@@ -32,9 +32,26 @@ from app.middleware.request_id import RequestIdMiddleware
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    # Startup
+    import os
+    from app.db.database import Database
+    from app.auth.api_key import hash_api_key, generate_api_key
+
+    db_path = os.environ.get("DB_PATH", "/tmp/linux-ai-server-test.db")
+    db = Database(db_path)
+    await db.initialize()
+
+    # Create default admin key if no keys exist
+    existing = await db.fetch_all("SELECT id FROM api_keys LIMIT 1")
+    if not existing:
+        default_key = os.environ.get("DEFAULT_API_KEY", generate_api_key())
+        await db.execute(
+            "INSERT INTO api_keys (key_hash, name, permissions) VALUES (?, ?, ?)",
+            (hash_api_key(default_key), "admin", "admin"),
+        )
+
+    app.state.db = db
     yield
-    # Shutdown
+    await db.close()
 
 
 def create_app() -> FastAPI:
