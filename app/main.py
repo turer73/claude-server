@@ -7,7 +7,9 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer
 
 from app import __version__
 from app.api.auth import router as auth_router
@@ -28,6 +30,8 @@ from app.ws.terminal import router as ws_terminal_router
 from app.ws.logs import router as ws_logs_router
 from app.exceptions import ServerError
 from app.middleware.request_id import RequestIdMiddleware
+
+security_scheme = HTTPBearer()
 
 
 @asynccontextmanager
@@ -60,9 +64,18 @@ def create_app() -> FastAPI:
         description="Full kernel-level Linux control via REST API and MCP",
         version=__version__,
         lifespan=lifespan,
+        swagger_ui_parameters={"persistAuthorization": True},
     )
 
     app.add_middleware(RequestIdMiddleware)
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # Configure in production
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.exception_handler(ServerError)
     async def server_error_handler(request: Request, exc: ServerError) -> JSONResponse:
