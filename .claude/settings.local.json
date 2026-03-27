@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(plink -ssh:*)",
+      "Bash(tar czf:*)",
+      "Bash(pscp -pw tur0452 -batch /tmp/linux-ai-server.tar.gz klipperos@192.168.1.129:/opt/linux-ai-server/)"
+    ]
+  }
+}

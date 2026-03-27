@@ -18,15 +18,19 @@ class AIInference:
     async def chat(
         self,
         message: str,
-        model: str = "linux-ai-agent",
+        model: str = "qwen3:1.7b",
         context: list[dict[str, str]] | None = None,
+        think: bool = False,
     ) -> dict:
         messages = context or []
+        # Disable thinking mode by default for speed on low-end hardware
+        if not think and message and not message.startswith("/think"):
+            message = f"/no_think {message}"
         messages.append({"role": "user", "content": message})
 
         start = time.monotonic()
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
+            async with httpx.AsyncClient(timeout=300) as client:
                 resp = await client.post(
                     f"{self._base_url}/api/chat",
                     json={"model": model, "messages": messages, "stream": False},

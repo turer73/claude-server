@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "linux-ai-server": {
+      "command": "cmd.exe",
+      "args": ["/c", "F:\\claude-server\\scripts\\mcp-ssh-wrapper.bat"],
+      "env": {}
+    }
+  }
+}
