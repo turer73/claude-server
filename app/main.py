@@ -19,6 +19,8 @@ from app.api.network import router as network_router
 from app.api.dev import router as dev_router
 from app.api.ssh import router as ssh_router
 from app.api.agents import router as agents_router
+from app.api.webops import router as webops_router
+from app.api.ai import router as ai_router
 from app.api.monitoring import router as monitoring_router
 from app.api.logs import router as logs_router
 from app.ws.monitor import router as ws_monitor_router
@@ -65,6 +67,8 @@ def create_app() -> FastAPI:
     app.include_router(dev_router)
     app.include_router(ssh_router)
     app.include_router(agents_router)
+    app.include_router(webops_router)
+    app.include_router(ai_router)
     app.include_router(monitoring_router)
     app.include_router(logs_router)
     app.include_router(ws_monitor_router)
