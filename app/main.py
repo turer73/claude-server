@@ -19,6 +19,11 @@ from app.api.network import router as network_router
 from app.api.dev import router as dev_router
 from app.api.ssh import router as ssh_router
 from app.api.agents import router as agents_router
+from app.api.monitoring import router as monitoring_router
+from app.api.logs import router as logs_router
+from app.ws.monitor import router as ws_monitor_router
+from app.ws.terminal import router as ws_terminal_router
+from app.ws.logs import router as ws_logs_router
 from app.exceptions import ServerError
 from app.middleware.request_id import RequestIdMiddleware
 
@@ -60,6 +65,11 @@ def create_app() -> FastAPI:
     app.include_router(dev_router)
     app.include_router(ssh_router)
     app.include_router(agents_router)
+    app.include_router(monitoring_router)
+    app.include_router(logs_router)
+    app.include_router(ws_monitor_router)
+    app.include_router(ws_terminal_router)
+    app.include_router(ws_logs_router)
 
     @app.get("/health")
     async def health() -> dict:
