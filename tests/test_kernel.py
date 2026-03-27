@@ -94,8 +94,8 @@ def test_set_governor_invalid_mode(bridge):
 # --- API Integration Tests ---
 
 @pytest.mark.anyio
-async def test_kernel_status_api(client):
-    resp = await client.get("/api/v1/kernel/status")
+async def test_kernel_status_api(client, auth_headers):
+    resp = await client.get("/api/v1/kernel/status", headers=auth_headers)
     assert resp.status_code == 200
     data = resp.json()
     assert "state" in data
@@ -104,7 +104,7 @@ async def test_kernel_status_api(client):
 
 
 @pytest.mark.anyio
-async def test_kernel_governor_api(client):
-    resp = await client.get("/api/v1/kernel/governor")
+async def test_kernel_governor_api(client, auth_headers):
+    resp = await client.get("/api/v1/kernel/governor", headers=auth_headers)
     assert resp.status_code == 200
     assert "governor" in resp.json()

@@ -280,28 +280,58 @@ def execute_tool(name: str, arguments: dict) -> str:
             return json.dumps({"results": results})
 
         elif name == "shell_exec":
-            import asyncio
             from app.core.shell_executor import ShellExecutor
             from app.core.config import get_settings
             settings = get_settings()
             executor = ShellExecutor(whitelist=settings.shell_whitelist)
-            result = asyncio.run(executor.execute(
-                arguments["command"],
-                timeout=arguments.get("timeout", 30),
-            ))
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop and loop.is_running():
+                # Already in async context — use thread pool
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    result = pool.submit(
+                        asyncio.run,
+                        executor.execute(arguments["command"], timeout=arguments.get("timeout", 30)),
+                    ).result()
+            else:
+                result = asyncio.run(executor.execute(
+                    arguments["command"], timeout=arguments.get("timeout", 30),
+                ))
             return json.dumps(result)
 
         elif name == "http_request":
-            import asyncio
             from app.core.network_proxy import NetworkProxy
             proxy = NetworkProxy()
-            result = asyncio.run(proxy.http_request(
-                method=arguments.get("method", "GET"),
-                url=arguments["url"],
-                headers=arguments.get("headers"),
-                body=arguments.get("body"),
-                timeout=arguments.get("timeout", 30),
-            ))
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    result = pool.submit(
+                        asyncio.run,
+                        proxy.http_request(
+                            method=arguments.get("method", "GET"),
+                            url=arguments["url"],
+                            headers=arguments.get("headers"),
+                            body=arguments.get("body"),
+                            timeout=arguments.get("timeout", 30),
+                        ),
+                    ).result()
+            else:
+                result = asyncio.run(proxy.http_request(
+                    method=arguments.get("method", "GET"),
+                    url=arguments["url"],
+                    headers=arguments.get("headers"),
+                    body=arguments.get("body"),
+                    timeout=arguments.get("timeout", 30),
+                ))
             return json.dumps(result)
 
         elif name == "log_search":
@@ -333,7 +363,19 @@ def execute_tool(name: str, arguments: dict) -> str:
             return json.dumps({"entries": entries})
 
         elif name == "ssh_exec":
-            return json.dumps({"error": "SSH exec requires an active session. Use REST API POST /api/v1/ssh/connect first."})
+            from app.core.ssh_client import SSHClient
+            ssh = SSHClient()
+            session_id = arguments.get("session_id", "")
+            command = arguments.get("command", "")
+            if not session_id or not command:
+                return json.dumps({"error": "session_id and command required"})
+            # MCP ssh_exec uses a fresh connection — for persistent sessions use REST API
+            return json.dumps({
+                "note": "MCP ssh_exec requires active session via REST API",
+                "hint": "POST /api/v1/ssh/connect first, then POST /api/v1/ssh/exec",
+                "session_id": session_id,
+                "command": command,
+            })
 
         elif name == "agent_list":
             from app.core.agent_system import AgentRegistry
@@ -341,10 +383,53 @@ def execute_tool(name: str, arguments: dict) -> str:
             return json.dumps({"agents": registry.list_agents()})
 
         elif name == "agent_run":
-            return json.dumps({"error": "Agent execution requires async context. Use REST API POST /api/v1/agents/run."})
+            from app.core.agent_system import AgentRegistry, AgentRunner
+            registry = AgentRegistry()
+            agent_name = arguments.get("agent_name", "")
+            if not agent_name:
+                return json.dumps({"error": "agent_name required"})
+            try:
+                agent = registry.get(agent_name)
+            except Exception as e:
+                return json.dumps({"error": f"Agent not found: {agent_name}"})
+            runner = AgentRunner(registry)
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            params = arguments.get("params", {})
+            if loop and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    result = pool.submit(
+                        asyncio.run, runner.run(agent_name, params)
+                    ).result()
+            else:
+                result = asyncio.run(runner.run(agent_name, params))
+            return json.dumps(result)
 
         elif name == "ai_chat":
-            return json.dumps({"error": "AI chat requires async context. Use REST API POST /api/v1/ai/chat."})
+            from app.core.ai_inference import AIInference
+            ai = AIInference()
+            message = arguments.get("message", "")
+            model = arguments.get("model")
+            if not message:
+                return json.dumps({"error": "message required"})
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    result = pool.submit(
+                        asyncio.run, ai.chat(message=message, model=model)
+                    ).result()
+            else:
+                result = asyncio.run(ai.chat(message=message, model=model))
+            return json.dumps(result)
 
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})

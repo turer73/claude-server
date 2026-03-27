@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Request
 
 from app.core.config import Settings, get_settings
 from app.core.webops_proxy import WebOpsProxy
+from app.middleware.dependencies import require_auth
 
 router = APIRouter(prefix="/api/v1/webops", tags=["webops"])
 
@@ -22,12 +23,16 @@ def get_webops(settings: Settings = Depends(get_settings)) -> WebOpsProxy:
     )
 
 
-@router.get("/services")
+@router.get("/services", dependencies=[Depends(require_auth)])
 async def list_services(proxy: WebOpsProxy = Depends(get_webops)):
     return {"services": proxy.available_services()}
 
 
-@router.api_route("/{service}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+@router.api_route(
+    "/{service}/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    dependencies=[Depends(require_auth)],
+)
 async def proxy_request(
     service: str,
     path: str,

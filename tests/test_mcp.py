@@ -211,7 +211,8 @@ def test_execute_tool_git_log(tmp_path):
 def test_execute_tool_ssh_exec():
     from app.mcp.tools import execute_tool
     result = json.loads(execute_tool("ssh_exec", {"session_id": "x", "command": "ls"}))
-    assert "error" in result
+    # Now returns hint/note instead of error (points user to REST API)
+    assert "hint" in result or "note" in result or "error" in result
 
 
 def test_execute_tool_agent_run():
