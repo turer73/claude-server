@@ -1,10 +1,23 @@
-"""Server configuration with environment variable support."""
+"""Server configuration with environment variable and YAML support."""
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
+from pathlib import Path
 
+import yaml
 from pydantic_settings import BaseSettings
+
+
+def load_yaml_config(path: str) -> dict:
+    """Load configuration from YAML file. Returns empty dict on failure."""
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f)
+            return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, PermissionError, yaml.YAMLError):
+        return {}
 
 
 class Settings(BaseSettings):
@@ -76,4 +89,20 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    yaml_paths = [
+        os.environ.get("CONFIG_FILE", ""),
+        "config/server.yml",
+        "/etc/linux-ai-server/server.yml",
+    ]
+    yaml_overrides = {}
+    for path in yaml_paths:
+        if path:
+            yaml_overrides = load_yaml_config(path)
+            if yaml_overrides:
+                break
+
+    # Only pass keys that match Settings fields (flat keys only)
+    valid_fields = Settings.model_fields
+    filtered = {k: v for k, v in yaml_overrides.items() if k in valid_fields}
+
+    return Settings(**filtered)
