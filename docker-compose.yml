@@ -1,0 +1,34 @@
+version: "3.8"
+
+services:
+  linux-ai-server:
+    build: .
+    container_name: linux-ai-server
+    ports:
+      - "8420:8420"
+    volumes:
+      - /var/AI-stump:/var/AI-stump
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - server-data:/var/lib/linux-ai-server
+      - server-logs:/var/log/linux-ai-server
+    environment:
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - VERCEL_TOKEN=${VERCEL_TOKEN:-}
+      - CLOUDFLARE_TOKEN=${CLOUDFLARE_TOKEN:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_TOKEN=${SUPABASE_TOKEN:-}
+      - COOLIFY_URL=${COOLIFY_URL:-}
+      - COOLIFY_TOKEN=${COOLIFY_TOKEN:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; r = httpx.get('http://localhost:8420/health'); assert r.status_code == 200"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  server-data:
+  server-logs:
