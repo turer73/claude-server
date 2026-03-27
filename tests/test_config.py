@@ -50,3 +50,34 @@ def test_webops_tokens_empty_by_default():
 def test_db_path_default():
     s = Settings()
     assert "server.db" in s.db_path
+
+
+def test_load_from_yaml(tmp_path):
+    import yaml
+    config = {
+        "server_port": 9999,
+        "jwt_secret": "yaml-secret",
+        "rate_limit_read": 200,
+        "log_level": "DEBUG",
+    }
+    config_file = tmp_path / "server.yml"
+    config_file.write_text(yaml.dump(config))
+
+    from app.core.config import load_yaml_config
+    loaded = load_yaml_config(str(config_file))
+    assert loaded["server_port"] == 9999
+    assert loaded["jwt_secret"] == "yaml-secret"
+
+
+def test_load_yaml_not_found():
+    from app.core.config import load_yaml_config
+    loaded = load_yaml_config("/nonexistent/path.yml")
+    assert loaded == {}
+
+
+def test_load_yaml_invalid(tmp_path):
+    bad = tmp_path / "bad.yml"
+    bad.write_text("not: valid: yaml: [[[")
+    from app.core.config import load_yaml_config
+    loaded = load_yaml_config(str(bad))
+    assert loaded == {}
