@@ -28,6 +28,9 @@ from app.api.logs import router as logs_router
 from app.ws.monitor import router as ws_monitor_router
 from app.ws.terminal import router as ws_terminal_router
 from app.ws.logs import router as ws_logs_router
+from app.api.prometheus import router as prometheus_router
+from app.api.backup import router as backup_router
+from app.api.ws_status import router as ws_status_router
 from app.exceptions import ServerError
 from app.middleware.request_id import RequestIdMiddleware
 
@@ -104,6 +107,9 @@ def create_app() -> FastAPI:
     app.include_router(ws_monitor_router)
     app.include_router(ws_terminal_router)
     app.include_router(ws_logs_router)
+    app.include_router(prometheus_router)
+    app.include_router(backup_router)
+    app.include_router(ws_status_router)
 
     @app.get("/health")
     async def health() -> dict:
