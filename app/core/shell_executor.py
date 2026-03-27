@@ -1,14 +1,19 @@
-"""Shell executor — whitelisted command execution with injection prevention."""
+"""Shell executor — full shell access via bash with whitelist validation.
+
+Security model: JWT admin auth is the gate. Once authenticated as admin,
+full shell access is granted through bash -c for pipe, redirection, etc.
+The whitelist validates the *first* command in the pipeline.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import shlex
 import time
 
 from app.exceptions import AuthorizationError, ShellExecutionError
 
-INJECTION_PATTERNS = [";", "&&", "||", "|", "`", "$(", "${", ">", "<", "\n"]
+# Dangerous patterns that are NEVER allowed regardless of auth
+BLOCKED_PATTERNS = ["rm -rf /", "mkfs /dev/sd", "dd if=/dev/zero of=/dev/sd", ":(){:|:&};:"]
 
 
 class ShellExecutor:
@@ -19,14 +24,24 @@ class ShellExecutor:
         if not command or not command.strip():
             raise AuthorizationError("Empty command")
 
-        # Check injection patterns
-        for pattern in INJECTION_PATTERNS:
+        # Block catastrophic commands
+        for pattern in BLOCKED_PATTERNS:
             if pattern in command:
-                raise AuthorizationError(f"Command injection detected: {pattern!r}")
+                raise AuthorizationError(f"Blocked dangerous pattern: {pattern!r}")
 
-        # Extract base command
-        base = command.strip().split()[0]
-        if base not in self._whitelist:
+        # Validate the first command in the pipeline is whitelisted
+        # Strip leading env vars like VAR=val, sudo, etc.
+        stripped = command.strip()
+        # Handle sudo prefix
+        if stripped.startswith("sudo "):
+            stripped = stripped[5:].strip()
+        # Handle env var prefix like KEY=val cmd
+        while "=" in stripped.split()[0] if stripped.split() else False:
+            stripped = stripped.split(None, 1)[1] if " " in stripped else stripped
+
+        base = stripped.split()[0].split("/")[-1]  # basename
+        # Also check pipe targets aren't the only validation — first cmd matters
+        if base not in self._whitelist and base not in ("sudo",):
             raise AuthorizationError(f"Command {base!r} not in whitelist")
 
         return True
@@ -36,12 +51,11 @@ class ShellExecutor:
     ) -> dict:
         self.validate_command(command)
 
-        parts = shlex.split(command)
         start = time.monotonic()
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *parts,
+            proc = await asyncio.create_subprocess_shell(
+                command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
@@ -53,7 +67,7 @@ class ShellExecutor:
             proc.kill()
             raise ShellExecutionError(f"Command timed out after {timeout}s")
         except FileNotFoundError:
-            raise ShellExecutionError(f"Command not found: {parts[0]}")
+            raise ShellExecutionError(f"Command not found in shell")
 
         elapsed = (time.monotonic() - start) * 1000
 
