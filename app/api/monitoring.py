@@ -6,8 +6,12 @@ from fastapi import APIRouter, Depends
 
 from app.core.monitor_agent import MonitorAgent
 from app.models.schemas import MetricsSnapshot, AlertConfig
+from app.api.webhooks import router as webhooks_router
 
 router = APIRouter(prefix="/api/v1/monitor", tags=["monitor"])
+
+# Mount webhook routes under /api/v1/monitor/webhooks
+router.include_router(webhooks_router, prefix="/webhooks")
 
 
 def get_monitor() -> MonitorAgent:

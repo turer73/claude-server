@@ -1,0 +1,11 @@
+# Prometheus configuration for linux-ai-server
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "linux-ai-server"
+    static_configs:
+      - targets: ["linux-ai-server:8420"]
+    metrics_path: "/metrics"
+    scrape_interval: 10s

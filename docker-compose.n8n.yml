@@ -1,0 +1,82 @@
+# docker-compose.n8n.yml — Full stack: linux-ai-server + n8n + monitoring
+version: "3.8"
+
+services:
+  linux-ai-server:
+    build: .
+    container_name: linux-ai-server
+    ports:
+      - "8420:8420"
+    volumes:
+      - /var/AI-stump:/var/AI-stump
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - server-data:/var/lib/linux-ai-server
+      - server-logs:/var/log/linux-ai-server
+    environment:
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - DEFAULT_API_KEY=${DEFAULT_API_KEY:-}
+      - VERCEL_TOKEN=${VERCEL_TOKEN:-}
+      - CLOUDFLARE_TOKEN=${CLOUDFLARE_TOKEN:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_TOKEN=${SUPABASE_TOKEN:-}
+      - COOLIFY_URL=${COOLIFY_URL:-}
+      - COOLIFY_TOKEN=${COOLIFY_TOKEN:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; assert httpx.get('http://localhost:8420/health').status_code == 200"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - ai-network
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n-data:/home/node/.n8n
+    environment:
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:-changeme}
+      # Connect to linux-ai-server
+      - LINUX_AI_SERVER_URL=http://linux-ai-server:8420
+      - LINUX_AI_API_KEY=${DEFAULT_API_KEY:-}
+    restart: unless-stopped
+    depends_on:
+      linux-ai-server:
+        condition: service_healthy
+    networks:
+      - ai-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+    depends_on:
+      - linux-ai-server
+    networks:
+      - ai-network
+
+volumes:
+  server-data:
+  server-logs:
+  n8n-data:
+  prometheus-data:
+
+networks:
+  ai-network:
+    driver: bridge
