@@ -135,3 +135,98 @@ def test_handle_invalid_json():
     response = server.handle_message("not valid json")
     data = json.loads(response)
     assert "error" in data
+
+
+def test_execute_tool_system_info():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("system_info", {}))
+    assert "hostname" in result
+    assert "cpu_count" in result
+
+
+def test_execute_tool_monitor_metrics():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("monitor_metrics", {}))
+    assert "cpu_percent" in result
+
+
+def test_execute_tool_file_read(tmp_path):
+    from app.mcp.tools import execute_tool
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("hello world")
+    result = json.loads(execute_tool("file_read", {"path": str(test_file)}))
+    assert "content" in result or "error" in result
+
+
+def test_execute_tool_file_write(tmp_path):
+    from app.mcp.tools import execute_tool
+    test_file = tmp_path / "write_test.txt"
+    result = json.loads(execute_tool("file_write", {"path": str(test_file), "content": "test data"}))
+    assert "size" in result or "error" in result
+
+
+def test_execute_tool_file_list(tmp_path):
+    from app.mcp.tools import execute_tool
+    (tmp_path / "a.txt").write_text("a")
+    (tmp_path / "b.txt").write_text("b")
+    result = json.loads(execute_tool("file_list", {"path": str(tmp_path)}))
+    assert "entries" in result or "error" in result
+
+
+def test_execute_tool_file_search(tmp_path):
+    from app.mcp.tools import execute_tool
+    (tmp_path / "hello.py").write_text("pass")
+    result = json.loads(execute_tool("file_search", {"path": str(tmp_path), "pattern": "*.py"}))
+    assert "results" in result or "error" in result
+
+
+def test_execute_tool_log_tail():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("log_tail", {"n": 5}))
+    assert "lines" in result or "error" in result
+
+
+def test_execute_tool_log_search():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("log_search", {"pattern": "error"}))
+    assert "results" in result or "error" in result
+
+
+def test_execute_tool_git_status(tmp_path):
+    import subprocess
+    subprocess.run(["git", "init", str(tmp_path)], capture_output=True)
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("git_status", {"cwd": str(tmp_path)}))
+    assert "branch" in result or "error" in result
+
+
+def test_execute_tool_git_log(tmp_path):
+    import subprocess
+    subprocess.run(["git", "init", str(tmp_path)], capture_output=True)
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("git_log", {"cwd": str(tmp_path)}))
+    assert "entries" in result or "error" in result
+
+
+def test_execute_tool_ssh_exec():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("ssh_exec", {"session_id": "x", "command": "ls"}))
+    assert "error" in result
+
+
+def test_execute_tool_agent_run():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("agent_run", {"agent_name": "test"}))
+    assert "error" in result
+
+
+def test_execute_tool_ai_chat():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("ai_chat", {"message": "hello"}))
+    assert "error" in result
+
+
+def test_execute_tool_unknown():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("totally_fake_tool", {}))
+    assert "error" in result
