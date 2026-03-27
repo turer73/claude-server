@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 
 from app.core.config import Settings, get_settings
 from app.core.shell_executor import ShellExecutor
+from app.middleware.dependencies import rate_limit_exec
 from app.models.schemas import ShellExecRequest, ShellExecResponse
 
 router = APIRouter(prefix="/api/v1/shell", tags=["shell"])
@@ -15,7 +16,7 @@ def get_shell_executor(settings: Settings = Depends(get_settings)) -> ShellExecu
     return ShellExecutor(whitelist=settings.shell_whitelist)
 
 
-@router.post("/exec", response_model=ShellExecResponse)
+@router.post("/exec", response_model=ShellExecResponse, dependencies=[Depends(rate_limit_exec)])
 async def exec_command(body: ShellExecRequest, executor: ShellExecutor = Depends(get_shell_executor)):
     result = await executor.execute(body.command, timeout=body.timeout, cwd=body.cwd)
     return ShellExecResponse(**result)
