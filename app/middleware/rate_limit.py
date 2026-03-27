@@ -1,9 +1,13 @@
-"""Token bucket rate limiter — in-memory, per-key."""
+"""Token bucket rate limiter — in-memory, per-key + global ASGI middleware."""
 
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 
 
 @dataclass
@@ -40,3 +44,36 @@ class TokenBucketLimiter:
             bucket.tokens -= 1
             return True
         return False
+
+
+class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
+    """ASGI middleware — global rate limit safety net for ALL routes."""
+
+    SKIP_PATHS = {"/health", "/ready", "/docs", "/openapi.json", "/redoc"}
+
+    def __init__(self, app, rate: int = 200, per_seconds: int = 60) -> None:
+        super().__init__(app)
+        self._limiter = TokenBucketLimiter(rate=rate, per_seconds=per_seconds)
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        if request.url.path in self.SKIP_PATHS:
+            return await call_next(request)
+
+        # Extract client IP
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            client_ip = forwarded.split(",")[0].strip()
+        else:
+            client_ip = request.client.host if request.client else "unknown"
+
+        if not self._limiter.allow(client_ip):
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": "RateLimitError",
+                    "message": "Global rate limit exceeded (200/min)",
+                    "detail": None,
+                },
+            )
+
+        return await call_next(request)

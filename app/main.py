@@ -33,6 +33,8 @@ from app.api.backup import router as backup_router
 from app.api.ws_status import router as ws_status_router
 from app.exceptions import ServerError
 from app.middleware.request_id import RequestIdMiddleware
+from app.middleware.audit_log import AuditMiddleware
+from app.middleware.rate_limit import GlobalRateLimitMiddleware
 
 security_scheme = HTTPBearer()
 
@@ -70,8 +72,11 @@ def create_app() -> FastAPI:
         swagger_ui_parameters={"persistAuthorization": True},
     )
 
+    # Middleware order matters: outermost first
+    # 1. Request ID — adds x-request-id to every request
     app.add_middleware(RequestIdMiddleware)
 
+    # 2. CORS — browser cross-origin support
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],  # Configure in production
@@ -79,6 +84,12 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # 3. Audit — logs all POST/PUT/PATCH/DELETE to DB
+    app.add_middleware(AuditMiddleware)
+
+    # 4. Global rate limit — 200 req/min per client IP (safety net)
+    app.add_middleware(GlobalRateLimitMiddleware, rate=200, per_seconds=60)
 
     @app.exception_handler(ServerError)
     async def server_error_handler(request: Request, exc: ServerError) -> JSONResponse:
@@ -91,6 +102,7 @@ def create_app() -> FastAPI:
             },
         )
 
+    # ---- Routes ----
     app.include_router(auth_router)
     app.include_router(kernel_router)
     app.include_router(system_router)

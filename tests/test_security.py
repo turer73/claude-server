@@ -108,6 +108,92 @@ class TestJWTSecurity:
             decode_token("not.a.jwt.token.at.all", "secret")
 
 
+class TestUnauthenticatedAccess:
+    """Verify that protected endpoints return 401 without a token."""
+
+    @pytest.mark.anyio
+    async def test_kernel_status_requires_auth(self, client):
+        resp = await client.get("/api/v1/kernel/status")
+        assert resp.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_kernel_governor_requires_auth(self, client):
+        resp = await client.get("/api/v1/kernel/governor")
+        assert resp.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_system_info_requires_auth(self, client):
+        resp = await client.get("/api/v1/system/info")
+        assert resp.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_system_processes_requires_auth(self, client):
+        resp = await client.get("/api/v1/system/processes")
+        assert resp.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_files_read_requires_auth(self, client):
+        resp = await client.get("/api/v1/files/read?path=/tmp/test.txt")
+        assert resp.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_monitor_metrics_no_auth(self, client):
+        """Monitor metrics endpoint is public (no auth required)."""
+        resp = await client.get("/api/v1/monitor/metrics")
+        assert resp.status_code == 200
+
+    @pytest.mark.anyio
+    async def test_agents_list_requires_auth(self, client):
+        resp = await client.get("/api/v1/agents/list")
+        assert resp.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_network_interfaces_requires_auth(self, client):
+        resp = await client.get("/api/v1/network/interfaces")
+        assert resp.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_logs_sources_requires_auth(self, client):
+        resp = await client.get("/api/v1/logs/sources")
+        assert resp.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_ssh_sessions_requires_auth(self, client):
+        resp = await client.get("/api/v1/ssh/sessions")
+        assert resp.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_webops_services_requires_auth(self, client):
+        resp = await client.get("/api/v1/webops/services")
+        assert resp.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_webhooks_receive_no_auth(self, client):
+        """Webhook receive endpoint is public (no auth required)."""
+        resp = await client.post("/api/v1/monitor/webhooks/receive", json={
+            "source": "test", "event": "ping",
+        })
+        assert resp.status_code == 200
+
+    @pytest.mark.anyio
+    async def test_health_does_not_require_auth(self, client):
+        resp = await client.get("/health")
+        assert resp.status_code == 200
+
+    @pytest.mark.anyio
+    async def test_ready_does_not_require_auth(self, client):
+        resp = await client.get("/ready")
+        assert resp.status_code == 200
+
+    @pytest.mark.anyio
+    async def test_invalid_token_returns_401(self, client):
+        resp = await client.get(
+            "/api/v1/kernel/status",
+            headers={"Authorization": "Bearer invalid-token-here"},
+        )
+        assert resp.status_code == 401
+
+
 class TestRateLimiter:
     def test_exhaustion(self):
         from app.middleware.rate_limit import TokenBucketLimiter

@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 
 from app.core.system_manager import SystemManager
+from app.middleware.dependencies import require_auth
 from app.models.schemas import SystemInfoResponse, ProcessInfo, ProcessListResponse
 
 router = APIRouter(prefix="/api/v1/system", tags=["system"])
@@ -14,13 +15,13 @@ def get_system_manager() -> SystemManager:
     return SystemManager()
 
 
-@router.get("/info", response_model=SystemInfoResponse)
+@router.get("/info", response_model=SystemInfoResponse, dependencies=[Depends(require_auth)])
 async def system_info(mgr: SystemManager = Depends(get_system_manager)):
     info = mgr.get_system_info()
     return SystemInfoResponse(**info)
 
 
-@router.get("/processes", response_model=ProcessListResponse)
+@router.get("/processes", response_model=ProcessListResponse, dependencies=[Depends(require_auth)])
 async def process_list(
     limit: int = Query(default=20, ge=1, le=100),
     sort_by: str = Query(default="cpu", pattern="^(cpu|memory)$"),
