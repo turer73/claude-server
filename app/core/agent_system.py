@@ -40,6 +40,7 @@ class AgentRegistry:
     def __init__(self, agents_dir: str = "/var/AI-stump/agents") -> None:
         self._agents_dir = agents_dir
         self._agents: dict[str, AgentDefinition] = {}
+        self.load_from_directory()
 
     def load_from_directory(self) -> int:
         """Load all YAML agent definitions from directory. Returns count loaded."""
