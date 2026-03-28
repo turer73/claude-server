@@ -16,7 +16,7 @@ class RAGEngine:
 
     def __init__(
         self,
-        chroma_url: str = "http://localhost:8000",
+        chroma_url: str = "http://localhost:8100",
         ollama_url: str = "http://localhost:11434",
         embed_model: str = "nomic-embed-text",
         chat_model: str = "qwen3:1.7b",
