@@ -13,7 +13,7 @@ import time
 from app.exceptions import AuthorizationError, ShellExecutionError
 
 # Dangerous patterns that are NEVER allowed regardless of auth
-BLOCKED_PATTERNS = ["rm -rf /", "mkfs /dev/sd", "dd if=/dev/zero of=/dev/sd", ":(){:|:&};:"]
+BLOCKED_PATTERNS = ["rm -rf /", "mkfs /dev/sd", "dd if=/dev/zero of=/dev/sd", ":(){", ":()", "forkbomb"]
 
 
 class ShellExecutor:

