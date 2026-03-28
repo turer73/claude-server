@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Linux-AI Control Center</title>
+<style>
+  :root { --bg: #0a0a0f; --card: #12121a; --border: #1e1e2e; --accent: #6366f1; --green: #22c55e; --red: #ef4444; --yellow: #eab308; --text: #e2e8f0; --dim: #64748b; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  /* Login */
+  #login { display: flex; align-items: center; justify-content: center; height: 100vh; }
+  #login form { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 2rem; width: 360px; }
+  #login h2 { margin-bottom: 1rem; color: var(--accent); }
+  #login input { width: 100%; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); margin-bottom: 1rem; font-size: 14px; }
+  #login button { width: 100%; padding: 10px; background: var(--accent); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; }
+
+  /* Dashboard */
+  #dashboard { display: none; }
+  .header { background: var(--card); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 10; }
+  .header h1 { font-size: 18px; color: var(--accent); }
+  .header .status { display: flex; gap: 12px; align-items: center; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.green { background: var(--green); }
+  .dot.red { background: var(--red); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; padding: 20px 24px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .card h3 { font-size: 14px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .card h3 .badge { font-size: 11px; background: var(--accent); color: white; padding: 2px 8px; border-radius: 12px; text-transform: none; letter-spacing: 0; }
+
+  .metric { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .metric:last-child { border: none; }
+  .metric .label { color: var(--dim); font-size: 13px; }
+  .metric .value { font-weight: 600; font-size: 13px; }
+
+  .service-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .service-row:last-child { border: none; }
+  .service-row a { color: var(--accent); text-decoration: none; font-size: 13px; }
+  .service-row a:hover { text-decoration: underline; }
+  .service-row .status-badge { font-size: 11px; padding: 2px 8px; border-radius: 8px; font-weight: 600; }
+  .status-badge.up { background: #16a34a22; color: var(--green); }
+  .status-badge.down { background: #dc262622; color: var(--red); }
+
+  .container-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; }
+  .container-row .name { color: var(--text); }
+  .container-row .st { color: var(--green); }
+
+  .alert-row { padding: 8px; margin-bottom: 6px; border-radius: 8px; font-size: 12px; }
+  .alert-row.critical { background: #dc262622; border: 1px solid #dc26264d; }
+  .alert-row.warning { background: #eab30822; border: 1px solid #eab3084d; }
+  .alert-row.ok { background: #16a34a22; border: 1px solid #16a34a4d; color: var(--green); }
+
+  .project-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .project-row:last-child { border: none; }
+
+  #terminal { background: #000; color: #0f0; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 12px; padding: 12px; border-radius: 8px; height: 200px; overflow-y: auto; white-space: pre-wrap; }
+  #termInput { width: 100%; background: #111; color: #0f0; border: 1px solid #333; padding: 8px; font-family: monospace; font-size: 12px; border-radius: 0 0 8px 8px; }
+
+  .refresh-btn { background: none; border: 1px solid var(--border); color: var(--dim); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .tab-bar { display: flex; gap: 4px; padding: 0 24px; background: var(--card); border-bottom: 1px solid var(--border); }
+  .tab { padding: 10px 16px; cursor: pointer; font-size: 13px; color: var(--dim); border-bottom: 2px solid transparent; }
+  .tab.active { color: var(--accent); border-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login">
+  <form onsubmit="doLogin(event)">
+    <h2>Linux-AI Control Center</h2>
+    <input type="password" id="apiKey" placeholder="API Key" autofocus>
+    <button type="submit">Giris</button>
+    <p id="loginError" style="color: var(--red); font-size: 12px; margin-top: 8px;"></p>
+  </form>
+</div>
+
+<!-- DASHBOARD -->
+<div id="dashboard">
+  <div class="header">
+    <h1>Linux-AI Control Center</h1>
+    <div class="status">
+      <span><span class="dot" id="devDot"></span> Dev</span>
+      <span><span class="dot" id="vpsDot"></span> VPS</span>
+      <button class="refresh-btn" onclick="refreshAll()">Yenile</button>
+    </div>
+  </div>
+
+  <div class="tab-bar">
+    <div class="tab active" onclick="showTab('overview')">Genel</div>
+    <div class="tab" onclick="showTab('services')">Servisler</div>
+    <div class="tab" onclick="showTab('projects')">Projeler</div>
+    <div class="tab" onclick="showTab('terminal')">Terminal</div>
+  </div>
+
+  <!-- OVERVIEW -->
+  <div id="tab-overview" class="grid">
+    <div class="card">
+      <h3>Dev Server (klipper) <span class="badge">LAN</span></h3>
+      <div id="devMetrics">Yukleniyor...</div>
+    </div>
+    <div class="card">
+      <h3>Production VPS <span class="badge">Contabo</span></h3>
+      <div id="vpsMetrics">Yukleniyor...</div>
+    </div>
+    <div class="card">
+      <h3>DevOps Agent</h3>
+      <div id="devopsStatus">Yukleniyor...</div>
+    </div>
+    <div class="card">
+      <h3>Alerts</h3>
+      <div id="alertsList">Yukleniyor...</div>
+    </div>
+    <div class="card">
+      <h3>Kernel Modulleri</h3>
+      <div id="kernelStatus">Yukleniyor...</div>
+    </div>
+    <div class="card">
+      <h3>Firewall</h3>
+      <div id="firewallStatus">Yukleniyor...</div>
+    </div>
+  </div>
+
+  <!-- SERVICES -->
+  <div id="tab-services" class="grid" style="display:none">
+    <div class="card">
+      <h3>Dev Server Servisleri</h3>
+      <div id="devServices"></div>
+    </div>
+    <div class="card">
+      <h3>VPS Servisleri</h3>
+      <div id="vpsServices"></div>
+    </div>
+    <div class="card">
+      <h3>Dev Docker Containers</h3>
+      <div id="devContainers"></div>
+    </div>
+    <div class="card">
+      <h3>VPS Docker Containers</h3>
+      <div id="vpsContainers"></div>
+    </div>
+  </div>
+
+  <!-- PROJECTS -->
+  <div id="tab-projects" class="grid" style="display:none">
+    <div class="card" style="grid-column: 1 / -1">
+      <h3>Proje Takip <span class="badge" id="projectCount">0</span></h3>
+      <div id="projectList"></div>
+    </div>
+  </div>
+
+  <!-- TERMINAL -->
+  <div id="tab-terminal" style="display:none; padding: 20px 24px;">
+    <div class="card">
+      <h3>Uzak Terminal</h3>
+      <select id="termTarget" style="background:var(--bg);color:var(--text);border:1px solid var(--border);padding:6px;border-radius:6px;margin-bottom:8px;">
+        <option value="dev">Dev Server (klipper)</option>
+        <option value="vps">Production VPS</option>
+      </select>
+      <div id="terminal"></div>
+      <input id="termInput" placeholder="Komut girin..." onkeydown="if(event.key==='Enter')runCmd()">
+    </div>
+  </div>
+</div>
+
+<script>
+const API = window.location.origin + '/api/v1';
+let TOKEN = localStorage.getItem('token') || '';
+
+// Auto-login if token exists
+if (TOKEN) { document.getElementById('login').style.display='none'; document.getElementById('dashboard').style.display='block'; refreshAll(); }
+
+async function doLogin(e) {
+  e.preventDefault();
+  const key = document.getElementById('apiKey').value;
+  try {
+    const r = await fetch(API+'/auth/token', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({api_key: key})});
+    const d = await r.json();
+    if (d.access_token) {
+      TOKEN = d.access_token;
+      localStorage.setItem('token', TOKEN);
+      document.getElementById('login').style.display='none';
+      document.getElementById('dashboard').style.display='block';
+      refreshAll();
+    } else { document.getElementById('loginError').textContent = 'Gecersiz API key'; }
+  } catch(e) { document.getElementById('loginError').textContent = 'Baglanti hatasi'; }
+}
+
+const H = () => ({Authorization: 'Bearer '+TOKEN});
+
+function m(label, value) { return `<div class="metric"><span class="label">${label}</span><span class="value">${value}</span></div>`; }
+
+async function refreshAll() {
+  loadDevMetrics(); loadVPSStatus(); loadDevOps(); loadAlerts(); loadKernel(); loadFirewall();
+  loadDevServices(); loadVPSServices(); loadProjects();
+}
+
+async function loadDevMetrics() {
+  try {
+    const r = await fetch(API+'/monitor/metrics', {headers:H()});
+    const d = await r.json();
+    document.getElementById('devDot').className = 'dot green';
+    document.getElementById('devMetrics').innerHTML =
+      m('CPU', d.cpu_percent+'%') + m('RAM', d.memory_percent+'%') + m('Disk', d.disk_percent+'%') +
+      m('Sicaklik', d.temperature+'C') + m('Load', (d.load_avg||[0])[0]) +
+      m('Net Sent', d.network_sent_mb+' MB') + m('Net Recv', d.network_recv_mb+' MB');
+  } catch(e) { document.getElementById('devDot').className='dot red'; document.getElementById('devMetrics').innerHTML='Baglanti yok'; }
+}
+
+async function loadVPSStatus() {
+  try {
+    const r = await fetch(API+'/vps/status', {headers:H()});
+    const d = await r.json();
+    if (d.online) {
+      document.getElementById('vpsDot').className = 'dot green';
+      document.getElementById('vpsMetrics').innerHTML =
+        m('Hostname', d.hostname) + m('Uptime', d.uptime) + m('RAM', d.ram_used) +
+        m('Disk', d.disk) + m('Containers', d.containers?.length || 0);
+      // VPS containers
+      document.getElementById('vpsContainers').innerHTML = (d.containers||[]).map(c =>
+        `<div class="container-row"><span class="name">${c.name}</span><span class="st">${c.status}</span></div>`
+      ).join('');
+    } else { document.getElementById('vpsDot').className='dot red'; }
+  } catch(e) { document.getElementById('vpsDot').className='dot red'; document.getElementById('vpsMetrics').innerHTML='Baglanti yok'; }
+}
+
+async function loadDevOps() {
+  try {
+    const r = await fetch(API+'/devops/status', {headers:H()});
+    const d = await r.json();
+    document.getElementById('devopsStatus').innerHTML =
+      m('Durum', d.running ? 'Calisiyor' : 'Durdu') + m('Kontrol', d.check_count) +
+      m('Aktif Alert', d.active_alerts) + m('Remediation', d.total_remediations) +
+      m('Aralik', d.interval_seconds+'s');
+  } catch(e) {}
+}
+
+async function loadAlerts() {
+  try {
+    const r = await fetch(API+'/devops/alerts', {headers:H()});
+    const d = await r.json();
+    if (!d.alerts || d.alerts.length === 0) {
+      document.getElementById('alertsList').innerHTML = '<div class="alert-row ok">Tum sistemler normal</div>';
+    } else {
+      document.getElementById('alertsList').innerHTML = d.alerts.map(a =>
+        `<div class="alert-row ${a.severity}">${a.source}: ${a.message}</div>`
+      ).join('');
+    }
+  } catch(e) {}
+}
+
+async function loadKernel() {
+  try {
+    const r = await fetch(API+'/shell/exec', {method:'POST', headers:{...H(),'Content-Type':'application/json'}, body:JSON.stringify({command:'cat /proc/linux_ai 2>/dev/null || echo "Module not loaded"'})});
+    const d = await r.json();
+    const lines = d.stdout.split('\n').filter(l=>l.includes('linux_ai'));
+    document.getElementById('kernelStatus').innerHTML = lines.slice(0,6).map(l => {
+      const [k,v] = l.split(' '); return m(k.replace('linux_ai_',''), v);
+    }).join('');
+  } catch(e) {}
+}
+
+async function loadFirewall() {
+  try {
+    const r = await fetch(API+'/shell/exec', {method:'POST', headers:{...H(),'Content-Type':'application/json'}, body:JSON.stringify({command:'cat /proc/linux_ai_firewall 2>/dev/null || echo "Module not loaded"'})});
+    const d = await r.json();
+    const lines = d.stdout.split('\n').filter(l=>l.trim());
+    document.getElementById('firewallStatus').innerHTML = lines.map(l => {
+      const [k,...v] = l.split(' '); return m(k, v.join(' '));
+    }).join('');
+  } catch(e) {}
+}
+
+async function loadDevServices() {
+  const services = [
+    {name:'API Server', url:'/', port:8420},
+    {name:'Swagger', url:'/docs', port:8420, link:true},
+    {name:'Grafana', url:'http://'+location.hostname+':3000', port:3000, link:true},
+    {name:'Prometheus', url:'http://'+location.hostname+':9090', port:9090, link:true},
+    {name:'n8n', url:'http://'+location.hostname+':5678', port:5678, link:true},
+    {name:'Coolify (Dev)', url:'http://'+location.hostname+':8000', port:8000, link:true},
+    {name:'Gitea', url:'http://'+location.hostname+':3001', port:3001, link:true},
+    {name:'Paperless', url:'http://'+location.hostname+':8088', port:8088, link:true},
+    {name:'Ollama', url:'http://'+location.hostname+':11434', port:11434},
+    {name:'ChromaDB', url:'http://'+location.hostname+':8100', port:8100},
+  ];
+  document.getElementById('devServices').innerHTML = services.map(s =>
+    `<div class="service-row">
+      ${s.link ? `<a href="${s.url}" target="_blank">${s.name} (:${s.port})</a>` : `<span>${s.name} (:${s.port})</span>`}
+      <span class="status-badge up">:${s.port}</span>
+    </div>`
+  ).join('');
+}
+
+async function loadVPSServices() {
+  const services = [
+    {name:'Coolify', url:'https://coolify.panola.app'},
+    {name:'Uptime Kuma', url:'https://uptime.panola.app'},
+    {name:'n8n', url:'https://n8n.panola.app'},
+    {name:'Plausible', url:'https://analytics.panola.app'},
+  ];
+  document.getElementById('vpsServices').innerHTML = services.map(s =>
+    `<div class="service-row"><a href="${s.url}" target="_blank">${s.name}</a><span class="status-badge up">SSL</span></div>`
+  ).join('');
+}
+
+async function loadProjects() {
+  try {
+    const r = await fetch(API+'/deploy/projects', {headers:H()});
+    const d = await r.json();
+    const projects = Object.entries(d.projects||{});
+    document.getElementById('projectCount').textContent = projects.length;
+    document.getElementById('projectList').innerHTML = projects.map(([name, p]) =>
+      `<div class="project-row">
+        <span>${name}</span>
+        <span style="color:var(--dim)">${p.stack}</span>
+        <span style="color:var(--dim)">${p.github || 'local'}</span>
+        <span style="color:var(--dim)">${p.deploy_count} deploy</span>
+      </div>`
+    ).join('');
+  } catch(e) {}
+}
+
+// Tabs
+function showTab(name) {
+  document.querySelectorAll('[id^="tab-"]').forEach(t=>t.style.display='none');
+  document.getElementById('tab-'+name).style.display = name==='terminal' ? 'block' : 'grid';
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  event.target.classList.add('active');
+}
+
+// Terminal
+async function runCmd() {
+  const input = document.getElementById('termInput');
+  const term = document.getElementById('terminal');
+  const target = document.getElementById('termTarget').value;
+  const cmd = input.value;
+  input.value = '';
+  term.innerHTML += `\n$ ${cmd}\n`;
+
+  const endpoint = target === 'vps' ? '/vps/exec' : '/shell/exec';
+  try {
+    const r = await fetch(API+endpoint, {method:'POST', headers:{...H(),'Content-Type':'application/json'}, body:JSON.stringify({command:cmd})});
+    const d = await r.json();
+    term.innerHTML += d.stdout || d.stderr || JSON.stringify(d);
+  } catch(e) { term.innerHTML += 'Error: '+e.message; }
+  term.scrollTop = term.scrollHeight;
+}
+
+// Auto-refresh every 30s
+setInterval(()=>{ if(TOKEN) { loadDevMetrics(); loadVPSStatus(); loadDevOps(); loadAlerts(); }}, 30000);
+</script>
+</body>
+</html>
