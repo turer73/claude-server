@@ -33,6 +33,7 @@ from app.api.backup import router as backup_router
 from app.api.rag import router as rag_router
 from app.api.devops import router as devops_router
 from app.api.deploy import router as deploy_router
+from app.api.vps import router as vps_router
 from app.api.ws_status import router as ws_status_router
 from app.exceptions import ServerError
 from app.middleware.request_id import RequestIdMiddleware
@@ -138,6 +139,7 @@ def create_app() -> FastAPI:
     app.include_router(rag_router)
     app.include_router(devops_router)
     app.include_router(deploy_router)
+    app.include_router(vps_router)
 
     @app.get("/health")
     async def health() -> dict:

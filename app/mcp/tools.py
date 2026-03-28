@@ -347,6 +347,29 @@ def get_tool_definitions() -> list[dict]:
             "description": "List all notes in Claude's workspace",
             "inputSchema": {"type": "object", "properties": {}},
         },
+        # ── VPS Bridge Tools ──
+        {
+            "name": "vps_exec",
+            "description": "Execute a command on production VPS (Contabo) via SSH bridge",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "timeout": {"type": "integer", "default": 30},
+                },
+                "required": ["command"],
+            },
+        },
+        {
+            "name": "vps_status",
+            "description": "Get production VPS status (hostname, uptime, RAM, disk, containers)",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "vps_services",
+            "description": "Check production VPS web services health (Coolify, Uptime Kuma, n8n, Plausible)",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
     ]
 
 
@@ -719,6 +742,34 @@ def execute_tool(name: str, arguments: dict) -> str:
                     if os.path.isfile(fp):
                         notes.append({"name": f, "size": os.path.getsize(fp)})
             return json.dumps({"notes": notes})
+
+        # ── VPS Bridge Tools ──
+        elif name == "vps_exec":
+            from app.core.shell_executor import ShellExecutor
+            from app.core.config import get_settings
+            settings = get_settings()
+            executor = ShellExecutor(whitelist=settings.shell_whitelist)
+            cmd = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@194.163.134.239 '{arguments['command']}'"
+            result = _run_async(executor.execute(cmd, timeout=arguments.get("timeout", 30)))
+            return json.dumps(result)
+
+        elif name == "vps_status":
+            from app.core.shell_executor import ShellExecutor
+            from app.core.config import get_settings
+            settings = get_settings()
+            executor = ShellExecutor(whitelist=settings.shell_whitelist)
+            cmd = "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@194.163.134.239 'hostname && uptime -p && free -h | head -2 && df -h / | tail -1 && docker ps --format \"{{.Names}}: {{.Status}}\" | head -15'"
+            result = _run_async(executor.execute(cmd, timeout=15))
+            return json.dumps(result)
+
+        elif name == "vps_services":
+            from app.core.shell_executor import ShellExecutor
+            from app.core.config import get_settings
+            settings = get_settings()
+            executor = ShellExecutor(whitelist=settings.shell_whitelist)
+            cmd = """ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@194.163.134.239 'for u in https://coolify.panola.app https://uptime.panola.app https://n8n.panola.app https://analytics.panola.app; do echo "$u $(curl -s -o /dev/null -w %{http_code} $u)"; done'"""
+            result = _run_async(executor.execute(cmd, timeout=20))
+            return json.dumps(result)
 
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
