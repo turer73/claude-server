@@ -67,6 +67,9 @@ PLAYBOOKS: dict[str, list[dict]] = {
 
 CRITICAL_SERVICES = ["linux-ai-server", "ollama"]
 CRITICAL_CONTAINERS = ["n8n", "prometheus", "grafana", "chromadb", "paperless"]
+VPS_HOST = "root@REDACTED_VPS_IP"
+VPS_SSH = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 {VPS_HOST}"
+VPS_CONTAINERS = ["coolify", "panola-postgres", "panola-caddy", "n8n", "uptime-kuma", "plausible-plausible-1"]
 
 
 class DevOpsAgent:
@@ -169,6 +172,10 @@ class DevOpsAgent:
 
         # 5. Check services
         await self._check_services()
+
+        # 6. Check VPS (every 5th tick = ~150s to avoid SSH overhead)
+        if self._check_count % 5 == 0:
+            await self._check_vps()
 
     # ── Collector ──────────────────────────────────────
 
@@ -406,6 +413,49 @@ class DevOpsAgent:
                         await self._remediate_container(container, alert)
             except Exception:
                 pass
+
+    async def _check_vps(self) -> None:
+        """Check production VPS containers via SSH bridge."""
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            result = await self._executor.execute(
+                f"{VPS_SSH} 'docker ps --format \"{{{{.Names}}}}:{{{{.Status}}}}\"'", timeout=10
+            )
+            if result.get("exit_code", 1) != 0:
+                source = "vps:offline"
+                if source not in self._active_alerts:
+                    self._active_alerts[source] = Alert(
+                        id=f"{source}-{self._check_count}", severity="critical",
+                        source=source, message="VPS is unreachable",
+                        value=0, threshold=1, timestamp=now,
+                    )
+                return
+
+            # Auto-resolve VPS offline alert
+            if "vps:offline" in self._active_alerts:
+                self._active_alerts["vps:offline"].resolved = True
+                del self._active_alerts["vps:offline"]
+
+            # Check each critical container
+            running = result.get("stdout", "")
+            for container in VPS_CONTAINERS:
+                source = f"vps:{container}"
+                if container not in running or "Up" not in running.split(container)[1].split("\n")[0] if container in running else True:
+                    # Container might be down — simple check
+                    if f"{container}:" not in running:
+                        if source not in self._active_alerts:
+                            self._active_alerts[source] = Alert(
+                                id=f"{source}-{self._check_count}", severity="warning",
+                                source=source, message=f"VPS container {container} not running",
+                                value=0, threshold=1, timestamp=now,
+                            )
+                else:
+                    # Running — auto-resolve if was alerting
+                    if source in self._active_alerts:
+                        self._active_alerts[source].resolved = True
+                        del self._active_alerts[source]
+        except Exception:
+            pass
 
     async def _remediate_service(self, service: str, alert: Alert) -> None:
         now = time.monotonic()
