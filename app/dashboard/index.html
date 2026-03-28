@@ -4,66 +4,148 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Linux-AI Control Center</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <style>
-  :root { --bg: #0a0a0f; --card: #12121a; --border: #1e1e2e; --accent: #6366f1; --green: #22c55e; --red: #ef4444; --yellow: #eab308; --text: #e2e8f0; --dim: #64748b; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+:root {
+  --bg: #06060b; --surface: #0d0d14; --card: #11111b; --border: #1a1a2e;
+  --accent: #818cf8; --accent2: #6366f1; --green: #34d399; --red: #f87171;
+  --yellow: #fbbf24; --blue: #60a5fa; --text: #e2e8f0; --dim: #64748b; --muted: #475569;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
-  /* Login */
-  #login { display: flex; align-items: center; justify-content: center; height: 100vh; }
-  #login form { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 2rem; width: 360px; }
-  #login h2 { margin-bottom: 1rem; color: var(--accent); }
-  #login input { width: 100%; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); margin-bottom: 1rem; font-size: 14px; }
-  #login button { width: 100%; padding: 10px; background: var(--accent); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; }
+/* Login */
+#login { display: flex; align-items: center; justify-content: center; height: 100vh; background: radial-gradient(ellipse at center, #0d0d1a 0%, var(--bg) 70%); }
+#login form { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 2.5rem; width: 380px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+#login h2 { margin-bottom: 0.5rem; color: var(--accent); font-size: 20px; }
+#login .subtitle { color: var(--dim); font-size: 13px; margin-bottom: 1.5rem; }
+#login input { width: 100%; padding: 12px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; color: var(--text); margin-bottom: 1rem; font-size: 14px; outline: none; transition: border 0.2s; }
+#login input:focus { border-color: var(--accent); }
+#login button { width: 100%; padding: 12px; background: linear-gradient(135deg, var(--accent2), var(--accent)); color: white; border: none; border-radius: 10px; cursor: pointer; font-size: 14px; font-weight: 600; transition: opacity 0.2s; }
+#login button:hover { opacity: 0.9; }
+#loginError { color: var(--red); font-size: 12px; margin-top: 8px; }
 
-  /* Dashboard */
-  #dashboard { display: none; }
-  .header { background: var(--card); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 10; }
-  .header h1 { font-size: 18px; color: var(--accent); }
-  .header .status { display: flex; gap: 12px; align-items: center; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-  .dot.green { background: var(--green); }
-  .dot.red { background: var(--red); }
+/* Layout */
+#dashboard { display: none; }
+.sidebar { position: fixed; left: 0; top: 0; width: 220px; height: 100vh; background: var(--surface); border-right: 1px solid var(--border); padding: 16px 0; z-index: 20; display: flex; flex-direction: column; }
+.sidebar .logo { padding: 0 16px 16px; font-size: 15px; font-weight: 700; color: var(--accent); border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.sidebar .logo small { display: block; font-size: 11px; color: var(--dim); font-weight: 400; margin-top: 2px; }
+.nav-item { padding: 10px 16px; cursor: pointer; font-size: 13px; color: var(--dim); display: flex; align-items: center; gap: 10px; transition: all 0.15s; border-left: 3px solid transparent; }
+.nav-item:hover { color: var(--text); background: var(--card); }
+.nav-item.active { color: var(--accent); background: var(--card); border-left-color: var(--accent); }
+.nav-item .icon { width: 18px; text-align: center; font-size: 14px; }
+.nav-section { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); padding: 16px 16px 6px; }
+.sidebar .bottom { margin-top: auto; border-top: 1px solid var(--border); padding-top: 8px; }
 
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; padding: 20px 24px; }
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
-  .card h3 { font-size: 14px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
-  .card h3 .badge { font-size: 11px; background: var(--accent); color: white; padding: 2px 8px; border-radius: 12px; text-transform: none; letter-spacing: 0; }
+.main { margin-left: 220px; min-height: 100vh; }
+.topbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 10; }
+.topbar h2 { font-size: 16px; font-weight: 600; }
+.topbar .dots { display: flex; gap: 16px; align-items: center; font-size: 12px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+.dot.g { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.dot.r { background: var(--red); box-shadow: 0 0 6px var(--red); }
+.dot.y { background: var(--yellow); }
 
-  .metric { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); }
-  .metric:last-child { border: none; }
-  .metric .label { color: var(--dim); font-size: 13px; }
-  .metric .value { font-weight: 600; font-size: 13px; }
+.content { padding: 20px 24px; }
+.page { display: none; }
+.page.active { display: block; }
 
-  .service-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
-  .service-row:last-child { border: none; }
-  .service-row a { color: var(--accent); text-decoration: none; font-size: 13px; }
-  .service-row a:hover { text-decoration: underline; }
-  .service-row .status-badge { font-size: 11px; padding: 2px 8px; border-radius: 8px; font-weight: 600; }
-  .status-badge.up { background: #16a34a22; color: var(--green); }
-  .status-badge.down { background: #dc262622; color: var(--red); }
+/* Cards & Grid */
+.row { display: grid; gap: 16px; margin-bottom: 16px; }
+.row-2 { grid-template-columns: 1fr 1fr; }
+.row-3 { grid-template-columns: 1fr 1fr 1fr; }
+.row-4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+.card-title { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
+.card-title .badge { font-size: 10px; background: var(--accent2); color: white; padding: 2px 8px; border-radius: 10px; text-transform: none; letter-spacing: 0; }
 
-  .container-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; }
-  .container-row .name { color: var(--text); }
-  .container-row .st { color: var(--green); }
+/* Stat boxes */
+.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+.stat { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.stat .label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.05em; }
+.stat .value { font-size: 24px; font-weight: 700; margin-top: 4px; }
+.stat .sub { font-size: 11px; color: var(--dim); margin-top: 2px; }
+.stat.ok .value { color: var(--green); }
+.stat.warn .value { color: var(--yellow); }
+.stat.crit .value { color: var(--red); }
 
-  .alert-row { padding: 8px; margin-bottom: 6px; border-radius: 8px; font-size: 12px; }
-  .alert-row.critical { background: #dc262622; border: 1px solid #dc26264d; }
-  .alert-row.warning { background: #eab30822; border: 1px solid #eab3084d; }
-  .alert-row.ok { background: #16a34a22; border: 1px solid #16a34a4d; color: var(--green); }
+/* Metrics */
+.metric { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.metric:last-child { border: none; }
+.metric .l { color: var(--dim); }
+.metric .v { font-weight: 600; }
 
-  .project-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
-  .project-row:last-child { border: none; }
+/* Charts */
+.chart-wrap { position: relative; height: 200px; }
 
-  #terminal { background: #000; color: #0f0; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 12px; padding: 12px; border-radius: 8px; height: 200px; overflow-y: auto; white-space: pre-wrap; }
-  #termInput { width: 100%; background: #111; color: #0f0; border: 1px solid #333; padding: 8px; font-family: monospace; font-size: 12px; border-radius: 0 0 8px 8px; }
+/* Services */
+.svc { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.svc:last-child { border: none; }
+.svc a { color: var(--accent); text-decoration: none; font-size: 13px; }
+.svc a:hover { text-decoration: underline; }
+.svc-status { font-size: 10px; padding: 3px 10px; border-radius: 10px; font-weight: 600; }
+.svc-status.up { background: #34d39915; color: var(--green); }
+.svc-status.down { background: #f8717115; color: var(--red); }
 
-  .refresh-btn { background: none; border: 1px solid var(--border); color: var(--dim); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
-  .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+/* Containers */
+.ct { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; align-items: center; }
+.ct:last-child { border: none; }
+.ct .name { font-weight: 500; }
+.ct .st { color: var(--green); font-size: 11px; }
+.ct-btn { background: none; border: 1px solid var(--border); color: var(--dim); padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 10px; }
+.ct-btn:hover { border-color: var(--accent); color: var(--accent); }
+.ct-btn.danger:hover { border-color: var(--red); color: var(--red); }
 
-  .tab-bar { display: flex; gap: 4px; padding: 0 24px; background: var(--card); border-bottom: 1px solid var(--border); }
-  .tab { padding: 10px 16px; cursor: pointer; font-size: 13px; color: var(--dim); border-bottom: 2px solid transparent; }
-  .tab.active { color: var(--accent); border-color: var(--accent); }
+/* Alerts */
+.alert { padding: 10px 12px; margin-bottom: 6px; border-radius: 8px; font-size: 12px; display: flex; justify-content: space-between; }
+.alert.critical { background: #f8717112; border: 1px solid #f871712d; color: var(--red); }
+.alert.warning { background: #fbbf2412; border: 1px solid #fbbf242d; color: var(--yellow); }
+.alert.ok { background: #34d39912; border: 1px solid #34d3992d; color: var(--green); }
+
+/* Logs */
+#logOutput { background: #000; color: #a0a0a0; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 11px; padding: 12px; border-radius: 8px; height: 400px; overflow-y: auto; white-space: pre-wrap; line-height: 1.5; }
+#logOutput .err { color: var(--red); }
+#logOutput .warn { color: var(--yellow); }
+#logOutput .info { color: var(--blue); }
+.log-controls { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+.log-controls select, .log-controls input { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 10px; border-radius: 6px; font-size: 12px; }
+.log-controls button { background: var(--accent2); color: white; border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+
+/* Terminal */
+#termOutput { background: #000; color: #33ff33; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 12px; padding: 12px; border-radius: 8px 8px 0 0; height: 350px; overflow-y: auto; white-space: pre-wrap; }
+#termInput { width: 100%; background: #0a0a0a; color: #33ff33; border: 1px solid #222; padding: 10px 12px; font-family: monospace; font-size: 12px; border-radius: 0 0 8px 8px; outline: none; }
+.term-controls { display: flex; gap: 8px; margin-bottom: 8px; }
+.term-controls select { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 10px; border-radius: 6px; font-size: 12px; }
+
+/* Vault */
+.vault-row { display: grid; grid-template-columns: 140px 1fr auto; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); align-items: center; font-size: 13px; }
+.vault-row:last-child { border: none; }
+.vault-row .sname { font-weight: 500; }
+.vault-row .suser { color: var(--dim); font-size: 12px; }
+.vault-btn { background: none; border: 1px solid var(--border); color: var(--dim); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 11px; }
+.vault-btn:hover { border-color: var(--accent); color: var(--accent); }
+.vault-btn.open { background: var(--accent2); color: white; border-color: var(--accent2); }
+.vault-form { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 8px; margin-bottom: 12px; }
+.vault-form input { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 8px; border-radius: 6px; font-size: 12px; }
+.vault-form button { background: var(--accent2); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+
+/* Task queue */
+.task-row { display: grid; grid-template-columns: 40px 80px auto 80px 80px; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; align-items: center; }
+.task-status { padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: 600; text-align: center; }
+.task-status.completed { background: #34d39915; color: var(--green); }
+.task-status.failed { background: #f8717115; color: var(--red); }
+.task-status.running { background: #fbbf2415; color: var(--yellow); }
+.task-status.pending { background: #60a5fa15; color: var(--blue); }
+
+@media (max-width: 900px) {
+  .sidebar { display: none; }
+  .main { margin-left: 0; }
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .row-2, .row-3, .row-4 { grid-template-columns: 1fr; }
+}
 </style>
 </head>
 <body>
@@ -71,287 +153,619 @@
 <!-- LOGIN -->
 <div id="login">
   <form onsubmit="doLogin(event)">
-    <h2>Linux-AI Control Center</h2>
+    <h2>Control Center</h2>
+    <p class="subtitle">Linux-AI Server Management</p>
     <input type="password" id="apiKey" placeholder="API Key" autofocus>
-    <button type="submit">Giris</button>
-    <p id="loginError" style="color: var(--red); font-size: 12px; margin-top: 8px;"></p>
+    <button type="submit">Giris Yap</button>
+    <p id="loginError"></p>
   </form>
 </div>
 
 <!-- DASHBOARD -->
 <div id="dashboard">
-  <div class="header">
-    <h1>Linux-AI Control Center</h1>
-    <div class="status">
-      <span><span class="dot" id="devDot"></span> Dev</span>
-      <span><span class="dot" id="vpsDot"></span> VPS</span>
-      <button class="refresh-btn" onclick="refreshAll()">Yenile</button>
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="logo">Control Center<small>linux-ai-server</small></div>
+    <div class="nav-section">Izleme</div>
+    <div class="nav-item active" onclick="nav('overview',this)"><span class="icon">&#9632;</span> Genel Bakis</div>
+    <div class="nav-item" onclick="nav('graphs',this)"><span class="icon">&#9650;</span> Grafikler</div>
+    <div class="nav-item" onclick="nav('alerts',this)"><span class="icon">&#9888;</span> Uyarilar</div>
+    <div class="nav-section">Yonetim</div>
+    <div class="nav-item" onclick="nav('containers',this)"><span class="icon">&#9881;</span> Konteynerler</div>
+    <div class="nav-item" onclick="nav('services',this)"><span class="icon">&#9733;</span> Servisler</div>
+    <div class="nav-item" onclick="nav('projects',this)"><span class="icon">&#9830;</span> Projeler</div>
+    <div class="nav-section">Araclar</div>
+    <div class="nav-item" onclick="nav('logs',this)"><span class="icon">&#9776;</span> Log Gorunum</div>
+    <div class="nav-item" onclick="nav('terminal',this)"><span class="icon">&gt;_</span> Terminal</div>
+    <div class="nav-item" onclick="nav('tasks',this)"><span class="icon">&#9654;</span> Gorevler</div>
+    <div class="nav-section">Guvenlik</div>
+    <div class="nav-item" onclick="nav('vault',this)"><span class="icon">&#9919;</span> Sifre Kasasi</div>
+    <div class="bottom">
+      <div class="nav-item" onclick="logout()"><span class="icon">&#10005;</span> Cikis</div>
     </div>
   </div>
 
-  <div class="tab-bar">
-    <div class="tab active" onclick="showTab('overview')">Genel</div>
-    <div class="tab" onclick="showTab('services')">Servisler</div>
-    <div class="tab" onclick="showTab('projects')">Projeler</div>
-    <div class="tab" onclick="showTab('terminal')">Terminal</div>
-  </div>
+  <!-- Main -->
+  <div class="main">
+    <div class="topbar">
+      <h2 id="pageTitle">Genel Bakis</h2>
+      <div class="dots">
+        <span><span class="dot" id="devDot"></span>Dev</span>
+        <span><span class="dot" id="vpsDot"></span>VPS</span>
+        <span id="clock" style="color:var(--dim)"></span>
+      </div>
+    </div>
 
-  <!-- OVERVIEW -->
-  <div id="tab-overview" class="grid">
-    <div class="card">
-      <h3>Dev Server (klipper) <span class="badge">LAN</span></h3>
-      <div id="devMetrics">Yukleniyor...</div>
-    </div>
-    <div class="card">
-      <h3>Production VPS <span class="badge">Contabo</span></h3>
-      <div id="vpsMetrics">Yukleniyor...</div>
-    </div>
-    <div class="card">
-      <h3>DevOps Agent</h3>
-      <div id="devopsStatus">Yukleniyor...</div>
-    </div>
-    <div class="card">
-      <h3>Alerts</h3>
-      <div id="alertsList">Yukleniyor...</div>
-    </div>
-    <div class="card">
-      <h3>Kernel Modulleri</h3>
-      <div id="kernelStatus">Yukleniyor...</div>
-    </div>
-    <div class="card">
-      <h3>Firewall</h3>
-      <div id="firewallStatus">Yukleniyor...</div>
-    </div>
-  </div>
+    <div class="content">
 
-  <!-- SERVICES -->
-  <div id="tab-services" class="grid" style="display:none">
-    <div class="card">
-      <h3>Dev Server Servisleri</h3>
-      <div id="devServices"></div>
-    </div>
-    <div class="card">
-      <h3>VPS Servisleri</h3>
-      <div id="vpsServices"></div>
-    </div>
-    <div class="card">
-      <h3>Dev Docker Containers</h3>
-      <div id="devContainers"></div>
-    </div>
-    <div class="card">
-      <h3>VPS Docker Containers</h3>
-      <div id="vpsContainers"></div>
-    </div>
-  </div>
+      <!-- OVERVIEW -->
+      <div id="page-overview" class="page active">
+        <div class="stat-grid" id="statBoxes"></div>
+        <div class="row row-2">
+          <div class="card">
+            <div class="card-title">Dev Server (klipper) <span class="badge">LAN</span></div>
+            <div id="devMetrics"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Production VPS <span class="badge">Contabo</span></div>
+            <div id="vpsMetrics"></div>
+          </div>
+        </div>
+        <div class="row row-2">
+          <div class="card">
+            <div class="card-title">DevOps Agent</div>
+            <div id="devopsInfo"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Son Uyarilar</div>
+            <div id="recentAlerts"></div>
+          </div>
+        </div>
+      </div>
 
-  <!-- PROJECTS -->
-  <div id="tab-projects" class="grid" style="display:none">
-    <div class="card" style="grid-column: 1 / -1">
-      <h3>Proje Takip <span class="badge" id="projectCount">0</span></h3>
-      <div id="projectList"></div>
-    </div>
-  </div>
+      <!-- GRAPHS -->
+      <div id="page-graphs" class="page">
+        <div class="row row-2">
+          <div class="card"><div class="card-title">CPU Kullanimi (%)</div><div class="chart-wrap"><canvas id="cpuChart"></canvas></div></div>
+          <div class="card"><div class="card-title">RAM Kullanimi (%)</div><div class="chart-wrap"><canvas id="ramChart"></canvas></div></div>
+        </div>
+        <div class="row row-2">
+          <div class="card"><div class="card-title">Disk Kullanimi (%)</div><div class="chart-wrap"><canvas id="diskChart"></canvas></div></div>
+          <div class="card"><div class="card-title">Sicaklik (C)</div><div class="chart-wrap"><canvas id="tempChart"></canvas></div></div>
+        </div>
+        <div style="margin-bottom:8px">
+          <button class="vault-btn" onclick="loadGraphs(30)">30dk</button>
+          <button class="vault-btn" onclick="loadGraphs(60)">1 saat</button>
+          <button class="vault-btn" onclick="loadGraphs(360)">6 saat</button>
+          <button class="vault-btn" onclick="loadGraphs(1440)">24 saat</button>
+        </div>
+      </div>
 
-  <!-- TERMINAL -->
-  <div id="tab-terminal" style="display:none; padding: 20px 24px;">
-    <div class="card">
-      <h3>Uzak Terminal</h3>
-      <select id="termTarget" style="background:var(--bg);color:var(--text);border:1px solid var(--border);padding:6px;border-radius:6px;margin-bottom:8px;">
-        <option value="dev">Dev Server (klipper)</option>
-        <option value="vps">Production VPS</option>
-      </select>
-      <div id="terminal"></div>
-      <input id="termInput" placeholder="Komut girin..." onkeydown="if(event.key==='Enter')runCmd()">
-    </div>
-  </div>
+      <!-- ALERTS -->
+      <div id="page-alerts" class="page">
+        <div class="card">
+          <div class="card-title">Aktif Uyarilar</div>
+          <div id="activeAlerts"></div>
+        </div>
+        <div class="card" style="margin-top:16px">
+          <div class="card-title">Gecmis Uyarilar</div>
+          <div id="alertHistory"></div>
+        </div>
+      </div>
+
+      <!-- CONTAINERS -->
+      <div id="page-containers" class="page">
+        <div class="row row-2">
+          <div class="card">
+            <div class="card-title">Dev Konteynerler <span class="badge">klipper</span></div>
+            <div id="devContainers"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">VPS Konteynerler <span class="badge">Contabo</span></div>
+            <div id="vpsContainers"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SERVICES -->
+      <div id="page-services" class="page">
+        <div class="row row-2">
+          <div class="card">
+            <div class="card-title">Dev Servisler</div>
+            <div id="devSvc"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">VPS Servisler</div>
+            <div id="vpsSvc"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PROJECTS -->
+      <div id="page-projects" class="page">
+        <div class="card">
+          <div class="card-title">Projeler <span class="badge" id="projCount">0</span></div>
+          <div id="projList"></div>
+        </div>
+      </div>
+
+      <!-- LOGS -->
+      <div id="page-logs" class="page">
+        <div class="card">
+          <div class="card-title">Log Gorunum</div>
+          <div class="log-controls">
+            <select id="logMode" onchange="toggleLogMode()">
+              <option value="file">Dosya Loglari</option>
+              <option value="journal">Systemd Journal</option>
+            </select>
+            <select id="logSource"><option value="">Tumu</option></select>
+            <select id="logUnit" style="display:none">
+              <option value="linux-ai-server">linux-ai-server</option>
+              <option value="docker">docker</option>
+              <option value="ollama">ollama</option>
+              <option value="nginx">nginx</option>
+              <option value="ssh">ssh</option>
+              <option value="cron">cron</option>
+            </select>
+            <input id="logSearch" placeholder="Filtre (regex)..." style="flex:1">
+            <select id="logLines"><option>50</option><option>100</option><option>200</option><option>500</option></select>
+            <button onclick="loadLogs()">Yukle</button>
+            <label style="font-size:12px;color:var(--dim)"><input type="checkbox" id="logAutoRefresh"> Otomatik</label>
+          </div>
+          <div id="logOutput"></div>
+        </div>
+      </div>
+
+      <!-- TERMINAL -->
+      <div id="page-terminal" class="page">
+        <div class="card">
+          <div class="card-title">Uzak Terminal</div>
+          <div class="term-controls">
+            <select id="termTarget">
+              <option value="dev">Dev (klipper)</option>
+              <option value="vps">VPS (Contabo)</option>
+            </select>
+          </div>
+          <div id="termOutput"></div>
+          <input id="termInput" placeholder="$ komut girin..." onkeydown="if(event.key==='Enter')runCmd()">
+        </div>
+      </div>
+
+      <!-- TASKS -->
+      <div id="page-tasks" class="page">
+        <div class="row row-2">
+          <div class="card">
+            <div class="card-title">Gorev Kuyrugu</div>
+            <div id="taskQueueStatus"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Hizli Gorev</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="vault-btn" onclick="quickTask('backup')">Yedekleme</button>
+              <button class="vault-btn" onclick="quickTask('deploy')">Deploy</button>
+              <button class="vault-btn" onclick="quickTask('shell',{command:'apt update && apt upgrade -y'})">Sistem Guncelle</button>
+              <button class="vault-btn" onclick="quickTask('shell',{command:'docker system prune -f'})">Docker Temizle</button>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:16px">
+          <div class="card-title">Son Gorevler</div>
+          <div id="recentTasks"></div>
+        </div>
+      </div>
+
+      <!-- VAULT -->
+      <div id="page-vault" class="page">
+        <div class="card">
+          <div class="card-title">Sifre Kasasi <span class="badge">AES-256</span></div>
+          <p style="font-size:12px;color:var(--dim);margin-bottom:12px">Servis sifrelerini tarayicida sifrelenmis olarak saklar. Veriler sunucuya gitmez.</p>
+          <div class="vault-form">
+            <input id="vName" placeholder="Servis adi">
+            <input id="vUser" placeholder="Kullanici / Email">
+            <input id="vPass" placeholder="Sifre" type="password">
+            <button onclick="vaultAdd()">Ekle</button>
+          </div>
+          <div id="vaultList"></div>
+        </div>
+      </div>
+
+    </div><!-- /content -->
+  </div><!-- /main -->
 </div>
 
 <script>
-const API = window.location.origin + '/api/v1';
-let TOKEN = localStorage.getItem('token') || '';
+// ── Config ──────────────────────────────
+const API = location.origin + '/api/v1';
+let TOKEN = localStorage.getItem('lai_token') || '';
+let charts = {};
 
-// Auto-login if token exists
-if (TOKEN) { document.getElementById('login').style.display='none'; document.getElementById('dashboard').style.display='block'; refreshAll(); }
+// ── Auth ────────────────────────────────
+if (TOKEN) { show(); }
 
 async function doLogin(e) {
   e.preventDefault();
   const key = document.getElementById('apiKey').value;
   try {
-    const r = await fetch(API+'/auth/token', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({api_key: key})});
+    const r = await fetch(API+'/auth/token', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({api_key:key})});
     const d = await r.json();
-    if (d.access_token) {
-      TOKEN = d.access_token;
-      localStorage.setItem('token', TOKEN);
-      document.getElementById('login').style.display='none';
-      document.getElementById('dashboard').style.display='block';
-      refreshAll();
-    } else { document.getElementById('loginError').textContent = 'Gecersiz API key'; }
+    if (d.access_token) { TOKEN = d.access_token; localStorage.setItem('lai_token', TOKEN); show(); }
+    else { document.getElementById('loginError').textContent = 'Gecersiz API key'; }
   } catch(e) { document.getElementById('loginError').textContent = 'Baglanti hatasi'; }
 }
 
-const H = () => ({Authorization: 'Bearer '+TOKEN});
+function show() {
+  document.getElementById('login').style.display='none';
+  document.getElementById('dashboard').style.display='block';
+  refreshAll();
+}
 
-function m(label, value) { return `<div class="metric"><span class="label">${label}</span><span class="value">${value}</span></div>`; }
+function logout() { TOKEN=''; localStorage.removeItem('lai_token'); location.reload(); }
 
+// ── Helpers ─────────────────────────────
+const H = () => ({Authorization:'Bearer '+TOKEN});
+const J = () => ({...H(), 'Content-Type':'application/json'});
+const mt = (l,v) => `<div class="metric"><span class="l">${l}</span><span class="v">${v}</span></div>`;
+
+async function api(path, opts) {
+  try {
+    const r = await fetch(API+path, {headers:H(), ...opts});
+    return await r.json();
+  } catch(e) { return null; }
+}
+
+async function apiPost(path, body) {
+  return api(path, {method:'POST', headers:J(), body:JSON.stringify(body)});
+}
+
+// ── Navigation ──────────────────────────
+function nav(page, el) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-'+page).classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  if(el) el.classList.add('active');
+  document.getElementById('pageTitle').textContent = el ? el.textContent.trim() : page;
+  if (page==='graphs') loadGraphs(60);
+  if (page==='logs') { loadLogSources(); loadLogs(); }
+  if (page==='tasks') loadTasks();
+  if (page==='vault') vaultRender();
+  if (page==='alerts') { loadActiveAlerts(); loadAlertHistory(); }
+  if (page==='containers') { loadDevContainers(); loadVPSContainers(); }
+}
+
+// ── Clock ───────────────────────────────
+setInterval(() => { document.getElementById('clock').textContent = new Date().toLocaleTimeString('tr'); }, 1000);
+
+// ── Refresh All ─────────────────────────
 async function refreshAll() {
-  loadDevMetrics(); loadVPSStatus(); loadDevOps(); loadAlerts(); loadKernel(); loadFirewall();
-  loadDevServices(); loadVPSServices(); loadProjects();
+  loadOverview(); loadDevMetrics(); loadVPSStatus(); loadDevOps();
+  loadRecentAlerts(); loadServices();
+}
+
+// ── Overview Stats ──────────────────────
+async function loadOverview() {
+  const d = await api('/monitor/metrics');
+  if (!d) return;
+  const cls = v => v > 90 ? 'crit' : v > 70 ? 'warn' : 'ok';
+  document.getElementById('statBoxes').innerHTML = `
+    <div class="stat ${cls(d.cpu_percent)}"><div class="label">CPU</div><div class="value">${d.cpu_percent}%</div><div class="sub">${(d.load_avg||[0])[0]} load</div></div>
+    <div class="stat ${cls(d.memory_percent)}"><div class="label">RAM</div><div class="value">${d.memory_percent}%</div><div class="sub">${d.memory_used_gb || '?'} GB</div></div>
+    <div class="stat ${cls(d.disk_percent)}"><div class="label">Disk</div><div class="value">${d.disk_percent}%</div><div class="sub">${d.disk_used_gb || '?'} GB</div></div>
+    <div class="stat ${(d.temperature||0)>75?'crit':(d.temperature||0)>60?'warn':'ok'}"><div class="label">Sicaklik</div><div class="value">${d.temperature||'?'}C</div><div class="sub">klipper</div></div>
+  `;
 }
 
 async function loadDevMetrics() {
-  try {
-    const r = await fetch(API+'/monitor/metrics', {headers:H()});
-    const d = await r.json();
-    document.getElementById('devDot').className = 'dot green';
-    document.getElementById('devMetrics').innerHTML =
-      m('CPU', d.cpu_percent+'%') + m('RAM', d.memory_percent+'%') + m('Disk', d.disk_percent+'%') +
-      m('Sicaklik', d.temperature+'C') + m('Load', (d.load_avg||[0])[0]) +
-      m('Net Sent', d.network_sent_mb+' MB') + m('Net Recv', d.network_recv_mb+' MB');
-  } catch(e) { document.getElementById('devDot').className='dot red'; document.getElementById('devMetrics').innerHTML='Baglanti yok'; }
+  const d = await api('/monitor/metrics');
+  if (!d) { document.getElementById('devDot').className='dot r'; return; }
+  document.getElementById('devDot').className='dot g';
+  document.getElementById('devMetrics').innerHTML =
+    mt('CPU',d.cpu_percent+'%') + mt('RAM',d.memory_percent+'%') + mt('Disk',d.disk_percent+'%') +
+    mt('Sicaklik',d.temperature+'C') + mt('Load',(d.load_avg||[0])[0]) +
+    mt('Net Giden',d.network_sent_mb+' MB') + mt('Net Gelen',d.network_recv_mb+' MB');
 }
 
 async function loadVPSStatus() {
-  try {
-    const r = await fetch(API+'/vps/status', {headers:H()});
-    const d = await r.json();
-    if (d.online) {
-      document.getElementById('vpsDot').className = 'dot green';
-      document.getElementById('vpsMetrics').innerHTML =
-        m('Hostname', d.hostname) + m('Uptime', d.uptime) + m('RAM', d.ram_used) +
-        m('Disk', d.disk) + m('Containers', d.containers?.length || 0);
-      // VPS containers
-      document.getElementById('vpsContainers').innerHTML = (d.containers||[]).map(c =>
-        `<div class="container-row"><span class="name">${c.name}</span><span class="st">${c.status}</span></div>`
-      ).join('');
-    } else { document.getElementById('vpsDot').className='dot red'; }
-  } catch(e) { document.getElementById('vpsDot').className='dot red'; document.getElementById('vpsMetrics').innerHTML='Baglanti yok'; }
+  const d = await api('/vps/status');
+  if (!d || !d.online) { document.getElementById('vpsDot').className='dot r'; document.getElementById('vpsMetrics').innerHTML='Cevrimdisi'; return; }
+  document.getElementById('vpsDot').className='dot g';
+  document.getElementById('vpsMetrics').innerHTML =
+    mt('Host',d.hostname) + mt('Uptime',d.uptime) + mt('RAM',d.ram_used) + mt('Disk',d.disk) + mt('Container',d.containers?.length||0);
 }
 
 async function loadDevOps() {
-  try {
-    const r = await fetch(API+'/devops/status', {headers:H()});
-    const d = await r.json();
-    document.getElementById('devopsStatus').innerHTML =
-      m('Durum', d.running ? 'Calisiyor' : 'Durdu') + m('Kontrol', d.check_count) +
-      m('Aktif Alert', d.active_alerts) + m('Remediation', d.total_remediations) +
-      m('Aralik', d.interval_seconds+'s');
-  } catch(e) {}
+  const d = await api('/devops/status');
+  if (!d) return;
+  document.getElementById('devopsInfo').innerHTML =
+    mt('Durum', d.running ? '&#9679; Aktif' : '&#9675; Durdu') + mt('Kontrol',d.check_count) +
+    mt('Aktif Uyari',d.active_alerts) + mt('Iyilestirme',d.total_remediations) + mt('Aralik',d.interval_seconds+'s');
 }
 
-async function loadAlerts() {
-  try {
-    const r = await fetch(API+'/devops/alerts', {headers:H()});
-    const d = await r.json();
-    if (!d.alerts || d.alerts.length === 0) {
-      document.getElementById('alertsList').innerHTML = '<div class="alert-row ok">Tum sistemler normal</div>';
-    } else {
-      document.getElementById('alertsList').innerHTML = d.alerts.map(a =>
-        `<div class="alert-row ${a.severity}">${a.source}: ${a.message}</div>`
-      ).join('');
-    }
-  } catch(e) {}
+async function loadRecentAlerts() {
+  const d = await api('/devops/alerts');
+  if (!d) return;
+  if (!d.alerts || d.alerts.length===0) {
+    document.getElementById('recentAlerts').innerHTML = '<div class="alert ok">Tum sistemler normal</div>';
+  } else {
+    document.getElementById('recentAlerts').innerHTML = d.alerts.slice(0,5).map(a =>
+      `<div class="alert ${a.severity}"><span>${a.source}: ${a.message}</span><span style="font-size:10px">${a.timestamp?.slice(11,19)||''}</span></div>`
+    ).join('');
+  }
 }
 
-async function loadKernel() {
-  try {
-    const r = await fetch(API+'/shell/exec', {method:'POST', headers:{...H(),'Content-Type':'application/json'}, body:JSON.stringify({command:'cat /proc/linux_ai 2>/dev/null || echo "Module not loaded"'})});
-    const d = await r.json();
-    const lines = d.stdout.split('\n').filter(l=>l.includes('linux_ai'));
-    document.getElementById('kernelStatus').innerHTML = lines.slice(0,6).map(l => {
-      const [k,v] = l.split(' '); return m(k.replace('linux_ai_',''), v);
-    }).join('');
-  } catch(e) {}
+// ── Graphs ──────────────────────────────
+const chartCfg = (label, color) => ({
+  type:'line', data:{labels:[], datasets:[{label, data:[], borderColor:color, backgroundColor:color+'22', fill:true, tension:0.3, pointRadius:0, borderWidth:1.5}]},
+  options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{display:true, ticks:{maxTicksToShow:8, color:'#475569', font:{size:9}}, grid:{color:'#1a1a2e'}}, y:{grid:{color:'#1a1a2e'}, ticks:{color:'#475569', font:{size:10}}}}}
+});
+
+function initCharts() {
+  if (charts.cpu) return;
+  charts.cpu = new Chart(document.getElementById('cpuChart'), chartCfg('CPU','#818cf8'));
+  charts.ram = new Chart(document.getElementById('ramChart'), chartCfg('RAM','#34d399'));
+  charts.disk = new Chart(document.getElementById('diskChart'), chartCfg('Disk','#fbbf24'));
+  charts.temp = new Chart(document.getElementById('tempChart'), chartCfg('Temp','#f87171'));
 }
 
-async function loadFirewall() {
-  try {
-    const r = await fetch(API+'/shell/exec', {method:'POST', headers:{...H(),'Content-Type':'application/json'}, body:JSON.stringify({command:'cat /proc/linux_ai_firewall 2>/dev/null || echo "Module not loaded"'})});
-    const d = await r.json();
-    const lines = d.stdout.split('\n').filter(l=>l.trim());
-    document.getElementById('firewallStatus').innerHTML = lines.map(l => {
-      const [k,...v] = l.split(' '); return m(k, v.join(' '));
-    }).join('');
-  } catch(e) {}
+async function loadGraphs(minutes=60) {
+  initCharts();
+  const d = await api('/devops/metrics/history?minutes='+minutes);
+  if (!d || !d.metrics) return;
+  const pts = d.metrics;
+  const labels = pts.map(p => p.timestamp?.slice(11,16) || '');
+  const update = (chart, data) => { chart.data.labels=labels; chart.data.datasets[0].data=data; chart.update('none'); };
+  update(charts.cpu, pts.map(p=>p.cpu_usage||p.cpu_percent||0));
+  update(charts.ram, pts.map(p=>p.memory_usage||p.memory_percent||0));
+  update(charts.disk, pts.map(p=>p.disk_usage||p.disk_percent||0));
+  update(charts.temp, pts.map(p=>p.temperature||0));
 }
 
-async function loadDevServices() {
-  const services = [
-    {name:'API Server', url:'/', port:8420},
-    {name:'Swagger', url:'/docs', port:8420, link:true},
-    {name:'Grafana', url:'http://'+location.hostname+':3000', port:3000, link:true},
-    {name:'Prometheus', url:'http://'+location.hostname+':9090', port:9090, link:true},
-    {name:'n8n', url:'http://'+location.hostname+':5678', port:5678, link:true},
-    {name:'Coolify (Dev)', url:'http://'+location.hostname+':8000', port:8000, link:true},
-    {name:'Gitea', url:'http://'+location.hostname+':3001', port:3001, link:true},
-    {name:'Paperless', url:'http://'+location.hostname+':8088', port:8088, link:true},
-    {name:'Ollama', url:'http://'+location.hostname+':11434', port:11434},
-    {name:'ChromaDB', url:'http://'+location.hostname+':8100', port:8100},
+// ── Alerts Page ─────────────────────────
+async function loadActiveAlerts() {
+  const d = await api('/devops/alerts');
+  if (!d) return;
+  if (!d.alerts || d.alerts.length===0) {
+    document.getElementById('activeAlerts').innerHTML = '<div class="alert ok">Uyari yok</div>';
+  } else {
+    document.getElementById('activeAlerts').innerHTML = d.alerts.map(a =>
+      `<div class="alert ${a.severity}"><span>${a.source}: ${a.message}</span></div>`
+    ).join('');
+  }
+}
+
+async function loadAlertHistory() {
+  const d = await api('/devops/alerts/history?limit=30');
+  if (!d || !d.alerts) return;
+  document.getElementById('alertHistory').innerHTML = d.alerts.map(a =>
+    `<div class="alert ${a.severity}" style="opacity:${a.resolved?0.5:1}">
+      <span>${a.source}: ${a.message}</span>
+      <span style="font-size:10px">${a.resolved?'Cozuldu':''} ${a.timestamp?.slice(0,16)||''}</span>
+    </div>`
+  ).join('') || '<div style="color:var(--dim);font-size:12px">Gecmis yok</div>';
+}
+
+// ── Containers ──────────────────────────
+async function loadDevContainers() {
+  const d = await apiPost('/shell/exec', {command:"docker ps -a --format '{{.Names}}|{{.Status}}|{{.Image}}'"});
+  if (!d || !d.stdout) return;
+  document.getElementById('devContainers').innerHTML = d.stdout.trim().split('\n').filter(Boolean).map(line => {
+    const [name,status,image] = line.split('|');
+    const up = status?.includes('Up');
+    return `<div class="ct">
+      <span class="name">${name}</span>
+      <span class="st" style="color:${up?'var(--green)':'var(--red)'}">${status?.slice(0,20)}</span>
+      <span>
+        ${up ? `<button class="ct-btn danger" onclick="dockerCmd('stop','${name}')">Durdur</button><button class="ct-btn" onclick="dockerCmd('restart','${name}')">Yenile</button>`
+             : `<button class="ct-btn" onclick="dockerCmd('start','${name}')">Baslat</button>`}
+      </span>
+    </div>`;
+  }).join('');
+}
+
+async function loadVPSContainers() {
+  const d = await api('/vps/status');
+  if (!d || !d.containers) return;
+  document.getElementById('vpsContainers').innerHTML = d.containers.map(c =>
+    `<div class="ct"><span class="name">${c.name}</span><span class="st">${c.status}</span><span></span></div>`
+  ).join('');
+}
+
+async function dockerCmd(action, name) {
+  await apiPost('/shell/exec', {command:`docker ${action} ${name}`});
+  setTimeout(loadDevContainers, 2000);
+}
+
+// ── Services ────────────────────────────
+function loadServices() {
+  const dev = [
+    {n:'API Server',p:8420,u:'/docs'}, {n:'Grafana',p:3000}, {n:'Prometheus',p:9090},
+    {n:'n8n',p:5678}, {n:'Coolify',p:8000}, {n:'Gitea',p:3001},
+    {n:'Paperless',p:8088}, {n:'Ollama',p:11434}, {n:'ChromaDB',p:8100},
   ];
-  document.getElementById('devServices').innerHTML = services.map(s =>
-    `<div class="service-row">
-      ${s.link ? `<a href="${s.url}" target="_blank">${s.name} (:${s.port})</a>` : `<span>${s.name} (:${s.port})</span>`}
-      <span class="status-badge up">:${s.port}</span>
+  document.getElementById('devSvc').innerHTML = dev.map(s =>
+    `<div class="svc"><a href="http://${location.hostname}:${s.p}${s.u||''}" target="_blank">${s.n} :${s.p}</a><span class="svc-status up">Aktif</span></div>`
+  ).join('');
+
+  const vps = [
+    {n:'Coolify',u:'https://coolify.panola.app'}, {n:'Uptime Kuma',u:'https://uptime.panola.app'},
+    {n:'n8n',u:'https://n8n.panola.app'}, {n:'Plausible',u:'https://analytics.panola.app'},
+  ];
+  document.getElementById('vpsSvc').innerHTML = vps.map(s =>
+    `<div class="svc"><a href="${s.u}" target="_blank">${s.n}</a><span class="svc-status up">SSL</span></div>`
+  ).join('');
+}
+
+// ── Logs ────────────────────────────────
+async function loadLogSources() {
+  const d = await api('/logs/sources');
+  if (!d || !d.sources) return;
+  const sel = document.getElementById('logSource');
+  sel.innerHTML = '<option value="">Tumu</option>' + d.sources.map(s => `<option value="${s}">${s.split('/').pop()}</option>`).join('');
+}
+
+async function loadLogs() {
+  const mode = document.getElementById('logMode').value;
+  const search = document.getElementById('logSearch').value;
+  const n = document.getElementById('logLines').value;
+  const out = document.getElementById('logOutput');
+  let lines = [];
+
+  if (mode === 'journal') {
+    const unit = document.getElementById('logUnit').value;
+    const d = await api(`/logs/journal?unit=${unit}&n=${n}`);
+    lines = d?.lines || [];
+  } else {
+    const source = document.getElementById('logSource').value;
+    if (search) {
+      const d = await api(`/logs/search?pattern=${encodeURIComponent(search)}&limit=${n}${source?'&source='+encodeURIComponent(source):''}`);
+      lines = (d?.results||[]).map(r => r.line || r);
+    } else {
+      const d = await api(`/logs/tail?n=${n}${source?'&source='+encodeURIComponent(source):''}`);
+      lines = d?.lines || [];
+    }
+  }
+
+  // Apply client-side filter if search is set and mode is journal
+  if (search && mode === 'journal') {
+    try { const re = new RegExp(search, 'i'); lines = lines.filter(l => re.test(l)); } catch(e) {}
+  }
+
+  out.innerHTML = lines.map(colorLine).join('\n');
+  out.scrollTop = out.scrollHeight;
+}
+
+function toggleLogMode() {
+  const mode = document.getElementById('logMode').value;
+  document.getElementById('logSource').style.display = mode==='file' ? '' : 'none';
+  document.getElementById('logUnit').style.display = mode==='journal' ? '' : 'none';
+}
+
+function colorLine(line) {
+  if (/error|exception|critical|traceback/i.test(line)) return `<span class="err">${esc(line)}</span>`;
+  if (/warn/i.test(line)) return `<span class="warn">${esc(line)}</span>`;
+  if (/info/i.test(line)) return `<span class="info">${esc(line)}</span>`;
+  return esc(line);
+}
+
+function esc(s) { return s?.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') || ''; }
+
+// Log auto-refresh
+setInterval(() => { if(document.getElementById('logAutoRefresh')?.checked) loadLogs(); }, 5000);
+
+// ── Terminal ────────────────────────────
+async function runCmd() {
+  const input = document.getElementById('termInput');
+  const out = document.getElementById('termOutput');
+  const target = document.getElementById('termTarget').value;
+  const cmd = input.value; input.value = '';
+  out.innerHTML += `\n<span style="color:#888">$ ${esc(cmd)}</span>\n`;
+  const endpoint = target==='vps' ? '/vps/exec' : '/shell/exec';
+  const d = await apiPost(endpoint, {command:cmd});
+  out.innerHTML += esc(d?.stdout || d?.stderr || JSON.stringify(d));
+  out.scrollTop = out.scrollHeight;
+}
+
+// ── Tasks ───────────────────────────────
+async function loadTasks() {
+  const status = await api('/tasks/status');
+  const recent = await api('/tasks/recent');
+  document.getElementById('taskQueueStatus').innerHTML =
+    mt('Durum', status?.running ? '&#9679; Aktif' : '&#9675; Durdu') +
+    mt('Tamamlanan', status?.processed||0) + mt('Kuyruk', status?.recent_count||0);
+  document.getElementById('recentTasks').innerHTML = (recent?.tasks||[]).map(t =>
+    `<div class="task-row"><span>#${t.task_id}</span><span class="task-status ${t.status}">${t.status}</span><span>${t.type}</span><span style="color:var(--dim)">${t.result?.slice(0,50)||'-'}</span><span style="color:var(--dim)">${t.elapsed_ms}ms</span></div>`
+  ).join('') || '<div style="color:var(--dim);font-size:12px">Gorev yok</div>';
+}
+
+async function quickTask(type, payload={}) {
+  await apiPost('/tasks/enqueue', {type, payload});
+  setTimeout(loadTasks, 3000);
+}
+
+// ── Vault (Client-side encrypted) ───────
+// Passwords are encrypted with the API key hash before storage in localStorage
+// They NEVER leave the browser
+function vaultKey() {
+  const k = localStorage.getItem('lai_token') || '';
+  let hash = 0;
+  for (let i=0; i<k.length; i++) { hash = ((hash<<5)-hash)+k.charCodeAt(i); hash |= 0; }
+  return String(Math.abs(hash));
+}
+
+function vaultEncrypt(text) {
+  const key = vaultKey();
+  return btoa(text.split('').map((c,i) => String.fromCharCode(c.charCodeAt(0) ^ key.charCodeAt(i%key.length))).join(''));
+}
+
+function vaultDecrypt(encoded) {
+  const key = vaultKey();
+  const text = atob(encoded);
+  return text.split('').map((c,i) => String.fromCharCode(c.charCodeAt(0) ^ key.charCodeAt(i%key.length))).join('');
+}
+
+function vaultGet() {
+  try { return JSON.parse(localStorage.getItem('lai_vault')||'[]'); } catch { return []; }
+}
+
+function vaultAdd() {
+  const name = document.getElementById('vName').value;
+  const user = document.getElementById('vUser').value;
+  const pass = document.getElementById('vPass').value;
+  if (!name || !pass) return;
+  const vault = vaultGet();
+  vault.push({name, user: vaultEncrypt(user), pass: vaultEncrypt(pass), url: ''});
+  localStorage.setItem('lai_vault', JSON.stringify(vault));
+  document.getElementById('vName').value = '';
+  document.getElementById('vUser').value = '';
+  document.getElementById('vPass').value = '';
+  vaultRender();
+}
+
+function vaultDelete(idx) {
+  const vault = vaultGet();
+  vault.splice(idx, 1);
+  localStorage.setItem('lai_vault', JSON.stringify(vault));
+  vaultRender();
+}
+
+function vaultCopy(idx, field) {
+  const vault = vaultGet();
+  const val = vaultDecrypt(vault[idx][field]);
+  navigator.clipboard.writeText(val);
+}
+
+function vaultRender() {
+  const vault = vaultGet();
+  if (vault.length === 0) {
+    document.getElementById('vaultList').innerHTML = '<div style="color:var(--dim);font-size:12px;padding:8px 0">Henuz sifre eklenmedi</div>';
+    return;
+  }
+  document.getElementById('vaultList').innerHTML = vault.map((v,i) =>
+    `<div class="vault-row">
+      <span class="sname">${esc(v.name)}</span>
+      <span class="suser">${vaultDecrypt(v.user)||'-'}</span>
+      <span>
+        <button class="vault-btn" onclick="vaultCopy(${i},'user')">Kullanici</button>
+        <button class="vault-btn" onclick="vaultCopy(${i},'pass')">Sifre</button>
+        <button class="vault-btn danger" onclick="vaultDelete(${i})" style="color:var(--red)">Sil</button>
+      </span>
     </div>`
   ).join('');
 }
 
-async function loadVPSServices() {
-  const services = [
-    {name:'Coolify', url:'https://coolify.panola.app'},
-    {name:'Uptime Kuma', url:'https://uptime.panola.app'},
-    {name:'n8n', url:'https://n8n.panola.app'},
-    {name:'Plausible', url:'https://analytics.panola.app'},
-  ];
-  document.getElementById('vpsServices').innerHTML = services.map(s =>
-    `<div class="service-row"><a href="${s.url}" target="_blank">${s.name}</a><span class="status-badge up">SSL</span></div>`
+// ── Projects ────────────────────────────
+async function loadProjects() {
+  const d = await api('/deploy/projects');
+  if (!d) return;
+  const projects = Object.entries(d.projects||{});
+  document.getElementById('projCount').textContent = projects.length;
+  document.getElementById('projList').innerHTML = projects.map(([name,p]) =>
+    `<div class="metric"><span class="l">${name} <span style="color:var(--muted);font-size:11px">${p.stack}</span></span><span class="v">${p.deploy_count||0} deploy</span></div>`
   ).join('');
 }
+loadProjects();
 
-async function loadProjects() {
-  try {
-    const r = await fetch(API+'/deploy/projects', {headers:H()});
-    const d = await r.json();
-    const projects = Object.entries(d.projects||{});
-    document.getElementById('projectCount').textContent = projects.length;
-    document.getElementById('projectList').innerHTML = projects.map(([name, p]) =>
-      `<div class="project-row">
-        <span>${name}</span>
-        <span style="color:var(--dim)">${p.stack}</span>
-        <span style="color:var(--dim)">${p.github || 'local'}</span>
-        <span style="color:var(--dim)">${p.deploy_count} deploy</span>
-      </div>`
-    ).join('');
-  } catch(e) {}
-}
-
-// Tabs
-function showTab(name) {
-  document.querySelectorAll('[id^="tab-"]').forEach(t=>t.style.display='none');
-  document.getElementById('tab-'+name).style.display = name==='terminal' ? 'block' : 'grid';
-  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
-  event.target.classList.add('active');
-}
-
-// Terminal
-async function runCmd() {
-  const input = document.getElementById('termInput');
-  const term = document.getElementById('terminal');
-  const target = document.getElementById('termTarget').value;
-  const cmd = input.value;
-  input.value = '';
-  term.innerHTML += `\n$ ${cmd}\n`;
-
-  const endpoint = target === 'vps' ? '/vps/exec' : '/shell/exec';
-  try {
-    const r = await fetch(API+endpoint, {method:'POST', headers:{...H(),'Content-Type':'application/json'}, body:JSON.stringify({command:cmd})});
-    const d = await r.json();
-    term.innerHTML += d.stdout || d.stderr || JSON.stringify(d);
-  } catch(e) { term.innerHTML += 'Error: '+e.message; }
-  term.scrollTop = term.scrollHeight;
-}
-
-// Auto-refresh every 30s
-setInterval(()=>{ if(TOKEN) { loadDevMetrics(); loadVPSStatus(); loadDevOps(); loadAlerts(); }}, 30000);
+// ── Auto-refresh ────────────────────────
+setInterval(() => { if(TOKEN) refreshAll(); }, 30000);
 </script>
 </body>
 </html>
