@@ -212,7 +212,156 @@ def get_tool_definitions() -> list[dict]:
                 "required": ["message"],
             },
         },
+        # ── RAG Tools ──
+        {
+            "name": "rag_query",
+            "description": "Search indexed documents with semantic search (no LLM generation)",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string"},
+                    "n_results": {"type": "integer", "default": 5},
+                },
+                "required": ["question"],
+            },
+        },
+        {
+            "name": "rag_index_text",
+            "description": "Index text into the RAG document store",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "source": {"type": "string", "default": "manual"},
+                },
+                "required": ["text"],
+            },
+        },
+        {
+            "name": "rag_stats",
+            "description": "Get RAG collection statistics (document count)",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        # ── Deploy Tools ──
+        {
+            "name": "deploy_self",
+            "description": "Run tests and restart linux-ai-server (one-command deploy)",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"restart": {"type": "boolean", "default": True}},
+            },
+        },
+        {
+            "name": "project_list",
+            "description": "List all tracked projects with metadata",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "project_info",
+            "description": "Get project details including git status",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        },
+        # ── DevOps Agent Tools ──
+        {
+            "name": "devops_status",
+            "description": "Get DevOps agent status (running, check count, active alerts)",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "devops_alerts",
+            "description": "Get currently active (unresolved) alerts",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "devops_metrics",
+            "description": "Get in-memory metrics buffer (last ~1 hour of 30s samples)",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "devops_remediations",
+            "description": "Get remediation action history",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        # ── Kernel Module Tools ──
+        {
+            "name": "kernel_proc_metrics",
+            "description": "Read /proc/linux_ai kernel metrics (memory, load, uptime from kernel space)",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "kernel_firewall_status",
+            "description": "Read /proc/linux_ai_firewall (packet counts, blocked IPs)",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "kernel_firewall_block",
+            "description": "Block an IP address at kernel level via netfilter",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"ip": {"type": "string"}},
+                "required": ["ip"],
+            },
+        },
+        {
+            "name": "kernel_firewall_unblock",
+            "description": "Unblock an IP address at kernel level",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"ip": {"type": "string"}},
+                "required": ["ip"],
+            },
+        },
+        {
+            "name": "kernel_usb_status",
+            "description": "Read /proc/linux_ai_usb (USB whitelist, connection log)",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        # ── Workspace Tools ──
+        {
+            "name": "workspace_note_save",
+            "description": "Save a note to Claude's persistent workspace on the server",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["name", "content"],
+            },
+        },
+        {
+            "name": "workspace_note_read",
+            "description": "Read a note from Claude's workspace",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        },
+        {
+            "name": "workspace_note_list",
+            "description": "List all notes in Claude's workspace",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
     ]
+
+
+def _run_async(coro):
+    """Run async coroutine from sync context."""
+    import asyncio
+    import concurrent.futures
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop and loop.is_running():
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            return pool.submit(asyncio.run, coro).result()
+    return asyncio.run(coro)
 
 
 def execute_tool(name: str, arguments: dict) -> str:
@@ -430,6 +579,146 @@ def execute_tool(name: str, arguments: dict) -> str:
             else:
                 result = asyncio.run(ai.chat(message=message, model=model))
             return json.dumps(result)
+
+        # ── RAG Tools ──
+        elif name == "rag_query":
+            from app.core.rag_engine import RAGEngine
+            engine = RAGEngine()
+            import asyncio
+            result = _run_async(engine.query(
+                arguments["question"], n_results=arguments.get("n_results", 5), generate=False,
+            ))
+            return json.dumps(result)
+
+        elif name == "rag_index_text":
+            from app.core.rag_engine import RAGEngine
+            engine = RAGEngine()
+            result = _run_async(engine.index_text(
+                arguments["text"], source=arguments.get("source", "mcp"),
+            ))
+            return json.dumps(result)
+
+        elif name == "rag_stats":
+            from app.core.rag_engine import RAGEngine
+            engine = RAGEngine()
+            return json.dumps(_run_async(engine.stats()))
+
+        # ── Deploy Tools ──
+        elif name == "deploy_self":
+            from app.core.shell_executor import ShellExecutor
+            from app.core.config import get_settings
+            settings = get_settings()
+            executor = ShellExecutor(whitelist=settings.shell_whitelist)
+            test_result = _run_async(executor.execute(
+                "bash -c 'cd /opt/linux-ai-server && source venv/bin/activate && python -m pytest tests/ -q --ignore=tests/test_mcp.py 2>&1 | tail -5'",
+                timeout=120,
+            ))
+            results = [{"step": "test", "exit_code": test_result["exit_code"], "output": test_result["stdout"]}]
+            if arguments.get("restart", True) and test_result["exit_code"] == 0:
+                restart = _run_async(executor.execute("systemctl restart linux-ai-server", timeout=15))
+                results.append({"step": "restart", "exit_code": restart["exit_code"]})
+            return json.dumps({"success": test_result["exit_code"] == 0, "results": results})
+
+        elif name == "project_list":
+            from app.api.deploy import _load_registry
+            return json.dumps(_load_registry())
+
+        elif name == "project_info":
+            from app.api.deploy import _load_registry
+            registry = _load_registry()
+            project = registry["projects"].get(arguments.get("name", ""))
+            return json.dumps(project or {"error": "Project not found"})
+
+        # ── DevOps Tools ──
+        elif name == "devops_status":
+            return json.dumps({"note": "Use REST API GET /api/v1/devops/status — agent state is in app memory"})
+
+        elif name == "devops_alerts":
+            return json.dumps({"note": "Use REST API GET /api/v1/devops/alerts"})
+
+        elif name == "devops_metrics":
+            return json.dumps({"note": "Use REST API GET /api/v1/devops/metrics/buffer"})
+
+        elif name == "devops_remediations":
+            return json.dumps({"note": "Use REST API GET /api/v1/devops/remediation/log"})
+
+        # ── Kernel Module Tools ──
+        elif name == "kernel_proc_metrics":
+            try:
+                with open("/proc/linux_ai") as f:
+                    lines = f.read().strip().split("\n")
+                metrics = {}
+                for line in lines:
+                    parts = line.split()
+                    if len(parts) == 2:
+                        metrics[parts[0]] = parts[1]
+                return json.dumps(metrics)
+            except FileNotFoundError:
+                return json.dumps({"error": "Kernel module not loaded"})
+
+        elif name == "kernel_firewall_status":
+            try:
+                with open("/proc/linux_ai_firewall") as f:
+                    content = f.read()
+                return json.dumps({"raw": content})
+            except FileNotFoundError:
+                return json.dumps({"error": "Firewall module not loaded"})
+
+        elif name == "kernel_firewall_block":
+            ip = arguments.get("ip", "")
+            try:
+                with open("/proc/linux_ai_firewall", "w") as f:
+                    f.write(f"block {ip}")
+                return json.dumps({"blocked": ip})
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+        elif name == "kernel_firewall_unblock":
+            ip = arguments.get("ip", "")
+            try:
+                with open("/proc/linux_ai_firewall", "w") as f:
+                    f.write(f"unblock {ip}")
+                return json.dumps({"unblocked": ip})
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+        elif name == "kernel_usb_status":
+            try:
+                with open("/proc/linux_ai_usb") as f:
+                    content = f.read()
+                return json.dumps({"raw": content})
+            except FileNotFoundError:
+                return json.dumps({"error": "USB module not loaded"})
+
+        # ── Workspace Tools ──
+        elif name == "workspace_note_save":
+            import os
+            workspace = "/data/claude/workspace"
+            os.makedirs(workspace, exist_ok=True)
+            path = os.path.join(workspace, arguments["name"])
+            with open(path, "w") as f:
+                f.write(arguments["content"])
+            return json.dumps({"saved": arguments["name"], "size": len(arguments["content"])})
+
+        elif name == "workspace_note_read":
+            path = f"/data/claude/workspace/{arguments['name']}"
+            try:
+                with open(path) as f:
+                    content = f.read()
+                return json.dumps({"name": arguments["name"], "content": content})
+            except FileNotFoundError:
+                return json.dumps({"error": f"Note {arguments['name']} not found"})
+
+        elif name == "workspace_note_list":
+            import os
+            workspace = "/data/claude/workspace"
+            notes = []
+            if os.path.isdir(workspace):
+                for f in sorted(os.listdir(workspace)):
+                    fp = os.path.join(workspace, f)
+                    if os.path.isfile(fp):
+                        notes.append({"name": f, "size": os.path.getsize(fp)})
+            return json.dumps({"notes": notes})
 
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
