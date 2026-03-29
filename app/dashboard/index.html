@@ -683,9 +683,24 @@ function termInit() {
   term.open(document.getElementById('termContainer'));
   termFit.fit();
   window.addEventListener('resize', () => { if (termFit) termFit.fit(); });
-  term.onData(data => {
-    if (termWs && termWs.readyState === 1) {
-      termWs.send(JSON.stringify({ type: 'input', data }));
+  // WS modu: tuslari biriktir, Enter'da komut gonder
+  let wsCmdBuf = '';
+  term.onKey(({key, domEvent}) => {
+    if (!termWs || termWs.readyState !== 1) return;
+    if (domEvent.key === 'Enter') {
+      term.writeln('');
+      if (wsCmdBuf.trim()) {
+        termWs.send(JSON.stringify({ command: wsCmdBuf.trim() }));
+      } else {
+        term.write('\x1b[32m$ \x1b[0m');
+      }
+      wsCmdBuf = '';
+    } else if (domEvent.key === 'Backspace') {
+      if (wsCmdBuf.length > 0) { wsCmdBuf = wsCmdBuf.slice(0,-1); term.write('\b \b'); }
+    } else if (domEvent.key === 'Tab') {
+      domEvent.preventDefault();
+    } else if (key.length === 1 && !domEvent.ctrlKey && !domEvent.altKey) {
+      wsCmdBuf += key; term.write(key);
     }
   });
   term.onResize(({cols, rows}) => {
@@ -753,10 +768,12 @@ function termConnect() {
       if (msg.type === 'session_created') {
         termSessionId = msg.session_id;
         term.writeln(`\x1b[90mOturum: ${msg.session_id}\x1b[0m`);
+        term.write('\x1b[32m$ \x1b[0m');
       } else if (msg.type === 'output') {
         const txt = msg.stdout || msg.output || '';
         if (txt) term.write(txt.replace(/\n/g, '\r\n'));
         if (msg.stderr) term.write(`\x1b[31m${msg.stderr.replace(/\n/g, '\r\n')}\x1b[0m`);
+        term.write('\r\n\x1b[32m$ \x1b[0m');
       } else if (msg.type === 'pty_output') {
         term.write(msg.data);
       } else if (msg.error) {
