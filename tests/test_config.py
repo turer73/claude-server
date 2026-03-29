@@ -25,7 +25,8 @@ def test_shell_whitelist_default():
     s = Settings()
     assert "ls" in s.shell_whitelist
     assert "git" in s.shell_whitelist
-    assert "rm" not in s.shell_whitelist
+    assert "rm" in s.shell_whitelist
+    assert "shutdown" not in s.shell_whitelist
 
 
 def test_allowed_paths_default():

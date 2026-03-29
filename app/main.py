@@ -41,6 +41,7 @@ from app.api.vps import router as vps_router
 from app.api.tasks import router as tasks_router
 from app.api.ws_status import router as ws_status_router
 from app.api.claude_code import router as claude_code_router
+from app.api.projects import router as projects_router
 from app.exceptions import ServerError
 from app.middleware.request_id import RequestIdMiddleware
 from app.middleware.audit_log import AuditMiddleware
@@ -104,9 +105,20 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestIdMiddleware)
 
     # 2. CORS — browser cross-origin support
+    from app.core.config import get_settings
+    _settings = get_settings()
+    _cors_origins = [
+        "http://localhost:8420",
+        "http://localhost:3000",
+        "http://REDACTED_LAN_IP:8420",
+        "http://REDACTED_TAILSCALE_IP:8420",
+        "https://panola.app",
+        "https://petvet.panola.app",
+        "https://kuafor.panola.app",
+    ]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Configure in production
+        allow_origins=_cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -155,6 +167,7 @@ def create_app() -> FastAPI:
     app.include_router(vps_router)
     app.include_router(tasks_router)
     app.include_router(claude_code_router)
+    app.include_router(projects_router)
 
     @app.get("/health")
     async def health() -> dict:

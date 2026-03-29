@@ -1,4 +1,4 @@
-.PHONY: dev test lint type-check security build clean install
+.PHONY: dev test test-fast test-all lint type-check security build clean install
 
 dev:
 	uvicorn app.main:create_app --factory --reload --host 0.0.0.0 --port 8420
@@ -28,6 +28,9 @@ check: lint type-check security test
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage
+
+test-all:
+	bash scripts/run-all-tests.sh
 
 install:
 	pip install -e ".[dev]"

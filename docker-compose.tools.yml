@@ -1,0 +1,15 @@
+# docker-compose.tools.yml — Proje takip araçları
+# Başlat: docker compose -f docker-compose.tools.yml up -d
+
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    ports:
+      - "3002:3001"
+    volumes:
+      - uptime-kuma-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  uptime-kuma-data:
