@@ -40,6 +40,7 @@ from app.api.deploy import router as deploy_router
 from app.api.vps import router as vps_router
 from app.api.tasks import router as tasks_router
 from app.api.ws_status import router as ws_status_router
+from app.api.claude_code import router as claude_code_router
 from app.exceptions import ServerError
 from app.middleware.request_id import RequestIdMiddleware
 from app.middleware.audit_log import AuditMiddleware
@@ -153,6 +154,7 @@ def create_app() -> FastAPI:
     app.include_router(deploy_router)
     app.include_router(vps_router)
     app.include_router(tasks_router)
+    app.include_router(claude_code_router)
 
     @app.get("/health")
     async def health() -> dict:
@@ -168,6 +170,13 @@ def create_app() -> FastAPI:
         @app.get("/dashboard")
         async def dashboard():
             return FileResponse(dashboard_dir / "index.html")
+
+    # Claude Code UI — serve at /claude
+    claude_ui_dir = Path(__file__).parent / "claude_ui"
+    if claude_ui_dir.is_dir():
+        @app.get("/claude")
+        async def claude_page():
+            return FileResponse(claude_ui_dir / "index.html")
 
     return app
 
