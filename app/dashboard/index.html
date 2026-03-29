@@ -130,6 +130,25 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
 .term-status .dot.on { background: #22c55e; }
 .term-status .dot.off { background: #ef4444; }
 
+/* Claude Chat */
+#claudeMessages { display: flex; flex-direction: column; gap: 10px; height: 420px; overflow-y: auto; background: #000; border-radius: 8px; padding: 12px; }
+.cmsg { max-width: 85%; padding: 8px 12px; border-radius: 12px; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.cmsg.user { background: #3b82f6; color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
+.cmsg.bot { background: var(--card); border: 1px solid var(--border); align-self: flex-start; border-bottom-left-radius: 4px; }
+.cmsg.bot .clabel { font-size: 10px; color: var(--accent); font-weight: 600; margin-bottom: 4px; }
+.cmsg code { background: rgba(255,255,255,0.1); padding: 1px 4px; border-radius: 3px; font-family: monospace; font-size: 11px; }
+.cmsg pre { background: #111; padding: 6px; border-radius: 6px; overflow-x: auto; margin: 4px 0; font-size: 11px; }
+.cmsg pre code { background: none; padding: 0; }
+.claude-input { display: flex; gap: 8px; margin-top: 8px; }
+.claude-input textarea { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 8px 10px; border-radius: 8px; font-size: 12px; font-family: inherit; resize: none; outline: none; min-height: 38px; max-height: 100px; }
+.claude-input textarea:focus { border-color: var(--accent); }
+.claude-input button { background: var(--accent2); color: white; border: none; padding: 0 16px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+.claude-input button:disabled { opacity: 0.4; }
+.claude-bar { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; font-size: 11px; }
+.claude-bar button { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 11px; }
+.claude-bar button:hover { border-color: var(--accent); color: var(--accent); }
+.claude-bar .csid { color: var(--dim); font-family: monospace; margin-left: auto; }
+
 /* Vault */
 .vault-row { display: grid; grid-template-columns: 140px 1fr auto; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); align-items: center; font-size: 13px; }
 .vault-row:last-child { border: none; }
@@ -185,6 +204,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
     <div class="nav-item" onclick="nav('services',this)"><span class="icon">&#9733;</span> Servisler</div>
     <div class="nav-item" onclick="nav('projects',this)"><span class="icon">&#9830;</span> Projeler</div>
     <div class="nav-section">Araclar</div>
+    <div class="nav-item" onclick="nav('claude',this)"><span class="icon">&#9679;</span> Claude Code</div>
     <div class="nav-item" onclick="nav('logs',this)"><span class="icon">&#9776;</span> Log Gorunum</div>
     <div class="nav-item" onclick="nav('terminal',this)"><span class="icon">&gt;_</span> Terminal</div>
     <div class="nav-item" onclick="nav('tasks',this)"><span class="icon">&#9654;</span> Gorevler</div>
@@ -369,6 +389,25 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
         </div>
       </div>
 
+      <!-- CLAUDE CODE -->
+      <div id="page-claude" class="page">
+        <div class="card">
+          <div class="card-title">Claude Code <span class="badge" id="claudeStatus">...</span></div>
+          <div class="claude-bar">
+            <button onclick="claudeNew()">Yeni Oturum</button>
+            <button onclick="claudeContinue()">Devam Et</button>
+            <span class="csid" id="claudeSid"></span>
+          </div>
+          <div id="claudeMessages">
+            <div class="cmsg bot"><div class="clabel">Claude</div>Oturum bazli chat. Onceki konusmayi hatirlayarak devam eder.</div>
+          </div>
+          <div class="claude-input">
+            <textarea id="claudeInput" placeholder="Claude'a gorev verin..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();claudeSend()}"></textarea>
+            <button id="claudeSendBtn" onclick="claudeSend()">→</button>
+          </div>
+        </div>
+      </div>
+
       <!-- VAULT -->
       <div id="page-vault" class="page">
         <div class="card">
@@ -446,6 +485,7 @@ function nav(page, el) {
   if (page==='alerts') { loadActiveAlerts(); loadAlertHistory(); }
   if (page==='containers') { loadDevContainers(); loadVPSContainers(); }
   if (page==='terminal') { termInit(); setTimeout(() => termFit && termFit.fit(), 100); }
+  if (page==='claude') { claudeInit(); }
 }
 
 // ── Clock ───────────────────────────────
@@ -666,6 +706,108 @@ function esc(s) { return s?.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/
 
 // Log auto-refresh
 setInterval(() => { if(document.getElementById('logAutoRefresh')?.checked) loadLogs(); }, 5000);
+
+// ── Claude Code Chat ────────────────────
+let claudeSessionId = localStorage.getItem('claude_session_id') || null;
+let claudeReady = false;
+
+async function claudeInit() {
+  if (claudeReady) return;
+  claudeReady = true;
+  try {
+    const d = await api('/claude/status');
+    const badge = document.getElementById('claudeStatus');
+    badge.textContent = d?.available && d?.authenticated ? d.version : (d?.error || 'Auth yok');
+    badge.style.background = d?.authenticated ? 'var(--accent2)' : '#ef4444';
+  } catch {}
+  claudeUpdateSid();
+}
+
+function claudeUpdateSid() {
+  const el = document.getElementById('claudeSid');
+  el.textContent = claudeSessionId ? claudeSessionId.slice(0,8) + '...' : 'yeni oturum';
+}
+
+function claudeNew() {
+  claudeSessionId = null;
+  localStorage.removeItem('claude_session_id');
+  document.getElementById('claudeMessages').innerHTML = '<div class="cmsg bot"><div class="clabel">Claude</div>Yeni oturum baslatildi.</div>';
+  claudeUpdateSid();
+}
+
+function claudeContinue() {
+  if (!claudeSessionId) { claudeAddMsg('bot', 'Devam edilecek oturum yok.'); return; }
+  claudeAddMsg('bot', 'Oturum devam ediyor: ' + claudeSessionId.slice(0,8));
+}
+
+function claudeAddMsg(role, text, cost) {
+  const box = document.getElementById('claudeMessages');
+  const div = document.createElement('div');
+  div.className = 'cmsg ' + role;
+  if (role === 'bot') {
+    const costStr = cost ? ' · $' + cost.toFixed(4) : '';
+    div.innerHTML = '<div class="clabel">Claude' + costStr + '</div>' + claudeFmt(text);
+  } else {
+    div.textContent = text;
+  }
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+function claudeFmt(t) {
+  return t
+    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+}
+
+async function claudeSend() {
+  const input = document.getElementById('claudeInput');
+  const btn = document.getElementById('claudeSendBtn');
+  const prompt = input.value.trim();
+  if (!prompt) return;
+
+  claudeAddMsg('user', prompt);
+  input.value = '';
+  btn.disabled = true;
+
+  // Typing indicator
+  const box = document.getElementById('claudeMessages');
+  const typing = document.createElement('div');
+  typing.className = 'cmsg bot'; typing.id = 'claudeTyping';
+  typing.innerHTML = '<div class="clabel">Claude</div><span style="color:var(--dim)">Dusunuyor...</span>';
+  box.appendChild(typing); box.scrollTop = box.scrollHeight;
+
+  try {
+    const body = { prompt };
+    if (claudeSessionId) body.session_id = claudeSessionId;
+
+    const d = await apiPost('/claude/run', body);
+    typing.remove();
+
+    if (d?.session_id) {
+      claudeSessionId = d.session_id;
+      localStorage.setItem('claude_session_id', claudeSessionId);
+      claudeUpdateSid();
+    }
+
+    if (d?.ok && d?.result) {
+      claudeAddMsg('bot', d.result, d.cost);
+    } else if (d?.error) {
+      claudeAddMsg('bot', '⚠️ ' + d.error);
+    } else if (d?.result) {
+      claudeAddMsg('bot', '⚠️ ' + d.result);
+    } else {
+      claudeAddMsg('bot', '⚠️ Bos yanit');
+    }
+  } catch(e) {
+    typing.remove();
+    claudeAddMsg('bot', '⚠️ ' + e.message);
+  } finally {
+    btn.disabled = false;
+    input.focus();
+  }
+}
 
 // ── Terminal (xterm.js + WebSocket) ─────
 let term = null, termWs = null, termFit = null, termSessionId = null;
