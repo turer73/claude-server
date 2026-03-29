@@ -54,7 +54,7 @@ class Settings(BaseSettings):
         "ps", "top", "df", "free", "uptime", "whoami", "id",
         "systemctl", "journalctl",
         "git", "pip", "npm", "python3", "node",
-        "make", "cmake", "gcc", "g++",
+        "make", "cmake", "gcc", "g++", "claude", "bash",
         "curl", "wget", "dig", "nslookup", "ping",
         "docker", "docker-compose",
     ]
