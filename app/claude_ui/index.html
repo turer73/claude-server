@@ -214,64 +214,23 @@ async function sendPrompt() {
   addTyping();
 
   try {
-    const r = await fetch(API + '/claude/stream', {
+    const r = await fetch(API + '/claude/run', {
       method: 'POST',
       headers: J(),
       body: JSON.stringify({ prompt }),
     });
 
     removeTyping();
-    const msgDiv = addMsg('claude', '');
-    let fullText = '';
+    const d = await r.json();
 
-    const reader = r.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-
-      const lines = buf.split('\n');
-      buf = lines.pop() || '';
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6).trim();
-        if (data === '[DONE]') continue;
-
-        try {
-          const msg = JSON.parse(data);
-
-          // Handle different message types from claude stream-json
-          if (msg.type === 'assistant' && msg.message?.content) {
-            for (const block of msg.message.content) {
-              if (block.type === 'text') {
-                fullText += block.text;
-              } else if (block.type === 'tool_use') {
-                fullText += `\n\`[${block.name}]\`\n`;
-              }
-            }
-          } else if (msg.type === 'content_block_delta' && msg.delta?.text) {
-            fullText += msg.delta.text;
-          } else if (msg.type === 'result') {
-            if (msg.result && !fullText) {
-              fullText = msg.result;
-            }
-            if (msg.is_error) {
-              fullText = '⚠️ ' + (msg.result || 'Hata olustu');
-            }
-          }
-
-          msgDiv.innerHTML = '<div class="label">Claude</div>' + formatMd(fullText);
-          msgDiv.scrollIntoView({ behavior: 'smooth' });
-        } catch {}
-      }
-    }
-
-    if (!fullText) {
-      msgDiv.innerHTML = '<div class="label">Claude</div><em style="color:var(--dim)">Bos yanit</em>';
+    if (d.ok && d.result) {
+      addMsg('claude', d.result);
+    } else if (d.error) {
+      addMsg('claude', '⚠️ ' + d.error);
+    } else if (d.result) {
+      addMsg('claude', '⚠️ ' + d.result);
+    } else {
+      addMsg('claude', '⚠️ Bos yanit');
     }
   } catch(e) {
     removeTyping();
