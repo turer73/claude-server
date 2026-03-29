@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Linux-AI Control Center</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
 <style>
 :root {
   --bg: #06060b; --surface: #0d0d14; --card: #11111b; --border: #1a1a2e;
@@ -115,10 +119,16 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
 .log-controls button { background: var(--accent2); color: white; border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; }
 
 /* Terminal */
-#termOutput { background: #000; color: #33ff33; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 12px; padding: 12px; border-radius: 8px 8px 0 0; height: 350px; overflow-y: auto; white-space: pre-wrap; }
-#termInput { width: 100%; background: #0a0a0a; color: #33ff33; border: 1px solid #222; padding: 10px 12px; font-family: monospace; font-size: 12px; border-radius: 0 0 8px 8px; outline: none; }
-.term-controls { display: flex; gap: 8px; margin-bottom: 8px; }
-.term-controls select { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 10px; border-radius: 6px; font-size: 12px; }
+#termContainer { background: #000; border-radius: 8px; padding: 4px; height: 420px; }
+#termContainer .xterm { height: 100%; }
+.term-bar { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+.term-bar button, .term-bar select { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+.term-bar button:hover { border-color: var(--accent); color: var(--accent); }
+.term-bar button.active { background: var(--accent); color: white; border-color: var(--accent); }
+.term-status { font-size: 11px; margin-left: auto; }
+.term-status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+.term-status .dot.on { background: #22c55e; }
+.term-status .dot.off { background: #ef4444; }
 
 /* Vault */
 .vault-row { display: grid; grid-template-columns: 140px 1fr auto; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); align-items: center; font-size: 13px; }
@@ -320,14 +330,19 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
       <div id="page-terminal" class="page">
         <div class="card">
           <div class="card-title">Uzak Terminal</div>
-          <div class="term-controls">
+          <div class="term-bar">
+            <button id="termBtnConnect" onclick="termConnect()">Baglan</button>
+            <button id="termBtnDisconnect" onclick="termDisconnect()" style="display:none">Kes</button>
             <select id="termTarget">
-              <option value="dev">Dev (klipper)</option>
-              <option value="vps">VPS (Contabo)</option>
+              <option value="ws">WebSocket (PTY)</option>
+              <option value="rest">REST (tek komut)</option>
             </select>
+            <div class="term-status">
+              <span class="dot off" id="termDot"></span>
+              <span id="termStatusText" style="color:var(--dim)">Bagli degil</span>
+            </div>
           </div>
-          <div id="termOutput"></div>
-          <input id="termInput" placeholder="$ komut girin..." onkeydown="if(event.key==='Enter')runCmd()">
+          <div id="termContainer"></div>
         </div>
       </div>
 
@@ -430,6 +445,7 @@ function nav(page, el) {
   if (page==='vault') vaultRender();
   if (page==='alerts') { loadActiveAlerts(); loadAlertHistory(); }
   if (page==='containers') { loadDevContainers(); loadVPSContainers(); }
+  if (page==='terminal') { termInit(); setTimeout(() => termFit && termFit.fit(), 100); }
 }
 
 // ── Clock ───────────────────────────────
@@ -651,17 +667,112 @@ function esc(s) { return s?.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/
 // Log auto-refresh
 setInterval(() => { if(document.getElementById('logAutoRefresh')?.checked) loadLogs(); }, 5000);
 
-// ── Terminal ────────────────────────────
-async function runCmd() {
-  const input = document.getElementById('termInput');
-  const out = document.getElementById('termOutput');
-  const target = document.getElementById('termTarget').value;
-  const cmd = input.value; input.value = '';
-  out.innerHTML += `\n<span style="color:#888">$ ${esc(cmd)}</span>\n`;
-  const endpoint = target==='vps' ? '/vps/exec' : '/shell/exec';
-  const d = await apiPost(endpoint, {command:cmd});
-  out.innerHTML += esc(d?.stdout || d?.stderr || JSON.stringify(d));
-  out.scrollTop = out.scrollHeight;
+// ── Terminal (xterm.js + WebSocket) ─────
+let term = null, termWs = null, termFit = null, termSessionId = null;
+
+function termInit() {
+  if (term) return;
+  term = new Terminal({
+    cursorBlink: true, fontSize: 13, fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+    theme: { background: '#000000', foreground: '#33ff33', cursor: '#33ff33', selectionBackground: '#33ff3344' },
+    scrollback: 5000, convertEol: true,
+  });
+  termFit = new FitAddon.FitAddon();
+  term.loadAddon(termFit);
+  term.loadAddon(new WebLinksAddon.WebLinksAddon());
+  term.open(document.getElementById('termContainer'));
+  termFit.fit();
+  window.addEventListener('resize', () => { if (termFit) termFit.fit(); });
+  term.onData(data => {
+    if (termWs && termWs.readyState === 1) {
+      termWs.send(JSON.stringify({ type: 'input', data }));
+    }
+  });
+  term.onResize(({cols, rows}) => {
+    if (termWs && termWs.readyState === 1) {
+      termWs.send(JSON.stringify({ type: 'resize', cols, rows }));
+    }
+  });
+  term.writeln('\x1b[1;36m── Linux-AI Terminal ──\x1b[0m');
+  term.writeln('\x1b[90mBaglan butonuna basin veya REST modunda komut yazin.\x1b[0m\r\n');
+}
+
+function termSetStatus(connected) {
+  document.getElementById('termDot').className = 'dot ' + (connected ? 'on' : 'off');
+  document.getElementById('termStatusText').textContent = connected ? 'Bagli' : 'Bagli degil';
+  document.getElementById('termBtnConnect').style.display = connected ? 'none' : '';
+  document.getElementById('termBtnDisconnect').style.display = connected ? '' : 'none';
+}
+
+function termConnect() {
+  const mode = document.getElementById('termTarget').value;
+  termInit();
+  if (mode === 'rest') {
+    // REST modunda basit komut girisi
+    termSetStatus(true);
+    term.writeln('\x1b[33m[REST modu] Komut yazin, Enter ile calistirin.\x1b[0m');
+    let cmdBuf = '';
+    term.onKey(({key, domEvent}) => {
+      if (mode !== 'rest' || termWs) return;
+      if (domEvent.key === 'Enter') {
+        term.writeln('');
+        if (cmdBuf.trim()) {
+          apiPost('/shell/exec', {command: cmdBuf.trim()}).then(d => {
+            const out = d?.stdout || d?.stderr || JSON.stringify(d);
+            term.writeln(out.replace(/\n/g, '\r\n'));
+            term.write('\x1b[32m$ \x1b[0m');
+          });
+        } else { term.write('\x1b[32m$ \x1b[0m'); }
+        cmdBuf = '';
+      } else if (domEvent.key === 'Backspace') {
+        if (cmdBuf.length > 0) { cmdBuf = cmdBuf.slice(0,-1); term.write('\b \b'); }
+      } else if (key.length === 1 && !domEvent.ctrlKey && !domEvent.altKey) {
+        cmdBuf += key; term.write(key);
+      }
+    });
+    term.write('\x1b[32m$ \x1b[0m');
+    return;
+  }
+
+  // WebSocket PTY modu
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const wsUrl = `${proto}://${location.host}/ws/terminal`;
+  term.writeln(`\x1b[90mBaglaniyor: ${wsUrl}\x1b[0m`);
+
+  termWs = new WebSocket(wsUrl);
+  termWs.onopen = () => {
+    termSetStatus(true);
+    term.writeln('\x1b[32mBaglandi!\x1b[0m\r\n');
+    termFit.fit();
+    const {cols, rows} = term;
+    termWs.send(JSON.stringify({ type: 'resize', cols, rows }));
+  };
+  termWs.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'session_created') {
+        termSessionId = msg.session_id;
+        term.writeln(`\x1b[90mOturum: ${msg.session_id}\x1b[0m`);
+      } else if (msg.type === 'output') {
+        const txt = msg.stdout || msg.output || '';
+        if (txt) term.write(txt.replace(/\n/g, '\r\n'));
+        if (msg.stderr) term.write(`\x1b[31m${msg.stderr.replace(/\n/g, '\r\n')}\x1b[0m`);
+      } else if (msg.type === 'pty_output') {
+        term.write(msg.data);
+      } else if (msg.error) {
+        term.writeln(`\x1b[31mHata: ${msg.error}\x1b[0m`);
+      }
+    } catch { term.write(e.data); }
+  };
+  termWs.onclose = () => { termSetStatus(false); term.writeln('\r\n\x1b[31mBaglanti kapandi.\x1b[0m'); termWs = null; termSessionId = null; };
+  termWs.onerror = () => { termSetStatus(false); term.writeln('\r\n\x1b[31mBaglanti hatasi.\x1b[0m'); };
+}
+
+function termDisconnect() {
+  if (termWs) { termWs.close(); termWs = null; }
+  termSetStatus(false);
+  termSessionId = null;
+  if (term) term.writeln('\r\n\x1b[33mBaglanti kesildi.\x1b[0m');
 }
 
 // ── Tasks ───────────────────────────────
