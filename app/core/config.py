@@ -57,6 +57,9 @@ class Settings(BaseSettings):
         "make", "cmake", "gcc", "g++", "claude", "bash",
         "curl", "wget", "dig", "nslookup", "ping",
         "docker", "docker-compose",
+        "sudo", "dmesg", "lsmod", "modprobe", "insmod", "rmmod",
+        "sysctl", "iptables", "ip", "ss", "lsblk", "mount", "umount",
+        "apt", "dpkg", "chmod", "chown", "ln", "cp", "mv", "rm", "mkdir",
     ]
     max_file_size_mb: int = 10
     max_terminal_sessions: int = 5
