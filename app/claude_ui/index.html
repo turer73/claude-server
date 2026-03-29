@@ -102,13 +102,26 @@ let TOKEN = localStorage.getItem('lai_token') || '';
 function H() { return { 'Authorization': 'Bearer ' + TOKEN }; }
 function J() { return { ...H(), 'Content-Type': 'application/json' }; }
 
-// Login
-function doLogin() {
-  TOKEN = document.getElementById('loginKey').value.trim();
-  if (!TOKEN) return;
-  localStorage.setItem('lai_token', TOKEN);
-  document.getElementById('loginOverlay').style.display = 'none';
-  checkStatus();
+// Login — API key ile JWT token al (dashboard ile ayni flow)
+async function doLogin() {
+  const key = document.getElementById('loginKey').value.trim();
+  if (!key) return;
+  try {
+    const r = await fetch(API + '/auth/token', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({api_key: key}),
+    });
+    const d = await r.json();
+    if (d.access_token) {
+      TOKEN = d.access_token;
+      localStorage.setItem('lai_token', TOKEN);
+      document.getElementById('loginOverlay').style.display = 'none';
+      checkStatus();
+    } else {
+      alert('Gecersiz API key');
+    }
+  } catch(e) { alert('Baglanti hatasi'); }
 }
 
 if (TOKEN) {
