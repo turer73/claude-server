@@ -111,13 +111,24 @@ async def run_claude(body: ClaudePromptRequest):
         proc.kill()
         return {"error": "Zaman asimi (5dk)"}
 
-    output = stdout.decode() if stdout else ""
-    # Try parse JSON
+    raw = stdout.decode() if stdout else ""
+    # Claude CLI may output warnings before JSON — find the JSON part
+    output = raw
+    for i, ch in enumerate(raw):
+        if ch in ('{', '['):
+            output = raw[i:]
+            break
     try:
         result = json.loads(output)
+        if isinstance(result, dict):
+            return {"ok": not result.get("is_error", False), "result": result.get("result", ""), "cost": result.get("total_cost_usd", 0)}
+        if isinstance(result, list):
+            for item in result:
+                if isinstance(item, dict) and item.get("type") == "result":
+                    return {"ok": not item.get("is_error", False), "result": item.get("result", ""), "cost": item.get("total_cost_usd", 0)}
         return {"ok": True, "result": result}
     except json.JSONDecodeError:
-        return {"ok": True, "raw": output, "stderr": stderr.decode() if stderr else ""}
+        return {"ok": True, "raw": raw, "stderr": stderr.decode() if stderr else ""}
 
 
 @router.post("/stream", dependencies=[Depends(require_admin)])
