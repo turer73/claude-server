@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     server_debug: bool = False
 
     # Auth
-    jwt_secret: str = "change-me-in-production"
+    jwt_secret: str = "d47ffdea8673b84f7dbdf7c6f9f77beb68f7169edbb1c933357f8e95f6b6289c"
     jwt_ttl_hours: int = 1
     api_key_header: str = "X-API-Key"
 

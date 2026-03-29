@@ -224,10 +224,102 @@ def test_execute_tool_agent_run():
 def test_execute_tool_ai_chat():
     from app.mcp.tools import execute_tool
     result = json.loads(execute_tool("ai_chat", {"message": "hello"}))
-    assert "error" in result
+    # Ollama running → returns response; not running → returns error
+    assert "response" in result or "error" in result
 
 
 def test_execute_tool_unknown():
     from app.mcp.tools import execute_tool
     result = json.loads(execute_tool("totally_fake_tool", {}))
     assert "error" in result
+
+
+def test_execute_tool_process_list():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("process_list", {"limit": 5, "sort_by": "cpu"}))
+    assert "processes" in result
+    assert len(result["processes"]) <= 5
+
+
+def test_execute_tool_kernel_set_governor():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("kernel_set_governor", {"mode": "performance"}))
+    # May succeed or fail depending on kernel module state
+    assert "governor" in result or "error" in result
+
+
+def test_execute_tool_shell_exec():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("shell_exec", {"command": "echo test123"}))
+    assert "stdout" in result or "error" in result
+
+
+def test_execute_tool_http_request():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("http_request", {"url": "http://localhost:8420/health", "method": "GET"}))
+    assert "status_code" in result or "error" in result
+
+
+def test_execute_tool_docker_ps():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("docker_ps", {}))
+    assert "containers" in result or "error" in result
+
+
+def test_execute_tool_docker_logs():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("docker_logs", {"container": "nonexistent", "tail": 5}))
+    assert "logs" in result or "error" in result
+
+
+def test_execute_tool_service_status():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("service_status", {"name": "linux-ai-server"}))
+    assert "active" in result or "status" in result or "error" in result
+
+
+def test_execute_tool_agent_list():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("agent_list", {}))
+    assert "agents" in result or "error" in result
+
+
+def test_execute_tool_ai_chat_empty_message():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("ai_chat", {"message": ""}))
+    assert "error" in result
+
+
+def test_run_async_helper():
+    from app.mcp.tools import _run_async
+    import asyncio
+
+    async def add(a, b):
+        return a + b
+
+    result = _run_async(add(2, 3))
+    assert result == 5
+
+
+def test_execute_tool_vps_exec():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("vps_exec", {"command": "echo test", "timeout": 3}))
+    assert "stdout" in result or "error" in result
+
+
+def test_execute_tool_vps_status():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("vps_status", {}))
+    assert "online" in result or "error" in result
+
+
+def test_execute_tool_vps_services():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("vps_services", {}))
+    assert "services" in result or "error" in result
+
+
+def test_execute_tool_rag_stats():
+    from app.mcp.tools import execute_tool
+    result = json.loads(execute_tool("rag_stats", {}))
+    assert "collection" in result or "document_count" in result or "error" in result

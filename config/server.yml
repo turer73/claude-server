@@ -5,7 +5,7 @@ server:
   debug: false
 
 auth:
-  jwt_secret: "change-me-in-production"
+  jwt_secret: "d47ffdea8673b84f7dbdf7c6f9f77beb68f7169edbb1c933357f8e95f6b6289c"
   token_expiry_hours: 24
   api_key_enabled: true
 
@@ -19,5 +19,10 @@ logging:
 security:
   rate_limit: 100
   allowed_origins:
-    - "http://localhost:3000"
     - "http://localhost:8420"
+    - "http://localhost:3000"
+    - "http://192.168.1.129:8420"
+    - "http://100.113.153.62:8420"
+    - "https://panola.app"
+    - "https://petvet.panola.app"
+    - "https://kuafor.panola.app"

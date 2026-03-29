@@ -21,6 +21,21 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
+/* Toast Notifications */
+#toastContainer { position: fixed; top: 16px; right: 16px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { pointer-events: auto; padding: 10px 16px; border-radius: 10px; font-size: 12px; font-weight: 500; animation: toastIn 0.3s ease, toastOut 0.3s ease 3.7s forwards; max-width: 360px; display: flex; align-items: center; gap: 8px; backdrop-filter: blur(12px); }
+.toast.success { background: #34d39920; border: 1px solid #34d39940; color: var(--green); }
+.toast.error { background: #f8717120; border: 1px solid #f8717140; color: var(--red); }
+.toast.warning { background: #fbbf2420; border: 1px solid #fbbf2440; color: var(--yellow); }
+.toast.info { background: #60a5fa20; border: 1px solid #60a5fa40; color: var(--blue); }
+@keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes toastOut { from { opacity: 1; } to { opacity: 0; transform: translateY(-10px); } }
+
+/* Loading spinner */
+.loading { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 12px; padding: 12px 0; }
+.spinner { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* Login */
 #login { display: flex; align-items: center; justify-content: center; height: 100vh; background: radial-gradient(ellipse at center, #0d0d1a 0%, var(--bg) 70%); }
 #login form { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 2.5rem; width: 380px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
@@ -34,7 +49,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
 
 /* Layout */
 #dashboard { display: none; }
-.sidebar { position: fixed; left: 0; top: 0; width: 220px; height: 100vh; background: var(--surface); border-right: 1px solid var(--border); padding: 16px 0; z-index: 20; display: flex; flex-direction: column; }
+.sidebar { position: fixed; left: 0; top: 0; width: 220px; height: 100vh; background: var(--surface); border-right: 1px solid var(--border); padding: 16px 0; z-index: 20; display: flex; flex-direction: column; transition: transform 0.3s ease; }
 .sidebar .logo { padding: 0 16px 16px; font-size: 15px; font-weight: 700; color: var(--accent); border-bottom: 1px solid var(--border); margin-bottom: 8px; }
 .sidebar .logo small { display: block; font-size: 11px; color: var(--dim); font-weight: 400; margin-top: 2px; }
 .nav-item { padding: 10px 16px; cursor: pointer; font-size: 13px; color: var(--dim); display: flex; align-items: center; gap: 10px; transition: all 0.15s; border-left: 3px solid transparent; }
@@ -43,6 +58,10 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
 .nav-item .icon { width: 18px; text-align: center; font-size: 14px; }
 .nav-section { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); padding: 16px 16px 6px; }
 .sidebar .bottom { margin-top: auto; border-top: 1px solid var(--border); padding-top: 8px; }
+
+/* Mobile hamburger */
+.hamburger { display: none; position: fixed; top: 10px; left: 10px; z-index: 30; background: var(--surface); border: 1px solid var(--border); color: var(--text); font-size: 20px; width: 40px; height: 40px; border-radius: 8px; cursor: pointer; align-items: center; justify-content: center; }
+.sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 15; }
 
 .main { margin-left: 220px; min-height: 100vh; }
 .topbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 10; }
@@ -68,7 +87,8 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
 
 /* Stat boxes */
 .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
-.stat { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.stat { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; transition: border-color 0.3s; }
+.stat:hover { border-color: var(--accent); }
 .stat .label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.05em; }
 .stat .value { font-size: 24px; font-weight: 700; margin-top: 4px; }
 .stat .sub { font-size: 11px; color: var(--dim); margin-top: 2px; }
@@ -93,13 +113,14 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
 .svc-status { font-size: 10px; padding: 3px 10px; border-radius: 10px; font-weight: 600; }
 .svc-status.up { background: #34d39915; color: var(--green); }
 .svc-status.down { background: #f8717115; color: var(--red); }
+.svc-status.check { background: #fbbf2415; color: var(--yellow); }
 
 /* Containers */
 .ct { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; align-items: center; }
 .ct:last-child { border: none; }
 .ct .name { font-weight: 500; }
 .ct .st { color: var(--green); font-size: 11px; }
-.ct-btn { background: none; border: 1px solid var(--border); color: var(--dim); padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 10px; }
+.ct-btn { background: none; border: 1px solid var(--border); color: var(--dim); padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 10px; transition: all 0.15s; }
 .ct-btn:hover { border-color: var(--accent); color: var(--accent); }
 .ct-btn.danger:hover { border-color: var(--red); color: var(--red); }
 
@@ -114,20 +135,20 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
 #logOutput .err { color: var(--red); }
 #logOutput .warn { color: var(--yellow); }
 #logOutput .info { color: var(--blue); }
-.log-controls { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+.log-controls { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
 .log-controls select, .log-controls input { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 10px; border-radius: 6px; font-size: 12px; }
 .log-controls button { background: var(--accent2); color: white; border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; }
 
 /* Terminal */
 #termContainer { background: #000; border-radius: 8px; padding: 4px; height: 420px; }
 #termContainer .xterm { height: 100%; }
-.term-bar { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+.term-bar { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
 .term-bar button, .term-bar select { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; }
 .term-bar button:hover { border-color: var(--accent); color: var(--accent); }
 .term-bar button.active { background: var(--accent); color: white; border-color: var(--accent); }
 .term-status { font-size: 11px; margin-left: auto; }
 .term-status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
-.term-status .dot.on { background: #22c55e; }
+.term-status .dot.on { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
 .term-status .dot.off { background: #ef4444; }
 
 /* Claude Chat */
@@ -154,7 +175,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
 .vault-row:last-child { border: none; }
 .vault-row .sname { font-weight: 500; }
 .vault-row .suser { color: var(--dim); font-size: 12px; }
-.vault-btn { background: none; border: 1px solid var(--border); color: var(--dim); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 11px; }
+.vault-btn { background: none; border: 1px solid var(--border); color: var(--dim); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 11px; transition: all 0.15s; }
 .vault-btn:hover { border-color: var(--accent); color: var(--accent); }
 .vault-btn.open { background: var(--accent2); color: white; border-color: var(--accent2); }
 .vault-form { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 8px; margin-bottom: 12px; }
@@ -169,15 +190,43 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
 .task-status.running { background: #fbbf2415; color: var(--yellow); }
 .task-status.pending { background: #60a5fa15; color: var(--blue); }
 
+/* Time range buttons */
+.time-range { display: flex; gap: 6px; margin-bottom: 12px; }
+.time-range button { background: var(--bg); border: 1px solid var(--border); color: var(--dim); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 11px; transition: all 0.15s; }
+.time-range button:hover, .time-range button.active { border-color: var(--accent); color: var(--accent); }
+
+/* Confirm dialog */
+.confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; display: flex; align-items: center; justify-content: center; }
+.confirm-box { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; max-width: 400px; }
+.confirm-box h3 { font-size: 14px; margin-bottom: 8px; }
+.confirm-box p { font-size: 12px; color: var(--dim); margin-bottom: 16px; }
+.confirm-box .btns { display: flex; gap: 8px; justify-content: flex-end; }
+.confirm-box button { padding: 6px 16px; border-radius: 8px; cursor: pointer; font-size: 12px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.confirm-box button.danger { background: var(--red); color: white; border-color: var(--red); }
+
 @media (max-width: 900px) {
-  .sidebar { display: none; }
+  .sidebar { transform: translateX(-100%); }
+  .sidebar.open { transform: translateX(0); }
+  .sidebar-overlay.open { display: block; }
+  .hamburger { display: flex; }
   .main { margin-left: 0; }
+  .topbar { padding-left: 56px; }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
   .row-2, .row-3, .row-4 { grid-template-columns: 1fr; }
+  .vault-form { grid-template-columns: 1fr; }
+  .task-row { grid-template-columns: 40px 60px auto 60px; }
+  .task-row > :nth-child(5) { display: none; }
 }
 </style>
 </head>
 <body>
+
+<!-- Toast Container -->
+<div id="toastContainer"></div>
+
+<!-- Mobile Hamburger -->
+<button class="hamburger" id="hamburgerBtn" onclick="toggleSidebar()">&#9776;</button>
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
 
 <!-- LOGIN -->
 <div id="login">
@@ -185,7 +234,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
     <h2>Control Center</h2>
     <p class="subtitle">Linux-AI Server Management</p>
     <input type="password" id="apiKey" placeholder="API Key" autofocus>
-    <button type="submit">Giris Yap</button>
+    <button type="submit" id="loginBtn">Giris Yap</button>
     <p id="loginError"></p>
   </form>
 </div>
@@ -193,7 +242,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
 <!-- DASHBOARD -->
 <div id="dashboard">
   <!-- Sidebar -->
-  <div class="sidebar">
+  <div class="sidebar" id="sidebar">
     <div class="logo">Control Center<small>linux-ai-server</small></div>
     <div class="nav-section">Izleme</div>
     <div class="nav-item active" onclick="nav('overview',this)"><span class="icon">&#9632;</span> Genel Bakis</div>
@@ -230,31 +279,46 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
 
       <!-- OVERVIEW -->
       <div id="page-overview" class="page active">
-        <div class="stat-grid" id="statBoxes"></div>
-        <div class="row row-2">
-          <div class="card">
-            <div class="card-title">Dev Server (klipper) <span class="badge">LAN</span></div>
-            <div id="devMetrics"></div>
-          </div>
-          <div class="card">
-            <div class="card-title">Production VPS <span class="badge">Contabo</span></div>
-            <div id="vpsMetrics"></div>
-          </div>
+        <div class="stat-grid" id="statBoxes">
+          <div class="stat"><div class="label">CPU</div><div class="value" style="color:var(--dim)">--</div></div>
+          <div class="stat"><div class="label">RAM</div><div class="value" style="color:var(--dim)">--</div></div>
+          <div class="stat"><div class="label">Disk</div><div class="value" style="color:var(--dim)">--</div></div>
+          <div class="stat"><div class="label">Sicaklik</div><div class="value" style="color:var(--dim)">--</div></div>
         </div>
         <div class="row row-2">
           <div class="card">
+            <div class="card-title">Dev Server (klipper) <span class="badge">LAN</span></div>
+            <div id="devMetrics"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Production VPS <span class="badge">Contabo</span></div>
+            <div id="vpsMetrics"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
+          </div>
+        </div>
+        <div class="row row-3">
+          <div class="card">
             <div class="card-title">DevOps Agent</div>
-            <div id="devopsInfo"></div>
+            <div id="devopsInfo"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Son Test Sonucu</div>
+            <div id="overviewTest"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
           </div>
           <div class="card">
             <div class="card-title">Son Uyarilar</div>
-            <div id="recentAlerts"></div>
+            <div id="recentAlerts"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
           </div>
         </div>
       </div>
 
       <!-- GRAPHS -->
       <div id="page-graphs" class="page">
+        <div class="time-range" id="graphTimeRange">
+          <button onclick="loadGraphs(30)" data-min="30">30dk</button>
+          <button onclick="loadGraphs(60)" data-min="60" class="active">1 saat</button>
+          <button onclick="loadGraphs(360)" data-min="360">6 saat</button>
+          <button onclick="loadGraphs(1440)" data-min="1440">24 saat</button>
+        </div>
         <div class="row row-2">
           <div class="card"><div class="card-title">CPU Kullanimi (%)</div><div class="chart-wrap"><canvas id="cpuChart"></canvas></div></div>
           <div class="card"><div class="card-title">RAM Kullanimi (%)</div><div class="chart-wrap"><canvas id="ramChart"></canvas></div></div>
@@ -262,12 +326,6 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
         <div class="row row-2">
           <div class="card"><div class="card-title">Disk Kullanimi (%)</div><div class="chart-wrap"><canvas id="diskChart"></canvas></div></div>
           <div class="card"><div class="card-title">Sicaklik (C)</div><div class="chart-wrap"><canvas id="tempChart"></canvas></div></div>
-        </div>
-        <div style="margin-bottom:8px">
-          <button class="vault-btn" onclick="loadGraphs(30)">30dk</button>
-          <button class="vault-btn" onclick="loadGraphs(60)">1 saat</button>
-          <button class="vault-btn" onclick="loadGraphs(360)">6 saat</button>
-          <button class="vault-btn" onclick="loadGraphs(1440)">24 saat</button>
         </div>
       </div>
 
@@ -288,11 +346,11 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
         <div class="row row-2">
           <div class="card">
             <div class="card-title">Dev Konteynerler <span class="badge">klipper</span></div>
-            <div id="devContainers"></div>
+            <div id="devContainers"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
           </div>
           <div class="card">
             <div class="card-title">VPS Konteynerler <span class="badge">Contabo</span></div>
-            <div id="vpsContainers"></div>
+            <div id="vpsContainers"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
           </div>
         </div>
       </div>
@@ -302,20 +360,36 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
         <div class="row row-2">
           <div class="card">
             <div class="card-title">Dev Servisler</div>
-            <div id="devSvc"></div>
+            <div id="devSvc"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
           </div>
           <div class="card">
             <div class="card-title">VPS Servisler</div>
-            <div id="vpsSvc"></div>
+            <div id="vpsSvc"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
           </div>
         </div>
       </div>
 
       <!-- PROJECTS -->
       <div id="page-projects" class="page">
-        <div class="card">
-          <div class="card-title">Projeler <span class="badge" id="projCount">0</span></div>
-          <div id="projList"></div>
+        <div class="row row-2">
+          <div class="card">
+            <div class="card-title">Proje Saglik Durumu <span class="badge" id="projCount">0</span></div>
+            <div id="projList"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Son Test Sonucu</div>
+            <div id="projTestResult"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
+          </div>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="vault-btn" onclick="loadProjects()">Yenile</button>
+          <button class="vault-btn" onclick="syncProjects()">Git Sync</button>
+          <button class="vault-btn" onclick="runAudit()">Dep Audit</button>
+          <a id="uptimeKumaLink" href="#" target="_blank" class="vault-btn" style="text-decoration:none;display:inline-block">Uptime Kuma</a>
+        </div>
+        <div class="card" style="margin-top:12px">
+          <div class="card-title">Dependency Audit</div>
+          <div id="projAudit"><span style="color:var(--dim);font-size:12px">Audit icin butona basin</span></div>
         </div>
       </div>
 
@@ -337,10 +411,10 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
               <option value="ssh">ssh</option>
               <option value="cron">cron</option>
             </select>
-            <input id="logSearch" placeholder="Filtre (regex)..." style="flex:1">
+            <input id="logSearch" placeholder="Filtre (regex)..." style="flex:1;min-width:120px">
             <select id="logLines"><option>50</option><option>100</option><option>200</option><option>500</option></select>
             <button onclick="loadLogs()">Yukle</button>
-            <label style="font-size:12px;color:var(--dim)"><input type="checkbox" id="logAutoRefresh"> Otomatik</label>
+            <label style="font-size:12px;color:var(--dim);white-space:nowrap"><input type="checkbox" id="logAutoRefresh"> Otomatik</label>
           </div>
           <div id="logOutput"></div>
         </div>
@@ -371,21 +445,21 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
         <div class="row row-2">
           <div class="card">
             <div class="card-title">Gorev Kuyrugu</div>
-            <div id="taskQueueStatus"></div>
+            <div id="taskQueueStatus"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
           </div>
           <div class="card">
             <div class="card-title">Hizli Gorev</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <button class="vault-btn" onclick="quickTask('backup')">Yedekleme</button>
               <button class="vault-btn" onclick="quickTask('deploy')">Deploy</button>
-              <button class="vault-btn" onclick="quickTask('shell',{command:'apt update && apt upgrade -y'})">Sistem Guncelle</button>
+              <button class="vault-btn" onclick="confirmAction('Sistem guncelleme baslatilacak. Emin misiniz?', () => quickTask('shell',{command:'apt update && apt upgrade -y'}))">Sistem Guncelle</button>
               <button class="vault-btn" onclick="quickTask('shell',{command:'docker system prune -f'})">Docker Temizle</button>
             </div>
           </div>
         </div>
         <div class="card" style="margin-top:16px">
           <div class="card-title">Son Gorevler</div>
-          <div id="recentTasks"></div>
+          <div id="recentTasks"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
         </div>
       </div>
 
@@ -403,7 +477,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
           </div>
           <div class="claude-input">
             <textarea id="claudeInput" placeholder="Claude'a gorev verin..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();claudeSend()}"></textarea>
-            <button id="claudeSendBtn" onclick="claudeSend()">→</button>
+            <button id="claudeSendBtn" onclick="claudeSend()">&#10148;</button>
           </div>
         </div>
       </div>
@@ -411,7 +485,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
       <!-- VAULT -->
       <div id="page-vault" class="page">
         <div class="card">
-          <div class="card-title">Sifre Kasasi <span class="badge">AES-256</span></div>
+          <div class="card-title">Sifre Kasasi <span class="badge">Sifrelenmis</span></div>
           <p style="font-size:12px;color:var(--dim);margin-bottom:12px">Servis sifrelerini tarayicida sifrelenmis olarak saklar. Veriler sunucuya gitmez.</p>
           <div class="vault-form">
             <input id="vName" placeholder="Servis adi">
@@ -432,6 +506,42 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
 const API = location.origin + '/api/v1';
 let TOKEN = localStorage.getItem('lai_token') || '';
 let charts = {};
+let _lastMetrics = null;
+let _activePage = 'overview';
+
+// ── Toast Notifications ─────────────────
+function toast(message, type='info', duration=4000) {
+  const container = document.getElementById('toastContainer');
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  const icons = { success: '&#10003;', error: '&#10007;', warning: '&#9888;', info: '&#8505;' };
+  el.innerHTML = `<span>${icons[type]||''}</span><span>${esc(message)}</span>`;
+  container.appendChild(el);
+  setTimeout(() => el.remove(), duration);
+}
+
+// ── Confirm Dialog ──────────────────────
+function confirmAction(message, onConfirm) {
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-overlay';
+  overlay.innerHTML = `<div class="confirm-box">
+    <h3>Onay Gerekli</h3>
+    <p>${esc(message)}</p>
+    <div class="btns">
+      <button onclick="this.closest('.confirm-overlay').remove()">Iptal</button>
+      <button class="danger" id="_confirmBtn">Onayla</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#_confirmBtn').onclick = () => { overlay.remove(); onConfirm(); };
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
+
+// ── Mobile Sidebar ──────────────────────
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebarOverlay').classList.toggle('open');
+}
 
 // ── Auth ────────────────────────────────
 if (TOKEN) { show(); }
@@ -439,21 +549,57 @@ if (TOKEN) { show(); }
 async function doLogin(e) {
   e.preventDefault();
   const key = document.getElementById('apiKey').value;
+  const btn = document.getElementById('loginBtn');
+  btn.disabled = true; btn.textContent = 'Giris yapiliyor...';
   try {
     const r = await fetch(API+'/auth/token', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({api_key:key})});
     const d = await r.json();
-    if (d.access_token) { TOKEN = d.access_token; localStorage.setItem('lai_token', TOKEN); show(); }
-    else { document.getElementById('loginError').textContent = 'Gecersiz API key'; }
-  } catch(e) { document.getElementById('loginError').textContent = 'Baglanti hatasi'; }
+    if (d.access_token) {
+      TOKEN = d.access_token;
+      localStorage.setItem('lai_token', TOKEN);
+      show();
+      toast('Giris basarili', 'success');
+    } else {
+      document.getElementById('loginError').textContent = d.message || 'Gecersiz API key';
+    }
+  } catch(e) {
+    document.getElementById('loginError').textContent = 'Baglanti hatasi - sunucu erisilemiyor';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Giris Yap';
+  }
 }
 
 function show() {
   document.getElementById('login').style.display='none';
   document.getElementById('dashboard').style.display='block';
+  document.getElementById('uptimeKumaLink').href = 'http://'+location.hostname+':3002';
   refreshAll();
 }
 
-function logout() { TOKEN=''; localStorage.removeItem('lai_token'); location.reload(); }
+function logout() {
+  TOKEN='';
+  localStorage.removeItem('lai_token');
+  termDisconnect();
+  location.reload();
+}
+
+// ── Token Expiry Check ──────────────────
+function isTokenExpired() {
+  if (!TOKEN) return true;
+  try {
+    const payload = JSON.parse(atob(TOKEN.split('.')[1]));
+    return payload.exp && (payload.exp * 1000) < Date.now();
+  } catch { return false; }
+}
+
+function checkTokenAndLogout() {
+  if (TOKEN && isTokenExpired()) {
+    toast('Oturum suresi doldu, yeniden giris yapiniz', 'warning');
+    setTimeout(logout, 2000);
+    return true;
+  }
+  return false;
+}
 
 // ── Helpers ─────────────────────────────
 const H = () => ({Authorization:'Bearer '+TOKEN});
@@ -461,10 +607,18 @@ const J = () => ({...H(), 'Content-Type':'application/json'});
 const mt = (l,v) => `<div class="metric"><span class="l">${l}</span><span class="v">${v}</span></div>`;
 
 async function api(path, opts) {
+  if (checkTokenAndLogout()) return null;
   try {
     const r = await fetch(API+path, {headers:H(), ...opts});
+    if (r.status === 401 || r.status === 403) {
+      toast('Yetkilendirme hatasi - yeniden giris yapiniz', 'error');
+      setTimeout(logout, 2000);
+      return null;
+    }
     return await r.json();
-  } catch(e) { return null; }
+  } catch(e) {
+    return null;
+  }
 }
 
 async function apiPost(path, body) {
@@ -473,11 +627,16 @@ async function apiPost(path, body) {
 
 // ── Navigation ──────────────────────────
 function nav(page, el) {
+  _activePage = page;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-'+page).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   if(el) el.classList.add('active');
   document.getElementById('pageTitle').textContent = el ? el.textContent.trim() : page;
+  // Close mobile sidebar
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebarOverlay').classList.remove('open');
+
   if (page==='graphs') loadGraphs(60);
   if (page==='logs') { loadLogSources(); loadLogs(); }
   if (page==='tasks') loadTasks();
@@ -486,6 +645,8 @@ function nav(page, el) {
   if (page==='containers') { loadDevContainers(); loadVPSContainers(); }
   if (page==='terminal') { termInit(); setTimeout(() => termFit && termFit.fit(), 100); }
   if (page==='claude') { claudeInit(); }
+  if (page==='projects') loadProjects();
+  if (page==='services') loadServices();
 }
 
 // ── Clock ───────────────────────────────
@@ -493,14 +654,26 @@ setInterval(() => { document.getElementById('clock').textContent = new Date().to
 
 // ── Refresh All ─────────────────────────
 async function refreshAll() {
-  loadOverview(); loadDevMetrics(); loadVPSStatus(); loadDevOps();
-  loadRecentAlerts(); loadServices();
+  _lastMetrics = null;
+  await loadMetricsOnce();
+  loadVPSStatus();
+  loadDevOps();
+  loadRecentAlerts();
+  loadServices();
+  loadOverviewTest();
 }
 
-// ── Overview Stats ──────────────────────
-async function loadOverview() {
+// ── Single Metrics Fetch (fixes double API call) ──
+async function loadMetricsOnce() {
   const d = await api('/monitor/metrics');
-  if (!d) return;
+  if (!d) {
+    document.getElementById('devDot').className='dot r';
+    return;
+  }
+  _lastMetrics = d;
+  document.getElementById('devDot').className='dot g';
+
+  // Update stat boxes
   const cls = v => v > 90 ? 'crit' : v > 70 ? 'warn' : 'ok';
   document.getElementById('statBoxes').innerHTML = `
     <div class="stat ${cls(d.cpu_percent)}"><div class="label">CPU</div><div class="value">${d.cpu_percent}%</div><div class="sub">${(d.load_avg||[0])[0]} load</div></div>
@@ -508,34 +681,37 @@ async function loadOverview() {
     <div class="stat ${cls(d.disk_percent)}"><div class="label">Disk</div><div class="value">${d.disk_percent}%</div><div class="sub">${d.disk_used_gb || '?'} GB</div></div>
     <div class="stat ${(d.temperature||0)>75?'crit':(d.temperature||0)>60?'warn':'ok'}"><div class="label">Sicaklik</div><div class="value">${d.temperature||'?'}C</div><div class="sub">klipper</div></div>
   `;
-}
 
-async function loadDevMetrics() {
-  const d = await api('/monitor/metrics');
-  if (!d) { document.getElementById('devDot').className='dot r'; return; }
-  document.getElementById('devDot').className='dot g';
+  // Update dev metrics card
   document.getElementById('devMetrics').innerHTML =
     mt('CPU',d.cpu_percent+'%') + mt('RAM',d.memory_percent+'%') + mt('Disk',d.disk_percent+'%') +
     mt('Sicaklik',d.temperature+'C') + mt('Load',(d.load_avg||[0])[0]) +
     mt('Net Giden',d.network_sent_mb+' MB') + mt('Net Gelen',d.network_recv_mb+' MB');
 }
 
+// ── VPS Status ──────────────────────────
 async function loadVPSStatus() {
   const d = await api('/vps/status');
-  if (!d || !d.online) { document.getElementById('vpsDot').className='dot r'; document.getElementById('vpsMetrics').innerHTML='Cevrimdisi'; return; }
+  if (!d || !d.online) {
+    document.getElementById('vpsDot').className='dot r';
+    document.getElementById('vpsMetrics').innerHTML='<span style="color:var(--red)">Cevrimdisi</span>';
+    return;
+  }
   document.getElementById('vpsDot').className='dot g';
   document.getElementById('vpsMetrics').innerHTML =
     mt('Host',d.hostname) + mt('Uptime',d.uptime) + mt('RAM',d.ram_used) + mt('Disk',d.disk) + mt('Container',d.containers?.length||0);
 }
 
+// ── DevOps ──────────────────────────────
 async function loadDevOps() {
   const d = await api('/devops/status');
-  if (!d) return;
+  if (!d) { document.getElementById('devopsInfo').innerHTML = '<span style="color:var(--dim);font-size:12px">Erisim hatasi</span>'; return; }
   document.getElementById('devopsInfo').innerHTML =
-    mt('Durum', d.running ? '&#9679; Aktif' : '&#9675; Durdu') + mt('Kontrol',d.check_count) +
+    mt('Durum', d.running ? '<span style="color:var(--green)">&#9679; Aktif</span>' : '<span style="color:var(--red)">&#9675; Durdu</span>') + mt('Kontrol',d.check_count) +
     mt('Aktif Uyari',d.active_alerts) + mt('Iyilestirme',d.total_remediations) + mt('Aralik',d.interval_seconds+'s');
 }
 
+// ── Recent Alerts ───────────────────────
 async function loadRecentAlerts() {
   const d = await api('/devops/alerts');
   if (!d) return;
@@ -543,9 +719,25 @@ async function loadRecentAlerts() {
     document.getElementById('recentAlerts').innerHTML = '<div class="alert ok">Tum sistemler normal</div>';
   } else {
     document.getElementById('recentAlerts').innerHTML = d.alerts.slice(0,5).map(a =>
-      `<div class="alert ${a.severity}"><span>${a.source}: ${a.message}</span><span style="font-size:10px">${a.timestamp?.slice(11,19)||''}</span></div>`
+      `<div class="alert ${a.severity}"><span>${esc(a.source)}: ${esc(a.message)}</span><span style="font-size:10px">${a.timestamp?.slice(11,19)||''}</span></div>`
     ).join('');
   }
+}
+
+// ── Overview Test Result ────────────────
+async function loadOverviewTest() {
+  const d = await api('/projects/health');
+  const el = document.getElementById('overviewTest');
+  if (!d || !el) return;
+  const t = d.last_test_run;
+  if (!t) { el.innerHTML = '<div style="color:var(--dim);font-size:12px">Test sonucu yok</div>'; return; }
+  const ok = t.status === 'pass';
+  const projs = d.projects?.filter(p => p.exists).length || 0;
+  el.innerHTML =
+    mt('Durum', ok ? '<span style="color:var(--green)">PASS</span>' : '<span style="color:var(--red)">FAIL</span>') +
+    mt('Test', `${t.total_passed}/${t.total_tests}`) +
+    mt('Proje', projs) +
+    mt('Tarih', t.timestamp?.slice(5,16)?.replace('T',' ') || '-');
 }
 
 // ── Graphs ──────────────────────────────
@@ -564,8 +756,11 @@ function initCharts() {
 
 async function loadGraphs(minutes=60) {
   initCharts();
+  document.querySelectorAll('#graphTimeRange button').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.min)===minutes);
+  });
   const d = await api('/devops/metrics/history?minutes='+minutes);
-  if (!d || !d.metrics) return;
+  if (!d || !d.metrics) { toast('Grafik verisi alinamadi', 'warning'); return; }
   const pts = d.metrics;
   const labels = pts.map(p => p.timestamp?.slice(11,16) || '');
   const update = (chart, data) => { chart.data.labels=labels; chart.data.datasets[0].data=data; chart.update('none'); };
@@ -583,7 +778,7 @@ async function loadActiveAlerts() {
     document.getElementById('activeAlerts').innerHTML = '<div class="alert ok">Uyari yok</div>';
   } else {
     document.getElementById('activeAlerts').innerHTML = d.alerts.map(a =>
-      `<div class="alert ${a.severity}"><span>${a.source}: ${a.message}</span></div>`
+      `<div class="alert ${a.severity}"><span>${esc(a.source)}: ${esc(a.message)}</span></div>`
     ).join('');
   }
 }
@@ -593,7 +788,7 @@ async function loadAlertHistory() {
   if (!d || !d.alerts) return;
   document.getElementById('alertHistory').innerHTML = d.alerts.map(a =>
     `<div class="alert ${a.severity}" style="opacity:${a.resolved?0.5:1}">
-      <span>${a.source}: ${a.message}</span>
+      <span>${esc(a.source)}: ${esc(a.message)}</span>
       <span style="font-size:10px">${a.resolved?'Cozuldu':''} ${a.timestamp?.slice(0,16)||''}</span>
     </div>`
   ).join('') || '<div style="color:var(--dim);font-size:12px">Gecmis yok</div>';
@@ -602,16 +797,16 @@ async function loadAlertHistory() {
 // ── Containers ──────────────────────────
 async function loadDevContainers() {
   const d = await apiPost('/shell/exec', {command:"docker ps -a --format '{{.Names}}|{{.Status}}|{{.Image}}'"});
-  if (!d || !d.stdout) return;
+  if (!d || !d.stdout) { document.getElementById('devContainers').innerHTML = '<span style="color:var(--dim);font-size:12px">Docker erisim hatasi</span>'; return; }
   document.getElementById('devContainers').innerHTML = d.stdout.trim().split('\n').filter(Boolean).map(line => {
     const [name,status,image] = line.split('|');
     const up = status?.includes('Up');
     return `<div class="ct">
-      <span class="name">${name}</span>
-      <span class="st" style="color:${up?'var(--green)':'var(--red)'}">${status?.slice(0,20)}</span>
+      <span class="name">${esc(name)}</span>
+      <span class="st" style="color:${up?'var(--green)':'var(--red)'}">${esc(status?.slice(0,25))}</span>
       <span>
-        ${up ? `<button class="ct-btn danger" onclick="dockerCmd('stop','${name}')">Durdur</button><button class="ct-btn" onclick="dockerCmd('restart','${name}')">Yenile</button>`
-             : `<button class="ct-btn" onclick="dockerCmd('start','${name}')">Baslat</button>`}
+        ${up ? `<button class="ct-btn danger" onclick="dockerCmd('stop','${esc(name)}')">Durdur</button><button class="ct-btn" onclick="dockerCmd('restart','${esc(name)}')">Yenile</button>`
+             : `<button class="ct-btn" onclick="dockerCmd('start','${esc(name)}')">Baslat</button>`}
       </span>
     </div>`;
   }).join('');
@@ -619,27 +814,34 @@ async function loadDevContainers() {
 
 async function loadVPSContainers() {
   const d = await api('/vps/status');
-  if (!d || !d.containers) return;
+  if (!d || !d.containers) { document.getElementById('vpsContainers').innerHTML = '<span style="color:var(--dim);font-size:12px">VPS erisim hatasi</span>'; return; }
   document.getElementById('vpsContainers').innerHTML = d.containers.map(c =>
-    `<div class="ct"><span class="name">${c.name}</span><span class="st">${c.status}</span><span></span></div>`
+    `<div class="ct"><span class="name">${esc(c.name)}</span><span class="st">${esc(c.status)}</span><span></span></div>`
   ).join('');
 }
 
 async function dockerCmd(action, name) {
-  await apiPost('/shell/exec', {command:`docker ${action} ${name}`});
-  setTimeout(loadDevContainers, 2000);
+  toast(`Docker ${action}: ${name}`, 'info');
+  const d = await apiPost('/shell/exec', {command:`docker ${action} ${name}`});
+  if (d && d.exit_code === 0) {
+    toast(`${name} ${action} basarili`, 'success');
+  } else {
+    toast(`${name} ${action} basarisiz: ${d?.stderr||''}`, 'error');
+  }
+  setTimeout(loadDevContainers, 1500);
 }
 
-// ── Services ────────────────────────────
+// ── Services (fixed: server-side port check instead of no-cors) ──
 function loadServices() {
   const dev = [
     {n:'API Server',p:8420,u:'/docs'}, {n:'Grafana',p:3000}, {n:'Prometheus',p:9090},
-    {n:'n8n',p:5678}, {n:'Coolify',p:8000}, {n:'Gitea',p:3001},
-    {n:'Paperless',p:8088}, {n:'Ollama',p:11434}, {n:'ChromaDB',p:8100},
+    {n:'n8n',p:5678}, {n:'Gitea',p:3100}, {n:'Uptime Kuma',p:3002},
+    {n:'Paperless',p:8000}, {n:'Ollama',p:11434}, {n:'ChromaDB',p:8100},
   ];
   document.getElementById('devSvc').innerHTML = dev.map(s =>
-    `<div class="svc"><a href="http://${location.hostname}:${s.p}${s.u||''}" target="_blank">${s.n} :${s.p}</a><span class="svc-status up">Aktif</span></div>`
+    `<div class="svc"><a href="http://${location.hostname}:${s.p}${s.u||''}" target="_blank">${s.n} :${s.p}</a><span class="svc-status check" id="svc-${s.p}">Kontrol...</span></div>`
   ).join('');
+  dev.forEach(s => checkSvc(s.p));
 
   const vps = [
     {n:'Coolify',u:'https://coolify.panola.app'}, {n:'Uptime Kuma',u:'https://uptime.panola.app'},
@@ -648,6 +850,21 @@ function loadServices() {
   document.getElementById('vpsSvc').innerHTML = vps.map(s =>
     `<div class="svc"><a href="${s.u}" target="_blank">${s.n}</a><span class="svc-status up">SSL</span></div>`
   ).join('');
+}
+
+async function checkSvc(port) {
+  const el = document.getElementById('svc-'+port);
+  if (!el) return;
+  try {
+    const d = await apiPost('/shell/exec', {command: `ss -tlnp | grep -q ':${port} ' && echo UP || echo DOWN`, timeout: 5});
+    if (d && d.stdout && d.stdout.trim() === 'UP') {
+      el.textContent = 'Aktif'; el.className = 'svc-status up';
+    } else {
+      el.textContent = 'Kapali'; el.className = 'svc-status down';
+    }
+  } catch {
+    el.textContent = '?'; el.className = 'svc-status down';
+  }
 }
 
 // ── Logs ────────────────────────────────
@@ -680,7 +897,6 @@ async function loadLogs() {
     }
   }
 
-  // Apply client-side filter if search is set and mode is journal
   if (search && mode === 'journal') {
     try { const re = new RegExp(search, 'i'); lines = lines.filter(l => re.test(l)); } catch(e) {}
   }
@@ -704,8 +920,8 @@ function colorLine(line) {
 
 function esc(s) { return s?.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') || ''; }
 
-// Log auto-refresh
-setInterval(() => { if(document.getElementById('logAutoRefresh')?.checked) loadLogs(); }, 5000);
+// Log auto-refresh (only when on logs page)
+setInterval(() => { if(document.getElementById('logAutoRefresh')?.checked && _activePage==='logs') loadLogs(); }, 5000);
 
 // ── Claude Code Chat ────────────────────
 let claudeSessionId = localStorage.getItem('claude_session_id') || null;
@@ -733,6 +949,7 @@ function claudeNew() {
   localStorage.removeItem('claude_session_id');
   document.getElementById('claudeMessages').innerHTML = '<div class="cmsg bot"><div class="clabel">Claude</div>Yeni oturum baslatildi.</div>';
   claudeUpdateSid();
+  toast('Yeni Claude oturumu', 'info');
 }
 
 function claudeContinue() {
@@ -771,7 +988,6 @@ async function claudeSend() {
   input.value = '';
   btn.disabled = true;
 
-  // Typing indicator
   const box = document.getElementById('claudeMessages');
   const typing = document.createElement('div');
   typing.className = 'cmsg bot'; typing.id = 'claudeTyping';
@@ -794,15 +1010,15 @@ async function claudeSend() {
     if (d?.ok && d?.result) {
       claudeAddMsg('bot', d.result, d.cost);
     } else if (d?.error) {
-      claudeAddMsg('bot', '⚠️ ' + d.error);
+      claudeAddMsg('bot', 'Hata: ' + d.error);
     } else if (d?.result) {
-      claudeAddMsg('bot', '⚠️ ' + d.result);
+      claudeAddMsg('bot', 'Uyari: ' + d.result);
     } else {
-      claudeAddMsg('bot', '⚠️ Bos yanit');
+      claudeAddMsg('bot', 'Bos yanit alindi');
     }
   } catch(e) {
     typing.remove();
-    claudeAddMsg('bot', '⚠️ ' + e.message);
+    claudeAddMsg('bot', 'Baglanti hatasi: ' + e.message);
   } finally {
     btn.disabled = false;
     input.focus();
@@ -811,6 +1027,10 @@ async function claudeSend() {
 
 // ── Terminal (xterm.js + WebSocket) ─────
 let term = null, termWs = null, termFit = null, termSessionId = null;
+let termRestHandler = null;
+let wsReconnectTimer = null;
+let wsReconnectAttempts = 0;
+const WS_MAX_RECONNECT = 5;
 
 function termInit() {
   if (term) return;
@@ -824,27 +1044,51 @@ function termInit() {
   term.loadAddon(new WebLinksAddon.WebLinksAddon());
   term.open(document.getElementById('termContainer'));
   termFit.fit();
-  window.addEventListener('resize', () => { if (termFit) termFit.fit(); });
-  // WS modu: tuslari biriktir, Enter'da komut gonder
+  window.addEventListener('resize', () => { if (termFit && _activePage==='terminal') termFit.fit(); });
+
+  // Single unified key handler (fixes duplicate handler bug)
   let wsCmdBuf = '';
   term.onKey(({key, domEvent}) => {
-    if (!termWs || termWs.readyState !== 1) return;
-    if (domEvent.key === 'Enter') {
-      term.writeln('');
-      if (wsCmdBuf.trim()) {
-        termWs.send(JSON.stringify({ command: wsCmdBuf.trim() }));
-      } else {
-        term.write('\x1b[32m$ \x1b[0m');
+    // WS mode
+    if (termWs && termWs.readyState === 1) {
+      if (domEvent.key === 'Enter') {
+        term.writeln('');
+        if (wsCmdBuf.trim()) {
+          termWs.send(JSON.stringify({ command: wsCmdBuf.trim() }));
+        } else {
+          term.write('\x1b[32m$ \x1b[0m');
+        }
+        wsCmdBuf = '';
+      } else if (domEvent.key === 'Backspace') {
+        if (wsCmdBuf.length > 0) { wsCmdBuf = wsCmdBuf.slice(0,-1); term.write('\b \b'); }
+      } else if (domEvent.key === 'Tab') {
+        domEvent.preventDefault();
+      } else if (key.length === 1 && !domEvent.ctrlKey && !domEvent.altKey) {
+        wsCmdBuf += key; term.write(key);
       }
-      wsCmdBuf = '';
-    } else if (domEvent.key === 'Backspace') {
-      if (wsCmdBuf.length > 0) { wsCmdBuf = wsCmdBuf.slice(0,-1); term.write('\b \b'); }
-    } else if (domEvent.key === 'Tab') {
-      domEvent.preventDefault();
-    } else if (key.length === 1 && !domEvent.ctrlKey && !domEvent.altKey) {
-      wsCmdBuf += key; term.write(key);
+      return;
+    }
+    // REST mode
+    if (termRestHandler) {
+      if (domEvent.key === 'Enter') {
+        term.writeln('');
+        if (termRestHandler.buf.trim()) {
+          const cmd = termRestHandler.buf.trim();
+          termRestHandler.buf = '';
+          apiPost('/shell/exec', {command: cmd}).then(d => {
+            const out = d?.stdout || d?.stderr || JSON.stringify(d);
+            term.writeln(out.replace(/\n/g, '\r\n'));
+            term.write('\x1b[32m$ \x1b[0m');
+          });
+        } else { term.write('\x1b[32m$ \x1b[0m'); }
+      } else if (domEvent.key === 'Backspace') {
+        if (termRestHandler.buf.length > 0) { termRestHandler.buf = termRestHandler.buf.slice(0,-1); term.write('\b \b'); }
+      } else if (key.length === 1 && !domEvent.ctrlKey && !domEvent.altKey) {
+        termRestHandler.buf += key; term.write(key);
+      }
     }
   });
+
   term.onResize(({cols, rows}) => {
     if (termWs && termWs.readyState === 1) {
       termWs.send(JSON.stringify({ type: 'resize', cols, rows }));
@@ -864,34 +1108,19 @@ function termSetStatus(connected) {
 function termConnect() {
   const mode = document.getElementById('termTarget').value;
   termInit();
+  wsReconnectAttempts = 0;
+  if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+
   if (mode === 'rest') {
-    // REST modunda basit komut girisi
     termSetStatus(true);
+    termRestHandler = { buf: '' };
     term.writeln('\x1b[33m[REST modu] Komut yazin, Enter ile calistirin.\x1b[0m');
-    let cmdBuf = '';
-    term.onKey(({key, domEvent}) => {
-      if (mode !== 'rest' || termWs) return;
-      if (domEvent.key === 'Enter') {
-        term.writeln('');
-        if (cmdBuf.trim()) {
-          apiPost('/shell/exec', {command: cmdBuf.trim()}).then(d => {
-            const out = d?.stdout || d?.stderr || JSON.stringify(d);
-            term.writeln(out.replace(/\n/g, '\r\n'));
-            term.write('\x1b[32m$ \x1b[0m');
-          });
-        } else { term.write('\x1b[32m$ \x1b[0m'); }
-        cmdBuf = '';
-      } else if (domEvent.key === 'Backspace') {
-        if (cmdBuf.length > 0) { cmdBuf = cmdBuf.slice(0,-1); term.write('\b \b'); }
-      } else if (key.length === 1 && !domEvent.ctrlKey && !domEvent.altKey) {
-        cmdBuf += key; term.write(key);
-      }
-    });
     term.write('\x1b[32m$ \x1b[0m');
     return;
   }
 
-  // WebSocket PTY modu
+  // WebSocket PTY mode
+  termRestHandler = null;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const wsUrl = `${proto}://${location.host}/ws/terminal`;
   term.writeln(`\x1b[90mBaglaniyor: ${wsUrl}\x1b[0m`);
@@ -899,7 +1128,9 @@ function termConnect() {
   termWs = new WebSocket(wsUrl);
   termWs.onopen = () => {
     termSetStatus(true);
+    wsReconnectAttempts = 0;
     term.writeln('\x1b[32mBaglandi!\x1b[0m\r\n');
+    toast('Terminal baglandi', 'success');
     termFit.fit();
     const {cols, rows} = term;
     termWs.send(JSON.stringify({ type: 'resize', cols, rows }));
@@ -923,12 +1154,40 @@ function termConnect() {
       }
     } catch { term.write(e.data); }
   };
-  termWs.onclose = () => { termSetStatus(false); term.writeln('\r\n\x1b[31mBaglanti kapandi.\x1b[0m'); termWs = null; termSessionId = null; };
-  termWs.onerror = () => { termSetStatus(false); term.writeln('\r\n\x1b[31mBaglanti hatasi.\x1b[0m'); };
+  termWs.onclose = (e) => {
+    termSetStatus(false);
+    termSessionId = null;
+    const wasConnected = termWs !== null;
+    termWs = null;
+    // Auto-reconnect with exponential backoff
+    if (wasConnected && wsReconnectAttempts < WS_MAX_RECONNECT && _activePage === 'terminal') {
+      wsReconnectAttempts++;
+      const delay = Math.min(1000 * Math.pow(2, wsReconnectAttempts - 1), 10000);
+      term.writeln(`\r\n\x1b[33mBaglanti koptu. ${(delay/1000).toFixed(0)}s icinde yeniden deneniyor... (${wsReconnectAttempts}/${WS_MAX_RECONNECT})\x1b[0m`);
+      wsReconnectTimer = setTimeout(() => {
+        if (_activePage === 'terminal') {
+          document.getElementById('termTarget').value = 'ws';
+          termConnect();
+        }
+      }, delay);
+    } else {
+      term.writeln('\r\n\x1b[31mBaglanti kapandi.\x1b[0m');
+      if (wsReconnectAttempts >= WS_MAX_RECONNECT) {
+        toast('Terminal baglantisi kurulamadi', 'error');
+      }
+    }
+  };
+  termWs.onerror = () => {
+    termSetStatus(false);
+    term.writeln('\r\n\x1b[31mBaglanti hatasi.\x1b[0m');
+  };
 }
 
 function termDisconnect() {
+  if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+  wsReconnectAttempts = WS_MAX_RECONNECT;
   if (termWs) { termWs.close(); termWs = null; }
+  termRestHandler = null;
   termSetStatus(false);
   termSessionId = null;
   if (term) term.writeln('\r\n\x1b[33mBaglanti kesildi.\x1b[0m');
@@ -936,24 +1195,26 @@ function termDisconnect() {
 
 // ── Tasks ───────────────────────────────
 async function loadTasks() {
-  const status = await api('/tasks/status');
-  const recent = await api('/tasks/recent');
+  const [status, recent] = await Promise.all([api('/tasks/status'), api('/tasks/recent')]);
   document.getElementById('taskQueueStatus').innerHTML =
-    mt('Durum', status?.running ? '&#9679; Aktif' : '&#9675; Durdu') +
+    mt('Durum', status?.running ? '<span style="color:var(--green)">&#9679; Aktif</span>' : '<span style="color:var(--red)">&#9675; Durdu</span>') +
     mt('Tamamlanan', status?.processed||0) + mt('Kuyruk', status?.recent_count||0);
   document.getElementById('recentTasks').innerHTML = (recent?.tasks||[]).map(t =>
-    `<div class="task-row"><span>#${t.task_id}</span><span class="task-status ${t.status}">${t.status}</span><span>${t.type}</span><span style="color:var(--dim)">${t.result?.slice(0,50)||'-'}</span><span style="color:var(--dim)">${t.elapsed_ms}ms</span></div>`
+    `<div class="task-row"><span>#${t.task_id}</span><span class="task-status ${t.status}">${t.status}</span><span>${esc(t.type)}</span><span style="color:var(--dim)">${esc(t.result?.slice(0,50)||'-')}</span><span style="color:var(--dim)">${t.elapsed_ms}ms</span></div>`
   ).join('') || '<div style="color:var(--dim);font-size:12px">Gorev yok</div>';
 }
 
 async function quickTask(type, payload={}) {
-  await apiPost('/tasks/enqueue', {type, payload});
+  const d = await apiPost('/tasks/enqueue', {type, payload});
+  if (d?.task_id) {
+    toast(`Gorev #${d.task_id} kuyruga eklendi`, 'success');
+  } else {
+    toast('Gorev eklenemedi', 'error');
+  }
   setTimeout(loadTasks, 3000);
 }
 
 // ── Vault (Client-side encrypted) ───────
-// Passwords are encrypted with the API key hash before storage in localStorage
-// They NEVER leave the browser
 function vaultKey() {
   const k = localStorage.getItem('lai_token') || '';
   let hash = 0;
@@ -980,7 +1241,7 @@ function vaultAdd() {
   const name = document.getElementById('vName').value;
   const user = document.getElementById('vUser').value;
   const pass = document.getElementById('vPass').value;
-  if (!name || !pass) return;
+  if (!name || !pass) { toast('Servis adi ve sifre gerekli', 'warning'); return; }
   const vault = vaultGet();
   vault.push({name, user: vaultEncrypt(user), pass: vaultEncrypt(pass), url: ''});
   localStorage.setItem('lai_vault', JSON.stringify(vault));
@@ -988,19 +1249,26 @@ function vaultAdd() {
   document.getElementById('vUser').value = '';
   document.getElementById('vPass').value = '';
   vaultRender();
+  toast('Sifre eklendi', 'success');
 }
 
 function vaultDelete(idx) {
   const vault = vaultGet();
-  vault.splice(idx, 1);
-  localStorage.setItem('lai_vault', JSON.stringify(vault));
-  vaultRender();
+  const name = vault[idx]?.name || '';
+  confirmAction(`"${name}" silinecek. Emin misiniz?`, () => {
+    vault.splice(idx, 1);
+    localStorage.setItem('lai_vault', JSON.stringify(vault));
+    vaultRender();
+    toast('Sifre silindi', 'info');
+  });
 }
 
 function vaultCopy(idx, field) {
   const vault = vaultGet();
   const val = vaultDecrypt(vault[idx][field]);
-  navigator.clipboard.writeText(val);
+  navigator.clipboard.writeText(val).then(() => {
+    toast(field === 'pass' ? 'Sifre kopyalandi' : 'Kullanici kopyalandi', 'success');
+  });
 }
 
 function vaultRender() {
@@ -1016,7 +1284,7 @@ function vaultRender() {
       <span>
         <button class="vault-btn" onclick="vaultCopy(${i},'user')">Kullanici</button>
         <button class="vault-btn" onclick="vaultCopy(${i},'pass')">Sifre</button>
-        <button class="vault-btn danger" onclick="vaultDelete(${i})" style="color:var(--red)">Sil</button>
+        <button class="vault-btn" onclick="vaultDelete(${i})" style="color:var(--red)">Sil</button>
       </span>
     </div>`
   ).join('');
@@ -1024,18 +1292,73 @@ function vaultRender() {
 
 // ── Projects ────────────────────────────
 async function loadProjects() {
-  const d = await api('/deploy/projects');
-  if (!d) return;
-  const projects = Object.entries(d.projects||{});
+  const d = await api('/projects/health');
+  if (!d) { document.getElementById('projList').innerHTML = '<span style="color:var(--red);font-size:12px">Erisim hatasi</span>'; return; }
+  const projects = d.projects || [];
   document.getElementById('projCount').textContent = projects.length;
-  document.getElementById('projList').innerHTML = projects.map(([name,p]) =>
-    `<div class="metric"><span class="l">${name} <span style="color:var(--muted);font-size:11px">${p.stack}</span></span><span class="v">${p.deploy_count||0} deploy</span></div>`
-  ).join('');
-}
-loadProjects();
+  document.getElementById('projList').innerHTML = projects.map(p => {
+    if (!p.exists) return `<div class="metric"><span class="l">${esc(p.name)}</span><span class="v" style="color:var(--red)">Bulunamadi</span></div>`;
+    const git = p.git || {};
+    const gs = p.git_status || {};
+    const dirty = gs.dirty_files || 0;
+    const dirtyBadge = dirty > 0 ? `<span style="color:var(--yellow);font-size:10px"> ${dirty} degisiklik</span>` : '';
+    const branch = gs.branch ? `<span style="color:var(--muted);font-size:10px">${esc(gs.branch)}</span>` : '';
+    const msg = git.message ? git.message.slice(0,40) : '';
+    const date = git.date ? git.date.slice(0,10) : '';
+    return `<div class="metric">
+      <span class="l">${esc(p.name)} ${branch}${dirtyBadge}</span>
+      <span class="v" style="font-size:12px;font-weight:400"><span style="color:var(--accent)">${esc(git.sha||'')}</span> ${esc(msg)} <span style="color:var(--muted)">${date}</span></span>
+    </div>`;
+  }).join('');
 
-// ── Auto-refresh ────────────────────────
-setInterval(() => { if(TOKEN) refreshAll(); }, 30000);
+  const test = d.last_test_run;
+  const testEl = document.getElementById('projTestResult');
+  if (test) {
+    const ok = test.status === 'pass';
+    testEl.innerHTML =
+      mt('Durum', ok ? '<span style="color:var(--green)">BASARILI</span>' : '<span style="color:var(--red)">BASARISIZ</span>') +
+      mt('Toplam', test.total_tests + ' test') +
+      mt('Gecen', test.total_passed) +
+      mt('Basarisiz', test.total_failed) +
+      mt('Zafiyet', test.audit_vulns || 0) +
+      mt('Tarih', test.timestamp?.slice(0,16)?.replace('T',' ') || '-');
+  } else {
+    testEl.innerHTML = '<div style="color:var(--dim);font-size:12px">Henuz test sonucu yok</div>';
+  }
+}
+
+async function syncProjects() {
+  const btn = event.target; btn.disabled = true; btn.textContent = 'Sync...';
+  const d = await apiPost('/projects/sync', {});
+  btn.disabled = false; btn.textContent = 'Git Sync';
+  if (d?.results) {
+    const summary = Object.entries(d.results).map(([k,v]) => `${k}: ${v.status}`).join(', ');
+    toast('Git Sync: ' + summary, 'success');
+  } else {
+    toast('Git Sync basarisiz', 'error');
+  }
+  loadProjects();
+}
+
+async function runAudit() {
+  const el = document.getElementById('projAudit');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>Audit calisiyor...</div>';
+  const d = await api('/projects/audit');
+  if (!d || !d.audits) { el.innerHTML = '<span style="color:var(--red)">Audit hatasi</span>'; toast('Audit basarisiz', 'error'); return; }
+  el.innerHTML = Object.entries(d.audits).map(([name, a]) => {
+    if (a.status === 'skip') return `<div class="metric"><span class="l">${esc(name)}</span><span class="v" style="color:var(--dim)">${esc(a.note||'atla')}</span></div>`;
+    if (a.status === 'ok') return `<div class="metric"><span class="l">${esc(name)}</span><span class="v" style="color:var(--green)">Temiz</span></div>`;
+    return `<div class="metric"><span class="l">${esc(name)}</span><span class="v" style="color:var(--red)">${a.critical||0}C / ${a.high||0}H</span></div>`;
+  }).join('');
+  toast('Audit tamamlandi', 'info');
+}
+
+// ── Smart Auto-refresh (only active page) ──
+setInterval(() => {
+  if (!TOKEN || isTokenExpired()) return;
+  loadMetricsOnce();
+  if (_activePage === 'overview') { loadVPSStatus(); loadDevOps(); loadRecentAlerts(); }
+}, 30000);
 </script>
 </body>
 </html>

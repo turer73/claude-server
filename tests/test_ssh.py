@@ -102,3 +102,70 @@ def test_ssh_client_exec_timeout():
     from app.exceptions import ShellExecutionError
     with pytest.raises(ShellExecutionError):
         client.exec_command(mock_client, "sleep 100", timeout=1)
+
+
+def test_ssh_client_connect_failure():
+    with patch("paramiko.SSHClient") as MockSSH:
+        mock_instance = MagicMock()
+        mock_instance.connect.side_effect = Exception("Connection refused")
+        MockSSH.return_value = mock_instance
+        client = SSHClient()
+        from app.exceptions import ShellExecutionError
+        with pytest.raises(ShellExecutionError, match="SSH connection failed"):
+            client.connect(host="bad-host", username="root")
+
+
+def test_ssh_upload_file():
+    mock_client = MagicMock()
+    mock_sftp = MagicMock()
+    mock_client.open_sftp.return_value = mock_sftp
+    client = SSHClient()
+    result = client.upload_file(mock_client, "/tmp/local", "/tmp/remote")
+    assert result is True
+    mock_sftp.put.assert_called_once_with("/tmp/local", "/tmp/remote")
+    mock_sftp.close.assert_called_once()
+
+
+def test_ssh_upload_file_failure():
+    mock_client = MagicMock()
+    mock_client.open_sftp.side_effect = Exception("SFTP error")
+    client = SSHClient()
+    from app.exceptions import ShellExecutionError
+    with pytest.raises(ShellExecutionError, match="SFTP upload failed"):
+        client.upload_file(mock_client, "/tmp/local", "/tmp/remote")
+
+
+def test_ssh_download_file():
+    mock_client = MagicMock()
+    mock_sftp = MagicMock()
+    mock_client.open_sftp.return_value = mock_sftp
+    client = SSHClient()
+    result = client.download_file(mock_client, "/tmp/remote", "/tmp/local")
+    assert result is True
+    mock_sftp.get.assert_called_once_with("/tmp/remote", "/tmp/local")
+    mock_sftp.close.assert_called_once()
+
+
+def test_ssh_download_file_failure():
+    mock_client = MagicMock()
+    mock_client.open_sftp.side_effect = Exception("SFTP error")
+    client = SSHClient()
+    from app.exceptions import ShellExecutionError
+    with pytest.raises(ShellExecutionError, match="SFTP download failed"):
+        client.download_file(mock_client, "/tmp/remote", "/tmp/local")
+
+
+def test_session_manager_close_all(session_mgr):
+    clients = [MagicMock() for _ in range(3)]
+    for i, c in enumerate(clients):
+        session_mgr.add(f"host{i}", f"user{i}", c)
+    assert session_mgr.count() == 3
+    session_mgr.close_all()
+    assert session_mgr.count() == 0
+    for c in clients:
+        c.close.assert_called_once()
+
+
+def test_session_manager_remove_nonexistent(session_mgr):
+    """Olmayan session remove — hata vermemeli."""
+    session_mgr.remove("ghost")

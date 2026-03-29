@@ -189,3 +189,227 @@ async def test_playbooks_defined():
     assert "temperature_critical" in PLAYBOOKS
     assert "service_down" in PLAYBOOKS
     assert "docker_down" in PLAYBOOKS
+
+
+# ── Store Metrics Tests ────────────────────────
+
+
+async def test_store_metrics(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.core.config.load_yaml_config", lambda path: {})
+    from app.core.config import get_settings
+    get_settings.cache_clear()
+    from app.core.devops_agent import DevOpsAgent
+    from app.db.database import Database
+    db = Database(str(tmp_path / "devops.db"))
+    await db.initialize()
+    agent = DevOpsAgent(db=db, interval=60)
+    metrics = {"timestamp": "2026-03-29T14:00:00Z", "cpu_percent": 45, "memory_percent": 60,
+               "disk_percent": 34, "temperature": 55, "load_avg": [1.0, 0.8, 0.7],
+               "network_sent_mb": 100, "network_recv_mb": 200}
+    await agent._store_metrics(metrics)
+    rows = await db.fetch_all("SELECT * FROM metrics_history")
+    assert len(rows) == 1
+    assert rows[0]["cpu_usage"] == 45
+    await db.close()
+    get_settings.cache_clear()
+
+
+async def test_store_metrics_no_db():
+    from app.core.devops_agent import DevOpsAgent
+    agent = DevOpsAgent(db=None, interval=60)
+    await agent._store_metrics({"cpu_percent": 50})  # Should not raise
+
+
+# ── Store Alert Tests ──────────────────────────
+
+
+async def test_store_alert(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.core.config.load_yaml_config", lambda path: {})
+    from app.core.config import get_settings
+    get_settings.cache_clear()
+    from app.core.devops_agent import DevOpsAgent, Alert
+    from app.db.database import Database
+    db = Database(str(tmp_path / "devops2.db"))
+    await db.initialize()
+    agent = DevOpsAgent(db=db, interval=60)
+    alert = Alert(id="cpu-1", severity="critical", source="cpu",
+                  message="CPU at 95%", value=95, threshold=85,
+                  timestamp="2026-03-29T14:00:00Z")
+    await agent._store_alert(alert)
+    rows = await db.fetch_all("SELECT * FROM alerts")
+    assert len(rows) == 1
+    assert rows[0]["severity"] == "critical"
+    await db.close()
+    get_settings.cache_clear()
+
+
+async def test_store_alert_no_db():
+    from app.core.devops_agent import DevOpsAgent, Alert
+    agent = DevOpsAgent(db=None, interval=60)
+    alert = Alert(id="x", severity="warning", source="cpu",
+                  message="test", value=80, threshold=85, timestamp="now")
+    await agent._store_alert(alert)  # Should not raise
+
+
+# ── Remediation Tests ──────────────────────────
+
+
+async def test_remediate_cpu_critical():
+    from unittest.mock import AsyncMock, patch
+    from app.core.devops_agent import DevOpsAgent, Alert
+    agent = DevOpsAgent(db=None, interval=60)
+    alert = Alert(id="cpu-1", severity="critical", source="cpu",
+                  message="CPU at 95%", value=95, threshold=85, timestamp="now")
+
+    mock_result = {"stdout": "done\n", "stderr": "", "exit_code": 0}
+    with patch.object(agent._executor, "execute", new_callable=AsyncMock, return_value=mock_result), \
+         patch.object(agent, "_send_webhook", new_callable=AsyncMock):
+        await agent._remediate(alert)
+
+    assert len(agent._remediation_log) > 0
+    assert agent._remediation_log[0].alert_source == "cpu"
+    assert agent._remediation_log[0].success is True
+
+
+async def test_remediate_cooldown():
+    from unittest.mock import AsyncMock, patch
+    from app.core.devops_agent import DevOpsAgent, Alert
+    agent = DevOpsAgent(db=None, interval=60)
+    alert = Alert(id="cpu-1", severity="critical", source="cpu",
+                  message="CPU high", value=95, threshold=85, timestamp="now")
+
+    mock_result = {"stdout": "ok\n", "stderr": "", "exit_code": 0}
+    with patch.object(agent._executor, "execute", new_callable=AsyncMock, return_value=mock_result), \
+         patch.object(agent, "_send_webhook", new_callable=AsyncMock):
+        await agent._remediate(alert)
+        count_1 = len(agent._remediation_log)
+
+        # Second remediation within cooldown — should be skipped
+        await agent._remediate(alert)
+        count_2 = len(agent._remediation_log)
+        assert count_1 == count_2  # No new remediation
+
+
+async def test_remediate_no_playbook():
+    from app.core.devops_agent import DevOpsAgent, Alert
+    agent = DevOpsAgent(db=None, interval=60)
+    alert = Alert(id="x-1", severity="critical", source="nonexistent",
+                  message="test", value=99, threshold=50, timestamp="now")
+    await agent._remediate(alert)
+    assert len(agent._remediation_log) == 0
+
+
+async def test_remediate_exception():
+    from unittest.mock import AsyncMock, patch
+    from app.core.devops_agent import DevOpsAgent, Alert
+    agent = DevOpsAgent(db=None, interval=60)
+    alert = Alert(id="cpu-1", severity="critical", source="cpu",
+                  message="CPU high", value=95, threshold=85, timestamp="now")
+
+    with patch.object(agent._executor, "execute", new_callable=AsyncMock, side_effect=RuntimeError("fail")), \
+         patch.object(agent, "_send_webhook", new_callable=AsyncMock):
+        await agent._remediate(alert)
+
+    assert len(agent._remediation_log) > 0
+    assert agent._remediation_log[0].success is False
+
+
+# ── Check Services Tests ───────────────────────
+
+
+async def test_check_services_all_active():
+    from unittest.mock import AsyncMock, patch
+    from app.core.devops_agent import DevOpsAgent
+    agent = DevOpsAgent(db=None, interval=60)
+
+    async def mock_exec(cmd, timeout=5):
+        if "systemctl is-active" in cmd:
+            return {"stdout": "active\n", "stderr": "", "exit_code": 0}
+        if "docker ps" in cmd:
+            return {"stdout": "Up 10 days\n", "stderr": "", "exit_code": 0}
+        return {"stdout": "", "stderr": "", "exit_code": 0}
+
+    with patch.object(agent._executor, "execute", new_callable=AsyncMock, side_effect=mock_exec):
+        await agent._check_services()
+
+    assert len(agent._active_alerts) == 0
+
+
+async def test_check_services_service_down():
+    from unittest.mock import AsyncMock, patch
+    from app.core.devops_agent import DevOpsAgent
+    agent = DevOpsAgent(db=None, interval=60)
+
+    async def mock_exec(cmd, timeout=5):
+        if "systemctl is-active" in cmd:
+            return {"stdout": "inactive\n", "stderr": "", "exit_code": 3}
+        if "docker ps" in cmd:
+            return {"stdout": "Up 10 days\n", "stderr": "", "exit_code": 0}
+        if "systemctl restart" in cmd:
+            return {"stdout": "", "stderr": "", "exit_code": 0}
+        return {"stdout": "", "stderr": "", "exit_code": 0}
+
+    with patch.object(agent._executor, "execute", new_callable=AsyncMock, side_effect=mock_exec):
+        await agent._check_services()
+
+    # Should have alerts for down services
+    service_alerts = [k for k in agent._active_alerts if k.startswith("service:")]
+    assert len(service_alerts) > 0
+
+
+# ── Resolve Alert DB Tests ─────────────────────
+
+
+async def test_resolve_alert_db(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.core.config.load_yaml_config", lambda path: {})
+    from app.core.config import get_settings
+    get_settings.cache_clear()
+    from app.core.devops_agent import DevOpsAgent, Alert
+    from app.db.database import Database
+    db = Database(str(tmp_path / "resolve.db"))
+    await db.initialize()
+    agent = DevOpsAgent(db=db, interval=60)
+
+    # Store then resolve
+    alert = Alert(id="cpu-1", severity="critical", source="cpu",
+                  message="CPU high", value=95, threshold=85, timestamp="now",
+                  resolved=True, resolved_at="later")
+    await agent._store_alert(alert)
+    await agent._resolve_alert_db(alert)
+
+    rows = await db.fetch_all("SELECT * FROM alerts WHERE source = 'cpu'")
+    assert rows[0]["resolved"] == 1
+    await db.close()
+    get_settings.cache_clear()
+
+
+# ── Start / Stop Tests ─────────────────────────
+
+
+async def test_start_stop():
+    from app.core.devops_agent import DevOpsAgent
+    agent = DevOpsAgent(db=None, interval=60)
+    agent.start()
+    assert agent._running is True
+    agent.start()  # no-op
+    await agent.stop()
+    assert agent._running is False
+
+
+# ── Alert Dataclass Tests ──────────────────────
+
+
+def test_alert_defaults():
+    from app.core.devops_agent import Alert
+    a = Alert(id="x", severity="warning", source="cpu", message="test",
+              value=80, threshold=85, timestamp="now")
+    assert a.resolved is False
+    assert a.resolved_at is None
+    assert a.remediation is None
+
+
+def test_remediation_record():
+    from app.core.devops_agent import RemediationRecord
+    r = RemediationRecord(timestamp="now", alert_source="cpu", action="log",
+                          command="ps aux", result="ok", success=True)
+    assert r.success is True
