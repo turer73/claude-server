@@ -84,7 +84,7 @@ async def run_claude(body: ClaudePromptRequest):
     if not binary:
         return {"error": "Claude Code CLI bulunamadi"}
 
-    cmd = [binary, "-p", body.prompt, "--output-format", "json"]
+    cmd = [binary, "-p", body.prompt, "--output-format", "json", "--dangerously-skip-permissions"]
     if body.model:
         cmd.extend(["--model", body.model])
     if body.max_turns:
@@ -138,7 +138,7 @@ async def stream_claude(body: ClaudePromptRequest):
     if not binary:
         return {"error": "Claude Code CLI bulunamadi"}
 
-    cmd = [binary, "-p", body.prompt, "--output-format", "stream-json"]
+    cmd = [binary, "-p", body.prompt, "--output-format", "stream-json", "--dangerously-skip-permissions"]
     if body.model:
         cmd.extend(["--model", body.model])
     if body.max_turns:
