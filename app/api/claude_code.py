@@ -18,6 +18,23 @@ router = APIRouter(prefix="/api/v1/claude", tags=["claude-code"])
 
 CLAUDE_BIN = os.path.expanduser("~/.npm-global/bin/claude")
 
+# Load OAuth token from ~/.bashrc env or file
+def _load_claude_token():
+    token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+    if token:
+        return token
+    env_file = os.path.expanduser("~/.claude_env")
+    bashrc = os.path.expanduser("~/.bashrc")
+    for f in [env_file, bashrc]:
+        try:
+            with open(f) as fh:
+                for line in fh:
+                    if "CLAUDE_CODE_OAUTH_TOKEN=" in line:
+                        return line.split("=", 1)[1].strip().strip("'\"")
+        except FileNotFoundError:
+            pass
+    return None
+
 
 class ClaudePromptRequest(BaseModel):
     prompt: str
@@ -49,12 +66,13 @@ async def claude_status():
     version = stdout.decode().strip() if stdout else "unknown"
 
     # Check auth
-    has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    token = _load_claude_token()
+    has_auth = bool(os.environ.get("ANTHROPIC_API_KEY") or token)
 
     return {
         "available": True,
         "version": version,
-        "authenticated": has_key,
+        "authenticated": has_auth,
         "binary": binary,
     }
 
@@ -73,6 +91,9 @@ async def run_claude(body: ClaudePromptRequest):
         cmd.extend(["--max-turns", str(body.max_turns)])
 
     env = {**os.environ}
+    oauth = _load_claude_token()
+    if oauth:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth
     cwd = body.cwd or os.path.expanduser("~")
 
     proc = await asyncio.create_subprocess_exec(
@@ -113,6 +134,9 @@ async def stream_claude(body: ClaudePromptRequest):
         cmd.extend(["--max-turns", str(body.max_turns)])
 
     env = {**os.environ}
+    oauth = _load_claude_token()
+    if oauth:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth
     cwd = body.cwd or os.path.expanduser("~")
 
     async def event_stream():
