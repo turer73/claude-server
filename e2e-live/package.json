@@ -1,0 +1,16 @@
+{
+  "name": "e2e-live",
+  "private": true,
+  "description": "Live site E2E tests — Renderhane, PetVet, Kuafor, Panola",
+  "scripts": {
+    "test": "npx playwright test",
+    "test:renderhane": "npx playwright test tests/renderhane/",
+    "test:petvet": "npx playwright test tests/petvet/",
+    "test:kuafor": "npx playwright test tests/kuafor/",
+    "test:panola": "npx playwright test tests/panola/",
+    "report": "npx playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
+  }
+}
