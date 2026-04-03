@@ -43,6 +43,7 @@ from app.api.ws_status import router as ws_status_router
 from app.api.claude_code import router as claude_code_router
 from app.api.projects import router as projects_router
 from app.api.social import router as social_router
+from app.api.memory import router as memory_router, public_router as memory_public_router
 from app.exceptions import ServerError
 from app.middleware.request_id import RequestIdMiddleware
 from app.middleware.audit_log import AuditMiddleware
@@ -170,6 +171,8 @@ def create_app() -> FastAPI:
     app.include_router(claude_code_router)
     app.include_router(projects_router)
     app.include_router(social_router)
+    app.include_router(memory_router)
+    app.include_router(memory_public_router)
 
     @app.get("/health")
     async def health() -> dict:

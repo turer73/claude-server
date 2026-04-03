@@ -78,6 +78,18 @@ Workers: kuafor-api, petvet-api
 Pages: panola, kuafor-panel, petvet-panel
 D1: kuafor-db, petvet-db
 
+## Hafiza Sistemi (Merkezi SQLite)
+- **DB:** /opt/linux-ai-server/data/claude_memory.db
+- **API:** /api/v1/memory/* (X-Memory-Key header gerekli)
+- **Helper:** bash /opt/linux-ai-server/scripts/claude-memory.sh
+- **Skill:** /memory — dashboard, save, bug, fix, note, search, sessions, tasks
+- **Oturum basi:** bash /opt/linux-ai-server/scripts/memory-session-start.sh
+- **Cihazlar:** klipper (linux), windows-masaustu, windows-laptop, android-telefon
+- **Tablolar:** memories, sessions, tasks_log, discoveries, notes, devices, device_projects, command_log
+
+Her oturum basinda `memory-session-start.sh` calistir, acik buglari ve okunmamis notlari kontrol et.
+Her oturum sonunda /memory save ile oturumu kaydet.
+
 ## Komutlar
 sudo systemctl restart linux-ai-server
 journalctl -u linux-ai-server -f
