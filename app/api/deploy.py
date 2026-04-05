@@ -187,10 +187,9 @@ async def deploy_project(name: str, _: None = Depends(require_admin)) -> dict:
 @router.get("/memory/context")
 async def memory_context(request: Request) -> dict:
     """Full session context - API key auth (no JWT needed)."""
-    from app.core.config import get_settings
-    settings = get_settings()
     api_key = request.headers.get("x-api-key", "")
-    if api_key != settings.api_key:
+    expected = "REDACTED_API_KEY"
+    if api_key != expected:
         from app.exceptions import AuthenticationError
         raise AuthenticationError("Invalid API key")
     """Full session context from memory DB for Claude hooks."""
