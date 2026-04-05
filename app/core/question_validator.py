@@ -126,7 +126,7 @@ class QuestionValidator:
         game = q.get("game")
         if game not in VALID_GAMES:
             _add("game", "invalid_game", "critical", f"Geçersiz game: {game!r}")
-            return errors  # game bozuksa diğer kontroller anlamsız
+            return errors
 
         # 2. category-game uyumu
         category = q.get("category")
@@ -154,7 +154,75 @@ class QuestionValidator:
                      "Soru AKTİF ama content bozuk!")
             return errors
 
-        # 6. content.question (question veya sentence alanı)
+        # Detect content type for format-specific validation
+        content_type = content.get("type", "multiple_choice")
+
+        # --- cloze_test: passage + questions[] alt dizisi ---
+        if content_type == "cloze_test":
+            return self._validate_cloze_test(q, content, errors, _add)
+
+        # --- dialogue: lines[] + options + correct ---
+        if content_type == "dialogue":
+            return self._validate_dialogue(q, content, errors, _add)
+
+        # --- Standard format: question/sentence + options + answer/correct ---
+        return self._validate_standard(q, content, errors, _add)
+
+    def _validate_options_and_answer(
+        self, content: dict, errors: list[ValidationError],
+        _add, *, field_prefix: str = "content",
+    ) -> bool:
+        """Validate options array and answer/correct field. Returns True if options are valid."""
+        options = content.get("options")
+        if not isinstance(options, list):
+            _add(f"{field_prefix}.options", "options_not_list", "critical",
+                 f"options bir liste değil: {type(options).__name__}")
+            return False
+
+        opt_count = len(options)
+        if opt_count < EXPECTED_OPTIONS_COUNT[0]:
+            _add(f"{field_prefix}.options", "too_few_options", "warning",
+                 f"Seçenek sayısı az: {opt_count} (beklenen ≥{EXPECTED_OPTIONS_COUNT[0]})")
+        elif opt_count > EXPECTED_OPTIONS_COUNT[1]:
+            _add(f"{field_prefix}.options", "too_many_options", "warning",
+                 f"Seçenek sayısı fazla: {opt_count} (beklenen ≤{EXPECTED_OPTIONS_COUNT[1]})")
+
+        # empty options
+        for i, opt in enumerate(options):
+            if not opt or (isinstance(opt, str) and not opt.strip()):
+                _add(f"{field_prefix}.options", "empty_option", "warning",
+                     f"Seçenek [{i}] boş")
+
+        # duplicate options
+        str_options = [str(o).strip().lower() for o in options if o]
+        if len(str_options) != len(set(str_options)):
+            seen: set[str] = set()
+            dupes = [o for o in str_options if o in seen or seen.add(o)]  # type: ignore[func-returns-value]
+            _add(f"{field_prefix}.options", "duplicate_options", "warning",
+                 f"Tekrar eden seçenek(ler): {dupes[:3]}")
+
+        # answer/correct field (both names accepted)
+        answer = content.get("answer") if content.get("answer") is not None else content.get("correct")
+        if answer is None:
+            _add(f"{field_prefix}.answer", "missing_answer", "critical",
+                 "Cevap (answer/correct) alanı yok")
+        elif not isinstance(answer, int):
+            _add(f"{field_prefix}.answer", "answer_not_int", "critical",
+                 f"Cevap integer değil: {type(answer).__name__} ({answer!r})")
+        elif answer < 0:
+            _add(f"{field_prefix}.answer", "negative_answer", "critical",
+                 f"Cevap negatif: {answer}")
+        elif answer >= opt_count:
+            _add(f"{field_prefix}.answer", "answer_out_of_bounds", "critical",
+                 f"Cevap index ({answer}) ≥ seçenek sayısı ({opt_count})")
+
+        return True
+
+    def _validate_standard(
+        self, q: dict, content: dict, errors: list[ValidationError], _add,
+    ) -> list[ValidationError]:
+        """Validate standard multiple_choice format (question/sentence + options + answer/correct)."""
+        # question text: question, sentence, or passage accepted
         question_text = content.get("question") or content.get("sentence") or ""
         if not question_text or not isinstance(question_text, str):
             _add("content.question", "missing_question_text", "critical",
@@ -167,64 +235,93 @@ class QuestionValidator:
                 _add("content.question", "too_long", "warning",
                      f"Soru metni çok uzun ({len(question_text)} karakter)")
 
-        # 7. content.options
-        options = content.get("options")
-        if not isinstance(options, list):
-            _add("content.options", "options_not_list", "critical",
-                 f"options bir liste değil: {type(options).__name__}")
-            if q.get("is_active"):
-                _add("is_active", "active_but_broken", "critical",
-                     "Soru AKTİF ama options bozuk!")
+        valid_opts = self._validate_options_and_answer(content, errors, _add)
+        if not valid_opts and q.get("is_active"):
+            _add("is_active", "active_but_broken", "critical",
+                 "Soru AKTİF ama options bozuk!")
             return errors
 
-        opt_count = len(options)
-        if opt_count < EXPECTED_OPTIONS_COUNT[0]:
-            _add("content.options", "too_few_options", "warning",
-                 f"Seçenek sayısı az: {opt_count} (beklenen ≥{EXPECTED_OPTIONS_COUNT[0]})")
-        elif opt_count > EXPECTED_OPTIONS_COUNT[1]:
-            _add("content.options", "too_many_options", "warning",
-                 f"Seçenek sayısı fazla: {opt_count} (beklenen ≤{EXPECTED_OPTIONS_COUNT[1]})")
-
-        # 8. empty options
-        for i, opt in enumerate(options):
-            if not opt or (isinstance(opt, str) and not opt.strip()):
-                _add("content.options", "empty_option", "warning",
-                     f"Seçenek [{i}] boş")
-
-        # 9. duplicate options
-        str_options = [str(o).strip().lower() for o in options if o]
-        if len(str_options) != len(set(str_options)):
-            seen = set()
-            dupes = [o for o in str_options if o in seen or seen.add(o)]  # type: ignore[func-returns-value]
-            _add("content.options", "duplicate_options", "warning",
-                 f"Tekrar eden seçenek(ler): {dupes[:3]}")
-
-        # 10. content.answer
-        answer = content.get("answer")
-        if answer is None:
-            _add("content.answer", "missing_answer", "critical", "Cevap (answer) alanı yok")
-        elif not isinstance(answer, int):
-            _add("content.answer", "answer_not_int", "critical",
-                 f"Cevap integer değil: {type(answer).__name__} ({answer!r})")
-        elif answer < 0:
-            _add("content.answer", "negative_answer", "critical",
-                 f"Cevap negatif: {answer}")
-        elif answer >= opt_count:
-            _add("content.answer", "answer_out_of_bounds", "critical",
-                 f"Cevap index ({answer}) ≥ seçenek sayısı ({opt_count})")
-
-        # 11. active but broken
+        # active but broken
         if q.get("is_active") and any(e.severity == "critical" for e in errors):
-            # Sadece henüz eklenmemişse ekle
             if not any(e.rule == "active_but_broken" for e in errors):
                 _add("is_active", "active_but_broken", "critical",
                      "Soru AKTİF ama kritik hatalar var!")
 
-        # 12. external_id format (opsiyonel)
+        # external_id
         ext_id = q.get("external_id")
         if ext_id and not isinstance(ext_id, str):
             _add("external_id", "invalid_external_id", "info",
                  f"external_id string değil: {type(ext_id).__name__}")
+
+        return errors
+
+    def _validate_cloze_test(
+        self, q: dict, content: dict, errors: list[ValidationError], _add,
+    ) -> list[ValidationError]:
+        """Validate cloze_test format: passage + questions[] sub-array."""
+        # passage text
+        passage = content.get("passage", "")
+        if not passage or not isinstance(passage, str):
+            _add("content.passage", "missing_question_text", "critical",
+                 "Cloze test passage metni yok")
+        elif len(passage.strip()) < MIN_QUESTION_LENGTH:
+            _add("content.passage", "too_short", "info",
+                 f"Passage çok kısa ({len(passage)} karakter)")
+
+        # questions sub-array
+        questions = content.get("questions")
+        if not isinstance(questions, list) or not questions:
+            _add("content.questions", "missing_cloze_questions", "critical",
+                 "Cloze test questions dizisi yok veya boş")
+            if q.get("is_active"):
+                _add("is_active", "active_but_broken", "critical",
+                     "Soru AKTİF ama cloze questions bozuk!")
+            return errors
+
+        # Validate each sub-question
+        for i, sub_q in enumerate(questions):
+            if not isinstance(sub_q, dict):
+                _add(f"content.questions[{i}]", "invalid_sub_question", "critical",
+                     f"Alt soru [{i}] dict değil")
+                continue
+            self._validate_options_and_answer(
+                sub_q, errors, _add, field_prefix=f"content.questions[{i}]",
+            )
+
+        # active but broken
+        if q.get("is_active") and any(e.severity == "critical" for e in errors):
+            if not any(e.rule == "active_but_broken" for e in errors):
+                _add("is_active", "active_but_broken", "critical",
+                     "Soru AKTİF ama kritik hatalar var!")
+
+        return errors
+
+    def _validate_dialogue(
+        self, q: dict, content: dict, errors: list[ValidationError], _add,
+    ) -> list[ValidationError]:
+        """Validate dialogue format: lines[] + options + correct."""
+        # lines array
+        lines = content.get("lines")
+        if not isinstance(lines, list) or not lines:
+            _add("content.lines", "missing_dialogue_lines", "critical",
+                 "Dialogue lines dizisi yok veya boş")
+        else:
+            has_blank = any(
+                isinstance(l, dict) and "----" in l.get("line", "")
+                for l in lines
+            )
+            if not has_blank:
+                _add("content.lines", "no_blank_in_dialogue", "warning",
+                     "Dialogue'da boşluk (----) bulunamadı")
+
+        # options + correct — use shared validator
+        self._validate_options_and_answer(content, errors, _add)
+
+        # active but broken
+        if q.get("is_active") and any(e.severity == "critical" for e in errors):
+            if not any(e.rule == "active_but_broken" for e in errors):
+                _add("is_active", "active_but_broken", "critical",
+                     "Soru AKTİF ama kritik hatalar var!")
 
         return errors
 
