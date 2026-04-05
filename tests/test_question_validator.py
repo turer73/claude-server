@@ -61,15 +61,54 @@ def make_question(**overrides) -> dict:
 
 
 def make_wordquest(**content_overrides) -> dict:
+    """WordQuest uses 'correct' instead of 'answer' and 'sentence' instead of 'question'."""
     content = {
-        "question": "The most powerful ---- to parachuting is fear.",
+        "type": "multiple_choice",
+        "sentence": "The most powerful ---- to parachuting is fear.",
         "options": ["resemblance", "adjustment", "deterrent", "submission", "adherence"],
-        "answer": 2,
+        "correct": 2,
+        "structure": None,
     }
     content.update(content_overrides)
     return make_question(
         id="test-wq-001", game="wordquest", category="vocabulary",
         level_tag="C1", content=content,
+    )
+
+
+def make_cloze_test(**overrides) -> dict:
+    content = {
+        "type": "cloze_test",
+        "passage": "The human immune system protects the body. White blood cells (1)---- pathogens and (2)---- antibodies.",
+        "blanks": 2,
+        "questions": [
+            {"number": 1, "correct": 0, "options": ["detect", "ignore", "create", "destroy"]},
+            {"number": 2, "correct": 1, "options": ["block", "produce", "prevent", "resist"]},
+        ],
+    }
+    content.update(overrides)
+    return make_question(
+        id="test-cloze-001", game="wordquest", category="cloze_test",
+        content=content, **{k: v for k, v in overrides.items() if k not in content},
+    )
+
+
+def make_dialogue(**overrides) -> dict:
+    content = {
+        "type": "dialogue",
+        "lines": [
+            {"speaker": "A", "line": "I want to switch careers."},
+            {"speaker": "B", "line": "What draws you to education?"},
+            {"speaker": "A", "line": "----"},
+            {"speaker": "B", "line": "Have you looked into training programmes?"},
+        ],
+        "options": ["I want to inspire the next generation.", "Finance pays more.", "I am not sure.", "Education is easier."],
+        "correct": 0,
+    }
+    content.update(overrides)
+    return make_question(
+        id="test-dialogue-001", game="wordquest", category="dialogue",
+        content=content, **{k: v for k, v in overrides.items() if k not in content},
     )
 
 
@@ -193,9 +232,10 @@ class TestContentValidation:
     def test_sentence_field_accepted(self, validator):
         """WordQuest uses 'sentence' instead of 'question'."""
         q = make_question(content={
+            "type": "multiple_choice",
             "sentence": "The ---- of the project was delayed significantly.",
             "options": ["completion", "compete", "complex", "compact"],
-            "answer": 0,
+            "correct": 0,
         })
         errors = validator.validate_question(q)
         assert not any(e.rule == "missing_question_text" for e in errors)
@@ -585,3 +625,110 @@ class TestEdgeCases:
         assert "too_few_options" in rules
         assert "duplicate_options" in rules
         assert "answer_out_of_bounds" in rules
+
+
+# ============================================================
+# 15. correct field (WordQuest format)
+# ============================================================
+
+class TestCorrectField:
+    def test_correct_field_accepted(self, validator):
+        """WordQuest uses 'correct' instead of 'answer'."""
+        q = make_wordquest()
+        errors = validator.validate_question(q)
+        assert not any(e.rule == "missing_answer" for e in errors)
+
+    def test_correct_out_of_bounds(self, validator):
+        q = make_wordquest(correct=10)
+        errors = validator.validate_question(q)
+        assert any(e.rule == "answer_out_of_bounds" for e in errors)
+
+    def test_both_answer_and_correct(self, validator):
+        """If both exist, answer takes precedence."""
+        q = make_question(content={
+            "question": "Hangisi doğrudur? Birden fazla alan testi.",
+            "options": ["A", "B", "C", "D"],
+            "answer": 1,
+            "correct": 2,
+        })
+        errors = validator.validate_question(q)
+        assert errors == []
+
+
+# ============================================================
+# 16. Cloze test format
+# ============================================================
+
+class TestClozeTestFormat:
+    def test_valid_cloze_test(self, validator):
+        q = make_cloze_test()
+        errors = validator.validate_question(q)
+        assert errors == []
+
+    def test_missing_passage(self, validator):
+        q = make_cloze_test(passage=None)
+        errors = validator.validate_question(q)
+        assert any(e.rule == "missing_question_text" for e in errors)
+
+    def test_missing_questions_array(self, validator):
+        q = make_cloze_test(questions=None)
+        errors = validator.validate_question(q)
+        assert any(e.rule == "missing_cloze_questions" for e in errors)
+
+    def test_empty_questions_array(self, validator):
+        q = make_cloze_test(questions=[])
+        errors = validator.validate_question(q)
+        assert any(e.rule == "missing_cloze_questions" for e in errors)
+
+    def test_sub_question_bad_answer(self, validator):
+        q = make_cloze_test(questions=[
+            {"number": 1, "correct": 10, "options": ["A", "B", "C", "D"]},
+        ])
+        errors = validator.validate_question(q)
+        assert any(e.rule == "answer_out_of_bounds" for e in errors)
+
+    def test_sub_question_missing_options(self, validator):
+        q = make_cloze_test(questions=[
+            {"number": 1, "correct": 0},
+        ])
+        errors = validator.validate_question(q)
+        assert any(e.rule == "options_not_list" for e in errors)
+
+
+# ============================================================
+# 17. Dialogue format
+# ============================================================
+
+class TestDialogueFormat:
+    def test_valid_dialogue(self, validator):
+        q = make_dialogue()
+        errors = validator.validate_question(q)
+        assert errors == []
+
+    def test_missing_lines(self, validator):
+        q = make_dialogue(lines=None)
+        errors = validator.validate_question(q)
+        assert any(e.rule == "missing_dialogue_lines" for e in errors)
+
+    def test_no_blank_in_dialogue(self, validator):
+        q = make_dialogue(lines=[
+            {"speaker": "A", "line": "Hello"},
+            {"speaker": "B", "line": "Hi"},
+        ])
+        errors = validator.validate_question(q)
+        assert any(e.rule == "no_blank_in_dialogue" for e in errors)
+
+    def test_dialogue_bad_answer(self, validator):
+        q = make_dialogue(correct=10)
+        errors = validator.validate_question(q)
+        assert any(e.rule == "answer_out_of_bounds" for e in errors)
+
+    def test_dialogue_missing_answer(self, validator):
+        content = {
+            "type": "dialogue",
+            "lines": [{"speaker": "A", "line": "----"}],
+            "options": ["A", "B", "C", "D"],
+        }
+        q = make_question(game="wordquest", category="dialogue", content=content)
+        errors = validator.validate_question(q)
+        assert any(e.rule == "missing_answer" for e in errors)
