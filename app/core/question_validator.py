@@ -22,7 +22,7 @@ VALID_CATEGORIES: dict[str, list[str]] = {
     "matematik": ["sayilar", "problemler", "geometri", "denklemler", "fonksiyonlar", "olasilik"],
     "turkce": ["paragraf", "dil_bilgisi", "sozcuk", "anlam_bilgisi", "yazim_kurallari"],
     "fen": ["fizik", "kimya", "biyoloji"],
-    "sosyal": ["tarih", "cografya", "felsefe"],
+    "sosyal": ["tarih", "cografya", "felsefe", "sosyoloji"],
     "wordquest": [
         "vocabulary", "grammar", "cloze_test", "dialogue",
         "restatement", "sentence_completion", "phrasal_verbs",
@@ -193,8 +193,9 @@ class QuestionValidator:
                 _add(f"{field_prefix}.options", "empty_option", "warning",
                      f"Seçenek [{i}] boş")
 
-        # duplicate options
-        str_options = [str(o).strip().lower() for o in options if o]
+        # duplicate options (case-sensitive — yazım kuralları ve genetik sorularında
+        # büyük/küçük harf farkı anlam taşır)
+        str_options = [str(o).strip() for o in options if o]
         if len(str_options) != len(set(str_options)):
             seen: set[str] = set()
             dupes = [o for o in str_options if o in seen or seen.add(o)]  # type: ignore[func-returns-value]
