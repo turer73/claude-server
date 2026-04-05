@@ -347,6 +347,68 @@ def get_tool_definitions() -> list[dict]:
             "description": "List all notes in Claude's workspace",
             "inputSchema": {"type": "object", "properties": {}},
         },
+        # ── Memory DB Tools ──
+        {
+            "name": "memory_context",
+            "description": "Get full session context from memory DB: active projects, recent sessions, pending tasks, unread discoveries. Call this at the START of every conversation to load context.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "memory_query",
+            "description": "Query memory DB with flexible SQL. Tables: memories, sessions, tasks_log, devices, device_projects, discoveries, notes. Use for specific lookups.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "sql": {"type": "string", "description": "SELECT query (read-only)"},
+                },
+                "required": ["sql"],
+            },
+        },
+        {
+            "name": "memory_save",
+            "description": "Save or update a memory entry (project info, decision, feedback, reference). Use type: project|decision|feedback|reference",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string", "enum": ["project", "decision", "feedback", "reference"]},
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["type", "name", "content"],
+            },
+        },
+        {
+            "name": "memory_log_session",
+            "description": "Log current session summary when conversation ends or major milestone reached",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string"},
+                    "tasks_completed": {"type": "string"},
+                    "files_changed": {"type": "string"},
+                    "device_name": {"type": "string"},
+                    "platform": {"type": "string"},
+                },
+                "required": ["summary", "device_name", "platform"],
+            },
+        },
+        {
+            "name": "memory_log_task",
+            "description": "Log a completed task with project, description, and changed files",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string"},
+                    "task": {"type": "string"},
+                    "status": {"type": "string", "enum": ["done", "failed", "blocked", "in_progress"]},
+                    "files_changed": {"type": "string"},
+                    "details": {"type": "string"},
+                    "device_name": {"type": "string"},
+                },
+                "required": ["project", "task", "status", "device_name"],
+            },
+        },
         # ── VPS Bridge Tools ──
         {
             "name": "vps_exec",
@@ -742,6 +804,123 @@ def execute_tool(name: str, arguments: dict) -> str:
                     if os.path.isfile(fp):
                         notes.append({"name": f, "size": os.path.getsize(fp)})
             return json.dumps({"notes": notes})
+
+        # ── Memory DB Tools ──
+        elif name == "memory_context":
+            import sqlite3
+            db = "/opt/linux-ai-server/data/claude_memory.db"
+            try:
+                conn = sqlite3.connect(db)
+                conn.row_factory = sqlite3.Row
+                c = conn.cursor()
+                result = {}
+
+                # Active projects
+                c.execute("SELECT name, description, content FROM memories WHERE type='project' AND active=1 ORDER BY updated_at DESC")
+                result["active_projects"] = [{"name": r["name"], "description": r["description"], "content": r["content"][:500]} for r in c.fetchall()]
+
+                # Recent sessions (last 5)
+                c.execute("SELECT date, device_name, platform, summary FROM sessions ORDER BY id DESC LIMIT 5")
+                result["recent_sessions"] = [dict(r) for r in c.fetchall()]
+
+                # Pending/recent tasks (last 10)
+                c.execute("SELECT project, task, status, device_name, created_at FROM tasks_log ORDER BY id DESC LIMIT 10")
+                result["recent_tasks"] = [dict(r) for r in c.fetchall()]
+
+                # Unread discoveries
+                c.execute("SELECT project, type, title, details FROM discoveries WHERE resolved=0 ORDER BY id DESC LIMIT 10")
+                result["unresolved_discoveries"] = [dict(r) for r in c.fetchall()]
+
+                # Devices
+                c.execute("SELECT name, platform, last_seen FROM devices")
+                result["devices"] = [dict(r) for r in c.fetchall()]
+
+                # Active feedback/decisions
+                c.execute("SELECT name, description, content FROM memories WHERE type IN ('feedback','decision') AND active=1")
+                result["active_rules"] = [{"name": r["name"], "description": r["description"]} for r in c.fetchall()]
+
+                conn.close()
+                return json.dumps(result, ensure_ascii=False)
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+        elif name == "memory_query":
+            import sqlite3
+            sql = arguments.get("sql", "")
+            if not sql.strip().upper().startswith("SELECT"):
+                return json.dumps({"error": "Only SELECT queries allowed"})
+            try:
+                conn = sqlite3.connect("/opt/linux-ai-server/data/claude_memory.db")
+                conn.row_factory = sqlite3.Row
+                c = conn.cursor()
+                c.execute(sql)
+                rows = [dict(r) for r in c.fetchall()]
+                conn.close()
+                return json.dumps({"rows": rows, "count": len(rows)}, ensure_ascii=False)
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+        elif name == "memory_save":
+            import sqlite3
+            from datetime import datetime
+            db = "/opt/linux-ai-server/data/claude_memory.db"
+            try:
+                conn = sqlite3.connect(db)
+                c = conn.cursor()
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                # Upsert by name
+                c.execute("SELECT id FROM memories WHERE name=?", (arguments["name"],))
+                existing = c.fetchone()
+                if existing:
+                    c.execute("UPDATE memories SET content=?, description=?, updated_at=?, active=1 WHERE id=?",
+                              (arguments["content"], arguments.get("description", ""), now, existing[0]))
+                    action = "updated"
+                else:
+                    c.execute("INSERT INTO memories (type, name, description, content, created_at, updated_at, active, read_count) VALUES (?,?,?,?,?,?,1,0)",
+                              (arguments["type"], arguments["name"], arguments.get("description", ""), arguments["content"], now, now))
+                    action = "created"
+                conn.commit()
+                conn.close()
+                return json.dumps({"action": action, "name": arguments["name"]})
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+        elif name == "memory_log_session":
+            import sqlite3
+            from datetime import datetime
+            db = "/opt/linux-ai-server/data/claude_memory.db"
+            try:
+                conn = sqlite3.connect(db)
+                c = conn.cursor()
+                now = datetime.now().strftime("%Y-%m-%d")
+                c.execute("SELECT COALESCE(MAX(session_num),0)+1 FROM sessions")
+                next_num = c.fetchone()[0]
+                c.execute("INSERT INTO sessions (session_num, date, summary, tasks_completed, files_changed, device_name, platform, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                          (next_num, now, arguments["summary"], arguments.get("tasks_completed",""), arguments.get("files_changed",""),
+                           arguments["device_name"], arguments["platform"], datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                conn.commit()
+                conn.close()
+                return json.dumps({"logged": True, "session_num": next_num})
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+        elif name == "memory_log_task":
+            import sqlite3
+            from datetime import datetime
+            db = "/opt/linux-ai-server/data/claude_memory.db"
+            try:
+                conn = sqlite3.connect(db)
+                c = conn.cursor()
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                c.execute("INSERT INTO tasks_log (project, task, status, files_changed, details, device_name, created_at) VALUES (?,?,?,?,?,?,?)",
+                          (arguments["project"], arguments["task"], arguments["status"],
+                           arguments.get("files_changed",""), arguments.get("details",""),
+                           arguments["device_name"], now))
+                conn.commit()
+                conn.close()
+                return json.dumps({"logged": True, "task": arguments["task"]})
+            except Exception as e:
+                return json.dumps({"error": str(e)})
 
         # ── VPS Bridge Tools ──
         elif name == "vps_exec":
