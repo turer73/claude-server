@@ -184,6 +184,32 @@ async def deploy_project(name: str, _: None = Depends(require_admin)) -> dict:
 # ── Claude Workspace ─────────────────────────────
 
 
+@router.get("/memory/context")
+async def memory_context(_: None = Depends(require_admin)) -> dict:
+    """Full session context from memory DB for Claude hooks."""
+    import sqlite3
+    db = Path("/opt/linux-ai-server/data/claude_memory.db")
+    if not db.exists():
+        return {"error": "memory DB not found"}
+    try:
+        conn = sqlite3.connect(str(db))
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        result = {}
+        c.execute("SELECT name, description, content FROM memories WHERE type='project' AND active=1 ORDER BY updated_at DESC")
+        result["projects"] = [{"name": r["name"], "description": r["description"], "content": (r["content"] or "")[:500]} for r in c.fetchall()]
+        c.execute("SELECT date, device_name, summary FROM sessions ORDER BY id DESC LIMIT 3")
+        result["recent_sessions"] = [dict(r) for r in c.fetchall()]
+        c.execute("SELECT project, task, status, device_name, created_at FROM tasks_log ORDER BY id DESC LIMIT 5")
+        result["recent_tasks"] = [dict(r) for r in c.fetchall()]
+        c.execute("SELECT name, description FROM memories WHERE type IN ('feedback','decision') AND active=1")
+        result["rules"] = [dict(r) for r in c.fetchall()]
+        conn.close()
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.get("/workspace/notes")
 async def list_notes(_: None = Depends(require_admin)) -> dict:
     """List Claude's workspace notes."""
