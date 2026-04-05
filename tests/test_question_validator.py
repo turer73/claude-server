@@ -303,14 +303,15 @@ class TestOptionsValidation:
         errors = validator.validate_question(q)
         assert any(e.rule == "duplicate_options" for e in errors)
 
-    def test_duplicate_case_insensitive(self, validator):
+    def test_case_difference_not_duplicate(self, validator):
+        """Case differences are NOT duplicates (e.g. yazım kuralları, genetik soruları)."""
         q = make_question(content={
-            "question": "Test sorusu?",
+            "question": "Hangisi doğrudur büyük küçük harf testi?",
             "options": ["hello", "HELLO", "world", "test"],
             "answer": 2,
         })
         errors = validator.validate_question(q)
-        assert any(e.rule == "duplicate_options" for e in errors)
+        assert not any(e.rule == "duplicate_options" for e in errors)
 
 
 # ============================================================
