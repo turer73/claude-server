@@ -16,6 +16,8 @@ build/
 .mcp.json
 venv/
 node_modules/
+e2e-live/test-results/
+e2e-live/report/
 *.ko
 *.o
 *.mod

@@ -113,8 +113,6 @@ def create_app() -> FastAPI:
     _cors_origins = [
         "http://localhost:8420",
         "http://localhost:3000",
-        "http://REDACTED_LAN_IP:8420",
-        "http://REDACTED_TAILSCALE_IP:8420",
         "https://panola.app",
         "https://petvet.panola.app",
         "https://kuafor.panola.app",

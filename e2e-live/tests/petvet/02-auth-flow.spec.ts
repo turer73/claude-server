@@ -1,8 +1,8 @@
 import { test, expect } from "@playwright/test";
 
-const PHONE = process.env.PETVET_PHONE || "REDACTED_PHONE";
-const PASS = process.env.PETVET_PASS || "test1234";
-const PIN = process.env.PETVET_PIN || "1234";
+const PHONE = process.env.PETVET_PHONE || "";
+const PASS = process.env.PETVET_PASS || "";
+const PIN = process.env.PETVET_PIN || "";
 
 async function login(page: import("@playwright/test").Page) {
   await page.goto("/login");

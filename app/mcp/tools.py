@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 from app.core.kernel_bridge import KernelBridge
 from app.core.system_manager import SystemManager
@@ -928,7 +929,8 @@ def execute_tool(name: str, arguments: dict) -> str:
             from app.core.config import get_settings
             settings = get_settings()
             executor = ShellExecutor(whitelist=settings.shell_whitelist)
-            cmd = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@REDACTED_VPS_IP '{arguments['command']}'"
+            vps_host = os.environ.get("VPS_HOST", "")
+            cmd = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 {vps_host} '{arguments['command']}'"
             result = _run_async(executor.execute(cmd, timeout=arguments.get("timeout", 30)))
             return json.dumps(result)
 
@@ -937,7 +939,8 @@ def execute_tool(name: str, arguments: dict) -> str:
             from app.core.config import get_settings
             settings = get_settings()
             executor = ShellExecutor(whitelist=settings.shell_whitelist)
-            cmd = "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@REDACTED_VPS_IP 'hostname && uptime -p && free -h | head -2 && df -h / | tail -1 && docker ps --format \"{{.Names}}: {{.Status}}\" | head -15'"
+            vps_host = os.environ.get("VPS_HOST", "")
+            cmd = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 {vps_host} 'hostname && uptime -p && free -h | head -2 && df -h / | tail -1 && docker ps --format \"{{{{.Names}}}}: {{{{.Status}}}}\" | head -15'"
             result = _run_async(executor.execute(cmd, timeout=15))
             return json.dumps(result)
 
@@ -946,7 +949,8 @@ def execute_tool(name: str, arguments: dict) -> str:
             from app.core.config import get_settings
             settings = get_settings()
             executor = ShellExecutor(whitelist=settings.shell_whitelist)
-            cmd = """ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@REDACTED_VPS_IP 'for u in https://coolify.panola.app https://uptime.panola.app https://n8n.panola.app https://analytics.panola.app; do echo "$u $(curl -s -o /dev/null -w %{http_code} $u)"; done'"""
+            vps_host = os.environ.get("VPS_HOST", "")
+            cmd = f"""ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 {vps_host} 'for u in https://coolify.panola.app https://uptime.panola.app https://n8n.panola.app https://analytics.panola.app; do echo "$u $(curl -s -o /dev/null -w %{{http_code}} $u)"; done'"""
             result = _run_async(executor.execute(cmd, timeout=20))
             return json.dumps(result)
 

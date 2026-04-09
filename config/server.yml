@@ -5,7 +5,7 @@ server:
   debug: false
 
 auth:
-  jwt_secret: "REDACTED_JWT_SECRET"
+  # jwt_secret: Set via JWT_SECRET env var
   token_expiry_hours: 24
   api_key_enabled: true
 
@@ -21,8 +21,7 @@ security:
   allowed_origins:
     - "http://localhost:8420"
     - "http://localhost:3000"
-    - "http://REDACTED_LAN_IP:8420"
-    - "http://REDACTED_TAILSCALE_IP:8420"
     - "https://panola.app"
     - "https://petvet.panola.app"
     - "https://kuafor.panola.app"
+    # Internal IPs: set via CORS_EXTRA_ORIGINS env var

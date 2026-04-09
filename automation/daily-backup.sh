@@ -3,7 +3,7 @@
 source /opt/linux-ai-server/.env 2>/dev/null
 
 API=http://localhost:8420
-KEY=REDACTED_API_KEY
+KEY="${API_KEY:?API_KEY env var required}"
 LOG=/var/log/linux-ai-server/backup.log
 
 send_telegram() {

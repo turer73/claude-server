@@ -1,19 +1,13 @@
 # Linux-AI Server — Klipper Sunucu
 
 ## Sunucu Bilgileri
-- **Hostname:** klipper
-- **OS:** Ubuntu 24.04.4 LTS (Noble Numbat)
-- **Kernel:** 6.8.0-101-generic + 3 ozel modul (proc_linux_ai, nf_linux_ai, usb_linux_ai)
-- **CPU:** Intel i5, 4 cekirdek
-- **RAM:** 8GB DDR4
-- **Disk:** 108GB SSD, 34GB kullanildi
-- **Ag:** LAN REDACTED_LAN_IP | Tailscale REDACTED_TAILSCALE_IP
-- **Kullanici:** klipperos (sudo NOPASSWD)
+- **OS:** Ubuntu 24.04 LTS
+- **Kernel:** 6.8.0 + 3 ozel modul (proc_linux_ai, nf_linux_ai, usb_linux_ai)
+- **Ag:** .env dosyasinda tanimli (LAN_IP, TAILSCALE_IP)
 
 ## Servis
-- **Port:** 8420
 - **Framework:** FastAPI + Uvicorn (2 worker)
-- **DB:** SQLite (/opt/linux-ai-server/data/server.db)
+- **DB:** SQLite (yol .env'de tanimli)
 - **Auth:** JWT + API Key
 - **Systemd:** linux-ai-server.service
 
@@ -54,37 +48,31 @@ Coolify, Gitea, Paperless-ngx, Grafana, Prometheus, n8n, ChromaDB
 
 ### PetVet (petvet.panola.app)
 Veteriner + pet shop yonetimi. React 19, Cloudflare Workers + D1. 64 test.
-GitHub: github.com/turer73/petvet
-Test: REDACTED_PHONE / test1234
+Test credential'lari .env dosyasinda.
 
 ### Kuafor SaaS (kuafor.panola.app)
 Salon yonetimi. React 19, Cloudflare Workers + D1. 50 test.
-GitHub: github.com/turer73/kuafor
-Test: REDACTED_PHONE / test1234
+Test credential'lari .env dosyasinda.
 
 ### Panola ERP (panola.app)
 Siparis/uretim/stok/CRM. React 19, Supabase. 898 test.
 
-### Linux-AI Server (REDACTED_TAILSCALE_IP:8420)
+### Linux-AI Server
 Bu sunucu. FastAPI, kernel modulleri, 430 test.
-GitHub: github.com/turer73/claude-server
 
 ## VPS (Contabo)
 Coolify, Uptime Kuma, n8n, Plausible. /api/v1/vps/exec ile yonetim.
+VPS erisim bilgileri .env dosyasinda (VPS_HOST).
 
 ## Cloudflare
-Hesap: REDACTED_EMAIL
 Workers: kuafor-api, petvet-api
 Pages: panola, kuafor-panel, petvet-panel
 D1: kuafor-db, petvet-db
+Hesap bilgileri .env dosyasinda.
 
 ## Hafiza Sistemi (Merkezi SQLite)
-- **DB:** /opt/linux-ai-server/data/claude_memory.db
 - **API:** /api/v1/memory/* (X-Memory-Key header gerekli)
-- **Helper:** bash /opt/linux-ai-server/scripts/claude-memory.sh
 - **Skill:** /memory — dashboard, save, bug, fix, note, search, sessions, tasks
-- **Oturum basi:** bash /opt/linux-ai-server/scripts/memory-session-start.sh
-- **Cihazlar:** klipper (linux), windows-masaustu, windows-laptop, android-telefon
 - **Tablolar:** memories, sessions, tasks_log, discoveries, notes, devices, device_projects, command_log
 
 Her oturum basinda `memory-session-start.sh` calistir, acik buglari ve okunmamis notlari kontrol et.
@@ -94,4 +82,3 @@ Her oturum sonunda /memory save ile oturumu kaydet.
 sudo systemctl restart linux-ai-server
 journalctl -u linux-ai-server -f
 docker ps -a
-cd /opt/linux-ai-server/kernel && make && sudo insmod proc_linux_ai.ko

@@ -4,7 +4,7 @@
 # Instagram token geçerliliğini kontrol eder, <7 gün kala otomatik yeniler.
 source /opt/linux-ai-server/.env 2>/dev/null
 
-VPS="root@REDACTED_VPS_IP"
+VPS="${VPS_HOST:?VPS_HOST env var required}"
 SSH="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 $VPS"
 CLI="cd /opt/panola-social && /opt/panola-social/venv/bin/python main.py"
 LOG=/var/log/linux-ai-server/social-token.log

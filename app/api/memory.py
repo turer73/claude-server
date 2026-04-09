@@ -895,7 +895,7 @@ async def get_onboard_prompt(device_name: str):
 
         stats = db.execute("SELECT COUNT(*) FROM sessions WHERE device_name=?", (device_name,)).fetchone()[0]
 
-        API = "http://REDACTED_TAILSCALE_IP:8420/api/v1/memory"
+        API = "http://localhost:8420/api/v1/memory"
         KEY = MEMORY_API_KEY
         DN = device_name
 
@@ -967,7 +967,7 @@ async def get_project_scan_prompt(device_name: str):
         if not device:
             raise HTTPException(404, f"Device '{device_name}' not found")
 
-        API = "http://REDACTED_TAILSCALE_IP:8420/api/v1/memory"
+        API = "http://localhost:8420/api/v1/memory"
         KEY = MEMORY_API_KEY
         DN = device_name
 

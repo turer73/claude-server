@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -138,7 +139,8 @@ class TaskQueue:
                 success = r.get("exit_code", 1) == 0
 
             elif job_type == "vps_exec":
-                cmd = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@REDACTED_VPS_IP '{payload.get('command', 'echo noop')}'"
+                vps_host = os.environ.get("VPS_HOST", "")
+                cmd = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 {vps_host} '{payload.get('command', 'echo noop')}'"
                 r = await self._executor.execute(cmd, timeout=payload.get("timeout", 60))
                 result_text = r.get("stdout", "") + r.get("stderr", "")
                 success = r.get("exit_code", 1) == 0

@@ -11,8 +11,8 @@ Otomatik olarak projeyi analiz edip merkezi hafıza DB'sine kaydedecek.
 Sen merkezi hafıza sistemime bağlı bir Claude asistansın. Bu projeyi analiz edip tüm bilgileri klipper sunucumdaki hafıza DB'sine kaydet.
 
 ## Bağlantı Bilgileri
-- **API:** http://REDACTED_TAILSCALE_IP:8420/api/v1/memory
-- **Auth:** X-Memory-Key: REDACTED_MEMORY_KEY
+- **API:** http://YOUR_SERVER_IP:8420/api/v1/memory
+- **Auth:** X-Memory-Key: YOUR_MEMORY_API_KEY
 - **Cihaz adın:** BURAYA_CIHAZ_ADI (klipper / windows-masaustu / windows-laptop / android-telefon)
 
 ## Görevin
@@ -32,9 +32,9 @@ Git remote URL veya klasör adından kısa bir proje adı çıkar (küçük harf
 
 ### 3. Cihaz-Proje Eşleşmesi Kaydet
 ```bash
-curl -s -X POST http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/device-projects \
+curl -s -X POST http://YOUR_SERVER_IP:8420/api/v1/memory/device-projects \
   -H "Content-Type: application/json" \
-  -H "X-Memory-Key: REDACTED_MEMORY_KEY" \
+  -H "X-Memory-Key: YOUR_MEMORY_API_KEY" \
   -d '{"device_name":"CIHAZ","project":"PROJE_ADI","local_path":"TAM_YOL"}'
 ```
 
@@ -47,9 +47,9 @@ Git geçmişi ve kod yapısından çıkar. Her biri için:
 - Önemli entegrasyonlar
 
 ```bash
-curl -s -X POST http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/discoveries \
+curl -s -X POST http://YOUR_SERVER_IP:8420/api/v1/memory/discoveries \
   -H "Content-Type: application/json" \
-  -H "X-Memory-Key: REDACTED_MEMORY_KEY" \
+  -H "X-Memory-Key: YOUR_MEMORY_API_KEY" \
   -d '{"device_name":"CIHAZ","project":"PROJE_ADI","type":"architecture","title":"BAŞLIK","details":"DETAY"}'
 ```
 
@@ -57,9 +57,9 @@ curl -s -X POST http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/discoveries \
 README, issues, TODO, veya commit mesajlarından gelecek planları çıkar:
 
 ```bash
-curl -s -X POST http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/discoveries \
+curl -s -X POST http://YOUR_SERVER_IP:8420/api/v1/memory/discoveries \
   -H "Content-Type: application/json" \
-  -H "X-Memory-Key: REDACTED_MEMORY_KEY" \
+  -H "X-Memory-Key: YOUR_MEMORY_API_KEY" \
   -d '{"device_name":"CIHAZ","project":"PROJE_ADI","type":"plan","title":"BAŞLIK","details":"DETAY"}'
 ```
 
@@ -67,9 +67,9 @@ curl -s -X POST http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/discoveries \
 Açık issue'lar, bilinen sorunlar, TODO/FIXME/HACK yorumları:
 
 ```bash
-curl -s -X POST http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/discoveries \
+curl -s -X POST http://YOUR_SERVER_IP:8420/api/v1/memory/discoveries \
   -H "Content-Type: application/json" \
-  -H "X-Memory-Key: REDACTED_MEMORY_KEY" \
+  -H "X-Memory-Key: YOUR_MEMORY_API_KEY" \
   -d '{"device_name":"CIHAZ","project":"PROJE_ADI","type":"bug","title":"BAŞLIK","details":"DETAY"}'
 ```
 
@@ -78,9 +78,9 @@ Commit mesajlarında "fix", "hotfix", "workaround", "hack" geçenleri tespit et:
 
 ```bash
 # type: "fix" veya "workaround"
-curl -s -X POST http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/discoveries \
+curl -s -X POST http://YOUR_SERVER_IP:8420/api/v1/memory/discoveries \
   -H "Content-Type: application/json" \
-  -H "X-Memory-Key: REDACTED_MEMORY_KEY" \
+  -H "X-Memory-Key: YOUR_MEMORY_API_KEY" \
   -d '{"device_name":"CIHAZ","project":"PROJE_ADI","type":"fix","title":"BAŞLIK","details":"DETAY"}'
 ```
 
@@ -88,9 +88,9 @@ curl -s -X POST http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/discoveries \
 Son 2 aydaki önemli commit'leri task olarak kaydet (her commit değil, anlamlı iş birimleri):
 
 ```bash
-curl -s -X POST http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/tasks \
+curl -s -X POST http://YOUR_SERVER_IP:8420/api/v1/memory/tasks \
   -H "Content-Type: application/json" \
-  -H "X-Memory-Key: REDACTED_MEMORY_KEY" \
+  -H "X-Memory-Key: YOUR_MEMORY_API_KEY" \
   -d '{"device_name":"CIHAZ","project":"PROJE_ADI","task":"NE YAPILDI","status":"completed","details":"DETAY"}'
 ```
 
@@ -98,9 +98,9 @@ curl -s -X POST http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/tasks \
 En sonda, yaptığın analizi oturum olarak kaydet:
 
 ```bash
-curl -s -X POST http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/sessions \
+curl -s -X POST http://YOUR_SERVER_IP:8420/api/v1/memory/sessions \
   -H "Content-Type: application/json" \
-  -H "X-Memory-Key: REDACTED_MEMORY_KEY" \
+  -H "X-Memory-Key: YOUR_MEMORY_API_KEY" \
   -d '{"device_name":"CIHAZ","summary":"PROJE_ADI proje analizi ve hafıza DB kaydı. X architecture, Y plan, Z bug, W fix, T task kaydedildi.","tasks_completed":["proje analizi","hafıza DB kaydı"],"notes":"İlk kayıt"}'
 ```
 
@@ -135,8 +135,8 @@ Oturum:    #N kaydedildi
 ## Mevcut Kayıtları Kontrol
 Başlamadan önce bu projenin zaten kaydı var mı kontrol et:
 ```bash
-curl -s -H "X-Memory-Key: REDACTED_MEMORY_KEY" \
-  "http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/projects/PROJE_ADI"
+curl -s -H "X-Memory-Key: YOUR_MEMORY_API_KEY" \
+  "http://YOUR_SERVER_IP:8420/api/v1/memory/projects/PROJE_ADI"
 ```
 
 Varsa sadece eksikleri tamamla, yoksa sıfırdan kaydet.

@@ -23,9 +23,9 @@ allowed-tools: Bash(curl *)
 
 Klipper sunucusundaki SQLite hafıza veritabanına API üzerinden bağlan.
 
-**API:** `http://REDACTED_TAILSCALE_IP:8420/api/v1/memory`
-**Key:** `REDACTED_MEMORY_KEY`
-**Header:** `X-Memory-Key: REDACTED_MEMORY_KEY`
+**API:** `http://YOUR_SERVER_IP:8420/api/v1/memory`
+**Key:** `YOUR_MEMORY_API_KEY`
+**Header:** `X-Memory-Key: YOUR_MEMORY_API_KEY`
 **Cihaz:** Bu cihazın adını `$DEVICE` olarak kullan (windows-masaustu veya windows-laptop)
 
 ## Komutlar
@@ -40,23 +40,23 @@ Klipper sunucusundaki SQLite hafıza veritabanına API üzerinden bağlan.
 ## API Çağrıları
 
 Dashboard:
-curl -s -H "X-Memory-Key: KEY" http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/dashboard
+curl -s -H "X-Memory-Key: KEY" http://YOUR_SERVER_IP:8420/api/v1/memory/dashboard
 
 Session kaydet:
-curl -s -X POST http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/sessions -H "Content-Type: application/json" -H "X-Memory-Key: KEY" -d '{"device_name":"DEVICE","summary":"ÖZET"}'
+curl -s -X POST http://YOUR_SERVER_IP:8420/api/v1/memory/sessions -H "Content-Type: application/json" -H "X-Memory-Key: KEY" -d '{"device_name":"DEVICE","summary":"ÖZET"}'
 
 Bug kaydet:
-curl -s -X POST http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/discoveries -H "Content-Type: application/json" -H "X-Memory-Key: KEY" -d '{"device_name":"DEVICE","project":"PROJE","type":"bug","title":"BAŞLIK","details":"DETAY"}'
+curl -s -X POST http://YOUR_SERVER_IP:8420/api/v1/memory/discoveries -H "Content-Type: application/json" -H "X-Memory-Key: KEY" -d '{"device_name":"DEVICE","project":"PROJE","type":"bug","title":"BAŞLIK","details":"DETAY"}'
 
 Bug çöz:
-curl -s -X PUT http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/discoveries/ID/resolve -H "X-Memory-Key: KEY"
+curl -s -X PUT http://YOUR_SERVER_IP:8420/api/v1/memory/discoveries/ID/resolve -H "X-Memory-Key: KEY"
 
 Not:
-curl -s -X POST http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/notes -H "Content-Type: application/json" -H "X-Memory-Key: KEY" -d '{"from_device":"DEVICE","title":"BAŞLIK","content":"İÇERİK"}'
+curl -s -X POST http://YOUR_SERVER_IP:8420/api/v1/memory/notes -H "Content-Type: application/json" -H "X-Memory-Key: KEY" -d '{"from_device":"DEVICE","title":"BAŞLIK","content":"İÇERİK"}'
 
 Ara:
-curl -s -H "X-Memory-Key: KEY" "http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/search?q=KELIME"
+curl -s -H "X-Memory-Key: KEY" "http://YOUR_SERVER_IP:8420/api/v1/memory/search?q=KELIME"
 
 Okunmamış notlar:
-curl -s -H "X-Memory-Key: KEY" "http://REDACTED_TAILSCALE_IP:8420/api/v1/memory/notes?device=DEVICE&unread_only=true"
+curl -s -H "X-Memory-Key: KEY" "http://YOUR_SERVER_IP:8420/api/v1/memory/notes?device=DEVICE&unread_only=true"
 ```

@@ -20,9 +20,9 @@ LOG_FILE="$RESULTS_DIR/e2e-$TIMESTAMP.log"
 # Env
 source /opt/linux-ai-server/.env 2>/dev/null || true
 export E2E_EMAIL="${E2E_EMAIL:-demo@panola.app}"
-export E2E_PASSWORD="${E2E_PASSWORD:-REDACTED_DEMO_PASS}"
+export E2E_PASSWORD="${E2E_PASSWORD:?E2E_PASSWORD env var required}"
 export E2E_BASE_URL="${E2E_BASE_URL:-https://panola.app}"
-export E2E_SUPABASE_URL="${E2E_SUPABASE_URL:-http://REDACTED_VPS_IP:8080}"
+export E2E_SUPABASE_URL="${E2E_SUPABASE_URL:?E2E_SUPABASE_URL env var required}"
 export E2E_SUPABASE_KEY="${E2E_SUPABASE_KEY:-}"
 export CI=true
 

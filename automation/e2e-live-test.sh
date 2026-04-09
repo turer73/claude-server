@@ -14,7 +14,7 @@ send_telegram() {
 }
 
 # Get Renderhane API key from VPS
-RH_KEY=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@REDACTED_VPS_IP \
+RH_KEY=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${VPS_HOST} \
     "grep RENDERHANE_API_KEY /opt/panola-social/.env | cut -d= -f2" 2>/dev/null)
 
 cd "$DIR" || exit 1
@@ -22,7 +22,7 @@ cd "$DIR" || exit 1
 # Run tests (skip API v1 to save credits — run manually when needed)
 RENDERHANE_API_KEY="$RH_KEY" \
 E2E_EMAIL="${E2E_EMAIL:-demo@panola.app}" \
-E2E_PASSWORD="${E2E_PASSWORD:-REDACTED_DEMO_PASS}" \
+E2E_PASSWORD="${E2E_PASSWORD:?E2E_PASSWORD env var required}" \
 npx playwright test --grep-invert="API v1" --reporter=json 2>/dev/null > results.json
 
 # Parse results

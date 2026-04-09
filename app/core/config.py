@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     server_debug: bool = False
 
     # Auth
-    jwt_secret: str = "REDACTED_JWT_SECRET"
+    jwt_secret: str = ""  # Set via JWT_SECRET env var or config/server.yml
     jwt_ttl_hours: int = 1
     api_key_header: str = "X-API-Key"
 

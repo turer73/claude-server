@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
-const PHONE = process.env.KUAFOR_PHONE || "REDACTED_PHONE";
-const PASS = process.env.KUAFOR_PASS || "test1234";
+const PHONE = process.env.KUAFOR_PHONE || "";
+const PASS = process.env.KUAFOR_PASS || "";
 
 async function login(page: import("@playwright/test").Page) {
   await page.goto("/login");

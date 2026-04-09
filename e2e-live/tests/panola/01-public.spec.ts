@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
-const EMAIL = process.env.E2E_EMAIL || "demo@panola.app";
-const PASS = process.env.E2E_PASSWORD || "REDACTED_DEMO_PASS";
+const EMAIL = process.env.E2E_EMAIL || "";
+const PASS = process.env.E2E_PASSWORD || "";
 
 test.describe("Panola — Public & Auth", () => {
   test("landing page loads", async ({ page }) => {
