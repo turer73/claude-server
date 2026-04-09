@@ -4,7 +4,7 @@
 # Üretilen draft içerikleri onaylar ve haftanın günlerine zamanlar.
 source /opt/linux-ai-server/.env 2>/dev/null
 
-VPS="root@REDACTED_VPS_IP"
+VPS="${VPS_HOST:?Set VPS_HOST in .env}"
 SSH="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 $VPS"
 SOCIAL_DIR="/opt/panola-social"
 PYTHON="$SOCIAL_DIR/venv/bin/python"

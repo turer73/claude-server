@@ -7,6 +7,7 @@ Supports: shell commands, VPS commands, deploy triggers, scheduled tasks.
 from __future__ import annotations
 
 import asyncio
+import os
 import json
 import time
 from collections import deque
@@ -138,7 +139,7 @@ class TaskQueue:
                 success = r.get("exit_code", 1) == 0
 
             elif job_type == "vps_exec":
-                cmd = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@REDACTED_VPS_IP '{payload.get('command', 'echo noop')}'"
+                cmd = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 " + os.environ.get("VPS_HOST", "") + " '{payload.get('command', 'echo noop')}'"
                 r = await self._executor.execute(cmd, timeout=payload.get("timeout", 60))
                 result_text = r.get("stdout", "") + r.get("stderr", "")
                 success = r.get("exit_code", 1) == 0

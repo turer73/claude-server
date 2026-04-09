@@ -2,7 +2,7 @@
 # Run a named agent via API
 AGENT_NAME=$1
 API=http://localhost:8420
-KEY=REDACTED_API_KEY
+KEY="${API_KEY:?Set API_KEY in .env}"
 TOKEN=$(curl -s -X POST $API/api/v1/auth/token -H "Content-Type: application/json" -d "{\"api_key\": \"$KEY\"}" | python3 -c "import sys,json; print(json.load(sys.stdin)[\"access_token\"])" 2>/dev/null)
 
 if [ -z "$TOKEN" ]; then

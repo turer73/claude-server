@@ -11,8 +11,9 @@ from app.middleware.dependencies import require_admin
 
 router = APIRouter(prefix="/api/v1/vps", tags=["vps"])
 
-VPS_HOST = "root@REDACTED_VPS_IP"
-VPS_SSH = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 {VPS_HOST}"
+def _vps_ssh():
+    s = get_settings()
+    return f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 {s.vps_host}"
 
 
 class VPSCommandRequest(BaseModel):

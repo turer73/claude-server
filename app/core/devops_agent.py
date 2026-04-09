@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import json
 import time
 from collections import deque
@@ -67,7 +68,7 @@ PLAYBOOKS: dict[str, list[dict]] = {
 
 CRITICAL_SERVICES = ["linux-ai-server", "ollama"]
 CRITICAL_CONTAINERS = ["n8n", "prometheus", "grafana", "chromadb", "paperless"]
-VPS_HOST = "root@REDACTED_VPS_IP"
+VPS_HOST = os.environ.get("VPS_HOST", "")
 VPS_SSH = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 {VPS_HOST}"
 VPS_CONTAINERS = ["coolify", "panola-postgres", "panola-caddy", "n8n", "uptime-kuma", "plausible-plausible-1"]
 

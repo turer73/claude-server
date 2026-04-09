@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Optional
 
@@ -15,7 +16,7 @@ from app.middleware.dependencies import require_admin
 
 router = APIRouter(prefix="/api/v1/social", tags=["social"])
 
-VPS_HOST = "root@REDACTED_VPS_IP"
+VPS_HOST = os.environ.get("VPS_HOST", "")
 VPS_SSH = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 {VPS_HOST}"
 SOCIAL_DIR = "/opt/panola-social"
 PYTHON = f"{SOCIAL_DIR}/venv/bin/python"

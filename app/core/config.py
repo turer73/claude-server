@@ -28,9 +28,15 @@ class Settings(BaseSettings):
     server_debug: bool = False
 
     # Auth
-    jwt_secret: str = "REDACTED_JWT_SECRET"
+    jwt_secret: str = "change-me-via-env"
     jwt_ttl_hours: int = 1
     api_key_header: str = "X-API-Key"
+
+    # Network
+    vps_host: str = ""
+    lan_ip: str = "127.0.0.1"
+    tailscale_ip: str = "127.0.0.1"
+    memory_api_key: str = ""
 
     # Database
     db_path: str = "/var/lib/linux-ai-server/server.db"

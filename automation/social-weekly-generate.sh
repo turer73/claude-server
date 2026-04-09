@@ -4,7 +4,7 @@
 # Haftalık içerik planı + postları otomatik üretir.
 source /opt/linux-ai-server/.env 2>/dev/null
 
-VPS="root@REDACTED_VPS_IP"
+VPS="${VPS_HOST:?Set VPS_HOST in .env}"
 SSH="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 $VPS"
 CLI="cd /opt/panola-social && /opt/panola-social/venv/bin/python main.py"
 LOG=/var/log/linux-ai-server/social-generate.log
