@@ -1,0 +1,368 @@
+{
+  "name": "Scrape business emails from Google Maps — Fixed",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "79df5316-c210-478d-a4de-35b5d31924ee",
+      "name": "Remove Duplicate URLs",
+      "type": "n8n-nodes-base.removeDuplicates",
+      "position": [1872, 992],
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": { "options": {} },
+      "id": "985ac7e3-b501-4079-a043-780677c94b52",
+      "name": "Loop over queries",
+      "type": "n8n-nodes-base.splitInBatches",
+      "position": [1568, 512],
+      "typeVersion": 3
+    },
+    {
+      "parameters": {
+        "url": "=https://www.google.com/maps/search/{{ $json.query }}",
+        "options": {
+          "allowUnauthorizedCerts": false,
+          "timeout": 15000,
+          "headers": {
+            "header": [
+              {
+                "name": "User-Agent",
+                "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+              },
+              {
+                "name": "Accept-Language",
+                "value": "en-US,en;q=0.9"
+              }
+            ]
+          }
+        }
+      },
+      "id": "3a478935-781b-4fb1-bdc7-fcf8be1334bc",
+      "name": "Search Google Maps with query",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1280, 992],
+      "executeOnce": false,
+      "typeVersion": 4.2,
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// FIX #1: null-safe + improved regex\n// Orijinal: data.match(regex) null donebilir → crash\n// Orijinal regex: sadece domain yakaliyordu, cok gurultulu\n\nconst data = $input.first().json.data || ''\n\n// URL'leri yakala (scheme + domain + optional path)\nconst regex = /https?:\\/\\/[^\\s\"'<>\\)\\]]+/g\nconst rawUrls = data.match(regex) || []\n\n// Sadece domain'e indir (path'ler Google Maps icinde yaniltici olabilir)\nconst domains = rawUrls.map(url => {\n  try {\n    const u = new URL(url)\n    return u.origin\n  } catch(e) {\n    return url.match(/https?:\\/\\/[^\\/]+/)?.[0] || null\n  }\n}).filter(Boolean)\n\n// Tekrarlari kaldir\nconst uniqueDomains = [...new Set(domains)]\n\n// Bilinen gereksiz domain'leri hemen filtrele (downstream yukunu azalt)\nconst excludePattern = /google\\.|gstatic\\.|googleapis\\.|ggpht\\.|schema\\.org|example\\.com|w3\\.org|mozilla\\.org|apache\\.org|cloudflare|cdn\\.|fonts\\./i\n\nconst filtered = uniqueDomains.filter(url => !excludePattern.test(url))\n\nif (filtered.length === 0) {\n  return [{json: {url: '', _empty: true, _info: 'Google Maps sonuclarindan hicbir isletme URL\\'si bulunamadi'}}]\n}\n\nreturn filtered.map(url => ({json: {url: url}}))"
+      },
+      "id": "477e7d55-b7d6-4b20-ac44-dd1f443e270a",
+      "name": "Scrape URLs from results",
+      "type": "n8n-nodes-base.code",
+      "position": [1472, 992],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "041797f2-2fe2-41dc-902a-d34050b9b304",
+              "operator": { "type": "string", "operation": "notRegex" },
+              "leftValue": "={{ $json.url }}",
+              "rightValue": "=(google|gstatic|ggpht|schema\\.org|example\\.com|sentry-next\\.wixpress\\.com|imli\\.com|sentry\\.wixpress\\.com|ingest\\.sentry\\.io|w3\\.org|cloudflare|cdn\\.|fonts\\.)"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a5b67e45-a3f6-41d2-aa58-c26a441c41b2",
+      "name": "Filter irrelevant URLs",
+      "type": "n8n-nodes-base.filter",
+      "position": [1680, 992],
+      "typeVersion": 2.2
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {
+          "timeout": 10000,
+          "headers": {
+            "header": [
+              {
+                "name": "User-Agent",
+                "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+              }
+            ]
+          }
+        }
+      },
+      "id": "40ec6d1f-1c98-4c9f-8499-c5893c3df7b9",
+      "name": "Request web page for URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [2272, 1072],
+      "typeVersion": 4.2,
+      "alwaysOutputData": false,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": { "options": { "reset": false } },
+      "id": "12f662a8-c55f-409a-b381-f37ab6dd3794",
+      "name": "Loop over URLs",
+      "type": "n8n-nodes-base.splitInBatches",
+      "position": [2080, 992],
+      "typeVersion": 3,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": { "options": {} },
+      "id": "e6957d05-3533-48ae-9cc1-ee4ac026a2a6",
+      "name": "Loop over pages",
+      "type": "n8n-nodes-base.splitInBatches",
+      "position": [2288, 720],
+      "typeVersion": 3,
+      "alwaysOutputData": false,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// FIX #2: null-safe + undefined-safe + improved email regex\n// Orijinal: data.match() null donebilir → downstream crash\n// Orijinal: data undefined olabilir → TypeError\n// Orijinal regex: .webp, .svg, .css, .js gibi uzantilar filtrelenmiyordu\n\nconst data = $json.data || ''\n\nif (!data || data.length < 10) {\n  return {json: {emails: []}}\n}\n\n// Iyilestirilmis email regex:\n// - Resim uzantilari: png, jpg, gif, jpeg, webp, svg, ico\n// - Kod/font uzantilari: css, js, woff, woff2, map, ttf, eot\n// - Diger: pdf (genelde dosya adi, email degil)\nconst emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.(?!png|jpg|gif|jpeg|webp|svg|ico|css|js|woff2?|map|ttf|eot|pdf\\b)[a-zA-Z]{2,}/g\n\nconst emails = data.match(emailRegex) || []\n\n// Acikca gecersiz olan emailleri temizle\nconst cleaned = emails.filter(email => {\n  // Cok kisa domain (a@b.cc minimum)\n  if (email.length < 6) return false\n  // Sayi ile baslayan domain (genelde IP veya hash)\n  const domain = email.split('@')[1]\n  if (/^\\d/.test(domain)) return false\n  // Placeholder/test emailleri\n  if (/example\\.com|test\\.com|email\\.com|domain\\.com|placeholder/i.test(email)) return false\n  return true\n})\n\nreturn {json: {emails: cleaned}}"
+      },
+      "id": "018621c0-0ea9-4865-b110-b6d0727f0588",
+      "name": "Scrape emails from page",
+      "type": "n8n-nodes-base.code",
+      "position": [2448, 832],
+      "typeVersion": 2,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "fieldsToAggregate": {
+          "fieldToAggregate": [{ "fieldToAggregate": "emails" }]
+        },
+        "options": { "mergeLists": true }
+      },
+      "id": "5509b8e2-a6fc-4fbe-bbc5-1bc1d5de1c98",
+      "name": "Aggregate arrays of emails",
+      "type": "n8n-nodes-base.aggregate",
+      "position": [2608, 704],
+      "typeVersion": 1
+    },
+    {
+      "parameters": { "fieldToSplitOut": "emails", "options": {} },
+      "id": "f1f01f03-b62e-453f-b938-ffe4f9b3f4de",
+      "name": "Split out into default data structure",
+      "type": "n8n-nodes-base.splitOut",
+      "position": [2832, 704],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "compare": "selectedFields",
+        "fieldsToCompare": "emails",
+        "options": {}
+      },
+      "id": "ec27d665-d9c1-4f10-9c52-0d5ea89cbf77",
+      "name": "Remove duplicate emails",
+      "type": "n8n-nodes-base.removeDuplicates",
+      "position": [3056, 704],
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "041797f2-2fe2-41dc-902a-d34050b9b304",
+              "operator": { "type": "string", "operation": "notRegex" },
+              "leftValue": "={{ $json.emails }}",
+              "rightValue": "=(google|gstatic|ggpht|schema\\.org|example\\.com|sentry\\.wixpress\\.com|sentry-next\\.wixpress\\.com|ingest\\.sentry\\.io|sentry\\.io|imli\\.com|noreply|no-reply|mailer-daemon|postmaster)"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4a071bf0-23ad-455b-b231-bafd3b32e4f8",
+      "name": "Filter irrelevant emails",
+      "type": "n8n-nodes-base.filter",
+      "position": [3248, 704],
+      "typeVersion": 2.2
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "mode": "list", "value": "" },
+        "sheetName": { "__rl": true, "mode": "list", "value": "" }
+      },
+      "id": "59675faa-2b0d-4ba5-82c7-dc5dedcad31e",
+      "name": "Save emails to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [3456, 704],
+      "typeVersion": 4.5,
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "HncC0A3Ykt90dJNd", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "93437e8b-4f8d-40a1-9585-cab1b556164a",
+      "name": "Starts scraper workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "position": [1056, 992],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {},
+      "id": "eed77477-777d-450d-a975-4d2848b1cf55",
+      "name": "Run workflow",
+      "type": "n8n-nodes-base.manualTrigger",
+      "position": [1328, 512],
+      "typeVersion": 1
+    },
+    {
+      "parameters": { "amount": 2 },
+      "id": "dffaf04e-d1d2-4002-9a69-f0904b61fc2d",
+      "name": "Wait between executions",
+      "type": "n8n-nodes-base.wait",
+      "position": [1952, 608],
+      "webhookId": "40eb11a9-0f7d-4932-993e-0052b69dbf9b",
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "workflowId": { "__rl": true, "mode": "id", "value": "={{ $workflow.id }}" },
+        "mode": "each",
+        "options": { "waitForSubWorkflow": false }
+      },
+      "id": "18787007-1d11-41b9-89c3-d5f69756eda7",
+      "name": "Execute scraper for query",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "position": [1776, 608],
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": { "amount": 1 },
+      "id": "b1c2d3e4-f5a6-7890-abcd-ef1234567890",
+      "name": "Wait between URL requests",
+      "type": "n8n-nodes-base.wait",
+      "position": [2464, 1072],
+      "webhookId": "c2d3e4f5-a6b7-8901-cdef-234567890abc",
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "content": "## DUZELTILMIS VERSIYON\n\nOrijinal template #2567 uzerinde yapilan duzeltmeler:\n\n**Kritik:**\n- Scrape URLs: null check eklendi (crash onlendi)\n- Scrape Emails: null + undefined check eklendi\n\n**Orta:**\n- Filter: bos ikinci kosul kaldirildi\n- URL regex iyilestirildi (pre-filtering eklendi)\n- HTTP isteklerine User-Agent header eklendi\n\n**Dusuk:**\n- HTTP timeout: Google Maps 15s, web page 10s\n- URL istekleri arasi 1s bekleme eklendi\n- Email regex: .webp/.svg/.css/.js filtreleri eklendi\n- Email filter: noreply/no-reply/mailer-daemon eklendi\n- Gecersiz email temizleme (placeholder, test, IP domain)",
+        "height": 380,
+        "width": 480,
+        "color": 4
+      },
+      "id": "aabb1122-3344-5566-7788-99aabbccddee",
+      "name": "Sticky Note - Changelog",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [368, 680],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## Setup\n1. \"Run workflow\" node'unda sorgu listesini tanimlayin\n2. **Google Sheets** node'unda document ve sheet secin\n3. Workflow'u calistirin",
+        "height": 140,
+        "width": 480,
+        "color": 5
+      },
+      "id": "67fcde25-05e4-437c-b799-4448baea7891",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [368, 464],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "**Rate Limit** — Sorgular arasi 2s bekleme",
+        "height": 80,
+        "color": 6
+      },
+      "id": "ac880457-44b4-4ff7-8440-b4107f8468bb",
+      "name": "Sticky Note2",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [1952, 500],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "### Scraper (sub-workflow)\nHer sorgu icin arka planda calisir.",
+        "height": 80,
+        "width": 480
+      },
+      "id": "d83afb3d-7b71-4b47-9b50-28837aac408c",
+      "name": "Sticky Note3",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [1056, 880],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "**Google Sheets** — documentId ve sheetName secmeyi unutmayin!",
+        "height": 80,
+        "color": 4
+      },
+      "id": "007b621a-3d41-4358-aa45-560a3c8e3414",
+      "name": "Sticky Note4",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [3456, 800],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "**Rate Limit** — URL istekleri arasi 1s bekleme (IP ban onleme)",
+        "height": 80,
+        "color": 6
+      },
+      "id": "ff112233-4455-6677-8899-aabbccddeeff",
+      "name": "Sticky Note - URL Rate Limit",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [2464, 964],
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "Run workflow": { "main": [[{ "node": "Loop over queries", "type": "main", "index": 0 }]] },
+    "Loop over URLs": { "main": [[{ "node": "Loop over pages", "type": "main", "index": 0 }], [{ "node": "Request web page for URL", "type": "main", "index": 0 }]] },
+    "Loop over pages": { "main": [[{ "node": "Aggregate arrays of emails", "type": "main", "index": 0 }], [{ "node": "Scrape emails from page", "type": "main", "index": 0 }]] },
+    "Loop over queries": { "main": [[], [{ "node": "Execute scraper for query", "type": "main", "index": 0 }]] },
+    "Remove Duplicate URLs": { "main": [[{ "node": "Loop over URLs", "type": "main", "index": 0 }]] },
+    "Filter irrelevant URLs": { "main": [[{ "node": "Remove Duplicate URLs", "type": "main", "index": 0 }]] },
+    "Remove duplicate emails": { "main": [[{ "node": "Filter irrelevant emails", "type": "main", "index": 0 }]] },
+    "Scrape emails from page": { "main": [[{ "node": "Loop over pages", "type": "main", "index": 0 }]] },
+    "Starts scraper workflow": { "main": [[{ "node": "Search Google Maps with query", "type": "main", "index": 0 }]] },
+    "Wait between executions": { "main": [[{ "node": "Loop over queries", "type": "main", "index": 0 }]] },
+    "Wait between URL requests": { "main": [[{ "node": "Loop over URLs", "type": "main", "index": 0 }]] },
+    "Filter irrelevant emails": { "main": [[{ "node": "Save emails to Google Sheet", "type": "main", "index": 0 }]] },
+    "Request web page for URL": { "main": [[{ "node": "Wait between URL requests", "type": "main", "index": 0 }]] },
+    "Scrape URLs from results": { "main": [[{ "node": "Filter irrelevant URLs", "type": "main", "index": 0 }]] },
+    "Execute scraper for query": { "main": [[{ "node": "Wait between executions", "type": "main", "index": 0 }]] },
+    "Aggregate arrays of emails": { "main": [[{ "node": "Split out into default data structure", "type": "main", "index": 0 }]] },
+    "Search Google Maps with query": { "main": [[{ "node": "Scrape URLs from results", "type": "main", "index": 0 }]] },
+    "Split out into default data structure": { "main": [[{ "node": "Remove duplicate emails", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "meta": {
+    "templateId": "2567",
+    "templateCredsSetupCompleted": true,
+    "instanceId": "0bded5cc5a2b2ff3ea0c9c6ce6764b6b8fb57fad5f2b0306a6654038cf34e547"
+  },
+  "id": "4xv9sorBHgZy2D7t",
+  "tags": []
+}

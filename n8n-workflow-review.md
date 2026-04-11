@@ -319,3 +319,49 @@ Her iki HTTP Request node'una da timeout ekleyin:
 | 8 | DUSUK | HTTP timeout/boyut limiti yok | Request web page for URL | Timeout ekle |
 | 9 | BILGI | Google Sheets yapilandirilmamis | Save emails to Google Sheet | documentId/sheetName ayarla |
 | 10 | BILGI | Sayfalama yok | Search Google Maps | Pagination mantigi ekle |
+
+---
+
+## 9. Uygulanan Duzeltmeler
+
+Duzeltilmis workflow: `n8n-workflows/google-maps-email-scraper-fixed.json`
+
+### Duzeltme Tablosu
+
+| # | Orijinal Sorun | Duzeltme | Dosyadaki Yer |
+|---|----------------|----------|---------------|
+| 1 | `data.match(regex)` null → crash | `\|\| []` + bos sonuc icin bilgi mesaji | Scrape URLs from results — jsCode |
+| 2 | `data.match(emailRegex)` null | `$json.data \|\| ''` + `\|\| []` + bos data kontrolu | Scrape emails from page — jsCode |
+| 3 | Bos filter kosulu ("" == "") | Ikinci kosul tamamen kaldirildi | Filter irrelevant URLs — conditions |
+| 4 | URL regex cok genis | Pre-filtering + `new URL()` ile domain cikartma + exclude pattern | Scrape URLs from results — jsCode |
+| 5 | Google Maps bot tespiti | User-Agent + Accept-Language header eklendi | Search Google Maps — options.headers |
+| 6 | Email regex eksik filtreler | .webp, .svg, .css, .js, .woff2, .ico, .map, .ttf, .eot, .pdf eklendi | Scrape emails from page — jsCode |
+| 7 | URL istekleri arasi rate limit yok | "Wait between URL requests" node'u eklendi (1s) | Yeni node + connection degisikligi |
+| 8 | HTTP timeout yok | Google Maps: 15s, web page: 10s timeout | Her iki HTTP Request node — options.timeout |
+| 9 | Gecersiz email'ler gecebiliyor | Post-filter: kisa email, IP domain, placeholder temizleme | Scrape emails from page — jsCode |
+| 10 | Email filter'da noreply eksik | `noreply\|no-reply\|mailer-daemon\|postmaster` eklendi | Filter irrelevant emails — rightValue |
+
+### Duzeltilemeyenler (Durust Degerlendirme)
+
+| Sorun | Neden Duzeltilemez |
+|-------|-------------------|
+| Google Sheets document/sheet bos | Kullanicinin kendi Google hesabindan secmesi gerekiyor. n8n UI'da yapilmali. |
+| Google Maps SPA sorunu | Temel mimari kisitlama. HTTP GET ile JavaScript-rendered icerigi almak mumkun degil. Headless browser veya resmi API gerekir. Workflow'un "no third party API" vaadi bu noktada kisitidir. |
+| Sayfalama (pagination) yok | Google Maps sonuclari JavaScript ile yukleniyor. Sayfalama icin tamamen farkli bir yaklasim gerekir (headless browser, Maps API). Mevcut HTTP GET mimarisine eklenemez. |
+| Google ToS ihlali riski | Teknik duzeltme degil, yasal/etik karar. Kullanici farkinda olmali. |
+
+### Yeni Eklenen Node
+
+**Wait between URL requests** — URL istekleri arasina 1 saniye bekleme ekler.
+- ID: `b1c2d3e4-f5a6-7890-abcd-ef1234567890`
+- Baglanti degisikligi: `Request web page for URL` → ~~`Loop over URLs`~~ → `Wait between URL requests` → `Loop over URLs`
+
+### Akis Degisikligi (Onceki vs Sonraki)
+
+```
+ONCEKI:
+  Request web page for URL → Loop over URLs (dogrudan)
+
+SONRAKI:
+  Request web page for URL → Wait 1s → Loop over URLs (rate limited)
+```
