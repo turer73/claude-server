@@ -1,0 +1,378 @@
+{
+  "name": "Klipper System Auto-Repair",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "system-alert",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-a000-000000000001",
+      "name": "Receive Alert",
+      "type": "n8n-nodes-base.webhook",
+      "position": [400, 500],
+      "webhookId": "system-alert-webhook-001",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"received\": true, \"alert_id\": \"{{ $json.alert_id }}\"}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-a000-000000000002",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [620, 300],
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-event-check",
+              "operator": { "type": "string", "operation": "equals" },
+              "leftValue": "={{ $json.event }}",
+              "rightValue": "alert_detected"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-a000-000000000003",
+      "name": "Is New Alert?",
+      "type": "n8n-nodes-base.if",
+      "position": [620, 500],
+      "typeVersion": 2.2
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Sorun turune gore duzeltme komutu belirle\nconst source = $json.source || ''\nconst severity = $json.severity || 'warning'\n\nlet commands = []\nlet description = ''\nlet fixType = 'unknown'\n\nif (source === 'cpu') {\n  commands = ['ps aux --sort=-%cpu | head -10']\n  description = 'CPU yuksek - top processler kontrol ediliyor'\n  fixType = 'metric'\n} else if (source === 'memory') {\n  commands = [\n    'docker system prune -f --volumes 2>/dev/null || true',\n    'pip cache purge 2>/dev/null || true',\n    'find /tmp -type f -mtime +1 -delete 2>/dev/null || true',\n    'sync && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true'\n  ]\n  description = 'Bellek yuksek - Docker prune + cache temizleme + page cache drop'\n  fixType = 'metric'\n} else if (source === 'disk') {\n  commands = [\n    'docker system prune -f 2>/dev/null || true',\n    \"find /var/log -name '*.log' -size +50M -exec truncate -s 10M {} \\\\; 2>/dev/null || true\",\n    'journalctl --vacuum-size=100M 2>/dev/null || true'\n  ]\n  description = 'Disk dolu - Docker prune + log truncate + journal vacuum'\n  fixType = 'metric'\n} else if (source === 'temperature') {\n  commands = [\n    \"echo 'powersave' | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true\"\n  ]\n  description = 'Sicaklik yuksek - CPU governor powersave'\n  fixType = 'metric'\n} else if (source.startsWith('service:')) {\n  const svc = source.split(':')[1]\n  commands = [`systemctl restart ${svc}`]\n  description = `Servis restart: ${svc}`\n  fixType = 'service'\n} else if (source.startsWith('docker:')) {\n  const container = source.split(':')[1]\n  commands = [`docker start ${container}`]\n  description = `Container start: ${container}`\n  fixType = 'docker'\n} else {\n  commands = []\n  description = 'Bilinmeyen sorun - sadece izleniyor'\n  fixType = 'unknown'\n}\n\nreturn {\n  json: {\n    ...$json,\n    commands,\n    fix_description: description,\n    fix_type: fixType,\n    command_count: commands.length\n  }\n}"
+      },
+      "id": "a1b2c3d4-0001-4000-a000-000000000004",
+      "name": "Determine Fix",
+      "type": "n8n-nodes-base.code",
+      "position": [860, 500],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-has-commands",
+              "operator": { "type": "number", "operation": "gt" },
+              "leftValue": "={{ $json.command_count }}",
+              "rightValue": 0
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-a000-000000000005",
+      "name": "Has Fix Commands?",
+      "type": "n8n-nodes-base.if",
+      "position": [1080, 500],
+      "typeVersion": 2.2
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Her komut icin ayri item olustur\nconst commands = $json.commands || []\nconst items = commands.map((cmd, i) => ({\n  json: {\n    command: cmd,\n    step: i + 1,\n    total_steps: commands.length,\n    alert_source: $json.source,\n    fix_description: $json.fix_description,\n    alert_id: $json.alert_id,\n    severity: $json.severity\n  }\n}))\nreturn items"
+      },
+      "id": "a1b2c3d4-0001-4000-a000-000000000006",
+      "name": "Split Commands",
+      "type": "n8n-nodes-base.code",
+      "position": [1300, 400],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-a000-000000000007",
+      "name": "Loop Commands",
+      "type": "n8n-nodes-base.splitInBatches",
+      "position": [1500, 400],
+      "typeVersion": 3
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://linux-ai-server:8420/api/v1/shell/exec",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.LINUX_AI_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"command\": \"{{ $json.command }}\",\n  \"timeout\": 30\n}",
+        "options": {
+          "timeout": 35000
+        }
+      },
+      "id": "a1b2c3d4-0001-4000-a000-000000000008",
+      "name": "Execute Fix",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1700, 500],
+      "typeVersion": 4.2,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "id": "a1b2c3d4-0001-4000-a000-000000000009",
+      "name": "Wait Between Commands",
+      "type": "n8n-nodes-base.wait",
+      "position": [1900, 500],
+      "webhookId": "wait-between-cmds-001",
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "amount": 15
+      },
+      "id": "a1b2c3d4-0001-4000-a000-000000000010",
+      "name": "Wait for Fix Effect",
+      "type": "n8n-nodes-base.wait",
+      "position": [1740, 200],
+      "webhookId": "wait-fix-effect-001",
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://linux-ai-server:8420/api/v1/monitor/webhooks/trigger/verify_fix",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.LINUX_AI_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"alert_source\": \"{{ $('Determine Fix').item.json.source }}\"\n}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "a1b2c3d4-0001-4000-a000-000000000011",
+      "name": "Verify Fix",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1960, 200],
+      "typeVersion": 4.2,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-is-fixed",
+              "operator": { "type": "boolean", "operation": "true" },
+              "leftValue": "={{ $json.fixed }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-a000-000000000012",
+      "name": "Is Fixed?",
+      "type": "n8n-nodes-base.if",
+      "position": [2180, 200],
+      "typeVersion": 2.2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $env.TELEGRAM_CHAT_ID }}\",\n  \"parse_mode\": \"Markdown\",\n  \"text\": \"\u2705 *Klipper \u2014 n8n Otomatik D\u00fczeltme*\\nKaynak: `{{ $('Determine Fix').item.json.source }}`\\nYap\u0131lan: {{ $('Determine Fix').item.json.fix_description }}\\nDo\u011frulama: {{ $json.detail }}\\nDurum: *D\u00fczeltildi* \u2714\\n\ud83d\udd52 {{ $now.format('HH:mm dd/MM/yyyy') }}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "a1b2c3d4-0001-4000-a000-000000000013",
+      "name": "Telegram: Fixed",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [2420, 100],
+      "typeVersion": 4.2,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $env.TELEGRAM_CHAT_ID }}\",\n  \"parse_mode\": \"Markdown\",\n  \"text\": \"\u274c *Klipper \u2014 n8n D\u00fczeltilemedi*\\nKaynak: `{{ $('Determine Fix').item.json.source }}`\\nDenenen: {{ $('Determine Fix').item.json.fix_description }}\\nDurum: {{ $json.detail }}\\nDe\u011ferlendirme: *Manuel m\u00fcdahale gerekli*\\n\ud83d\udd52 {{ $now.format('HH:mm dd/MM/yyyy') }}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "a1b2c3d4-0001-4000-a000-000000000014",
+      "name": "Telegram: Not Fixed",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [2420, 300],
+      "typeVersion": 4.2,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://linux-ai-server:8420/api/v1/monitor/webhooks/receive",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"source\": \"n8n-auto-repair\",\n  \"event\": \"fix_completed\",\n  \"data\": {\n    \"alert_source\": \"{{ $('Determine Fix').item.json.source }}\",\n    \"fixed\": {{ $('Is Fixed?').item.json.fixed }},\n    \"detail\": \"{{ $json.detail || 'n/a' }}\",\n    \"fix_description\": \"{{ $('Determine Fix').item.json.fix_description }}\"\n  }\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "a1b2c3d4-0001-4000-a000-000000000015",
+      "name": "Log Result",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [2660, 200],
+      "typeVersion": 4.2,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "## Klipper System Auto-Repair\n\nDevOps agent sorun tespiti yaptiginda:\n1. Telegram bildirim gonderir\n2. Bu workflow'a webhook atar\n3. Workflow fix uygular\n4. 15s bekler\n5. Saglik kontrolu yapar\n6. Durust degerlendirme ile Telegram'a sonuc bildirir\n\n**Gerekli env vars:**\n- LINUX_AI_API_KEY\n- TELEGRAM_BOT_TOKEN\n- TELEGRAM_CHAT_ID",
+        "height": 300,
+        "width": 380,
+        "color": 4
+      },
+      "id": "a1b2c3d4-0001-4000-a000-000000000090",
+      "name": "Sticky Note - Info",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [380, 160],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "**Durust Dogrulama**\nFix sonrasi gercek metrik kontrolu yapar.\nSorun cozulmediyse acikca bildirir.",
+        "height": 80,
+        "width": 280,
+        "color": 6
+      },
+      "id": "a1b2c3d4-0001-4000-a000-000000000091",
+      "name": "Sticky Note - Verify",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [1940, 100],
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "Receive Alert": {
+      "main": [
+        [
+          { "node": "Respond OK", "type": "main", "index": 0 },
+          { "node": "Is New Alert?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Is New Alert?": {
+      "main": [
+        [{ "node": "Determine Fix", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Determine Fix": {
+      "main": [
+        [{ "node": "Has Fix Commands?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Fix Commands?": {
+      "main": [
+        [{ "node": "Split Commands", "type": "main", "index": 0 }],
+        [{ "node": "Wait for Fix Effect", "type": "main", "index": 0 }]
+      ]
+    },
+    "Split Commands": {
+      "main": [
+        [{ "node": "Loop Commands", "type": "main", "index": 0 }]
+      ]
+    },
+    "Loop Commands": {
+      "main": [
+        [{ "node": "Wait for Fix Effect", "type": "main", "index": 0 }],
+        [{ "node": "Execute Fix", "type": "main", "index": 0 }]
+      ]
+    },
+    "Execute Fix": {
+      "main": [
+        [{ "node": "Wait Between Commands", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait Between Commands": {
+      "main": [
+        [{ "node": "Loop Commands", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait for Fix Effect": {
+      "main": [
+        [{ "node": "Verify Fix", "type": "main", "index": 0 }]
+      ]
+    },
+    "Verify Fix": {
+      "main": [
+        [{ "node": "Is Fixed?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is Fixed?": {
+      "main": [
+        [{ "node": "Telegram: Fixed", "type": "main", "index": 0 }],
+        [{ "node": "Telegram: Not Fixed", "type": "main", "index": 0 }]
+      ]
+    },
+    "Telegram: Fixed": {
+      "main": [
+        [{ "node": "Log Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "Telegram: Not Fixed": {
+      "main": [
+        [{ "node": "Log Result", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "instanceId": "klipper-auto-repair"
+  },
+  "tags": []
+}

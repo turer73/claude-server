@@ -50,6 +50,9 @@ services:
       # Connect to linux-ai-server
       - LINUX_AI_SERVER_URL=http://linux-ai-server:8420
       - LINUX_AI_API_KEY=${DEFAULT_API_KEY:-}
+      # Telegram (for auto-repair workflow notifications)
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
     restart: unless-stopped
     depends_on:
       linux-ai-server:

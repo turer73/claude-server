@@ -117,6 +117,65 @@ async def trigger_action(action: str, request: Request):
         except Exception as e:
             return {"action": "backup_create", "success": False, "error": str(e)}
 
+    elif action == "verify_fix":
+        monitor = MonitorAgent()
+        metrics = monitor.collect_metrics()
+        alert_source = body.get("alert_source", "")
+        thresholds = {"cpu": 85, "memory": 85, "disk": 90, "temperature": 80}
+
+        fixed = False
+        detail = ""
+
+        if alert_source in ("cpu", "memory", "disk", "temperature"):
+            key_map = {
+                "cpu": "cpu_percent",
+                "memory": "memory_percent",
+                "disk": "disk_percent",
+                "temperature": "temperature",
+            }
+            key = key_map[alert_source]
+            current = metrics.get(key, 0) or 0
+            threshold = thresholds[alert_source]
+            fixed = current < threshold
+            detail = f"{alert_source}: {current:.1f}% (esik: {threshold}%)"
+        elif alert_source.startswith("service:"):
+            import subprocess
+            svc = alert_source.split(":", 1)[1]
+            try:
+                r = subprocess.run(
+                    ["systemctl", "is-active", svc],
+                    capture_output=True, text=True, timeout=5,
+                )
+                fixed = r.stdout.strip() == "active"
+                detail = f"Servis {svc}: {'active' if fixed else r.stdout.strip()}"
+            except Exception as e:
+                detail = f"Servis kontrol hatasi: {e}"
+        elif alert_source.startswith("docker:"):
+            import subprocess
+            container = alert_source.split(":", 1)[1]
+            try:
+                r = subprocess.run(
+                    ["docker", "ps", "--filter", f"name={container}", "--format", "{{.Status}}"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                fixed = "Up" in r.stdout
+                detail = f"Container {container}: {r.stdout.strip() or 'not running'}"
+            except Exception as e:
+                detail = f"Docker kontrol hatasi: {e}"
+        else:
+            # Genel saglik kontrolu
+            fixed = metrics["cpu_percent"] < 95 and metrics["memory_percent"] < 95
+            detail = "Genel saglik kontrolu"
+
+        return {
+            "action": "verify_fix",
+            "alert_source": alert_source,
+            "fixed": fixed,
+            "detail": detail,
+            "metrics": metrics,
+            "honest_assessment": "Sorun cozuldu" if fixed else "Sorun devam ediyor",
+        }
+
     else:
         return {
             "error": f"Unknown action: {action}",
@@ -125,5 +184,6 @@ async def trigger_action(action: str, request: Request):
                 "metrics_snapshot",
                 "alert_check",
                 "backup_create",
+                "verify_fix",
             ],
         }

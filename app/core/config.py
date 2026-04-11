@@ -88,6 +88,13 @@ class Settings(BaseSettings):
     coolify_token: str = ""
     coolify_url: str = ""
 
+    # Telegram
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+
+    # n8n
+    n8n_webhook_url: str = "http://localhost:5678/webhook/system-alert"
+
     # Logging
     log_level: str = "INFO"
     log_format: str = "json"

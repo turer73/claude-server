@@ -1,4 +1,7 @@
-"""Autonomous DevOps Agent — monitors, detects anomalies, auto-remediates."""
+"""Autonomous DevOps Agent — monitors, detects anomalies, auto-remediates.
+
+Pipeline: Detect → Telegram + n8n → Remediate → Verify → Report
+"""
 
 from __future__ import annotations
 
@@ -9,6 +12,8 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+
+import httpx
 
 from app.core.monitor_agent import MonitorAgent
 from app.core.shell_executor import ShellExecutor
@@ -253,6 +258,9 @@ class DevOpsAgent:
                 self._active_alerts[source] = alert
                 alerts.append(alert)
                 asyncio.create_task(self._store_alert(alert))
+                # Telegram + n8n bildirim (es zamanli)
+                asyncio.create_task(self._notify_telegram_alert(alert))
+                asyncio.create_task(self._notify_n8n(alert))
 
         return alerts
 
@@ -346,10 +354,15 @@ class DevOpsAgent:
         # Send webhook event
         await self._send_webhook(alert)
 
+        # Post-fix dogrulama (15s bekle, sonra kontrol et)
+        await asyncio.sleep(15)
+        fixed = await self._verify_fix(alert)
+        await self._notify_telegram_fix_result(alert, fixed)
+        await self._notify_n8n_fix_result(alert, fixed)
+
     async def _send_webhook(self, alert: Alert) -> None:
-        """Notify via webhook for n8n integration."""
+        """Notify via internal webhook for event log."""
         try:
-            import httpx
             async with httpx.AsyncClient(timeout=5) as client:
                 await client.post(
                     "http://localhost:8420/api/v1/monitor/webhooks/receive",
@@ -363,6 +376,154 @@ class DevOpsAgent:
                             "remediation": alert.remediation,
                             "timestamp": alert.timestamp,
                         },
+                    },
+                )
+        except Exception:
+            pass
+
+    # ── Telegram + n8n Bildirim ───────────────────────
+
+    async def _notify_telegram_alert(self, alert: Alert) -> None:
+        """Sorun tespitinde Telegram'a bildirim gonder."""
+        settings = get_settings()
+        token = settings.telegram_bot_token or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        chat_id = settings.telegram_chat_id or os.environ.get("TELEGRAM_CHAT_ID", "")
+        if not token or not chat_id:
+            return
+
+        emoji = "\U0001f6a8" if alert.severity == "critical" else "\u26a0\ufe0f"
+        text = (
+            f"{emoji} *Klipper \u2014 {alert.severity.upper()}*\n"
+            f"Kaynak: `{alert.source}`\n"
+            f"{alert.message}\n"
+            f"\U0001f552 {datetime.now().strftime('%H:%M %d/%m/%Y')}"
+        )
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    data={"chat_id": chat_id, "parse_mode": "Markdown", "text": text},
+                )
+        except Exception:
+            pass
+
+    async def _notify_n8n(self, alert: Alert) -> None:
+        """Sorun tespitinde n8n webhook'una bildirim gonder."""
+        settings = get_settings()
+        n8n_url = settings.n8n_webhook_url or os.environ.get(
+            "N8N_WEBHOOK_URL", "http://localhost:5678/webhook/system-alert"
+        )
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(
+                    n8n_url,
+                    json={
+                        "event": "alert_detected",
+                        "alert_id": alert.id,
+                        "severity": alert.severity,
+                        "source": alert.source,
+                        "message": alert.message,
+                        "value": alert.value,
+                        "threshold": alert.threshold,
+                        "timestamp": alert.timestamp,
+                    },
+                )
+        except Exception:
+            pass
+
+    # ── Post-fix Dogrulama ────────────────────────────
+
+    async def _verify_fix(self, alert: Alert) -> bool:
+        """Remediation sonrasi metrik kontrolu. Durust degerlendirme."""
+        metrics = self._monitor.collect_metrics()
+        key_map = {
+            "cpu": "cpu_percent",
+            "memory": "memory_percent",
+            "disk": "disk_percent",
+            "temperature": "temperature",
+        }
+        # Metrik bazli alert'ler
+        key = key_map.get(alert.source)
+        if key:
+            current = metrics.get(key, 0) or 0
+            threshold = self._thresholds.get(alert.source, 100)
+            return current < threshold
+
+        # Servis alert'leri
+        if alert.source.startswith("service:"):
+            svc = alert.source.split(":", 1)[1]
+            try:
+                result = await self._executor.execute(f"systemctl is-active {svc}", timeout=5)
+                return result.get("stdout", "").strip() == "active"
+            except Exception:
+                return False
+
+        # Docker alert'leri
+        if alert.source.startswith("docker:"):
+            container = alert.source.split(":", 1)[1]
+            try:
+                result = await self._executor.execute(
+                    f"docker ps --filter name={container} --format '{{{{.Status}}}}'", timeout=5
+                )
+                return "Up" in result.get("stdout", "")
+            except Exception:
+                return False
+
+        return False
+
+    async def _notify_telegram_fix_result(self, alert: Alert, fixed: bool) -> None:
+        """Duzeltme sonucunu Telegram'a bildir."""
+        settings = get_settings()
+        token = settings.telegram_bot_token or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        chat_id = settings.telegram_chat_id or os.environ.get("TELEGRAM_CHAT_ID", "")
+        if not token or not chat_id:
+            return
+
+        if fixed:
+            text = (
+                "\u2705 *Klipper \u2014 Sorun D\u00fczeltildi*\n"
+                f"Kaynak: `{alert.source}`\n"
+                f"Yap\u0131lan: {alert.remediation}\n"
+                f"Do\u011frulama: Sa\u011fl\u0131k kontrol\u00fc ge\u00e7ti \u2714\n"
+                f"\U0001f552 {datetime.now().strftime('%H:%M %d/%m/%Y')}"
+            )
+        else:
+            text = (
+                "\u274c *Klipper \u2014 D\u00fczeltilemedi*\n"
+                f"Kaynak: `{alert.source}`\n"
+                f"Denenen: {alert.remediation}\n"
+                f"Durum: Manuel m\u00fcdahale gerekli\n"
+                f"\U0001f552 {datetime.now().strftime('%H:%M %d/%m/%Y')}"
+            )
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    data={"chat_id": chat_id, "parse_mode": "Markdown", "text": text},
+                )
+        except Exception:
+            pass
+
+    async def _notify_n8n_fix_result(self, alert: Alert, fixed: bool) -> None:
+        """Duzeltme sonucunu n8n'e bildir."""
+        settings = get_settings()
+        n8n_url = settings.n8n_webhook_url or os.environ.get(
+            "N8N_WEBHOOK_URL", "http://localhost:5678/webhook/system-alert"
+        )
+        metrics = self._monitor.collect_metrics()
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(
+                    n8n_url,
+                    json={
+                        "event": "fix_result",
+                        "alert_id": alert.id,
+                        "source": alert.source,
+                        "severity": alert.severity,
+                        "remediation": alert.remediation,
+                        "fixed": fixed,
+                        "metrics_after": metrics,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
                     },
                 )
         except Exception:
@@ -465,6 +626,10 @@ class DevOpsAgent:
             return
         self._cooldowns[source] = now
 
+        # Bildirim: sorun tespit edildi
+        asyncio.create_task(self._notify_telegram_alert(alert))
+        asyncio.create_task(self._notify_n8n(alert))
+
         cmd = f"systemctl restart {service}"
         try:
             result = await self._executor.execute(cmd, timeout=15)
@@ -484,12 +649,22 @@ class DevOpsAgent:
         alert.remediation = f"Restart {service}"
         await self._send_webhook(alert)
 
+        # Post-fix dogrulama
+        await asyncio.sleep(10)
+        fixed = await self._verify_fix(alert)
+        await self._notify_telegram_fix_result(alert, fixed)
+        await self._notify_n8n_fix_result(alert, fixed)
+
     async def _remediate_container(self, container: str, alert: Alert) -> None:
         now = time.monotonic()
         source = f"docker:{container}"
         if now - self._cooldowns.get(source, 0) < self._cooldown_seconds:
             return
         self._cooldowns[source] = now
+
+        # Bildirim: sorun tespit edildi
+        asyncio.create_task(self._notify_telegram_alert(alert))
+        asyncio.create_task(self._notify_n8n(alert))
 
         cmd = f"docker start {container}"
         try:
@@ -509,6 +684,12 @@ class DevOpsAgent:
         self._remediation_log.append(record)
         alert.remediation = f"Start {container}"
         await self._send_webhook(alert)
+
+        # Post-fix dogrulama
+        await asyncio.sleep(10)
+        fixed = await self._verify_fix(alert)
+        await self._notify_telegram_fix_result(alert, fixed)
+        await self._notify_n8n_fix_result(alert, fixed)
 
     # ── Query Methods (for API) ────────────────────────
 
