@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # --- Common ---
@@ -305,3 +305,80 @@ class AIChatResponse(BaseModel):
     response: str
     model: str
     elapsed_ms: float
+
+
+# --- CI/CD ---
+
+VALID_CI_PROJECTS = [
+    "panola",
+    "kuafor-panel",
+    "kuafor-worker",
+    "petvet",
+    "renderhane",
+    "bilge-arena",
+    "klipper",
+    "panola-rag",
+]
+
+
+class CITestRequest(BaseModel):
+    project: str
+    test_type: str = "all"
+
+    @field_validator("project")
+    @classmethod
+    def project_must_be_known(cls, v: str) -> str:
+        if v not in VALID_CI_PROJECTS:
+            raise ValueError(
+                f"Unknown project {v!r}. Valid: {VALID_CI_PROJECTS}"
+            )
+        return v
+
+
+class CIFailure(BaseModel):
+    test_file: str
+    test_name: str
+    error: str
+    source_file: str | None = None
+    stack_trace: str | None = None
+
+
+class CITestResponse(BaseModel):
+    project: str
+    total: int
+    passed: int
+    failed: int
+    duration_s: float
+    failures: list[CIFailure] = []
+
+
+class CIFixRequest(BaseModel):
+    project: str
+    failure: CIFailure
+    attempt: int = 1
+    prev_errors: list[str] = []
+
+
+class CIFixResponse(BaseModel):
+    fixed: bool
+    attempt: int
+    diff: str | None = None
+    retry_result: str | None = None
+    error: str | None = None
+
+
+class CIProjectResult(BaseModel):
+    project: str
+    total: int
+    passed: int
+    failed: int
+    fix_attempted: bool
+    fix_result: str | None = None
+
+
+class CIStatusResponse(BaseModel):
+    last_run: str
+    total_tests: int
+    passed: int
+    failed: int
+    projects: list[CIProjectResult]
