@@ -165,6 +165,11 @@ _PYTEST_FAILURE_RE = re.compile(
     r"^(tests?/\S+\.py):(\d+):\s+(.+)$", re.MULTILINE
 )
 
+# Matches FAILED summary lines: "FAILED tests/test_foo.py::test_name - error msg"
+_PYTEST_FAILED_RE = re.compile(
+    r"^FAILED\s+(\S+)::(\S+)\s*-\s*(.+)$", re.MULTILINE
+)
+
 
 def parse_pytest_output(raw: str) -> dict:
     """Parse pytest ``-q --tb=line`` output into a normalised result dict.
@@ -183,19 +188,39 @@ def parse_pytest_output(raw: str) -> dict:
 
     total = passed + failed
 
-    # Extract individual failure lines
+    # Extract individual failure lines from --tb=line output
     failures: list[dict] = []
+    seen = set()
     for match in _PYTEST_FAILURE_RE.finditer(raw):
         filepath = match.group(1)
         line_no = match.group(2)
         error_msg = match.group(3).strip()
-        failures.append(
-            {
-                "test_file": filepath,
-                "test_name": f"{filepath}:{line_no}",
-                "error": error_msg,
-            }
-        )
+        key = f"{filepath}:{line_no}"
+        if key not in seen:
+            seen.add(key)
+            failures.append(
+                {
+                    "test_file": filepath,
+                    "test_name": f"{filepath}:{line_no}",
+                    "error": error_msg,
+                }
+            )
+
+    # Also extract FAILED summary lines (more reliable for test names)
+    for match in _PYTEST_FAILED_RE.finditer(raw):
+        filepath = match.group(1)
+        test_name = match.group(2)
+        error_msg = match.group(3).strip()
+        key = f"{filepath}::{test_name}"
+        if key not in seen:
+            seen.add(key)
+            failures.append(
+                {
+                    "test_file": filepath,
+                    "test_name": test_name,
+                    "error": error_msg,
+                }
+            )
 
     return {
         "total": total,
