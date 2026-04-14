@@ -164,8 +164,8 @@ async def test_baseline_anomaly_detection():
     for _ in range(20):
         agent._history.append({"cpu_percent": 20, "memory_percent": 30, "disk_percent": 40, "temperature": 35})
 
-    # 20 * 1.5 = 30, so 50% is anomalous but below static threshold (85%)
-    metrics = {"cpu_percent": 50, "memory_percent": 30, "disk_percent": 40, "temperature": 35}
+    # baseline=20 * 1.5 = 30, so 52% is anomalous. Must also be >= threshold*0.6 (85*0.6=51)
+    metrics = {"cpu_percent": 52, "memory_percent": 30, "disk_percent": 40, "temperature": 35}
     alerts = agent._detect(metrics)
     assert len(alerts) == 1
     assert alerts[0].source == "cpu"
