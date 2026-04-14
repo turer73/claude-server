@@ -35,11 +35,11 @@ sync_repos() {
     if [ -d "$repo/.git" ]; then
       local name=$(basename "$repo")
       local pull_out
-      pull_out=$(cd "$repo" && git pull --ff-only 2>&1) || true
-      if echo "$pull_out" | grep -q "Already up to date"; then
-        log "  · $name — güncel"
-      else
+      pull_out=$(cd "$repo" && git fetch origin && git reset --hard origin/master 2>&1) || true
+      if echo "$pull_out" | grep -q "HEAD is now at"; then
         log "  ↓ $name — güncellendi"
+      else
+        log "  · $name — güncel"
       fi
     fi
   done
