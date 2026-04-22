@@ -65,6 +65,27 @@ CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user);
 CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics_history(timestamp);
 CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+
+CREATE TABLE IF NOT EXISTS ci_lesson_learned (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_uuid TEXT NOT NULL,
+    project TEXT NOT NULL,
+    test_name TEXT NOT NULL,
+    error_hash TEXT NOT NULL,
+    signature TEXT NOT NULL,
+    raw_error TEXT,
+    attempt_num INTEGER NOT NULL,
+    strategy TEXT NOT NULL,
+    context_lessons TEXT,
+    fix_diff TEXT,
+    outcome TEXT NOT NULL,
+    duration_ms INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_lesson_signature ON ci_lesson_learned(signature, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lesson_project ON ci_lesson_learned(project, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lesson_run_uuid ON ci_lesson_learned(run_uuid);
 """
 
 
