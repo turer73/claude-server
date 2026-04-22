@@ -81,3 +81,31 @@ async def record_lesson(
          attempt_num, strategy, context_lessons, fix_diff, outcome, duration_ms),
     )
     return cursor.lastrowid
+
+
+async def get_recent_occurrences(db: Database, signature: str, window: int = 3) -> int:
+    """Count 'failed' attempts with this signature across the `window` most recent runs.
+
+    A "run" is a distinct run_uuid. We look at the last `window` run_uuids that
+    touched this signature (any outcome), then count how many rows inside those
+    runs have outcome='failed'.
+    """
+    row = await db.fetch_one(
+        """
+        WITH recent_runs AS (
+            SELECT DISTINCT run_uuid, MAX(created_at) AS last_ts
+            FROM ci_lesson_learned
+            WHERE signature = ?
+            GROUP BY run_uuid
+            ORDER BY last_ts DESC
+            LIMIT ?
+        )
+        SELECT COUNT(*) AS n
+        FROM ci_lesson_learned
+        WHERE signature = ?
+          AND outcome = 'failed'
+          AND run_uuid IN (SELECT run_uuid FROM recent_runs)
+        """,
+        (signature, window, signature),
+    )
+    return int((row or {}).get("n") or 0)

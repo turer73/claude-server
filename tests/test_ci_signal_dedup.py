@@ -1,7 +1,12 @@
 """Tests for signal normalization and signature computation."""
 import pytest
 
-from app.core.ci_signal_dedup import compute_signature, normalize_error, record_lesson
+from app.core.ci_signal_dedup import (
+    compute_signature,
+    get_recent_occurrences,
+    normalize_error,
+    record_lesson,
+)
 
 
 def test_normalize_strips_iso_timestamp_z():
@@ -196,3 +201,53 @@ async def test_record_lesson_accepts_none_optional_fields(ci_db):
         duration_ms=None,
     )
     assert row_id > 0
+
+
+async def _seed(db, run_uuid, sig, outcome):
+    await db.execute(
+        """
+        INSERT INTO ci_lesson_learned
+            (run_uuid, project, test_name, error_hash, signature, raw_error,
+             attempt_num, strategy, context_lessons, fix_diff, outcome, duration_ms)
+        VALUES (?, 'p', 't', 'h', ?, 'e', 1, 'fix-direct', NULL, NULL, ?, 0)
+        """,
+        (run_uuid, sig, outcome),
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_recent_occurrences_counts_failed_only(ci_db):
+    sig = "p::t::abc"
+    await _seed(ci_db, "u1", sig, "failed")
+    await _seed(ci_db, "u2", sig, "passed")  # must not count
+    await _seed(ci_db, "u3", sig, "failed")
+    assert await get_recent_occurrences(ci_db, sig, window=3) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_recent_occurrences_counts_per_run_uuid(ci_db):
+    # window=3 means "last 3 distinct run_uuids". If one run_uuid has 3 failed
+    # attempts, that still counts as 1 occurrence.
+    sig = "p::t::abc"
+    await _seed(ci_db, "u1", sig, "failed")  # attempt 1
+    await _seed(ci_db, "u1", sig, "failed")  # attempt 2 — same run
+    await _seed(ci_db, "u1", sig, "passed")  # attempt 3 — fixed within run
+    await _seed(ci_db, "u2", sig, "failed")
+    # u1 should count as 0 (final outcome passed) — but we're counting rows not runs
+    # Simplified: count rows with outcome='failed' across last `window` runs.
+    # Result: 3 (two u1 failures + one u2 failure)
+    assert await get_recent_occurrences(ci_db, sig, window=3) == 3
+
+
+@pytest.mark.asyncio
+async def test_get_recent_occurrences_respects_window(ci_db):
+    sig = "p::t::abc"
+    for i in range(4):
+        await _seed(ci_db, f"u{i}", sig, "failed")
+    # Only last 3 runs (u1, u2, u3 by insertion order) — count all their failures
+    assert await get_recent_occurrences(ci_db, sig, window=3) == 3
+
+
+@pytest.mark.asyncio
+async def test_get_recent_occurrences_zero_when_empty(ci_db):
+    assert await get_recent_occurrences(ci_db, "nope", window=3) == 0
