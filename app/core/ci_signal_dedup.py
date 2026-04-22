@@ -109,3 +109,21 @@ async def get_recent_occurrences(db: Database, signature: str, window: int = 3) 
         (signature, window, signature),
     )
     return int((row or {}).get("n") or 0)
+
+
+async def fetch_lesson_context(
+    db: Database, project: str, signature: str, limit: int = 5,
+) -> list[dict]:
+    """Return past lessons matching (project, signature), newest first."""
+    rows = await db.fetch_all(
+        """
+        SELECT id, run_uuid, attempt_num, strategy, outcome, fix_diff,
+               raw_error, created_at
+        FROM ci_lesson_learned
+        WHERE project = ? AND signature = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+        """,
+        (project, signature, limit),
+    )
+    return rows

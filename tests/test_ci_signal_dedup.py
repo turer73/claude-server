@@ -3,6 +3,7 @@ import pytest
 
 from app.core.ci_signal_dedup import (
     compute_signature,
+    fetch_lesson_context,
     get_recent_occurrences,
     normalize_error,
     record_lesson,
@@ -251,3 +252,31 @@ async def test_get_recent_occurrences_respects_window(ci_db):
 @pytest.mark.asyncio
 async def test_get_recent_occurrences_zero_when_empty(ci_db):
     assert await get_recent_occurrences(ci_db, "nope", window=3) == 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_lesson_context_returns_newest_first(ci_db):
+    sig = "p::t::abc"
+    # Seed in ascending order; newest (by insertion id) should come back first
+    await _seed(ci_db, "u1", sig, "failed")
+    await _seed(ci_db, "u2", sig, "failed")
+    await _seed(ci_db, "u3", sig, "passed")
+    rows = await fetch_lesson_context(ci_db, "p", sig, limit=5)
+    assert len(rows) == 3
+    assert rows[0]["id"] > rows[1]["id"] > rows[2]["id"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_lesson_context_respects_limit(ci_db):
+    sig = "p::t::abc"
+    for i in range(7):
+        await _seed(ci_db, f"u{i}", sig, "failed")
+    rows = await fetch_lesson_context(ci_db, "p", sig, limit=3)
+    assert len(rows) == 3
+
+
+@pytest.mark.asyncio
+async def test_fetch_lesson_context_scoped_to_project(ci_db):
+    await _seed(ci_db, "u1", "p::t::abc", "failed")
+    rows = await fetch_lesson_context(ci_db, "other-project", "p::t::abc", limit=5)
+    assert rows == []
