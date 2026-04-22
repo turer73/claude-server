@@ -70,7 +70,8 @@ async def client(app, tmp_path, monkeypatch):
     app.state.db = db
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
-
-    await db.close()
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
+    finally:
+        await db.close()
