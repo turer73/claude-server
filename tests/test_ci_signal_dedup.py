@@ -1,5 +1,5 @@
 """Tests for signal normalization and signature computation."""
-from app.core.ci_signal_dedup import normalize_error
+from app.core.ci_signal_dedup import compute_signature, normalize_error
 
 
 def test_normalize_strips_iso_timestamp_z():
@@ -101,3 +101,27 @@ def test_normalize_full_idempotence():
     once = normalize_error(raw)
     twice = normalize_error(once)
     assert once == twice, f"not idempotent: {once!r} vs {twice!r}"
+
+
+def test_signature_is_project_testname_hash_triple():
+    h, sig = compute_signature("bilge-arena", "test_login", "AssertionError: 5 != 3")
+    assert len(h) == 12
+    assert sig == f"bilge-arena::test_login::{h}"
+
+
+def test_signature_stable_across_timestamps():
+    _, sig1 = compute_signature("p", "t", "failed at 2026-04-18T01:23:45Z")
+    _, sig2 = compute_signature("p", "t", "failed at 2026-04-18T09:59:59Z")
+    assert sig1 == sig2
+
+
+def test_signature_differs_for_different_errors():
+    _, sig1 = compute_signature("p", "t", "AssertionError: 5 != 3")
+    _, sig2 = compute_signature("p", "t", "KeyError: missing")
+    assert sig1 != sig2
+
+
+def test_signature_hash_is_hex_12_chars():
+    h, _ = compute_signature("p", "t", "anything")
+    assert len(h) == 12
+    assert all(c in "0123456789abcdef" for c in h)

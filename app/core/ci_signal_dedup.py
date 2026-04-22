@@ -8,7 +8,7 @@ See: docs/plans/2026-04-18-ci-lesson-learned-signal-dedup-design.md
 """
 from __future__ import annotations
 
-import hashlib  # noqa: F401  # used by compute_signature in a follow-up task
+import hashlib
 import re
 
 NOISE_PATTERNS: list[tuple[str, str]] = [
@@ -34,3 +34,14 @@ def normalize_error(raw: str) -> str:
     for rx, repl in _COMPILED:
         out = rx.sub(repl, out)
     return out
+
+
+def compute_signature(project: str, test_name: str, raw_error: str) -> tuple[str, str]:
+    """Return (error_hash, full_signature).
+
+    error_hash = first 12 hex chars of sha1(normalize_error(raw_error)).
+    full_signature = f"{project}::{test_name}::{error_hash}".
+    """
+    normalized = normalize_error(raw_error)
+    error_hash = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]
+    return error_hash, f"{project}::{test_name}::{error_hash}"
