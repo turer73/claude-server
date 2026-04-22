@@ -34,3 +34,4 @@ async def test_ci_lesson_learned_indexes_exist(ci_db):
     names = {r["name"] for r in rows}
     assert "idx_lesson_signature" in names
     assert "idx_lesson_project" in names
+    assert "idx_lesson_run_uuid" in names

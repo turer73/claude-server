@@ -81,5 +81,7 @@ async def ci_db(tmp_path):
     """Fresh aiosqlite Database for CI lesson tests, schema applied."""
     db = Database(str(tmp_path / "ci.db"))
     await db.initialize()
-    yield db
-    await db.close()
+    try:
+        yield db
+    finally:
+        await db.close()
