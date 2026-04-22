@@ -1,5 +1,7 @@
 """Tests for signal normalization and signature computation."""
-from app.core.ci_signal_dedup import compute_signature, normalize_error
+import pytest
+
+from app.core.ci_signal_dedup import compute_signature, normalize_error, record_lesson
 
 
 def test_normalize_strips_iso_timestamp_z():
@@ -125,3 +127,72 @@ def test_signature_hash_is_hex_12_chars():
     h, _ = compute_signature("p", "t", "anything")
     assert len(h) == 12
     assert all(c in "0123456789abcdef" for c in h)
+
+
+@pytest.mark.asyncio
+async def test_record_lesson_inserts_and_returns_id(ci_db):
+    row_id = await record_lesson(
+        ci_db,
+        run_uuid="u1",
+        project="p",
+        test_name="t",
+        error_hash="abc123abc123",
+        signature="p::t::abc123abc123",
+        raw_error="AssertionError",
+        attempt_num=1,
+        strategy="fix-direct",
+        context_lessons=None,
+        fix_diff="diff --git ...",
+        outcome="passed",
+        duration_ms=420,
+    )
+    assert row_id > 0
+    row = await ci_db.fetch_one(
+        "SELECT project, outcome, strategy FROM ci_lesson_learned WHERE id = ?",
+        (row_id,),
+    )
+    assert row == {"project": "p", "outcome": "passed", "strategy": "fix-direct"}
+
+
+@pytest.mark.asyncio
+async def test_record_lesson_truncates_fix_diff(ci_db):
+    big = "x" * 10000
+    row_id = await record_lesson(
+        ci_db,
+        run_uuid="u2",
+        project="p",
+        test_name="t",
+        error_hash="h",
+        signature="p::t::h",
+        raw_error="e",
+        attempt_num=1,
+        strategy="fix-direct",
+        context_lessons=None,
+        fix_diff=big,
+        outcome="failed",
+        duration_ms=0,
+    )
+    stored = await ci_db.fetch_one(
+        "SELECT fix_diff FROM ci_lesson_learned WHERE id = ?", (row_id,)
+    )
+    assert len(stored["fix_diff"]) <= 4096
+
+
+@pytest.mark.asyncio
+async def test_record_lesson_accepts_none_optional_fields(ci_db):
+    row_id = await record_lesson(
+        ci_db,
+        run_uuid="u3",
+        project="p",
+        test_name="t",
+        error_hash="h",
+        signature="p::t::h",
+        raw_error=None,
+        attempt_num=1,
+        strategy="fix-direct",
+        context_lessons=None,
+        fix_diff=None,
+        outcome="error",
+        duration_ms=None,
+    )
+    assert row_id > 0

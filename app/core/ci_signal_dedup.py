@@ -11,6 +11,10 @@ from __future__ import annotations
 import hashlib
 import re
 
+from app.db.database import Database
+
+FIX_DIFF_CAP = 4096
+
 NOISE_PATTERNS: list[tuple[str, str]] = [
     (r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?", "<TS>"),
     (r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", "<TS>"),
@@ -45,3 +49,35 @@ def compute_signature(project: str, test_name: str, raw_error: str) -> tuple[str
     normalized = normalize_error(raw_error)
     error_hash = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]
     return error_hash, f"{project}::{test_name}::{error_hash}"
+
+
+async def record_lesson(
+    db: Database,
+    *,
+    run_uuid: str,
+    project: str,
+    test_name: str,
+    error_hash: str,
+    signature: str,
+    raw_error: str | None,
+    attempt_num: int,
+    strategy: str,
+    context_lessons: str | None,
+    fix_diff: str | None,
+    outcome: str,
+    duration_ms: int | None,
+) -> int:
+    """Insert one lesson row, returning its id. fix_diff is truncated to FIX_DIFF_CAP."""
+    if fix_diff is not None and len(fix_diff) > FIX_DIFF_CAP:
+        fix_diff = fix_diff[:FIX_DIFF_CAP]
+    cursor = await db.execute(
+        """
+        INSERT INTO ci_lesson_learned
+            (run_uuid, project, test_name, error_hash, signature, raw_error,
+             attempt_num, strategy, context_lessons, fix_diff, outcome, duration_ms)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (run_uuid, project, test_name, error_hash, signature, raw_error,
+         attempt_num, strategy, context_lessons, fix_diff, outcome, duration_ms),
+    )
+    return cursor.lastrowid
