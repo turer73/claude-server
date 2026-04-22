@@ -47,3 +47,57 @@ def test_normalize_idempotent():
     once = normalize_error(raw)
     twice = normalize_error(once)
     assert once == twice
+
+
+def test_normalize_uppercase_uuid():
+    # GUID from a .NET stack trace
+    raw = "Request 3F2504E0-4F89-11D3-9A0C-0305E82C3301 failed"
+    assert normalize_error(raw) == "Request <UUID> failed"
+
+
+def test_normalize_uppercase_hex_address():
+    raw = "Segfault at 0xDEADBEEF in libfoo"
+    assert normalize_error(raw) == "Segfault at <HEX> in libfoo"
+
+
+def test_normalize_non_c_windows_drive():
+    raw = r"File not found: D:\Users\alice\proj\main.py"
+    assert normalize_error(raw) == "File not found: <USERPATH>"
+
+
+def test_normalize_lowercase_windows_drive():
+    raw = r"File not found: c:\Users\bob\proj\main.py"
+    assert normalize_error(raw) == "File not found: <USERPATH>"
+
+
+def test_normalize_path_terminated_by_bracket():
+    raw = "at /tmp/pytest-abc/test.py]:42"
+    # Path stops at ], then :42 is not a port (under 4 digits so ignored),
+    # so expect the trailing ]:42 preserved verbatim.
+    assert normalize_error(raw) == "at <TMPPATH>]:42"
+
+
+def test_normalize_path_terminated_by_comma():
+    raw = "files: /tmp/a.log, /tmp/b.log"
+    assert normalize_error(raw) == "files: <TMPPATH>, <TMPPATH>"
+
+
+def test_normalize_timestamp_does_not_eat_bigint():
+    raw = "2026-04-18T01:23:45.123Z1234567890 event"
+    assert normalize_error(raw) == "<TS><BIGINT> event"
+
+
+def test_normalize_full_idempotence():
+    raw = (
+        "2026-04-18T01:23:45.123Z "
+        "uuid=3f2504e0-4f89-11d3-9a0c-0305e82c3301 "
+        "hex=0xDEADBEEF "
+        "tmp=/tmp/foo.log "
+        "home=/home/user/proj "
+        "port=:5432 "
+        "big=1234567890 "
+        "date=2026-04-18 12:00:00"
+    )
+    once = normalize_error(raw)
+    twice = normalize_error(once)
+    assert once == twice, f"not idempotent: {once!r} vs {twice!r}"

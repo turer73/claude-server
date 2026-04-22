@@ -12,17 +12,17 @@ import hashlib  # noqa: F401  # used by compute_signature in a follow-up task
 import re
 
 NOISE_PATTERNS: list[tuple[str, str]] = [
-    (r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[\.\d]*Z?", "<TS>"),
+    (r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?", "<TS>"),
     (r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", "<TS>"),
     (r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "<UUID>"),
     (r"0x[0-9a-f]+", "<HEX>"),
-    (r"/tmp/[^\s)'\"]+", "<TMPPATH>"),
-    (r"(?:/home/|/Users/|C:\\Users\\)[^\s)'\"]+", "<USERPATH>"),
+    (r"/tmp/[^\s)'\"\]\}>,;]+", "<TMPPATH>"),
+    (r"(?:/home/|/Users/|[A-Za-z]:\\Users\\)[^\s)'\"\]\}>,;]+", "<USERPATH>"),
     (r":\d{4,5}\b", ":<PORT>"),
     (r"\b\d{10,}\b", "<BIGINT>"),
 ]
 
-_COMPILED = [(re.compile(pat), sub) for pat, sub in NOISE_PATTERNS]
+_COMPILED = [(re.compile(pat, re.IGNORECASE), sub) for pat, sub in NOISE_PATTERNS]
 
 
 def normalize_error(raw: str) -> str:
