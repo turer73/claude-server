@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     lan_ip: str = "127.0.0.1"
     tailscale_ip: str = "127.0.0.1"
     memory_api_key: str = ""
+    memory_api_base: str = "http://100.113.153.62:8420/api/v1/memory"
 
     # Database
     db_path: str = "/var/lib/linux-ai-server/server.db"

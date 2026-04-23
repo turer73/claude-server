@@ -334,3 +334,75 @@ async def test_attempt_fix_all_attempts_share_one_run_uuid(ci_db, monkeypatch):
     assert {r["run_uuid"] for r in rows} == {rows[0]["run_uuid"]}  # all identical
     assert [r["attempt_num"] for r in rows] == [1, 2, 3]
     assert all(r["outcome"] == "failed" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_attempt_fix_posts_memory_summary_on_success(ci_db, monkeypatch):
+    from unittest.mock import AsyncMock, patch
+
+    async def fake_open_ci_db():
+        return _NoCloseDB(ci_db)
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    posted = []
+
+    async def fake_post(**kw):
+        posted.append(kw)
+
+    mock_claude = AsyncMock(return_value={"answer": "done", "session_id": None, "error": None})
+    mock_tests = AsyncMock(return_value={
+        "project": "klipper",
+        "total": 1, "passed": 1, "failed": 0,
+        "duration_s": 0.1, "failures": [],
+    })
+
+    with patch("app.core.ci_fixer._call_claude_code", mock_claude), \
+         patch("app.core.ci_fixer.run_project_tests", mock_tests), \
+         patch("app.core.ci_fixer.post_lesson_summary_to_memory_api", fake_post):
+        result = await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError",
+        )
+
+    assert result["fixed"] is True
+    assert len(posted) == 1
+    assert posted[0]["type"] == "lesson_learned"
+    assert "klipper" in posted[0]["name"]
+
+
+@pytest.mark.asyncio
+async def test_attempt_fix_skips_memory_post_on_failure(ci_db, monkeypatch):
+    from unittest.mock import AsyncMock, patch
+
+    async def fake_open_ci_db():
+        return _NoCloseDB(ci_db)
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    posted = []
+
+    async def fake_post(**kw):
+        posted.append(kw)
+
+    mock_claude = AsyncMock(return_value={"answer": "", "session_id": None, "error": None})
+    mock_tests = AsyncMock(return_value={
+        "project": "klipper",
+        "total": 1, "passed": 0, "failed": 1,
+        "duration_s": 0.1,
+        "failures": [{"test_file": "tests/test_foo.py",
+                      "test_name": "test_bar",
+                      "error": "boom"}],
+    })
+
+    with patch("app.core.ci_fixer._call_claude_code", mock_claude), \
+         patch("app.core.ci_fixer.run_project_tests", mock_tests), \
+         patch("app.core.ci_fixer.post_lesson_summary_to_memory_api", fake_post):
+        await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError",
+        )
+
+    assert posted == []

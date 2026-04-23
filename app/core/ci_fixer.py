@@ -13,6 +13,8 @@ import os
 import shutil
 import uuid
 
+import httpx
+
 from app.core.ci_runner import PROJECT_REGISTRY, run_project_tests
 from app.core.ci_signal_dedup import compute_signature, record_lesson
 from app.core.config import get_settings
@@ -33,6 +35,32 @@ async def _open_ci_db() -> Database:
     db = Database(get_settings().db_path)
     await db.initialize()
     return db
+
+
+async def post_lesson_summary_to_memory_api(
+    *, type: str, name: str, description: str, content: str
+) -> None:
+    """Best-effort POST a lesson summary to the memory API.
+
+    Silent on failure. The memory API rejects payloads with backslash/newline
+    characters in JSON (it uses a strict parser), so the caller is responsible
+    for keeping ``content`` on a single line.
+    """
+    try:
+        settings = get_settings()
+        base = settings.memory_api_base
+        key = settings.memory_api_key
+        if not base or not key:
+            return
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(
+                f"{base}/memories",
+                headers={"X-Memory-Key": key, "Content-Type": "application/json"},
+                json={"type": type, "name": name,
+                      "description": description, "content": content},
+            )
+    except Exception as exc:
+        logger.warning("memory api post failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +329,17 @@ async def attempt_fix(
             # 4. Check if fixed
             if test_result.get("failed", 0) == 0:
                 logger.info("Test duzeltildi! deneme=%d", attempt)
+                # Post summary to memory API (single-line content -- memory API rejects \n in JSON)
+                await post_lesson_summary_to_memory_api(
+                    type="lesson_learned",
+                    name=f"CI fix: {project}/{test_name}",
+                    description=f"Attempt {attempt}, fix-direct - fixed",
+                    content=(
+                        f"Run {run_uuid[:8]}: {test_name} in {project} fixed on attempt {attempt}. "
+                        f"Signature: {signature}. "
+                        f"Diff length: {len(claude_result.get('answer') or '')} chars."
+                    ),
+                )
                 return {
                     "fixed": True,
                     "attempt": attempt,
