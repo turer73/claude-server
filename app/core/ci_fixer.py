@@ -336,8 +336,8 @@ async def attempt_fix(
             "error": f"{max_attempts} deneme sonrasi duzeltilemedi",
         }
     finally:
-        # The db returned by _open_ci_db() is owned by its caller's context
-        # (production: FastAPI lifespan; tests: ci_db fixture teardown).
-        # attempt_fix must not close it here — closing would break the test
-        # fixture whose teardown expects to manage lifecycle.
-        pass
+        if db is not None:
+            try:
+                await db.close()
+            except Exception as exc:
+                logger.warning("CI lesson DB close failed: %s", exc)

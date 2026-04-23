@@ -14,6 +14,26 @@ from app.core.ci_fixer import (
 )
 
 
+class _NoCloseDB:
+    """Proxy that forwards attribute access to a wrapped Database
+    but makes ``close()`` a no-op.
+
+    Used by attempt_fix tests: the fixture ``ci_db`` owns its lifecycle
+    via pytest teardown, so when attempt_fix's ``finally`` clause closes
+    the db it received, we don't want it to actually close the shared
+    fixture (which would break post-call ``fetch_all`` assertions).
+    """
+
+    def __init__(self, db):
+        self._db = db
+
+    def __getattr__(self, name):
+        return getattr(self._db, name)
+
+    async def close(self):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # build_fix_prompt
 # ---------------------------------------------------------------------------
@@ -241,7 +261,7 @@ async def test_attempt_fix_records_a_lesson_per_attempt(ci_db, monkeypatch):
     from unittest.mock import AsyncMock, patch
 
     async def fake_open_ci_db():
-        return ci_db
+        return _NoCloseDB(ci_db)
 
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
@@ -284,7 +304,7 @@ async def test_attempt_fix_all_attempts_share_one_run_uuid(ci_db, monkeypatch):
     from unittest.mock import AsyncMock, patch
 
     async def fake_open_ci_db():
-        return ci_db
+        return _NoCloseDB(ci_db)
 
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
