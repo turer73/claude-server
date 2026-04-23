@@ -525,6 +525,32 @@ def test_prompt_contains_past_lessons_when_provided():
     assert "Onceki oturumlardaki dersler" in prompt
     assert "diff 1" in prompt
     assert "diff 2" in prompt
+    # Shape asserts: pin the per-lesson header format so reordering fields
+    # or dropping the timestamp would be a visible regression.
+    assert "deneme 1 (fix-direct) => failed (2026-04-17 10:00:00)" in prompt
+    assert "deneme 2 (fix-direct) => failed (2026-04-18 09:00:00)" in prompt
+
+
+def test_prompt_truncates_long_fix_diff_to_500_chars():
+    """The prompt preview of fix_diff is capped at FIX_DIFF_PROMPT_PREVIEW (500)
+    chars so context-enriched prompts stay lean. Storage (FIX_DIFF_CAP=4096) is
+    a separate, larger cap -- this test pins the prompt-side invariant only.
+    """
+    long_diff = "x" * 600
+    lessons = [
+        {"attempt_num": 1, "strategy": "fix-direct", "outcome": "failed",
+         "fix_diff": long_diff, "raw_error": "err",
+         "created_at": "2026-04-17 10:00:00"},
+    ]
+    prompt = build_fix_prompt(
+        project="klipper",
+        test_file="tests/test_foo.py",
+        test_name="test_bar",
+        error="AssertionError",
+        context_lessons=lessons,
+    )
+    assert "x" * 500 in prompt
+    assert "x" * 501 not in prompt
 
 
 def test_prompt_has_no_lessons_section_when_none():

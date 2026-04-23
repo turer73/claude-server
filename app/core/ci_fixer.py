@@ -29,6 +29,12 @@ logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
 
+# Per-lesson fix_diff preview length in the context-enriched prompt. Kept well
+# below app.core.ci_signal_dedup.FIX_DIFF_CAP (4096, the storage cap) so each
+# past lesson stays lean in the model's context window while the DB row retains
+# richer detail for later analysis.
+FIX_DIFF_PROMPT_PREVIEW = 500
+
 CLAUDE_BIN = os.path.expanduser("~/.npm-global/bin/claude")
 
 
@@ -169,13 +175,15 @@ def build_fix_prompt(
 
     if context_lessons:  # truthy: non-None AND non-empty
         lines.extend(["", "Onceki oturumlardaki dersler (en yenisi ilk):"])
+        # lowercase "deneme" (historical) visually distinguishes past-session
+        # lessons from capital "Deneme" (current-session retry) above.
         for lesson in context_lessons:
             lines.append(
                 f"  - deneme {lesson['attempt_num']} ({lesson['strategy']}) "
                 f"=> {lesson['outcome']} ({lesson['created_at']})"
             )
             if lesson.get("fix_diff"):
-                lines.append(f"    diff: {lesson['fix_diff'][:500]}")
+                lines.append(f"    diff: {lesson['fix_diff'][:FIX_DIFF_PROMPT_PREVIEW]}")
 
     lines.extend([
         "",
@@ -339,10 +347,16 @@ async def attempt_fix(
                 try:
                     recent = await get_recent_occurrences(db, signature, window=3)
                     if recent >= 2:
-                        strategy = "context-enriched"
-                        context_rows = await fetch_lesson_context(
+                        fetched = await fetch_lesson_context(
                             db, project, signature, limit=5,
                         )
+                        # Only flip the telemetry label when we actually have
+                        # rows to enrich the prompt with -- otherwise the
+                        # "context-enriched" strategy on the ci_lesson_learned
+                        # row would diverge from the (empty) prompt context.
+                        if fetched:
+                            strategy = "context-enriched"
+                            context_rows = fetched
                 except Exception as exc:
                     logger.warning(
                         "dedup check failed, falling back to fix-direct: %s", exc,
