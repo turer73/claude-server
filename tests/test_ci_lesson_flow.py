@@ -101,3 +101,14 @@ async def test_enrichment_kicks_in_after_two_failing_calls(ci_db, monkeypatch):
     # Calls 1 and 2 fail throughout (6 failed rows); call 3's single row passes.
     assert outcomes[:6] == ["failed"] * 6
     assert outcomes[-1] == "passed"
+
+    # Lock down the run_uuid grouping shape: call 1 (3 attempts) + call 2
+    # (3 attempts) + call 3 (1 attempt) must land in 3 distinct run_uuids
+    # with row counts [3, 3, 1] in insertion order. Guards against a
+    # refactor that collapses uuid.uuid4() into a module-level constant.
+    run_uuid_groups = await ci_db.fetch_all(
+        "SELECT run_uuid, COUNT(*) AS n FROM ci_lesson_learned "
+        "GROUP BY run_uuid ORDER BY MIN(id)"
+    )
+    assert [r["n"] for r in run_uuid_groups] == [3, 3, 1]
+    assert len({r["run_uuid"] for r in run_uuid_groups}) == 3
