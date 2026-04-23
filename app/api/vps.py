@@ -27,7 +27,7 @@ async def vps_exec(req: VPSCommandRequest, _: None = Depends(require_admin)) -> 
     settings = get_settings()
     executor = ShellExecutor(whitelist=settings.shell_whitelist)
     # Wrap command in SSH
-    ssh_cmd = f"{VPS_SSH} '{req.command}'"
+    ssh_cmd = f"{_vps_ssh()} '{req.command}'"
     result = await executor.execute(ssh_cmd, timeout=req.timeout)
     return result
 
@@ -38,7 +38,7 @@ async def vps_status(_: None = Depends(require_admin)) -> dict:
     settings = get_settings()
     executor = ShellExecutor(whitelist=settings.shell_whitelist)
 
-    cmd = f"""{VPS_SSH} 'echo HOSTNAME=$(hostname) && echo UPTIME=$(uptime -p) && echo CPU=$(nproc) && free -h | awk "/Mem/{{print \\"RAM_USED=\\"\\$3\\"/\\"\\$2}}" && df -h / | awk "NR==2{{print \\"DISK=\\"\\$3\\"/\\"\\$2\\" (\\"\\$5\\")\\"}}" && docker ps --format "CONTAINER={{{{.Names}}}}:{{{{.Status}}}}" 2>/dev/null | head -20'"""
+    cmd = f"""{_vps_ssh()} 'echo HOSTNAME=$(hostname) && echo UPTIME=$(uptime -p) && echo CPU=$(nproc) && free -h | awk "/Mem/{{print \\"RAM_USED=\\"\\$3\\"/\\"\\$2}}" && df -h / | awk "NR==2{{print \\"DISK=\\"\\$3\\"/\\"\\$2\\" (\\"\\$5\\")\\"}}" && docker ps --format "CONTAINER={{{{.Names}}}}:{{{{.Status}}}}" 2>/dev/null | head -20'"""
 
     result = await executor.execute(cmd, timeout=15)
     if result["exit_code"] != 0:
@@ -72,7 +72,7 @@ async def vps_services(_: None = Depends(require_admin)) -> dict:
         "analytics": "https://analytics.panola.app",
     }
 
-    cmd = f"""{VPS_SSH} '{" && ".join([f'echo "{name}=$(curl -s -o /dev/null -w %{{http_code}} {url})"' for name, url in services.items()])}'"""
+    cmd = f"""{_vps_ssh()} '{" && ".join([f'echo "{name}=$(curl -s -o /dev/null -w %{{http_code}} {url})"' for name, url in services.items()])}'"""
 
     result = await executor.execute(cmd, timeout=20)
     parsed = {}
@@ -97,7 +97,7 @@ async def vps_deploy(project: str, _: None = Depends(require_admin)) -> dict:
 
     path = project_paths.get(project)
     if path:
-        cmd = f"{VPS_SSH} 'cd {path} && git pull && docker-compose restart 2>&1 | tail -5'"
+        cmd = f"{_vps_ssh()} 'cd {path} && git pull && docker-compose restart 2>&1 | tail -5'"
         result = await executor.execute(cmd, timeout=60)
         return {"project": project, "deployed": result["exit_code"] == 0, "output": result["stdout"]}
 
