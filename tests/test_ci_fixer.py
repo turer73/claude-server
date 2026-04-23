@@ -14,7 +14,6 @@ from app.core.ci_fixer import (
     MAX_ATTEMPTS,
     attempt_fix,
     build_fix_prompt,
-    _call_claude_code,
     post_lesson_summary_to_memory_api,
 )
 

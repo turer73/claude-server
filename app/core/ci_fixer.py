@@ -241,7 +241,7 @@ async def _call_claude_code(prompt: str, cwd: str) -> dict:
             stdin=asyncio.subprocess.DEVNULL,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         return {"answer": "", "session_id": None, "error": "Zaman asimi (5dk)"}
     except Exception as exc:

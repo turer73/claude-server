@@ -10,17 +10,21 @@ from __future__ import annotations
 
 import hashlib
 import re
+from typing import TYPE_CHECKING
 
-from app.db.database import Database
+if TYPE_CHECKING:
+    from app.db.database import Database
 
 FIX_DIFF_CAP = 4096
 
+# S108 below: pattern literally matches /tmp/... substrings in error text for
+# normalization; we never touch the filesystem. False positive.
 NOISE_PATTERNS: list[tuple[str, str]] = [
     (r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?", "<TS>"),
     (r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", "<TS>"),
     (r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "<UUID>"),
     (r"0x[0-9a-f]+", "<HEX>"),
-    (r"/tmp/[^\s)'\"\]\}>,;]+", "<TMPPATH>"),
+    (r"/tmp/[^\s)'\"\]\}>,;]+", "<TMPPATH>"),  # noqa: S108
     (r"(?:/home/|/Users/|[A-Za-z]:\\Users\\)[^\s)'\"\]\}>,;]+", "<USERPATH>"),
     (r":\d{4,5}\b", ":<PORT>"),
     (r"\b\d{10,}\b", "<BIGINT>"),
@@ -47,7 +51,9 @@ def compute_signature(project: str, test_name: str, raw_error: str) -> tuple[str
     full_signature = f"{project}::{test_name}::{error_hash}".
     """
     normalized = normalize_error(raw_error)
-    error_hash = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]
+    # sha1 is used for a short deterministic content fingerprint, not security.
+    # Collision resistance at 12 hex chars is sufficient for our dedup window.
+    error_hash = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]  # noqa: S324
     return error_hash, f"{project}::{test_name}::{error_hash}"
 
 
