@@ -233,3 +233,84 @@ class TestAttemptFix:
         assert result["fixed"] is False
         assert result["attempt"] == 3
         assert mock_claude.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_attempt_fix_records_a_lesson_per_attempt(ci_db, monkeypatch):
+    """Every iteration inside attempt_fix must insert a row into ci_lesson_learned."""
+    from unittest.mock import AsyncMock, patch
+
+    async def fake_open_ci_db():
+        return ci_db
+
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    mock_claude = AsyncMock(return_value={
+        "answer": "Fixed it",
+        "session_id": "sess-1",
+        "error": None,
+    })
+    mock_tests = AsyncMock(return_value={
+        "project": "klipper",
+        "total": 10, "passed": 10, "failed": 0,
+        "duration_s": 2.0, "failures": [],
+    })
+
+    with patch("app.core.ci_fixer._call_claude_code", mock_claude), \
+         patch("app.core.ci_fixer.run_project_tests", mock_tests):
+        result = await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError: 1 != 2",
+        )
+
+    assert result["fixed"] is True
+    rows = await ci_db.fetch_all(
+        "SELECT project, test_name, outcome, strategy, attempt_num, run_uuid "
+        "FROM ci_lesson_learned ORDER BY id"
+    )
+    assert len(rows) == 1
+    assert rows[0]["project"] == "klipper"
+    assert rows[0]["test_name"] == "test_bar"
+    assert rows[0]["outcome"] == "passed"
+    assert rows[0]["strategy"] == "fix-direct"
+    assert rows[0]["attempt_num"] == 1
+
+
+@pytest.mark.asyncio
+async def test_attempt_fix_all_attempts_share_one_run_uuid(ci_db, monkeypatch):
+    """When attempt_fix retries 3 times, all rows must share the same run_uuid."""
+    from unittest.mock import AsyncMock, patch
+
+    async def fake_open_ci_db():
+        return ci_db
+
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    mock_claude = AsyncMock(return_value={"answer": "", "session_id": None, "error": None})
+    mock_tests = AsyncMock(return_value={
+        "project": "klipper",
+        "total": 10, "passed": 9, "failed": 1,
+        "duration_s": 2.0,
+        "failures": [{"test_file": "tests/test_foo.py",
+                      "test_name": "test_bar",
+                      "error": "still broken"}],
+    })
+
+    with patch("app.core.ci_fixer._call_claude_code", mock_claude), \
+         patch("app.core.ci_fixer.run_project_tests", mock_tests):
+        await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError",
+        )
+
+    rows = await ci_db.fetch_all(
+        "SELECT run_uuid, attempt_num, outcome FROM ci_lesson_learned ORDER BY id"
+    )
+    assert len(rows) == 3
+    assert {r["run_uuid"] for r in rows} == {rows[0]["run_uuid"]}  # all identical
+    assert [r["attempt_num"] for r in rows] == [1, 2, 3]
+    assert all(r["outcome"] == "failed" for r in rows)

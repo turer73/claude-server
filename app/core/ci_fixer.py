@@ -11,14 +11,28 @@ import json
 import logging
 import os
 import shutil
+import uuid
 
 from app.core.ci_runner import PROJECT_REGISTRY, run_project_tests
+from app.core.ci_signal_dedup import compute_signature, record_lesson
+from app.core.config import get_settings
+from app.db.database import Database
 
 logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
 
 CLAUDE_BIN = os.path.expanduser("~/.npm-global/bin/claude")
+
+
+async def _open_ci_db() -> Database:
+    """Open a fresh Database connection for CI lesson recording.
+
+    Tests monkeypatch this to return a tmp_path-scoped Database.
+    """
+    db = Database(get_settings().db_path)
+    await db.initialize()
+    return db
 
 
 # ---------------------------------------------------------------------------
@@ -221,72 +235,109 @@ async def attempt_fix(
             "error": f"Bilinmeyen proje: {project}",
         }
 
-    cwd = PROJECT_REGISTRY[project]["path"]
-    prev_errors: list[str] = []
-    claude_responses: list[dict] = []
+    run_uuid = uuid.uuid4().hex
 
-    for attempt in range(1, max_attempts + 1):
-        logger.info(
-            "attempt_fix: %s / %s -- deneme %d/%d",
-            project, test_name, attempt, max_attempts,
-        )
+    try:
+        db = await _open_ci_db()
+    except Exception as exc:
+        logger.warning("CI lesson DB open failed: %s", exc)
+        db = None
 
-        # 1. Build prompt (include previous errors for retries)
-        prompt = build_fix_prompt(
-            project=project,
-            test_file=test_file,
-            test_name=test_name,
-            error=error if attempt == 1 else prev_errors[-1],
-            source_file=source_file,
-            prev_errors=prev_errors if attempt > 1 else None,
-        )
+    try:
+        cwd = PROJECT_REGISTRY[project]["path"]
+        prev_errors: list[str] = []
+        claude_responses: list[dict] = []
 
-        # 2. Call Claude Code
-        claude_result = await _call_claude_code(prompt, cwd)
-        claude_responses.append(claude_result)
+        for attempt in range(1, max_attempts + 1):
+            logger.info(
+                "attempt_fix: %s / %s -- deneme %d/%d",
+                project, test_name, attempt, max_attempts,
+            )
 
-        if claude_result.get("error"):
-            logger.warning("Claude Code hatasi: %s", claude_result["error"])
-            prev_errors.append(claude_result["error"])
-            continue
+            # 1. Build prompt (include previous errors for retries)
+            prompt = build_fix_prompt(
+                project=project,
+                test_file=test_file,
+                test_name=test_name,
+                error=error if attempt == 1 else prev_errors[-1],
+                source_file=source_file,
+                prev_errors=prev_errors if attempt > 1 else None,
+            )
 
-        # 3. Re-run tests
-        test_result = await run_project_tests(project)
+            # 2. Call Claude Code
+            claude_result = await _call_claude_code(prompt, cwd)
+            claude_responses.append(claude_result)
 
-        # 4. Check if fixed
-        if test_result.get("failed", 0) == 0:
-            logger.info("Test duzeltildi! deneme=%d", attempt)
-            return {
-                "fixed": True,
-                "attempt": attempt,
-                "project": project,
-                "test_file": test_file,
-                "test_name": test_name,
-                "claude_responses": claude_responses,
-                "error": None,
-            }
+            if claude_result.get("error"):
+                logger.warning("Claude Code hatasi: %s", claude_result["error"])
+                prev_errors.append(claude_result["error"])
+                continue
 
-        # 5. Still failing -- collect error for next attempt
-        current_error = "Bilinmeyen hata"
-        for failure in test_result.get("failures", []):
-            if failure.get("test_name") == test_name or failure.get("test_file") == test_file:
-                current_error = failure.get("error", current_error)
-                break
-        else:
-            # If exact match not found, take first failure error
-            if test_result.get("failures"):
-                current_error = test_result["failures"][0].get("error", current_error)
+            # 3. Re-run tests
+            test_result = await run_project_tests(project)
 
-        prev_errors.append(current_error)
-        logger.info("Hala basarisiz, deneme=%d, hata=%s", attempt, current_error[:100])
+            # Record the lesson for this attempt (before the passed/failed branches).
+            current_error_text = error if attempt == 1 else prev_errors[-1]
+            error_hash, signature = compute_signature(project, test_name, current_error_text)
+            outcome = "passed" if test_result.get("failed", 0) == 0 else "failed"
+            if db is not None:
+                try:
+                    await record_lesson(
+                        db,
+                        run_uuid=run_uuid,
+                        project=project, test_name=test_name,
+                        error_hash=error_hash, signature=signature,
+                        raw_error=current_error_text,
+                        attempt_num=attempt,
+                        strategy="fix-direct",  # Phase 2 replaces this
+                        context_lessons=None,
+                        fix_diff=claude_result.get("answer"),
+                        outcome=outcome,
+                        duration_ms=None,
+                    )
+                except Exception as exc:
+                    logger.warning("lesson record failed: %s", exc)
 
-    # Max attempts exhausted
-    return {
-        "fixed": False,
-        "attempt": max_attempts,
-        "project": project,
-        "test_file": test_file,
-        "test_name": test_name,
-        "claude_responses": claude_responses,
-        "error": f"{max_attempts} deneme sonrasi duzeltilemedi",
-    }
+            # 4. Check if fixed
+            if test_result.get("failed", 0) == 0:
+                logger.info("Test duzeltildi! deneme=%d", attempt)
+                return {
+                    "fixed": True,
+                    "attempt": attempt,
+                    "project": project,
+                    "test_file": test_file,
+                    "test_name": test_name,
+                    "claude_responses": claude_responses,
+                    "error": None,
+                }
+
+            # 5. Still failing -- collect error for next attempt
+            current_error = "Bilinmeyen hata"
+            for failure in test_result.get("failures", []):
+                if failure.get("test_name") == test_name or failure.get("test_file") == test_file:
+                    current_error = failure.get("error", current_error)
+                    break
+            else:
+                # If exact match not found, take first failure error
+                if test_result.get("failures"):
+                    current_error = test_result["failures"][0].get("error", current_error)
+
+            prev_errors.append(current_error)
+            logger.info("Hala basarisiz, deneme=%d, hata=%s", attempt, current_error[:100])
+
+        # Max attempts exhausted
+        return {
+            "fixed": False,
+            "attempt": max_attempts,
+            "project": project,
+            "test_file": test_file,
+            "test_name": test_name,
+            "claude_responses": claude_responses,
+            "error": f"{max_attempts} deneme sonrasi duzeltilemedi",
+        }
+    finally:
+        # The db returned by _open_ci_db() is owned by its caller's context
+        # (production: FastAPI lifespan; tests: ci_db fixture teardown).
+        # attempt_fix must not close it here — closing would break the test
+        # fixture whose teardown expects to manage lifecycle.
+        pass
