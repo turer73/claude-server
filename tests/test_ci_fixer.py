@@ -413,6 +413,96 @@ async def test_attempt_fix_skips_memory_post_on_failure(ci_db, monkeypatch):
     assert posted == []
 
 
+@pytest.mark.asyncio
+async def test_strategy_switches_to_context_enriched_after_2_failures(ci_db, monkeypatch):
+    """If 2 past runs failed with the same signature, 3rd run uses context-enriched."""
+    from unittest.mock import AsyncMock, patch
+
+    async def fake_open_ci_db():
+        return _NoCloseDB(ci_db)
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    # Seed 2 past failures with a known signature
+    sig = "klipper::test_bar::h"
+    for u in ("u-old-1", "u-old-2"):
+        await ci_db.execute(
+            """INSERT INTO ci_lesson_learned
+               (run_uuid, project, test_name, error_hash, signature, raw_error,
+                attempt_num, strategy, context_lessons, fix_diff, outcome, duration_ms)
+               VALUES (?, 'klipper', 'test_bar', 'h', ?, 'e', 1,
+                       'fix-direct', NULL, NULL, 'failed', 0)""",
+            (u, sig),
+        )
+
+    mock_claude = AsyncMock(return_value={"answer": "fix", "session_id": None, "error": None})
+    mock_tests = AsyncMock(return_value={
+        "project": "klipper",
+        "total": 1, "passed": 1, "failed": 0,
+        "duration_s": 0.1, "failures": [],
+    })
+
+    with patch("app.core.ci_fixer._call_claude_code", mock_claude), \
+         patch("app.core.ci_fixer.run_project_tests", mock_tests), \
+         patch("app.core.ci_fixer.compute_signature", return_value=("h", sig)), \
+         patch("app.core.ci_fixer.post_lesson_summary_to_memory_api", AsyncMock()):
+        await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError",
+        )
+
+    latest = await ci_db.fetch_one(
+        "SELECT strategy FROM ci_lesson_learned ORDER BY id DESC LIMIT 1"
+    )
+    assert latest["strategy"] == "context-enriched"
+
+
+@pytest.mark.asyncio
+async def test_dedup_disabled_by_env_flag(ci_db, monkeypatch):
+    from unittest.mock import AsyncMock, patch
+
+    monkeypatch.setenv("CI_SIGNAL_DEDUP_ENABLED", "0")
+
+    async def fake_open_ci_db():
+        return _NoCloseDB(ci_db)
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    sig = "klipper::test_bar::h"
+    for u in ("u-old-1", "u-old-2"):
+        await ci_db.execute(
+            """INSERT INTO ci_lesson_learned
+               (run_uuid, project, test_name, error_hash, signature, raw_error,
+                attempt_num, strategy, context_lessons, fix_diff, outcome, duration_ms)
+               VALUES (?, 'klipper', 'test_bar', 'h', ?, 'e', 1,
+                       'fix-direct', NULL, NULL, 'failed', 0)""",
+            (u, sig),
+        )
+
+    mock_claude = AsyncMock(return_value={"answer": "fix", "session_id": None, "error": None})
+    mock_tests = AsyncMock(return_value={
+        "project": "klipper",
+        "total": 1, "passed": 1, "failed": 0,
+        "duration_s": 0.1, "failures": [],
+    })
+
+    with patch("app.core.ci_fixer._call_claude_code", mock_claude), \
+         patch("app.core.ci_fixer.run_project_tests", mock_tests), \
+         patch("app.core.ci_fixer.compute_signature", return_value=("h", sig)), \
+         patch("app.core.ci_fixer.post_lesson_summary_to_memory_api", AsyncMock()):
+        await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError",
+        )
+
+    latest = await ci_db.fetch_one(
+        "SELECT strategy FROM ci_lesson_learned ORDER BY id DESC LIMIT 1"
+    )
+    assert latest["strategy"] == "fix-direct"
+
+
 # ---------------------------------------------------------------------------
 # post_lesson_summary_to_memory_api -- real helper body, httpx.MockTransport
 # ---------------------------------------------------------------------------

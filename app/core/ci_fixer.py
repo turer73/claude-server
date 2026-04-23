@@ -16,7 +16,12 @@ import uuid
 import httpx
 
 from app.core.ci_runner import PROJECT_REGISTRY, run_project_tests
-from app.core.ci_signal_dedup import compute_signature, record_lesson
+from app.core.ci_signal_dedup import (
+    compute_signature,
+    fetch_lesson_context,
+    get_recent_occurrences,
+    record_lesson,
+)
 from app.core.config import get_settings
 from app.db.database import Database
 
@@ -112,6 +117,19 @@ def _build_env() -> dict:
     if oauth:
         env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth
     return env
+
+
+# ---------------------------------------------------------------------------
+# Dedup env flag
+# ---------------------------------------------------------------------------
+
+
+def _dedup_enabled() -> bool:
+    """Check whether CI signal dedup is enabled via env flag.
+
+    Default: enabled. Set CI_SIGNAL_DEDUP_ENABLED=0 to disable.
+    """
+    return os.environ.get("CI_SIGNAL_DEDUP_ENABLED", "1") != "0"
 
 
 # ---------------------------------------------------------------------------
@@ -296,17 +314,42 @@ async def attempt_fix(
                 project, test_name, attempt, max_attempts,
             )
 
-            # 1. Build prompt (include previous errors for retries)
+            # 0. Determine current error text and compute its signature ONCE.
+            current_error_text = error if attempt == 1 else prev_errors[-1]
+            error_hash, signature = compute_signature(
+                project, test_name, current_error_text,
+            )
+
+            # 1. Dedup check: if the same signature failed in >=2 recent runs,
+            #    switch to context-enriched strategy and fetch past lessons.
+            strategy = "fix-direct"
+            context_rows: list[dict] | None = None
+            if _dedup_enabled() and db is not None:
+                try:
+                    recent = await get_recent_occurrences(db, signature, window=3)
+                    if recent >= 2:
+                        strategy = "context-enriched"
+                        context_rows = await fetch_lesson_context(
+                            db, project, signature, limit=5,
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "dedup check failed, falling back to fix-direct: %s", exc,
+                    )
+                    strategy = "fix-direct"
+                    context_rows = None
+
+            # 2. Build prompt (include previous errors for retries)
             prompt = build_fix_prompt(
                 project=project,
                 test_file=test_file,
                 test_name=test_name,
-                error=error if attempt == 1 else prev_errors[-1],
+                error=current_error_text,
                 source_file=source_file,
                 prev_errors=prev_errors if attempt > 1 else None,
             )
 
-            # 2. Call Claude Code
+            # 3. Call Claude Code
             claude_result = await _call_claude_code(prompt, cwd)
             claude_responses.append(claude_result)
 
@@ -315,13 +358,16 @@ async def attempt_fix(
                 prev_errors.append(claude_result["error"])
                 continue
 
-            # 3. Re-run tests
+            # 4. Re-run tests
             test_result = await run_project_tests(project)
 
             # Record the lesson for this attempt (before the passed/failed branches).
-            current_error_text = error if attempt == 1 else prev_errors[-1]
-            error_hash, signature = compute_signature(project, test_name, current_error_text)
             outcome = "passed" if test_result.get("failed", 0) == 0 else "failed"
+            context_lessons_json = (
+                json.dumps([r["id"] for r in context_rows])
+                if context_rows
+                else None
+            )
             if db is not None:
                 try:
                     await record_lesson(
@@ -331,8 +377,8 @@ async def attempt_fix(
                         error_hash=error_hash, signature=signature,
                         raw_error=current_error_text,
                         attempt_num=attempt,
-                        strategy="fix-direct",  # Phase 2 replaces this
-                        context_lessons=None,
+                        strategy=strategy,
+                        context_lessons=context_lessons_json,
                         fix_diff=claude_result.get("answer"),
                         outcome=outcome,
                         duration_ms=None,
@@ -340,14 +386,14 @@ async def attempt_fix(
                 except Exception as exc:
                     logger.warning("lesson record failed: %s", exc)
 
-            # 4. Check if fixed
+            # 5. Check if fixed
             if test_result.get("failed", 0) == 0:
                 logger.info("Test duzeltildi! deneme=%d", attempt)
                 # Post summary to memory API (single-line content -- memory API rejects \n in JSON)
                 await post_lesson_summary_to_memory_api(
                     lesson_type="lesson_learned",
                     name=f"CI fix: {project}/{test_name}",
-                    description=f"Attempt {attempt}, fix-direct - fixed",
+                    description=f"Attempt {attempt}, {strategy} - fixed",
                     content=(
                         f"Run {run_uuid[:8]}: {test_name} in {project} fixed on attempt {attempt}. "
                         f"Signature: {signature}. "
@@ -364,7 +410,7 @@ async def attempt_fix(
                     "error": None,
                 }
 
-            # 5. Still failing -- collect error for next attempt
+            # 6. Still failing -- collect error for next attempt
             current_error = "Bilinmeyen hata"
             for failure in test_result.get("failures", []):
                 if failure.get("test_name") == test_name or failure.get("test_file") == test_file:
