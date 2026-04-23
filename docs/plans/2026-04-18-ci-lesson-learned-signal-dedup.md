@@ -700,6 +700,8 @@ git commit -m "feat(ci): fetch_lesson_context() returns scoped past lessons newe
 
 **Step 1: Write the failing test**
 
+> **Note on test DB lifecycle:** All `attempt_fix` test snippets in this plan return `_NoCloseDB(ci_db)` from `fake_open_ci_db` rather than the raw `ci_db` fixture. `attempt_fix` has a `finally: await db.close()` block that runs after the retry loop — if the fixture is handed back directly, that close call would destroy the DB mid-test and break post-call `fetch_all` assertions. `_NoCloseDB` (defined at `tests/test_ci_fixer.py:17-34`) is a transparent proxy that forwards every attribute to the wrapped `ci_db` but makes `close()` a no-op. The fixture's own pytest teardown still closes the DB correctly after the test function returns.
+
 Append to `tests/test_ci_fixer.py`:
 
 ```python
@@ -709,7 +711,7 @@ async def test_attempt_fix_records_a_lesson_per_attempt(ci_db, monkeypatch):
     from unittest.mock import AsyncMock, patch
 
     async def fake_open_ci_db():
-        return ci_db
+        return _NoCloseDB(ci_db)
 
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
@@ -752,7 +754,7 @@ async def test_attempt_fix_all_attempts_share_one_run_uuid(ci_db, monkeypatch):
     from unittest.mock import AsyncMock, patch
 
     async def fake_open_ci_db():
-        return ci_db
+        return _NoCloseDB(ci_db)
 
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
@@ -879,7 +881,7 @@ async def test_attempt_fix_posts_memory_summary_on_success(ci_db, monkeypatch):
     from unittest.mock import AsyncMock, patch
 
     async def fake_open_ci_db():
-        return ci_db
+        return _NoCloseDB(ci_db)
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
     posted = []
@@ -915,7 +917,7 @@ async def test_attempt_fix_skips_memory_post_on_failure(ci_db, monkeypatch):
     from unittest.mock import AsyncMock, patch
 
     async def fake_open_ci_db():
-        return ci_db
+        return _NoCloseDB(ci_db)
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
     posted = []
@@ -1074,7 +1076,7 @@ async def test_strategy_switches_to_context_enriched_after_2_failures(ci_db, mon
     from unittest.mock import AsyncMock, patch
 
     async def fake_open_ci_db():
-        return ci_db
+        return _NoCloseDB(ci_db)
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
     # Seed 2 past failures with a known signature
@@ -1120,7 +1122,7 @@ async def test_dedup_disabled_by_env_flag(ci_db, monkeypatch):
     monkeypatch.setenv("CI_SIGNAL_DEDUP_ENABLED", "0")
 
     async def fake_open_ci_db():
-        return ci_db
+        return _NoCloseDB(ci_db)
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
     sig = "klipper::test_bar::h"
@@ -1334,7 +1336,7 @@ from app.core.ci_fixer import attempt_fix
 
 async def _one_call(ci_db, monkeypatch, *, claude_result, test_result):
     async def fake_open_ci_db():
-        return ci_db
+        return _NoCloseDB(ci_db)
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
     mock_claude = AsyncMock(return_value=claude_result)
