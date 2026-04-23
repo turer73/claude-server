@@ -711,3 +711,36 @@ async def test_post_lesson_summary_logs_warning_on_401(monkeypatch, caplog):
     assert warnings, "expected a warning log for 4xx response"
     joined = " ".join(r.getMessage() for r in warnings)
     assert "401" in joined
+
+
+@pytest.mark.asyncio
+async def test_post_lesson_summary_sanitizes_newlines_in_string_fields(monkeypatch):
+    """Defense-in-depth: newlines in name/description/content are flattened
+    to spaces before the JSON body goes out, so the strict memory API parser
+    never sees a rejectable payload even if a caller interpolates unsanitized
+    values (e.g. generative test names, project slugs with stray \\n)."""
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = request.content
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json={})
+
+    _patch_async_client_with_transport(monkeypatch, handler)
+    _patch_settings(monkeypatch, base="http://test/api", key="test-key")
+
+    await post_lesson_summary_to_memory_api(
+        lesson_type="lesson_learned",
+        name="n1\nn2",
+        description="d1\r\nd2",
+        content="a\nb\r\nc",
+    )
+
+    # content: \n -> space, then \r -> space; \r\n sequence becomes two spaces
+    assert captured["json"]["content"] == "a b  c"
+    assert captured["json"]["name"] == "n1 n2"
+    assert captured["json"]["description"] == "d1  d2"
+
+    # No raw newlines or carriage returns anywhere in the serialized body
+    assert b"\n" not in captured["body"]
+    assert b"\r" not in captured["body"]

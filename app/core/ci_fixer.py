@@ -63,8 +63,11 @@ async def post_lesson_summary_to_memory_api(
     parameter is named ``lesson_type`` to avoid shadowing the builtin.
 
     The memory API rejects payloads with backslash/newline characters in JSON
-    (it uses a strict parser), so the caller is responsible for keeping
-    ``content`` on a single line.
+    (it uses a strict parser). As defense-in-depth this helper flattens any
+    CR/LF in ``name``/``description``/``content`` to spaces before serializing,
+    so a caller that interpolates an unsanitized value (e.g. a project slug
+    with a stray newline, or a generative test name) cannot produce a payload
+    the parser would silently reject.
     """
     try:
         settings = get_settings()
@@ -72,12 +75,18 @@ async def post_lesson_summary_to_memory_api(
         key = settings.memory_api_key
         if not base or not key:
             return
+
+        def _flatten(s: str) -> str:
+            return s.replace("\n", " ").replace("\r", " ")
+
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.post(
                 f"{base}/memories",
                 headers={"X-Memory-Key": key, "Content-Type": "application/json"},
-                json={"type": lesson_type, "name": name,
-                      "description": description, "content": content},
+                json={"type": lesson_type,
+                      "name": _flatten(name),
+                      "description": _flatten(description),
+                      "content": _flatten(content)},
             )
             if resp.status_code >= 400:
                 logger.warning(
