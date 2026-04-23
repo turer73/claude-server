@@ -522,7 +522,7 @@ def test_prompt_contains_past_lessons_when_provided():
         error="AssertionError",
         context_lessons=lessons,
     )
-    assert "Onceki oturumlardaki dersler" in prompt
+    assert "Onceki denemelerdeki dersler" in prompt
     assert "diff 1" in prompt
     assert "diff 2" in prompt
     # Shape asserts: pin the per-lesson header format so reordering fields
@@ -561,7 +561,7 @@ def test_prompt_has_no_lessons_section_when_none():
         error="AssertionError",
         context_lessons=None,
     )
-    assert "Onceki oturumlardaki dersler" not in prompt
+    assert "Onceki denemelerdeki dersler" not in prompt
 
 
 def test_prompt_has_no_lessons_section_when_empty_list():
@@ -572,7 +572,7 @@ def test_prompt_has_no_lessons_section_when_empty_list():
         error="AssertionError",
         context_lessons=[],
     )
-    assert "Onceki oturumlardaki dersler" not in prompt
+    assert "Onceki denemelerdeki dersler" not in prompt
 
 
 # ---------------------------------------------------------------------------

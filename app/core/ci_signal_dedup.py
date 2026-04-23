@@ -89,6 +89,13 @@ async def get_recent_occurrences(db: Database, signature: str, window: int = 3) 
     A "run" is a distinct run_uuid. We look at the last `window` run_uuids that
     touched this signature (any outcome), then count how many rows inside those
     runs have outcome='failed'.
+
+    Counts failed ROWS, not distinct failing run_uuids. This means repeated
+    failures within a single `attempt_fix` call (same run_uuid, N retry
+    attempts) count toward the enrichment threshold. Intentional: a 3rd retry
+    that just failed twice is exactly when the AI benefits most from seeing
+    its own prior attempts. Canonical test:
+    ``tests/test_ci_signal_dedup.py::test_get_recent_occurrences_counts_per_run_uuid``.
     """
     row = await db.fetch_one(
         """

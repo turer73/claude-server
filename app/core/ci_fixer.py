@@ -174,9 +174,11 @@ def build_fix_prompt(
             lines.append(f"  Deneme {i}: {prev}")
 
     if context_lessons:  # truthy: non-None AND non-empty
-        lines.extend(["", "Onceki oturumlardaki dersler (en yenisi ilk):"])
-        # lowercase "deneme" (historical) visually distinguishes past-session
-        # lessons from capital "Deneme" (current-session retry) above.
+        lines.extend(["", "Onceki denemelerdeki dersler (en yenisi ilk):"])
+        # lowercase "deneme" (historical) visually distinguishes past-attempt
+        # lessons (may be cross-run OR intra-run -- see
+        # get_recent_occurrences docstring) from capital "Deneme"
+        # (current-session retry) above.
         for lesson in context_lessons:
             lines.append(
                 f"  - deneme {lesson['attempt_num']} ({lesson['strategy']}) "
