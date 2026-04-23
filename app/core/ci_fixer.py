@@ -38,13 +38,22 @@ async def _open_ci_db() -> Database:
 
 
 async def post_lesson_summary_to_memory_api(
-    *, type: str, name: str, description: str, content: str
+    *, lesson_type: str, name: str, description: str, content: str
 ) -> None:
     """Best-effort POST a lesson summary to the memory API.
 
-    Silent on failure. The memory API rejects payloads with backslash/newline
-    characters in JSON (it uses a strict parser), so the caller is responsible
-    for keeping ``content`` on a single line.
+    Silent on transport failure (network errors are caught and logged at
+    warning level -- this helper must never raise into the fix loop).
+    Non-2xx responses are logged at warning level with the status code and a
+    truncated body so operators can diagnose rejected lessons (bad key,
+    schema drift, upstream 5xx, etc.) instead of losing the signal silently.
+
+    The wire JSON key is ``"type"`` -- the memory API contract. The Python
+    parameter is named ``lesson_type`` to avoid shadowing the builtin.
+
+    The memory API rejects payloads with backslash/newline characters in JSON
+    (it uses a strict parser), so the caller is responsible for keeping
+    ``content`` on a single line.
     """
     try:
         settings = get_settings()
@@ -53,12 +62,17 @@ async def post_lesson_summary_to_memory_api(
         if not base or not key:
             return
         async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(
+            resp = await client.post(
                 f"{base}/memories",
                 headers={"X-Memory-Key": key, "Content-Type": "application/json"},
-                json={"type": type, "name": name,
+                json={"type": lesson_type, "name": name,
                       "description": description, "content": content},
             )
+            if resp.status_code >= 400:
+                logger.warning(
+                    "memory api rejected payload: status=%d body=%s",
+                    resp.status_code, resp.text[:200],
+                )
     except Exception as exc:
         logger.warning("memory api post failed: %s", exc)
 
@@ -331,7 +345,7 @@ async def attempt_fix(
                 logger.info("Test duzeltildi! deneme=%d", attempt)
                 # Post summary to memory API (single-line content -- memory API rejects \n in JSON)
                 await post_lesson_summary_to_memory_api(
-                    type="lesson_learned",
+                    lesson_type="lesson_learned",
                     name=f"CI fix: {project}/{test_name}",
                     description=f"Attempt {attempt}, fix-direct - fixed",
                     content=(

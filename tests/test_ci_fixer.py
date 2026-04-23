@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from app.core.ci_fixer import (
@@ -11,6 +15,7 @@ from app.core.ci_fixer import (
     attempt_fix,
     build_fix_prompt,
     _call_claude_code,
+    post_lesson_summary_to_memory_api,
 )
 
 
@@ -368,7 +373,7 @@ async def test_attempt_fix_posts_memory_summary_on_success(ci_db, monkeypatch):
 
     assert result["fixed"] is True
     assert len(posted) == 1
-    assert posted[0]["type"] == "lesson_learned"
+    assert posted[0]["lesson_type"] == "lesson_learned"
     assert "klipper" in posted[0]["name"]
 
 
@@ -406,3 +411,141 @@ async def test_attempt_fix_skips_memory_post_on_failure(ci_db, monkeypatch):
         )
 
     assert posted == []
+
+
+# ---------------------------------------------------------------------------
+# post_lesson_summary_to_memory_api -- real helper body, httpx.MockTransport
+# ---------------------------------------------------------------------------
+
+
+def _patch_async_client_with_transport(monkeypatch, handler):
+    """Route the helper's internal httpx.AsyncClient through MockTransport."""
+    real_client = httpx.AsyncClient
+
+    def make_client(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr("app.core.ci_fixer.httpx.AsyncClient", make_client)
+
+
+def _patch_settings(monkeypatch, *, base: str, key: str):
+    """Override app.core.ci_fixer.get_settings without polluting the real cache."""
+    fake = SimpleNamespace(memory_api_base=base, memory_api_key=key)
+    monkeypatch.setattr("app.core.ci_fixer.get_settings", lambda: fake)
+
+
+@pytest.mark.asyncio
+async def test_post_lesson_summary_sends_expected_request(monkeypatch, caplog):
+    """Happy path: URL, headers, payload shape; no warning on 200."""
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["headers"] = dict(request.headers)
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json={})
+
+    _patch_async_client_with_transport(monkeypatch, handler)
+    _patch_settings(monkeypatch, base="http://test/api", key="test-key")
+
+    with caplog.at_level(logging.WARNING, logger="app.core.ci_fixer"):
+        await post_lesson_summary_to_memory_api(
+            lesson_type="lesson_learned",
+            name="x",
+            description="y",
+            content="z",
+        )
+
+    assert captured["url"].endswith("/memories")
+    # httpx lowercases header names
+    assert captured["headers"]["x-memory-key"] == "test-key"
+    assert captured["headers"]["content-type"] == "application/json"
+    assert captured["json"] == {
+        "type": "lesson_learned",
+        "name": "x",
+        "description": "y",
+        "content": "z",
+    }
+    # No warnings on 200
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("base", "key"),
+    [
+        ("", "some-key"),
+        ("http://test/api", ""),
+    ],
+    ids=["base_missing", "key_missing"],
+)
+async def test_post_lesson_summary_skips_when_config_missing(
+    monkeypatch, base, key,
+):
+    """When base or key is empty, no HTTP request must be made."""
+    called: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        called.append(request)
+        return httpx.Response(200, json={})
+
+    _patch_async_client_with_transport(monkeypatch, handler)
+    _patch_settings(monkeypatch, base=base, key=key)
+
+    await post_lesson_summary_to_memory_api(
+        lesson_type="lesson_learned",
+        name="x",
+        description="y",
+        content="z",
+    )
+
+    assert called == []
+
+
+@pytest.mark.asyncio
+async def test_post_lesson_summary_logs_warning_on_500(monkeypatch, caplog):
+    """On 5xx, helper must log a warning and not raise into the fix loop."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="upstream exploded")
+
+    _patch_async_client_with_transport(monkeypatch, handler)
+    _patch_settings(monkeypatch, base="http://test/api", key="test-key")
+
+    with caplog.at_level(logging.WARNING, logger="app.core.ci_fixer"):
+        # Must not raise
+        await post_lesson_summary_to_memory_api(
+            lesson_type="lesson_learned",
+            name="x",
+            description="y",
+            content="z",
+        )
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings, "expected a warning log for 5xx response"
+    joined = " ".join(r.getMessage() for r in warnings)
+    assert "500" in joined
+    assert "upstream exploded" in joined
+
+
+@pytest.mark.asyncio
+async def test_post_lesson_summary_logs_warning_on_401(monkeypatch, caplog):
+    """On 4xx (e.g. bad key), helper logs warning, does not raise."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, text="unauthorized")
+
+    _patch_async_client_with_transport(monkeypatch, handler)
+    _patch_settings(monkeypatch, base="http://test/api", key="wrong-key")
+
+    with caplog.at_level(logging.WARNING, logger="app.core.ci_fixer"):
+        await post_lesson_summary_to_memory_api(
+            lesson_type="lesson_learned",
+            name="x",
+            description="y",
+            content="z",
+        )
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings, "expected a warning log for 4xx response"
+    joined = " ".join(r.getMessage() for r in warnings)
+    assert "401" in joined
