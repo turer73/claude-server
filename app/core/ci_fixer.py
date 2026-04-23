@@ -144,6 +144,7 @@ def build_fix_prompt(
     error: str,
     source_file: str | None = None,
     prev_errors: list[str] | None = None,
+    context_lessons: list[dict] | None = None,
 ) -> str:
     """Build a prompt for Claude Code to fix a failing test.
 
@@ -165,6 +166,16 @@ def build_fix_prompt(
         lines.extend(["", "Onceki duzeltme denemelerinde alinan hatalar:"])
         for i, prev in enumerate(prev_errors, 1):
             lines.append(f"  Deneme {i}: {prev}")
+
+    if context_lessons:  # truthy: non-None AND non-empty
+        lines.extend(["", "Onceki oturumlardaki dersler (en yenisi ilk):"])
+        for lesson in context_lessons:
+            lines.append(
+                f"  - deneme {lesson['attempt_num']} ({lesson['strategy']}) "
+                f"=> {lesson['outcome']} ({lesson['created_at']})"
+            )
+            if lesson.get("fix_diff"):
+                lines.append(f"    diff: {lesson['fix_diff'][:500]}")
 
     lines.extend([
         "",
@@ -347,6 +358,7 @@ async def attempt_fix(
                 error=current_error_text,
                 source_file=source_file,
                 prev_errors=prev_errors if attempt > 1 else None,
+                context_lessons=context_rows,
             )
 
             # 3. Call Claude Code

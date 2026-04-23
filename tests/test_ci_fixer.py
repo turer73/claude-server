@@ -504,6 +504,52 @@ async def test_dedup_disabled_by_env_flag(ci_db, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Task 10: build_fix_prompt past-lessons block
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_contains_past_lessons_when_provided():
+    lessons = [
+        {"attempt_num": 1, "strategy": "fix-direct", "outcome": "failed",
+         "fix_diff": "diff 1", "raw_error": "err", "created_at": "2026-04-17 10:00:00"},
+        {"attempt_num": 2, "strategy": "fix-direct", "outcome": "failed",
+         "fix_diff": "diff 2", "raw_error": "err", "created_at": "2026-04-18 09:00:00"},
+    ]
+    prompt = build_fix_prompt(
+        project="klipper",
+        test_file="tests/test_foo.py",
+        test_name="test_bar",
+        error="AssertionError",
+        context_lessons=lessons,
+    )
+    assert "Onceki oturumlardaki dersler" in prompt
+    assert "diff 1" in prompt
+    assert "diff 2" in prompt
+
+
+def test_prompt_has_no_lessons_section_when_none():
+    prompt = build_fix_prompt(
+        project="klipper",
+        test_file="tests/test_foo.py",
+        test_name="test_bar",
+        error="AssertionError",
+        context_lessons=None,
+    )
+    assert "Onceki oturumlardaki dersler" not in prompt
+
+
+def test_prompt_has_no_lessons_section_when_empty_list():
+    prompt = build_fix_prompt(
+        project="klipper",
+        test_file="tests/test_foo.py",
+        test_name="test_bar",
+        error="AssertionError",
+        context_lessons=[],
+    )
+    assert "Onceki oturumlardaki dersler" not in prompt
+
+
+# ---------------------------------------------------------------------------
 # post_lesson_summary_to_memory_api -- real helper body, httpx.MockTransport
 # ---------------------------------------------------------------------------
 
