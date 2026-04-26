@@ -90,6 +90,23 @@ D1: kuafor-db, petvet-db
 Her oturum basinda `memory-session-start.sh` calistir, acik buglari ve okunmamis notlari kontrol et.
 Her oturum sonunda /memory save ile oturumu kaydet.
 
+## Yari Otonom Hook Sistemi (scripts/hooks/)
+Claude Code icin SessionStart/UserPromptSubmit/PreToolUse/PostToolUse/Stop hook'lari.
+Kurulum: `bash /opt/linux-ai-server/scripts/hooks/install.sh` (~/.claude/settings.json'a yazar).
+Kontrol: `bash /opt/linux-ai-server/scripts/hooks/install.sh --check`.
+Loglar: /opt/linux-ai-server/data/hook-logs/
+
+Hook'lar:
+- **session-start.sh** — oturum acilinca hafiza durumu, acik bug, plan, notlari context'e enjekte eder
+- **user-prompt-log.sh** — her prompt'u TSV'ye kaydeder (user-prompts.tsv) — rationale audit
+- **pre-bash-guard.sh** — yikici komutlari (rm -rf, force push, DROP TABLE, vb.) BLOKLAR; otonom modda HOOK_DESTRUCTIVE_ACK=1 ile bypass
+- **post-bash-capture.sh** — pytest/npm/tsc/git commit gibi komutlarin ciktisini yakalar; FAIL ise discoveries'e bug yazar (last-test-results.tsv)
+- **stop-save-session.py** — oturum bitince transcript'i ozetleyip Memory API'ye session kaydeder
+
+Otonomi modlari (env HOOK_AUTONOMY):
+- `supervised` (default) — yikici komutlar engellenir, kullanici onayi sart
+- `autonomous` — HOOK_DESTRUCTIVE_ACK=1 ile guard atlanabilir (UI/CI icinde)
+
 ## Komutlar
 sudo systemctl restart linux-ai-server
 journalctl -u linux-ai-server -f

@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "_comment": "Klipper yari otonom hook sistemi. ~/.claude/settings.json olarak kur.",
+
+  "env": {
+    "HOOK_DB": "/opt/linux-ai-server/data/claude_memory.db",
+    "HOOK_API": "http://127.0.0.1:8420/api/v1/memory",
+    "HOOK_DEVICE": "klipper",
+    "HOOK_LOG_DIR": "/opt/linux-ai-server/data/hook-logs",
+    "HOOK_ENV_FILE": "/opt/linux-ai-server/.env",
+    "HOOK_AUTONOMY": "supervised",
+    "HOOK_MIN_TURNS": "2"
+  },
+
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/linux-ai-server/scripts/hooks/session-start.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/linux-ai-server/scripts/hooks/user-prompt-log.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/linux-ai-server/scripts/hooks/pre-bash-guard.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/linux-ai-server/scripts/hooks/post-bash-capture.sh",
+            "timeout": 8
+          }
+        ]
+      }
+    ],
+
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /opt/linux-ai-server/scripts/hooks/stop-save-session.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
