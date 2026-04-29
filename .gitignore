@@ -10,8 +10,16 @@ htmlcov/
 dist/
 build/
 .env
+.env.backup*
+.env.bak.*
 *.db
+*.db-shm
+*.db-wal
+*.db.bak.*
+*.pre-normalize-*
 *.log
+*.bak.*
+*.archive-*
 .claude/
 .mcp.json
 venv/
@@ -27,3 +35,8 @@ kernel/Module.symvers
 kernel/modules.order
 kernel/.*.cmd
 .claude/
+data/hook-logs/
+data/*.tsv
+e2e-live/test-results/
+e2e-live/playwright-report/
+e2e-live/results.json
