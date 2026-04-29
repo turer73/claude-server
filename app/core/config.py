@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     coolify_token: str = ""
     coolify_url: str = ""
 
+    # Telegram
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+
     # Logging
     log_level: str = "INFO"
     log_format: str = "json"
