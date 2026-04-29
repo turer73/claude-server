@@ -67,5 +67,5 @@ async def test_execute_in_session(tm):
 async def test_execute_with_error(tm):
     sid = tm.create_session()
     session = tm.get_session(sid)
-    result = await session.execute("python -c \"exit(42)\"")
+    result = await session.execute("python3 -c \"exit(42)\"")
     assert result["exit_code"] == 42
