@@ -43,7 +43,7 @@
 - /ws/terminal — WebSocket terminal (PTY)
 
 ## Docker Konteynerler
-Coolify, Gitea, Paperless-ngx, Grafana, Prometheus, n8n, ChromaDB
+Dozzle, Uptime Kuma (kalan: 2 konteyner — diger servisler VPS Dokploy altinda)
 
 ## Kernel Modulleri
 - proc_linux_ai — /proc/linux_ai (CPU, RAM, uptime, esikler)
@@ -70,7 +70,7 @@ Bu sunucu. FastAPI, kernel modulleri, 430 test.
 GitHub: github.com/turer73/claude-server
 
 ## VPS (Contabo)
-Coolify, Uptime Kuma, n8n, Plausible. /api/v1/vps/exec ile yonetim.
+Dokploy v0.28.8 + Traefik v3.1 orchestrator, Caddy 2 reverse proxy. Servisler: Plausible, n8n, OpenClaw, Panola (Postgres+PostgREST+Auth), Grafana+Prometheus+cAdvisor, Dashy, Uptime Kuma. 21 konteyner aktif. /api/v1/vps/exec ile yonetim.
 
 ## Cloudflare
 Hesap: REDACTED_EMAIL
