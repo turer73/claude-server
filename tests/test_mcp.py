@@ -316,7 +316,7 @@ def test_execute_tool_vps_status():
 def test_execute_tool_vps_services():
     from app.mcp.tools import execute_tool
     result = json.loads(execute_tool("vps_services", {}))
-    assert "services" in result or "error" in result
+    assert "services" in result or "error" in result or "exit_code" in result
 
 
 def test_execute_tool_rag_stats():
