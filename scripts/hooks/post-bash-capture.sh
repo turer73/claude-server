@@ -35,7 +35,7 @@ print(f"{cmd[:200]}\t{desc[:80]}\t{rc}\t{clip(stderr,300) or clip(stdout,300)}")
 CMD=$(printf '%s' "$EXTRACT" | cut -f1)
 
 # Yakalama tetikleyicileri — sadece anlamli komutlari kaydet
-if printf '%s' "$CMD" | grep -qiE '(pytest|npm[[:space:]]+(test|run[[:space:]]+test|run[[:space:]]+build|run[[:space:]]+lint|run[[:space:]]+typecheck)|yarn[[:space:]]+(test|build|lint)|pnpm[[:space:]]+(test|build|lint)|tsc([[:space:]]|$)|ruff([[:space:]]|$)|mypy([[:space:]]|$)|eslint|cargo[[:space:]]+(test|build|check)|go[[:space:]]+(test|build)|make[[:space:]]+(test|check|build)|vitest|jest|playwright|systemctl[[:space:]]+(restart|status)|docker[[:space:]]+compose[[:space:]]+(up|down|build)|git[[:space:]]+(commit|push)|black([[:space:]]|$))'; then
+if printf '%s' "$CMD" | grep -qiE '(pytest|npm[[:space:]]+(test|run[[:space:]]+test|run[[:space:]]+build|run[[:space:]]+lint|run[[:space:]]+typecheck)|yarn[[:space:]]+(test|build|lint)|pnpm[[:space:]]+(test|build|lint)|tsc([[:space:]]|$)|ruff([[:space:]]|$)|mypy([[:space:]]|$)|eslint|cargo[[:space:]]+(test|build|check)|go[[:space:]]+(test|build)|make[[:space:]]+(test|check|build)|vitest|jest|playwright|systemctl[[:space:]]+(restart|status)|docker[[:space:]]+compose[[:space:]]+(up|down|build)|black([[:space:]]|$))'; then
   TS=$(date '+%Y-%m-%d %H:%M:%S')
   printf '%s\t%s\n' "$TS" "$EXTRACT" >> "$HOOK_LOG_DIR/last-test-results.tsv" 2>/dev/null || true
 
