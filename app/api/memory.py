@@ -87,6 +87,7 @@ class MemoryCreate(BaseModel):
     description: str
     content: str
     source_device: Optional[str] = "klipper"
+    rationale: Optional[str] = None
 
 class MemoryUpdate(BaseModel):
     name: Optional[str] = None
@@ -102,6 +103,7 @@ class TaskLogCreate(BaseModel):
     status: Optional[str] = "completed"
     files_changed: Optional[list] = None
     details: Optional[str] = None
+    rationale: Optional[str] = None
 
 class DiscoveryCreate(BaseModel):
     session_id: Optional[int] = None
@@ -111,6 +113,7 @@ class DiscoveryCreate(BaseModel):
     title: str
     details: Optional[str] = None
     status: Optional[str] = "active"
+    rationale: Optional[str] = None
 
     @field_validator("type")
     @classmethod
@@ -140,6 +143,21 @@ class DiscoveryUpdate(BaseModel):
         if v and v not in VALID_STATUSES:
             raise ValueError(f"Geçersiz status: {v}. Geçerli: {', '.join(VALID_STATUSES)}")
         return v
+
+class TaskQueueCreate(BaseModel):
+    requested_by: str
+    target_device: Optional[str] = None
+    command: str
+    rationale: Optional[str] = None
+
+class TaskQueueClaim(BaseModel):
+    claimed_by: str
+
+class TaskQueueResult(BaseModel):
+    exit_code: int
+    stdout: Optional[str] = None
+    stderr: Optional[str] = None
+    status: Literal["completed", "failed"] = "completed"
 
 class NoteCreate(BaseModel):
     from_device: str
@@ -304,15 +322,15 @@ async def create_memory(data: MemoryCreate):
         if existing:
             # Var olanı güncelle
             db.execute(
-                "UPDATE memories SET description=?, content=?, source_device=?, updated_at=datetime('now') WHERE id=?",
-                (data.description, data.content, data.source_device, existing[0])
+                "UPDATE memories SET description=?, content=?, source_device=?, rationale=COALESCE(?, rationale), updated_at=datetime('now') WHERE id=?",
+                (data.description, data.content, data.source_device, data.rationale, existing[0])
             )
             db.commit()
             return {"id": existing[0], "status": "updated_existing"}
 
         cur = db.execute(
-            "INSERT INTO memories (type, name, description, content, source_device) VALUES (?, ?, ?, ?, ?)",
-            (data.type, data.name, data.description, data.content, data.source_device))
+            "INSERT INTO memories (type, name, description, content, source_device, rationale) VALUES (?, ?, ?, ?, ?, ?)",
+            (data.type, data.name, data.description, data.content, data.source_device, data.rationale))
         db.commit()
         return {"id": cur.lastrowid, "status": "created"}
     finally:
@@ -420,7 +438,7 @@ async def create_session(data: SessionCreate):
 async def list_tasks(project: Optional[str] = None, device: Optional[str] = None, limit: int = 30):
     db = get_db()
     try:
-        query = "SELECT id, session_id, device_name, project, task, status, date(created_at) as date FROM tasks_log WHERE 1=1"
+        query = "SELECT id, session_id, device_name, project, task, status, rationale, date(created_at) as date FROM tasks_log WHERE 1=1"
         params = []
         if project:
             query += " AND project=?"
@@ -447,10 +465,10 @@ async def create_task_log(data: TaskLogCreate):
             return {"id": existing[0], "status": "already_exists"}
 
         cur = db.execute("""
-            INSERT INTO tasks_log (session_id, device_name, project, task, status, files_changed, details)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks_log (session_id, device_name, project, task, status, files_changed, details, rationale)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (data.session_id, data.device_name, data.project, data.task, data.status,
-              json.dumps(data.files_changed) if data.files_changed else None, data.details))
+              json.dumps(data.files_changed) if data.files_changed else None, data.details, data.rationale))
         db.commit()
         return {"id": cur.lastrowid, "status": "created"}
     finally:
@@ -469,7 +487,7 @@ async def list_discoveries(
     db = get_db()
     try:
         query = ("SELECT id, session_id, device_name, project, type, title, status, "
-                 "read_count, date(created_at) as date FROM discoveries WHERE 1=1")
+                 "rationale, read_count, date(created_at) as date FROM discoveries WHERE 1=1")
         params = []
         if project:
             query += " AND project=?"
@@ -508,18 +526,18 @@ async def create_discovery(data: DiscoveryCreate):
             (data.project, data.type, data.title)
         ).fetchone()
         if existing:
-            # Var olanı güncelle (details değiştiyse)
-            if data.details:
-                db.execute("UPDATE discoveries SET details=?, device_name=? WHERE id=?",
-                           (data.details, data.device_name, existing[0]))
+            # Var olanı güncelle (details veya rationale değiştiyse)
+            if data.details or data.rationale:
+                db.execute("UPDATE discoveries SET details=COALESCE(?, details), device_name=?, rationale=COALESCE(?, rationale) WHERE id=?",
+                           (data.details, data.device_name, data.rationale, existing[0]))
                 db.commit()
             return {"id": existing[0], "status": "already_exists"}
 
         cur = db.execute("""
-            INSERT INTO discoveries (session_id, device_name, project, type, title, details, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO discoveries (session_id, device_name, project, type, title, details, status, rationale)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (data.session_id, data.device_name, data.project, data.type,
-              data.title, data.details, data.status or "active"))
+              data.title, data.details, data.status or "active", data.rationale))
         db.commit()
         _sync_fts(db, cur.lastrowid, data.title, data.details)
         db.commit()
@@ -858,6 +876,79 @@ async def archive_stale(days: int = 90):
         )
         db.commit()
         return {"archived": cur.rowcount}
+    finally:
+        db.close()
+
+
+# ============ Task Queue ============
+
+@router.get("/queue")
+async def list_queue(status: Optional[str] = None, target_device: Optional[str] = None, limit: int = 50):
+    db = get_db()
+    try:
+        q = "SELECT * FROM task_queue WHERE 1=1"
+        params = []
+        if status:
+            q += " AND status=?"
+            params.append(status)
+        if target_device:
+            q += " AND (target_device=? OR target_device IS NULL)"
+            params.append(target_device)
+        q += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        rows = db.execute(q, params).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        db.close()
+
+
+@router.post("/queue")
+async def create_queue_task(data: TaskQueueCreate):
+    db = get_db()
+    try:
+        cur = db.execute(
+            "INSERT INTO task_queue (requested_by, target_device, command, rationale) VALUES (?, ?, ?, ?)",
+            (data.requested_by, data.target_device, data.command, data.rationale)
+        )
+        db.commit()
+        return {"id": cur.lastrowid, "status": "pending"}
+    finally:
+        db.close()
+
+
+@router.put("/queue/{task_id}/claim")
+async def claim_queue_task(task_id: int, data: TaskQueueClaim):
+    """Atomic claim - only succeeds if task still pending."""
+    db = get_db()
+    try:
+        cur = db.execute(
+            "UPDATE task_queue SET status='claimed', claimed_by=?, claimed_at=datetime('now'), started_at=datetime('now') "
+            "WHERE id=? AND status='pending'",
+            (data.claimed_by, task_id)
+        )
+        db.commit()
+        if cur.rowcount == 0:
+            raise HTTPException(409, "Task not in pending state or does not exist")
+        row = db.execute("SELECT * FROM task_queue WHERE id=?", (task_id,)).fetchone()
+        return dict(row)
+    finally:
+        db.close()
+
+
+@router.put("/queue/{task_id}/result")
+async def write_queue_result(task_id: int, data: TaskQueueResult):
+    """Worker writes back exit code + stdout/stderr."""
+    db = get_db()
+    try:
+        cur = db.execute(
+            "UPDATE task_queue SET status=?, exit_code=?, stdout=?, stderr=?, finished_at=datetime('now') "
+            "WHERE id=? AND status IN ('claimed', 'running')",
+            (data.status, data.exit_code, data.stdout, data.stderr, task_id)
+        )
+        db.commit()
+        if cur.rowcount == 0:
+            raise HTTPException(409, "Task not claimed/running or does not exist")
+        return {"id": task_id, "status": data.status}
     finally:
         db.close()
 
