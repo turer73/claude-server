@@ -88,7 +88,38 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.task_queue = task_queue
     task_queue.start()
 
+    # Klipper telemetry: app fully initialized, fire-and-forget event POST.
+    # CLAUDE.md zorunlu kayit kurali -- service-start event'i tasks_log'a dusmeli.
+    # subprocess.Popen non-blocking; start_new_session=True ile parent kapanirsa
+    # script ayakta kalir; her exception yutulur (telemetry asla startup'i bozamaz).
+    try:
+        import subprocess
+        subprocess.Popen(
+            ["/opt/linux-ai-server/scripts/klipper-event.sh", "service-start", "fastapi-ready"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            start_new_session=True,
+        )
+    except Exception:
+        pass
+
     yield
+
+    # Klipper telemetry: graceful shutdown event.
+    # API kapanirken kendi /tasks endpoint'ine POST atilir -- script retry loop
+    # 10s boyunca dener; sonuc cogu zaman GIVEUP olur ama log dosyasinda kanit kalir.
+    try:
+        import subprocess
+        subprocess.Popen(
+            ["/opt/linux-ai-server/scripts/klipper-event.sh", "service-stop", "graceful"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            start_new_session=True,
+        )
+    except Exception:
+        pass
 
     # Graceful shutdown
     await task_queue.stop()
@@ -146,6 +177,14 @@ def create_app() -> FastAPI:
             },
         )
 
+    # ---- Health (no auth, public, monitoring) ----
+    # /health: Docker/systemd healthcheck pattern (root, no prefix)
+    # /api/v1/health: versioned API parallel
+    @app.get("/health")
+    @app.get("/api/v1/health")
+    async def health():
+        return {"status": "healthy", "service": "linux-ai-server", "version": __version__}
+
     # ---- Routes ----
     app.include_router(auth_router)
     app.include_router(kernel_router)
@@ -179,10 +218,6 @@ def create_app() -> FastAPI:
     app.include_router(validation_router)
     app.include_router(csp_router)
     app.include_router(ci_router)
-
-    @app.get("/health")
-    async def health() -> dict:
-        return {"status": "healthy", "version": __version__}
 
     @app.get("/ready")
     async def ready() -> dict:

@@ -1,0 +1,391 @@
+{
+  "name": "Klipper Self-Healing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "klipper-alert",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Klipper Alert Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "klipper-alert"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-critical",
+              "leftValue": "={{ $json.alert.severity }}",
+              "rightValue": "critical",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "severity-check",
+      "name": "Critical mi?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://100.113.153.62:8420/api/v1/devops/status",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "check-agent-status",
+      "name": "Agent Durumu Kontrol",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-already-remediated",
+              "leftValue": "={{ $json.total_remediations }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "already-remediated-check",
+      "name": "Zaten Duzeltme Yapildi mi?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://100.113.153.62:8420/api/v1/monitor/webhooks/trigger/health_check",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "health-check-after",
+      "name": "Saglik Kontrolu",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://100.113.153.62:8420/api/v1/monitor/webhooks/trigger/remediate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ source: $('Klipper Alert Webhook').item.json.alert.source, value: $('Klipper Alert Webhook').item.json.alert.value, threshold: $('Klipper Alert Webhook').item.json.alert.threshold }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "trigger-remediate",
+      "name": "Duzeltme Baslat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "amount": 45,
+        "unit": "seconds"
+      },
+      "id": "wait-for-fix",
+      "name": "45s Bekle",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1500, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://100.113.153.62:8420/api/v1/monitor/webhooks/trigger/verify",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ source: $('Klipper Alert Webhook').item.json.alert.source }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "verify-fix",
+      "name": "Dogrulama",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1750, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-fixed",
+              "leftValue": "={{ $json.verification.status }}",
+              "rightValue": "NOT_FIXED",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "fix-check",
+      "name": "Duzeltildi mi?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "8558299279",
+        "text": "=\u2705 *n8n Self-Healing Basarili*\n\nKaynak: `{{ $('Klipper Alert Webhook').item.json.alert.source }}`\nSorun: {{ $('Klipper Alert Webhook').item.json.alert.message }}\nSonuc: *{{ $json.verification.status }}*\nDeger: {{ $('Klipper Alert Webhook').item.json.alert.value }}% \u2192 {{ $json.verification.avg_value }}%\n\n\ud83d\udd51 {{ $now.format('HH:mm dd/MM/yyyy') }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "telegram-fixed",
+      "name": "Telegram: Duzeltildi",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2250, 200],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-cred",
+          "name": "Klipper Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "8558299279",
+        "text": "=\u274c *n8n Self-Healing BASARISIZ*\n\nKaynak: `{{ $('Klipper Alert Webhook').item.json.alert.source }}`\nSorun: {{ $('Klipper Alert Webhook').item.json.alert.message }}\nSonuc: *NOT_FIXED*\nDeger: {{ $('Klipper Alert Webhook').item.json.alert.value }}% \u2192 {{ $json.verification.avg_value }}%\n\n\u26a0\ufe0f *Manuel mudahale gerekli!*\n\ud83d\udd51 {{ $now.format('HH:mm dd/MM/yyyy') }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "telegram-not-fixed",
+      "name": "Telegram: Duzeltilemedi",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2250, 400],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-cred",
+          "name": "Klipper Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "8558299279",
+        "text": "=\u26a0\ufe0f *Klipper Uyari*\n\nKaynak: `{{ $json.alert.source }}`\nSeviye: *{{ $json.alert.severity }}*\nMesaj: {{ $json.alert.message }}\nDeger: {{ $json.alert.value }}% (Esik: {{ $json.alert.threshold }}%)\n\n\ud83d\udd51 {{ $now.format('HH:mm dd/MM/yyyy') }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "telegram-warning",
+      "name": "Telegram: Uyari",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [750, 450],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-cred",
+          "name": "Klipper Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "8558299279",
+        "text": "=\u2139\ufe0f *Klipper Zaten Duzeltme Yapti*\n\nAgent kendi basina duzeltme yapti.\nAktif alert sayisi: {{ $json.active_alerts }}\nToplam duzeltme: {{ $json.total_remediations }}\n\n\ud83d\udd51 {{ $now.format('HH:mm dd/MM/yyyy') }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "telegram-already-fixed",
+      "name": "Telegram: Zaten Duzeltildi",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1250, 0],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-cred",
+          "name": "Klipper Telegram Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Klipper Alert Webhook": {
+      "main": [
+        [
+          {
+            "node": "Critical mi?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critical mi?": {
+      "main": [
+        [
+          {
+            "node": "Agent Durumu Kontrol",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Uyari",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent Durumu Kontrol": {
+      "main": [
+        [
+          {
+            "node": "Zaten Duzeltme Yapildi mi?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zaten Duzeltme Yapildi mi?": {
+      "main": [
+        [
+          {
+            "node": "Saglik Kontrolu",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram: Zaten Duzeltildi",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Duzeltme Baslat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duzeltme Baslat": {
+      "main": [
+        [
+          {
+            "node": "45s Bekle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "45s Bekle": {
+      "main": [
+        [
+          {
+            "node": "Dogrulama",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dogrulama": {
+      "main": [
+        [
+          {
+            "node": "Duzeltildi mi?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duzeltildi mi?": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Duzeltildi",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Duzeltilemedi",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": [
+    {
+      "name": "klipper",
+      "id": "klipper-tag"
+    },
+    {
+      "name": "self-healing",
+      "id": "self-healing-tag"
+    }
+  ]
+}
