@@ -83,12 +83,11 @@ D1: kuafor-db, petvet-db
 - **API:** /api/v1/memory/* (X-Memory-Key header gerekli)
 - **Helper:** bash /opt/linux-ai-server/scripts/claude-memory.sh
 - **Skill:** /memory — dashboard, save, bug, fix, note, search, sessions, tasks
-- **Oturum basi:** bash /opt/linux-ai-server/scripts/memory-session-start.sh
+- **SessionStart hook:** scripts/hooks/session-start.sh (settings.json uzerinden otomatik) — acik bug, okunmamis not, son oturum, son test sonucu inject eder
 - **Cihazlar:** klipper (linux), windows-masaustu, windows-laptop, android-telefon
 - **Tablolar:** memories, sessions, tasks_log, discoveries, notes, devices, device_projects, command_log
 
-Her oturum basinda `memory-session-start.sh` calistir, acik buglari ve okunmamis notlari kontrol et.
-Her oturum sonunda /memory save ile oturumu kaydet.
+Oturum basinda hook DB durumunu otomatik yukler. Her oturum sonunda /memory save ile oturumu kaydet.
 
 ## Komutlar
 sudo systemctl restart linux-ai-server

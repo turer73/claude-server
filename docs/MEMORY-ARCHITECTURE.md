@@ -33,7 +33,6 @@ Claude Code hook entegre hafiza sistemi.
 | Dosya | Amac |
 |-------|------|
 | `claude-memory.sh` | Multi-device DB query helper (sqlite3 dogrudan) |
-| `memory-session-start.sh` | Klipper-side SessionStart context inject (alternatif) |
 | `klipper-event.sh` | systemd/cron event'lerini /tasks POST helper |
 | `klipper-cron-wrap.sh` | Cron komutlarini saran wrapper, OK/FAIL POST |
 

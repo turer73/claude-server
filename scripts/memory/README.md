@@ -7,7 +7,6 @@ Hafiza sistemi scriptleri. Crontab ve hook'lar bu path'leri kullaniyor — tasim
 | Script | Konum | Aciklama |
 |--------|-------|----------|
 | `claude-memory.sh` | `scripts/claude-memory.sh` | CLI helper: `memories`, `sessions`, `tasks`, `bugs`, `search`, `stats` |
-| `memory-session-start.sh` | `scripts/memory-session-start.sh` | SessionStart hook — acik bug, okunmamis not, son oturum ozeti |
 | `klipper-event.sh` | `scripts/klipper-event.sh` | Genel event POST: session/task/discovery kaydi |
 | `klipper-cron-wrap.sh` | `scripts/klipper-cron-wrap.sh` | Cron job wrapper — komut calistir, sonucu command_log'a yaz |
 
