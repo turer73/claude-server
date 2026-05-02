@@ -23,7 +23,10 @@ import urllib.request
 import urllib.error
 
 API_BASE = os.environ.get("MEMORY_API", "http://127.0.0.1:8420/api/v1/memory")
-API_KEY = os.environ.get("MEMORY_KEY", "n7lfjr7aqpe_wWm7VqihgI_fafGNK9ltEYmnBGUPsvg")
+API_KEY = os.environ.get("MEMORY_KEY", "")
+if not API_KEY:
+    print("FATAL: MEMORY_KEY env var required (set in /etc/task-worker.env)", flush=True)
+    sys.exit(1)
 HOSTNAME = socket.gethostname()
 POLL_INTERVAL = int(os.environ.get("WORKER_POLL_SEC", "10"))
 EXEC_TIMEOUT = int(os.environ.get("WORKER_EXEC_TIMEOUT", "30"))
