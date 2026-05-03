@@ -4,24 +4,17 @@ Merkezi CSP violation toplama, dedup, sorgulama.
 VPS csp-collector bu endpoint'e batch gonderir.
 """
 
-import os
 import sqlite3
 from datetime import datetime
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
+from app.core.config import read_env_var
+
 DB_PATH = "/opt/linux-ai-server/data/claude_memory.db"
 
-MEMORY_API_KEY = os.environ.get("MEMORY_API_KEY", "")
-if not MEMORY_API_KEY:
-    _env_path = "/opt/linux-ai-server/.env"
-    if os.path.exists(_env_path):
-        with open(_env_path) as _f:
-            for _line in _f:
-                if _line.startswith("MEMORY_API_KEY="):
-                    MEMORY_API_KEY = _line.strip().split("=", 1)[1]
-                    break
+MEMORY_API_KEY = read_env_var("MEMORY_API_KEY")
 
 router = APIRouter(prefix="/api/v1/csp", tags=["csp"])
 

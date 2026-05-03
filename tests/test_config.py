@@ -1,4 +1,4 @@
-from app.core.config import Settings
+from app.core.config import Settings, read_env_var
 
 
 def test_default_settings():
@@ -85,3 +85,49 @@ def test_load_yaml_invalid(tmp_path):
 
     loaded = load_yaml_config(str(bad))
     assert loaded == {}
+
+
+# ── read_env_var ───────────────────────────────────────────────────────────
+
+
+def test_read_env_var_prefers_environ(monkeypatch, tmp_path):
+    """Process env wins over file fallback."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("FOO=from-file\n")
+    monkeypatch.setenv("FOO", "from-env")
+    assert read_env_var("FOO", str(env_file)) == "from-env"
+
+
+def test_read_env_var_falls_back_to_file(monkeypatch, tmp_path):
+    monkeypatch.delenv("FOO", raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text("OTHER=irrelevant\nFOO=from-file\nBAR=ignored\n")
+    assert read_env_var("FOO", str(env_file)) == "from-file"
+
+
+def test_read_env_var_handles_value_with_equals(monkeypatch, tmp_path):
+    """JWTs and tokens often contain '=' — only the first one is the separator."""
+    monkeypatch.delenv("TOKEN", raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text("TOKEN=eyJhbGc=.payload=.sig=\n")
+    assert read_env_var("TOKEN", str(env_file)) == "eyJhbGc=.payload=.sig="
+
+
+def test_read_env_var_missing_file_returns_empty(monkeypatch, tmp_path):
+    monkeypatch.delenv("FOO", raising=False)
+    assert read_env_var("FOO", str(tmp_path / "does-not-exist.env")) == ""
+
+
+def test_read_env_var_missing_key_returns_empty(monkeypatch, tmp_path):
+    monkeypatch.delenv("FOO", raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text("OTHER=value\n")
+    assert read_env_var("FOO", str(env_file)) == ""
+
+
+def test_read_env_var_empty_env_value_uses_file(monkeypatch, tmp_path):
+    """Empty string in os.environ counts as 'unset' so file fallback runs."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("FOO=from-file\n")
+    monkeypatch.setenv("FOO", "")
+    assert read_env_var("FOO", str(env_file)) == "from-file"

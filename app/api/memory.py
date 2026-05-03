@@ -4,7 +4,6 @@ Duplicate koruması, FTS arama, read tracking, lifecycle yönetimi.
 """
 
 import json
-import os
 import re
 import sqlite3
 from typing import Literal
@@ -13,17 +12,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, field_validator
 
+from app.core.config import read_env_var
+
 DB_PATH = "/opt/linux-ai-server/data/claude_memory.db"
 
-MEMORY_API_KEY = os.environ.get("MEMORY_API_KEY", "")
-if not MEMORY_API_KEY:
-    _env_path = "/opt/linux-ai-server/.env"
-    if os.path.exists(_env_path):
-        with open(_env_path) as _f:
-            for _line in _f:
-                if _line.startswith("MEMORY_API_KEY="):
-                    MEMORY_API_KEY = _line.strip().split("=", 1)[1]
-                    break
+MEMORY_API_KEY = read_env_var("MEMORY_API_KEY")
 
 VALID_DISCOVERY_TYPES = ("bug", "fix", "learning", "config", "workaround", "architecture", "plan")
 VALID_STATUSES = ("active", "completed", "obsolete", "superseded")

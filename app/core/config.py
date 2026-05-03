@@ -8,6 +8,31 @@ from functools import lru_cache
 import yaml
 from pydantic_settings import BaseSettings
 
+DEFAULT_ENV_FILE = "/opt/linux-ai-server/.env"
+
+
+def read_env_var(name: str, env_file: str = DEFAULT_ENV_FILE) -> str:
+    """Read a single var from process env with KEY=VALUE file fallback.
+
+    The systemd unit currently doesn't pass MEMORY_API_KEY through
+    Environment= or EnvironmentFile=, so module-level callers in
+    api/memory.py and api/csp.py used to inline this dotenv parsing
+    twice. Centralised here so future endpoints don't repeat it.
+    """
+    val = os.environ.get(name, "")
+    if val:
+        return val
+    if not os.path.exists(env_file):
+        return ""
+    try:
+        with open(env_file) as f:
+            for line in f:
+                if line.startswith(f"{name}="):
+                    return line.strip().split("=", 1)[1]
+    except OSError:
+        pass
+    return ""
+
 
 def load_yaml_config(path: str) -> dict:
     """Load configuration from YAML file. Returns empty dict on failure."""
