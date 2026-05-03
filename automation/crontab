@@ -1,0 +1,27 @@
+# Linux-AI Server Automation
+*/10 * * * * /opt/linux-ai-server/automation/health-check.sh
+*/5 * * * * /opt/linux-ai-server/automation/alert-check.sh
+0 3 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh daily-backup /opt/linux-ai-server/automation/daily-backup.sh
+# Daily test runner — tüm projeler
+0 6 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh test-runner /opt/linux-ai-server/automation/test-runner.sh
+# Haftalık dependency audit — Pazartesi 09:00
+0 9 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh weekly-audit /opt/linux-ai-server/automation/weekly-audit.sh
+# Panola ERP — Gece demo reset + E2E test
+0 4 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh demo-reset-test /opt/linux-ai-server/automation/demo-reset-test.sh
+# Sosyal Medya Otomasyon
+# E2E Live Site Tests — günlük 07:00
+0 7 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh e2e-live-test /opt/linux-ai-server/automation/e2e-live-test.sh
+# Klipper HDD backup — VPS + Dokploy + Klipper yerel (30 gun retention)
+0 4 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh pull-vps-backup bash -c "/data/backups/pull-vps-backup.sh >> /data/backups/cron.log 2>&1"
+# Bilge Arena failover — Dokploy down ise Vercel e gecis (3dk kontrol)
+# Hafiza maintenance: 90+ gun eski okunmamis discoveries arsivle
+30 2 * * * bash /opt/linux-ai-server/scripts/memory-archive-stale.sh
+# Hafiza triage: 60+ gun active learning/workaround obsolete (gunluk 03:15)
+15 3 * * * bash /opt/linux-ai-server/scripts/memory-triage.sh
+# LLM-tabanli hafiza triage: Anthropic Haiku 4.5 (gunluk 03:30, max 20 batch)
+30 3 * * * /opt/linux-ai-server/venv/bin/python3 /opt/linux-ai-server/scripts/memory-triage-llm.py
+# Haftalık self-pentest — sahip olduğumuz tüm domain'leri tara (Pazar 03:30)
+30 3 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh self-pentest /opt/linux-ai-server/automation/self-pentest.sh
+0 4 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh nuclei-scan /opt/linux-ai-server/automation/nuclei-scan.sh
+# DB retention — server.db + ci_tests.db (haftalik Pazar 02:00)
+0 2 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh db-retention /opt/linux-ai-server/automation/db-retention.sh
