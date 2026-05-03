@@ -55,9 +55,17 @@ if printf '%s' "$CMD" | grep -qiE '(pytest|npm[[:space:]]+(test|run[[:space:]]+t
     fi
   fi
 
-  # Test FAIL (rc != 0) ise discoveries'e bug olarak kaydet
+  # Test FAIL (rc != 0) ise discoveries'e bug olarak kaydet —
+  # ama systemctl restart/status komutlarinda atla. Servis restart olunca
+  # zincirdeki curl /health vs adimlari henuz acilmamis servise dustugu
+  # icin rc!=0 oluyor; bu bir test regression degil, beklenen yarış. TSV
+  # log + command_log audit'i zaten yapildi, sadece bug-spam'i durdur.
   RC=$(printf '%s' "$EXTRACT" | cut -f3)
-  if [ -n "$RC" ] && [ "$RC" != "0" ]; then
+  SKIP_BUG=0
+  if printf '%s' "$CMD" | grep -qE 'systemctl[[:space:]]+(restart|status)'; then
+    SKIP_BUG=1
+  fi
+  if [ -n "$RC" ] && [ "$RC" != "0" ] && [ "$SKIP_BUG" = "0" ]; then
     # Tum dinamik veriler env var ile gecirilir — shell injection yok
     export _PROJECT="$(basename "$PWD")"
     export _DEVICE="$HOOK_DEVICE"
