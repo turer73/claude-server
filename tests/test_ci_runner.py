@@ -18,7 +18,9 @@ from app.core.ci_runner import (
 
 
 class TestProjectRegistry:
-    def test_has_all_eight_projects(self):
+    def test_has_all_projects(self):
+        # 2026-05-03: Windows hosts retired, Node projects migrated to local
+        # /data/projects/*. koken-akademi added.
         expected = {
             "panola",
             "kuafor-panel",
@@ -26,6 +28,7 @@ class TestProjectRegistry:
             "petvet",
             "renderhane",
             "bilge-arena",
+            "koken-akademi",
             "klipper",
             "panola-rag",
         }
@@ -52,17 +55,18 @@ class TestProjectRegistry:
     def test_panola_rag_is_vps_ssh(self):
         assert PROJECT_REGISTRY["panola-rag"]["env"] == "vps_ssh"
 
-    def test_windows_projects_are_remote_windows(self):
-        windows_projects = [
+    def test_node_projects_are_local(self):
+        node_projects = [
             "panola",
             "kuafor-panel",
             "kuafor-worker",
             "petvet",
             "renderhane",
             "bilge-arena",
+            "koken-akademi",
         ]
-        for name in windows_projects:
-            assert PROJECT_REGISTRY[name]["env"] == "remote_windows"
+        for name in node_projects:
+            assert PROJECT_REGISTRY[name]["env"] == "local"
 
 
 # ---------------------------------------------------------------------------
@@ -249,23 +253,37 @@ class TestRunProjectTests:
             await run_project_tests("nonexistent")
 
     @pytest.mark.asyncio
-    async def test_remote_windows_returns_skip(self):
-        result = await run_project_tests("panola")
+    async def test_remote_windows_returns_skip(self, monkeypatch):
+        # The remote_windows skip path is preserved in code for future use,
+        # even though no project currently uses it. Inject a synthetic entry.
+        monkeypatch.setitem(
+            PROJECT_REGISTRY,
+            "_synthetic_remote",
+            {
+                "path": "C:/dummy",
+                "test_cmd": "irrelevant",
+                "env": "remote_windows",
+                "framework": "vitest",
+            },
+        )
+        result = await run_project_tests("_synthetic_remote")
         assert result["skipped"] is True
-        assert result["project"] == "panola"
+        assert result["project"] == "_synthetic_remote"
         assert "remote_windows" in result["skip_reason"]
         assert result["total"] == 0
 
     @pytest.mark.asyncio
-    async def test_all_windows_projects_skip(self):
-        windows = ["panola", "kuafor-panel", "kuafor-worker", "petvet", "renderhane", "bilge-arena"]
-        for name in windows:
-            result = await run_project_tests(name)
-            assert result["skipped"] is True, f"{name} should be skipped"
-            assert result["project"] == name
-
-    @pytest.mark.asyncio
-    async def test_skip_result_has_required_keys(self):
-        result = await run_project_tests("petvet")
+    async def test_skip_result_has_required_keys(self, monkeypatch):
+        monkeypatch.setitem(
+            PROJECT_REGISTRY,
+            "_synthetic_remote",
+            {
+                "path": "C:/dummy",
+                "test_cmd": "irrelevant",
+                "env": "remote_windows",
+                "framework": "vitest",
+            },
+        )
+        result = await run_project_tests("_synthetic_remote")
         required = {"project", "total", "passed", "failed", "duration_s", "failures", "skipped", "skip_reason"}
         assert required.issubset(set(result.keys()))

@@ -11,6 +11,13 @@ TEST_API_KEY = "test-api-key-for-testing-purposes-1234567890abcdef"
 TEST_JWT_SECRET = "test-secret-key-for-jwt-signing"
 
 
+@pytest.fixture
+def anyio_backend():
+    """Pin anyio-marked tests to asyncio. aiosqlite/Database is asyncio-only,
+    so the trio parametrization fails with 'no current event loop'."""
+    return "asyncio"
+
+
 @pytest.fixture(autouse=True)
 def _clear_settings_cache():
     """Clear lru_cache on get_settings so env var changes take effect."""
@@ -26,6 +33,13 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setenv("JWT_SECRET", TEST_JWT_SECRET)
     # Prevent YAML config from being loaded (nested keys break flat Settings)
     monkeypatch.setattr("app.core.config.load_yaml_config", lambda path: {})
+
+    # Redirect AgentRegistry away from /var/AI-stump (no perms in CI).
+    # Import here so the module-level _registry already exists.
+    from app.api import agents as agents_module
+
+    monkeypatch.setattr(agents_module._registry, "_agents_dir", str(tmp_path / "agents"))
+
     return create_app()
 
 
