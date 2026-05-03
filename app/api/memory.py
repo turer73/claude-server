@@ -36,7 +36,12 @@ def verify_key(x_memory_key: str = Header(None)):
 
 
 router = APIRouter(prefix="/api/v1/memory", tags=["memory"], dependencies=[Depends(verify_key)])
-public_router = APIRouter(prefix="/api/v1/memory", tags=["memory-public"])
+# Onboarding endpoints embed MEMORY_API_KEY in their response prompts (so a
+# bootstrapped Claude instance has the auth header it needs). They MUST require
+# the key on the request side too — otherwise anyone reachable on the LAN /
+# Tailscale can curl /onboard/<device> and pull the live API key out of the
+# response body.
+public_router = APIRouter(prefix="/api/v1/memory", tags=["memory-public"], dependencies=[Depends(verify_key)])
 
 
 def get_db():

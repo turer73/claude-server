@@ -783,3 +783,26 @@ async def test_protected_router_requires_key_when_set(client, memory_db, monkeyp
     # Correct header → 200
     resp = await client.get("/api/v1/memory/devices", headers={"X-Memory-Key": "secret-key"})
     assert resp.status_code == 200
+
+
+async def test_onboard_endpoints_require_key_when_set(client, memory_db, monkeypatch):
+    """Regression: onboard responses embed MEMORY_API_KEY in plaintext,
+    so they MUST also require it on the request. Previously these were on a
+    public_router with no dependencies, leaking the key to anyone on the LAN."""
+    from app.api import memory as mem_module
+
+    monkeypatch.setattr(mem_module, "MEMORY_API_KEY", "secret-key")
+    # Seed a device so the endpoints would otherwise return 200
+    await client.post(
+        "/api/v1/memory/devices",
+        json={"name": "k", "platform": "linux"},
+        headers={"X-Memory-Key": "secret-key"},
+    )
+
+    for path in ("/api/v1/memory/onboard/k", "/api/v1/memory/onboard/k/raw", "/api/v1/memory/onboard/k/project-scan"):
+        resp = await client.get(path)
+        assert resp.status_code == 401, f"{path} must reject unauthenticated requests"
+        resp = await client.get(path, headers={"X-Memory-Key": "wrong"})
+        assert resp.status_code == 401, f"{path} must reject wrong key"
+        resp = await client.get(path, headers={"X-Memory-Key": "secret-key"})
+        assert resp.status_code == 200, f"{path} must accept correct key"
