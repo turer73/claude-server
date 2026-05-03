@@ -21,13 +21,24 @@ async def require_auth(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    """Verify JWT token and return decoded claims.
+    """Verify auth and return claims.
+
+    Accepts either:
+    1) X-API-Key header matching settings.internal_api_key (admin scope)
+       — for internal automation: n8n, cron, monitoring webhooks.
+    2) Bearer JWT (for human / scoped clients).
 
     Every protected route MUST depend on this.
     Returns: {"sub": "key-name", "permissions": "admin|read|..."}
     """
+    api_key = request.headers.get(settings.api_key_header)
+    if api_key and settings.internal_api_key and api_key == settings.internal_api_key:
+        request.state.user = "internal"
+        request.state.permissions = "admin"
+        return {"sub": "internal", "permissions": "admin"}
+
     if credentials is None:
-        raise AuthenticationError("Bearer token required")
+        raise AuthenticationError("Bearer token or X-API-Key required")
     payload = decode_token(credentials.credentials, settings.jwt_secret)
     request.state.user = payload.get("sub", "unknown")
     request.state.permissions = payload.get("permissions", "")

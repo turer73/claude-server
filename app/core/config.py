@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-via-env"
     jwt_ttl_hours: int = 1
     api_key_header: str = "X-API-Key"
+    internal_api_key: str = ""
 
     # Network
     vps_host: str = ""
