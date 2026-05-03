@@ -97,6 +97,13 @@ ignore = [
 "app/main.py" = ["S108"]
 "app/core/terminal_manager.py" = ["S606"]
 
+[tool.bandit]
+# Skips mirror the ruff S-rule ignores: md5/sha1 used as non-crypto content
+# hashes, paramiko AutoAdd is deliberate, SQL f-strings interpolate trusted
+# column/table names (not user input), 0.0.0.0 binding is intentional, /tmp
+# paths are controlled, tarfile extracts our own backups.
+skips = ["B104", "B108", "B202", "B324", "B507", "B601", "B608"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true

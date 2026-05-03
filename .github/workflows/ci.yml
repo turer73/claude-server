@@ -41,8 +41,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install bandit
-      - run: bandit -r app/ -ll -x app/mcp/
+      - run: pip install 'bandit[toml]'
+      - run: bandit -c pyproject.toml -r app/ -ll -x app/mcp/
 
   build:
     runs-on: ubuntu-latest

@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.api import projects as projects_module
+
+# Repo root — the parent of tests/. Works on dev (/opt/linux-ai-server) and on
+# CI (/home/runner/work/<repo>/<repo>) without hardcoding.
+REPO_ROOT = str(Path(__file__).resolve().parents[1])
 
 
 @pytest.fixture
@@ -18,7 +23,7 @@ def real_git_projects(monkeypatch):
         projects_module,
         "PROJECTS",
         [
-            {"name": "self", "path": "/opt/linux-ai-server", "type": "python"},
+            {"name": "self", "path": REPO_ROOT, "type": "python"},
             {"name": "missing", "path": "/data/projects/__nope__", "type": "node"},
         ],
     )
