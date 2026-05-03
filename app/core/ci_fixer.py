@@ -48,9 +48,7 @@ async def _open_ci_db() -> Database:
     return db
 
 
-async def post_lesson_summary_to_memory_api(
-    *, lesson_type: str, name: str, description: str, content: str
-) -> None:
+async def post_lesson_summary_to_memory_api(*, lesson_type: str, name: str, description: str, content: str) -> None:
     """Best-effort POST a lesson summary to the memory API.
 
     Silent on transport failure (network errors are caught and logged at
@@ -83,15 +81,13 @@ async def post_lesson_summary_to_memory_api(
             resp = await client.post(
                 f"{base}/memories",
                 headers={"X-Memory-Key": key, "Content-Type": "application/json"},
-                json={"type": lesson_type,
-                      "name": _flatten(name),
-                      "description": _flatten(description),
-                      "content": _flatten(content)},
+                json={"type": lesson_type, "name": _flatten(name), "description": _flatten(description), "content": _flatten(content)},
             )
             if resp.status_code >= 400:
                 logger.warning(
                     "memory api rejected payload: status=%d body=%s",
-                    resp.status_code, resp.text[:200],
+                    resp.status_code,
+                    resp.text[:200],
                 )
     except Exception as exc:
         logger.warning("memory api post failed: %s", exc)
@@ -189,18 +185,17 @@ def build_fix_prompt(
         # get_recent_occurrences docstring) from capital "Deneme"
         # (current-session retry) above.
         for lesson in context_lessons:
-            lines.append(
-                f"  - deneme {lesson['attempt_num']} ({lesson['strategy']}) "
-                f"=> {lesson['outcome']} ({lesson['created_at']})"
-            )
+            lines.append(f"  - deneme {lesson['attempt_num']} ({lesson['strategy']}) => {lesson['outcome']} ({lesson['created_at']})")
             if lesson.get("fix_diff"):
                 lines.append(f"    diff: {lesson['fix_diff'][:FIX_DIFF_PROMPT_PREVIEW]}")
 
-    lines.extend([
-        "",
-        "Bu testi duzelt. Sadece gerekli dosyalari degistir.",
-        "Testi tekrar calistirdigimda gecmesini saglayacak en kucuk degisikligi yap.",
-    ])
+    lines.extend(
+        [
+            "",
+            "Bu testi duzelt. Sadece gerekli dosyalari degistir.",
+            "Testi tekrar calistirdigimda gecmesini saglayacak en kucuk degisikligi yap.",
+        ]
+    )
 
     return "\n".join(lines)
 
@@ -223,10 +218,13 @@ async def _call_claude_code(prompt: str, cwd: str) -> dict:
 
     cmd = [
         binary,
-        "-p", prompt,
-        "--output-format", "json",
+        "-p",
+        prompt,
+        "--output-format",
+        "json",
         "--dangerously-skip-permissions",
-        "--max-turns", "5",
+        "--max-turns",
+        "5",
     ]
 
     logger.info("Calling Claude Code: cwd=%s", cwd)
@@ -341,13 +339,18 @@ async def attempt_fix(
         for attempt in range(1, max_attempts + 1):
             logger.info(
                 "attempt_fix: %s / %s -- deneme %d/%d",
-                project, test_name, attempt, max_attempts,
+                project,
+                test_name,
+                attempt,
+                max_attempts,
             )
 
             # 0. Determine current error text and compute its signature ONCE.
             current_error_text = error if attempt == 1 else prev_errors[-1]
             error_hash, signature = compute_signature(
-                project, test_name, current_error_text,
+                project,
+                test_name,
+                current_error_text,
             )
 
             # 1. Dedup check: if the same signature failed in >=2 recent runs,
@@ -359,7 +362,10 @@ async def attempt_fix(
                     recent = await get_recent_occurrences(db, signature, window=3)
                     if recent >= 2:
                         fetched = await fetch_lesson_context(
-                            db, project, signature, limit=5,
+                            db,
+                            project,
+                            signature,
+                            limit=5,
                         )
                         # Only flip the telemetry label when we actually have
                         # rows to enrich the prompt with -- otherwise the
@@ -370,7 +376,8 @@ async def attempt_fix(
                             context_rows = fetched
                 except Exception as exc:
                     logger.warning(
-                        "dedup check failed, falling back to fix-direct: %s", exc,
+                        "dedup check failed, falling back to fix-direct: %s",
+                        exc,
                     )
                     strategy = "fix-direct"
                     context_rows = None
@@ -400,18 +407,16 @@ async def attempt_fix(
 
             # Record the lesson for this attempt (before the passed/failed branches).
             outcome = "passed" if test_result.get("failed", 0) == 0 else "failed"
-            context_lessons_json = (
-                json.dumps([r["id"] for r in context_rows])
-                if context_rows
-                else None
-            )
+            context_lessons_json = json.dumps([r["id"] for r in context_rows]) if context_rows else None
             if db is not None:
                 try:
                     await record_lesson(
                         db,
                         run_uuid=run_uuid,
-                        project=project, test_name=test_name,
-                        error_hash=error_hash, signature=signature,
+                        project=project,
+                        test_name=test_name,
+                        error_hash=error_hash,
+                        signature=signature,
                         raw_error=current_error_text,
                         attempt_num=attempt,
                         strategy=strategy,

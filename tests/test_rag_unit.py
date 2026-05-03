@@ -1,7 +1,8 @@
 """Unit tests for RAGEngine — chunk_text, embed, index, query with mocked HTTP."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
 
 from app.core.rag_engine import RAGEngine
 
@@ -82,8 +83,10 @@ async def test_ensure_collection_create(engine):
     mock_post = MagicMock()
     mock_post.json.return_value = {"id": "new-123"}
 
-    with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_get), \
-         patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_post):
+    with (
+        patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_get),
+        patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_post),
+    ):
         col_id = await engine._ensure_collection()
         assert col_id == "new-123"
 
@@ -97,9 +100,10 @@ async def test_index_text_empty(engine):
 
 @pytest.mark.anyio
 async def test_index_text_success(engine):
-    with patch.object(engine, "_ensure_collection", new_callable=AsyncMock, return_value="col-1"), \
-         patch.object(engine, "_embed", new_callable=AsyncMock, return_value=[[0.1, 0.2]]):
-
+    with (
+        patch.object(engine, "_ensure_collection", new_callable=AsyncMock, return_value="col-1"),
+        patch.object(engine, "_embed", new_callable=AsyncMock, return_value=[[0.1, 0.2]]),
+    ):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
 
@@ -112,6 +116,7 @@ async def test_index_text_success(engine):
 @pytest.mark.anyio
 async def test_index_file_not_found(engine):
     from app.exceptions import ServerError
+
     with pytest.raises(ServerError, match="File not found"):
         await engine.index_file("/nonexistent/path.txt")
 
@@ -119,6 +124,7 @@ async def test_index_file_not_found(engine):
 @pytest.mark.anyio
 async def test_index_file_too_large(engine, tmp_path):
     from app.exceptions import ServerError
+
     big_file = tmp_path / "big.txt"
     big_file.write_text("x" * (11 * 1024 * 1024))
     with pytest.raises(ServerError, match="too large"):
@@ -150,6 +156,7 @@ async def test_index_directory(engine, tmp_path):
 @pytest.mark.anyio
 async def test_index_directory_not_found(engine):
     from app.exceptions import ServerError
+
     with pytest.raises(ServerError, match="Directory not found"):
         await engine.index_directory("/nonexistent/dir")
 
@@ -163,9 +170,11 @@ async def test_query_search_only(engine):
         "distances": [[0.1, 0.5]],
     }
 
-    with patch.object(engine, "_ensure_collection", new_callable=AsyncMock, return_value="col-1"), \
-         patch.object(engine, "_embed", new_callable=AsyncMock, return_value=[[0.1, 0.2]]), \
-         patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_query_resp):
+    with (
+        patch.object(engine, "_ensure_collection", new_callable=AsyncMock, return_value="col-1"),
+        patch.object(engine, "_embed", new_callable=AsyncMock, return_value=[[0.1, 0.2]]),
+        patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_query_resp),
+    ):
         result = await engine.query("what is linux?", n_results=2, generate=False)
         assert result["question"] == "what is linux?"
         assert len(result["results"]) == 2
@@ -177,8 +186,10 @@ async def test_stats(engine):
     mock_resp = MagicMock()
     mock_resp.json.return_value = 42
 
-    with patch.object(engine, "_ensure_collection", new_callable=AsyncMock, return_value="col-1"), \
-         patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp):
+    with (
+        patch.object(engine, "_ensure_collection", new_callable=AsyncMock, return_value="col-1"),
+        patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp),
+    ):
         result = await engine.stats()
         assert result["document_count"] == 42
 

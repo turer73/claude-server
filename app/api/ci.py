@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 
-from app.core.ci_runner import PROJECT_REGISTRY, run_project_tests
 from app.core.ci_fixer import attempt_fix
+from app.core.ci_runner import PROJECT_REGISTRY, run_project_tests
 from app.middleware.dependencies import require_admin
 from app.models.schemas import (
     CIFailure,
     CIFixRequest,
     CIFixResponse,
-    CIProjectResult,
     CIStatusResponse,
     CITestRequest,
     CITestResponse,
@@ -147,16 +146,18 @@ async def run_all():
         total_passed += proj_passed
         total_failed += proj_failed
 
-        project_results.append({
-            "project": project_name,
-            "total": proj_total,
-            "passed": proj_passed,
-            "failed": proj_failed,
-            "fix_attempted": fix_attempted,
-            "fix_result": fix_result_str,
-        })
+        project_results.append(
+            {
+                "project": project_name,
+                "total": proj_total,
+                "passed": proj_passed,
+                "failed": proj_failed,
+                "fix_attempted": fix_attempted,
+                "fix_result": fix_result_str,
+            }
+        )
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     _last_run = {
         "last_run": now,
         "total_tests": total_tests,

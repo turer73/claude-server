@@ -1,9 +1,8 @@
 """Tests for Deploy API — self-deploy, project registry, workspace notes."""
 
-import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock, patch
 
-from tests.conftest import TEST_API_KEY
+import pytest
 
 
 @pytest.mark.anyio
@@ -32,9 +31,16 @@ async def test_deploy_self_tests_fail(client, auth_headers):
 async def test_project_registry_crud(client, auth_headers, tmp_path):
     with patch("app.api.deploy.PROJECTS_FILE", str(tmp_path / "registry.json")):
         # Register
-        resp = await client.post("/api/v1/deploy/projects/register", json={
-            "name": "test-project", "path": "/tmp/test", "github": "test/repo", "stack": "python",
-        }, headers=auth_headers)
+        resp = await client.post(
+            "/api/v1/deploy/projects/register",
+            json={
+                "name": "test-project",
+                "path": "/tmp/test",
+                "github": "test/repo",
+                "stack": "python",
+            },
+            headers=auth_headers,
+        )
         assert resp.status_code == 200
         assert resp.json()["registered"] == "test-project"
 
@@ -61,9 +67,14 @@ async def test_project_not_found(client, auth_headers, tmp_path):
 async def test_workspace_notes_crud(client, auth_headers, tmp_path):
     with patch("app.api.deploy.WORKSPACE", str(tmp_path / "workspace")):
         # Save note
-        resp = await client.post("/api/v1/deploy/workspace/notes", json={
-            "name": "test.md", "content": "Hello World",
-        }, headers=auth_headers)
+        resp = await client.post(
+            "/api/v1/deploy/workspace/notes",
+            json={
+                "name": "test.md",
+                "content": "Hello World",
+            },
+            headers=auth_headers,
+        )
         assert resp.status_code == 200
         assert resp.json()["saved"] == "test.md"
 

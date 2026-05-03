@@ -1,11 +1,8 @@
 """Tests for WebSocket log streaming handler."""
 
-import pytest
-import os
 from unittest.mock import patch
-from starlette.testclient import TestClient
 
-from tests.conftest import TEST_API_KEY
+from starlette.testclient import TestClient
 
 
 def test_ws_logs_file_not_found(app):
@@ -24,8 +21,7 @@ def test_ws_logs_streams_lines(app, tmp_path):
     log_file.write_text("line1\nline2\n")
 
     # Patch the log path to our temp file
-    with patch("app.ws.logs.os.path.isfile", return_value=True), \
-         patch("builtins.open", return_value=open(str(log_file), "r")):
+    with patch("app.ws.logs.os.path.isfile", return_value=True), patch("builtins.open", return_value=open(str(log_file))):
         client = TestClient(app)
         # The ws handler seeks to end, so it won't send existing lines
         # We just verify it connects and doesn't crash

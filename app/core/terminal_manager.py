@@ -18,11 +18,12 @@ from app.exceptions import NotFoundError, RateLimitError
 _HAS_PTY = False
 try:
     if sys.platform != "win32":
-        import pty
         import fcntl
+        import pty
+        import signal
         import struct
         import termios
-        import signal
+
         _HAS_PTY = True
 except ImportError:
     pass
@@ -73,6 +74,7 @@ class TerminalSession:
             self.resize(cols, rows)
             # Make non-blocking
             import fcntl
+
             flags = fcntl.fcntl(fd, fcntl.F_GETFL)
             fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
@@ -106,15 +108,13 @@ class TerminalSession:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self._cwd,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             return {
                 "exit_code": proc.returncode or 0,
                 "stdout": stdout.decode(errors="replace"),
                 "stderr": stderr.decode(errors="replace"),
             }
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             return {"exit_code": -1, "stdout": "", "stderr": f"Timeout after {timeout}s"}
 
@@ -169,10 +169,7 @@ class TerminalManager:
             session.close()
 
     def list_sessions(self) -> list[dict]:
-        return [
-            {"id": sid, "created_at": s.created_at, "pty": s.is_pty}
-            for sid, s in self._sessions.items()
-        ]
+        return [{"id": sid, "created_at": s.created_at, "pty": s.is_pty} for sid, s in self._sessions.items()]
 
     def count(self) -> int:
         return len(self._sessions)

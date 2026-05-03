@@ -1,5 +1,7 @@
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
+
 from app.core.ssh_client import SSHClient, SSHSessionManager
 
 
@@ -32,6 +34,7 @@ def test_session_manager_get(session_mgr):
 
 def test_session_manager_get_not_found(session_mgr):
     from app.exceptions import NotFoundError
+
     with pytest.raises(NotFoundError):
         session_mgr.get("nonexistent-id")
 
@@ -48,6 +51,7 @@ def test_session_manager_max_sessions(session_mgr):
     for i in range(5):
         session_mgr.add(f"host{i}", f"user{i}", MagicMock())
     from app.exceptions import RateLimitError
+
     with pytest.raises(RateLimitError, match="Max SSH sessions"):
         session_mgr.add("host5", "user5", MagicMock())
 
@@ -100,6 +104,7 @@ def test_ssh_client_exec_timeout():
 
     client = SSHClient()
     from app.exceptions import ShellExecutionError
+
     with pytest.raises(ShellExecutionError):
         client.exec_command(mock_client, "sleep 100", timeout=1)
 
@@ -111,6 +116,7 @@ def test_ssh_client_connect_failure():
         MockSSH.return_value = mock_instance
         client = SSHClient()
         from app.exceptions import ShellExecutionError
+
         with pytest.raises(ShellExecutionError, match="SSH connection failed"):
             client.connect(host="bad-host", username="root")
 
@@ -131,6 +137,7 @@ def test_ssh_upload_file_failure():
     mock_client.open_sftp.side_effect = Exception("SFTP error")
     client = SSHClient()
     from app.exceptions import ShellExecutionError
+
     with pytest.raises(ShellExecutionError, match="SFTP upload failed"):
         client.upload_file(mock_client, "/tmp/local", "/tmp/remote")
 
@@ -151,6 +158,7 @@ def test_ssh_download_file_failure():
     mock_client.open_sftp.side_effect = Exception("SFTP error")
     client = SSHClient()
     from app.exceptions import ShellExecutionError
+
     with pytest.raises(ShellExecutionError, match="SFTP download failed"):
         client.download_file(mock_client, "/tmp/remote", "/tmp/local")
 

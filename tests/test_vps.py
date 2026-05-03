@@ -1,9 +1,8 @@
 """Tests for VPS Bridge API."""
 
-import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock, patch
 
-from tests.conftest import TEST_API_KEY
+import pytest
 
 
 @pytest.mark.anyio
@@ -27,7 +26,9 @@ async def test_vps_exec_with_admin(client, auth_headers):
 async def test_vps_status_online(client, auth_headers):
     mock_result = {
         "stdout": "HOSTNAME=vps\nUPTIME=up 10 days\nCPU=4\nRAM_USED=2.8Gi/7.8Gi\nDISK=13G/145G (9%)\nCONTAINER=coolify:Up 10 days\n",
-        "stderr": "", "exit_code": 0, "elapsed_ms": 500,
+        "stderr": "",
+        "exit_code": 0,
+        "elapsed_ms": 500,
     }
     with patch("app.api.vps.ShellExecutor.execute", new_callable=AsyncMock, return_value=mock_result):
         resp = await client.get("/api/v1/vps/status", headers=auth_headers)

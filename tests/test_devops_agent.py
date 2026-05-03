@@ -7,6 +7,7 @@ import pytest
 async def devops_client(client, app):
     """Client with DevOps agent initialized."""
     from app.core.devops_agent import DevOpsAgent
+
     db = app.state.db
     agent = DevOpsAgent(db=db, interval=60)
     app.state.devops_agent = agent
@@ -82,6 +83,7 @@ async def test_devops_playbooks(devops_client, auth_headers):
 
 async def test_detect_normal_no_alerts():
     from app.core.devops_agent import DevOpsAgent
+
     agent = DevOpsAgent(db=None, interval=60)
     metrics = {"cpu_percent": 20, "memory_percent": 40, "disk_percent": 50, "temperature": 45}
     alerts = agent._detect(metrics)
@@ -90,6 +92,7 @@ async def test_detect_normal_no_alerts():
 
 async def test_detect_cpu_critical():
     from app.core.devops_agent import DevOpsAgent
+
     agent = DevOpsAgent(db=None, interval=60)
     metrics = {"cpu_percent": 95, "memory_percent": 40, "disk_percent": 50, "temperature": 45}
     alerts = agent._detect(metrics)
@@ -100,6 +103,7 @@ async def test_detect_cpu_critical():
 
 async def test_detect_warning_zone():
     from app.core.devops_agent import DevOpsAgent
+
     agent = DevOpsAgent(db=None, interval=60)
     # 85 * 0.9 = 76.5 — so 80% is warning territory
     metrics = {"cpu_percent": 80, "memory_percent": 40, "disk_percent": 50, "temperature": 45}
@@ -110,6 +114,7 @@ async def test_detect_warning_zone():
 
 async def test_detect_multiple_alerts():
     from app.core.devops_agent import DevOpsAgent
+
     agent = DevOpsAgent(db=None, interval=60)
     metrics = {"cpu_percent": 95, "memory_percent": 92, "disk_percent": 95, "temperature": 85}
     alerts = agent._detect(metrics)
@@ -118,6 +123,7 @@ async def test_detect_multiple_alerts():
 
 async def test_auto_resolve():
     from app.core.devops_agent import DevOpsAgent
+
     agent = DevOpsAgent(db=None, interval=60)
 
     # Trigger
@@ -131,6 +137,7 @@ async def test_auto_resolve():
 
 async def test_no_duplicate_alerts():
     from app.core.devops_agent import DevOpsAgent
+
     agent = DevOpsAgent(db=None, interval=60)
 
     # First detection
@@ -144,6 +151,7 @@ async def test_no_duplicate_alerts():
 
 async def test_baseline_calculation():
     from app.core.devops_agent import DevOpsAgent
+
     agent = DevOpsAgent(db=None, interval=60)
 
     # Not enough data
@@ -158,6 +166,7 @@ async def test_baseline_calculation():
 
 async def test_baseline_anomaly_detection():
     from app.core.devops_agent import DevOpsAgent
+
     agent = DevOpsAgent(db=None, interval=60)
 
     # Fill baseline at 20%
@@ -174,6 +183,7 @@ async def test_baseline_anomaly_detection():
 
 async def test_status_property():
     from app.core.devops_agent import DevOpsAgent
+
     agent = DevOpsAgent(db=None, interval=30)
     s = agent.status
     assert s["running"] is False
@@ -183,6 +193,7 @@ async def test_status_property():
 
 async def test_playbooks_defined():
     from app.core.devops_agent import PLAYBOOKS
+
     assert "cpu_critical" in PLAYBOOKS
     assert "memory_critical" in PLAYBOOKS
     assert "disk_critical" in PLAYBOOKS
@@ -197,15 +208,24 @@ async def test_playbooks_defined():
 async def test_store_metrics(tmp_path, monkeypatch):
     monkeypatch.setattr("app.core.config.load_yaml_config", lambda path: {})
     from app.core.config import get_settings
+
     get_settings.cache_clear()
     from app.core.devops_agent import DevOpsAgent
     from app.db.database import Database
+
     db = Database(str(tmp_path / "devops.db"))
     await db.initialize()
     agent = DevOpsAgent(db=db, interval=60)
-    metrics = {"timestamp": "2026-03-29T14:00:00Z", "cpu_percent": 45, "memory_percent": 60,
-               "disk_percent": 34, "temperature": 55, "load_avg": [1.0, 0.8, 0.7],
-               "network_sent_mb": 100, "network_recv_mb": 200}
+    metrics = {
+        "timestamp": "2026-03-29T14:00:00Z",
+        "cpu_percent": 45,
+        "memory_percent": 60,
+        "disk_percent": 34,
+        "temperature": 55,
+        "load_avg": [1.0, 0.8, 0.7],
+        "network_sent_mb": 100,
+        "network_recv_mb": 200,
+    }
     await agent._store_metrics(metrics)
     rows = await db.fetch_all("SELECT * FROM metrics_history")
     assert len(rows) == 1
@@ -216,6 +236,7 @@ async def test_store_metrics(tmp_path, monkeypatch):
 
 async def test_store_metrics_no_db():
     from app.core.devops_agent import DevOpsAgent
+
     agent = DevOpsAgent(db=None, interval=60)
     await agent._store_metrics({"cpu_percent": 50})  # Should not raise
 
@@ -226,15 +247,17 @@ async def test_store_metrics_no_db():
 async def test_store_alert(tmp_path, monkeypatch):
     monkeypatch.setattr("app.core.config.load_yaml_config", lambda path: {})
     from app.core.config import get_settings
+
     get_settings.cache_clear()
-    from app.core.devops_agent import DevOpsAgent, Alert
+    from app.core.devops_agent import Alert, DevOpsAgent
     from app.db.database import Database
+
     db = Database(str(tmp_path / "devops2.db"))
     await db.initialize()
     agent = DevOpsAgent(db=db, interval=60)
-    alert = Alert(id="cpu-1", severity="critical", source="cpu",
-                  message="CPU at 95%", value=95, threshold=85,
-                  timestamp="2026-03-29T14:00:00Z")
+    alert = Alert(
+        id="cpu-1", severity="critical", source="cpu", message="CPU at 95%", value=95, threshold=85, timestamp="2026-03-29T14:00:00Z"
+    )
     await agent._store_alert(alert)
     rows = await db.fetch_all("SELECT * FROM alerts")
     assert len(rows) == 1
@@ -244,10 +267,10 @@ async def test_store_alert(tmp_path, monkeypatch):
 
 
 async def test_store_alert_no_db():
-    from app.core.devops_agent import DevOpsAgent, Alert
+    from app.core.devops_agent import Alert, DevOpsAgent
+
     agent = DevOpsAgent(db=None, interval=60)
-    alert = Alert(id="x", severity="warning", source="cpu",
-                  message="test", value=80, threshold=85, timestamp="now")
+    alert = Alert(id="x", severity="warning", source="cpu", message="test", value=80, threshold=85, timestamp="now")
     await agent._store_alert(alert)  # Should not raise
 
 
@@ -256,14 +279,17 @@ async def test_store_alert_no_db():
 
 async def test_remediate_cpu_critical():
     from unittest.mock import AsyncMock, patch
-    from app.core.devops_agent import DevOpsAgent, Alert
+
+    from app.core.devops_agent import Alert, DevOpsAgent
+
     agent = DevOpsAgent(db=None, interval=60)
-    alert = Alert(id="cpu-1", severity="critical", source="cpu",
-                  message="CPU at 95%", value=95, threshold=85, timestamp="now")
+    alert = Alert(id="cpu-1", severity="critical", source="cpu", message="CPU at 95%", value=95, threshold=85, timestamp="now")
 
     mock_result = {"stdout": "done\n", "stderr": "", "exit_code": 0}
-    with patch.object(agent._executor, "execute", new_callable=AsyncMock, return_value=mock_result), \
-         patch.object(agent, "_send_webhook", new_callable=AsyncMock):
+    with (
+        patch.object(agent._executor, "execute", new_callable=AsyncMock, return_value=mock_result),
+        patch.object(agent, "_send_webhook", new_callable=AsyncMock),
+    ):
         await agent._remediate(alert)
 
     assert len(agent._remediation_log) > 0
@@ -273,14 +299,17 @@ async def test_remediate_cpu_critical():
 
 async def test_remediate_cooldown():
     from unittest.mock import AsyncMock, patch
-    from app.core.devops_agent import DevOpsAgent, Alert
+
+    from app.core.devops_agent import Alert, DevOpsAgent
+
     agent = DevOpsAgent(db=None, interval=60)
-    alert = Alert(id="cpu-1", severity="critical", source="cpu",
-                  message="CPU high", value=95, threshold=85, timestamp="now")
+    alert = Alert(id="cpu-1", severity="critical", source="cpu", message="CPU high", value=95, threshold=85, timestamp="now")
 
     mock_result = {"stdout": "ok\n", "stderr": "", "exit_code": 0}
-    with patch.object(agent._executor, "execute", new_callable=AsyncMock, return_value=mock_result), \
-         patch.object(agent, "_send_webhook", new_callable=AsyncMock):
+    with (
+        patch.object(agent._executor, "execute", new_callable=AsyncMock, return_value=mock_result),
+        patch.object(agent, "_send_webhook", new_callable=AsyncMock),
+    ):
         await agent._remediate(alert)
         count_1 = len(agent._remediation_log)
 
@@ -291,23 +320,26 @@ async def test_remediate_cooldown():
 
 
 async def test_remediate_no_playbook():
-    from app.core.devops_agent import DevOpsAgent, Alert
+    from app.core.devops_agent import Alert, DevOpsAgent
+
     agent = DevOpsAgent(db=None, interval=60)
-    alert = Alert(id="x-1", severity="critical", source="nonexistent",
-                  message="test", value=99, threshold=50, timestamp="now")
+    alert = Alert(id="x-1", severity="critical", source="nonexistent", message="test", value=99, threshold=50, timestamp="now")
     await agent._remediate(alert)
     assert len(agent._remediation_log) == 0
 
 
 async def test_remediate_exception():
     from unittest.mock import AsyncMock, patch
-    from app.core.devops_agent import DevOpsAgent, Alert
-    agent = DevOpsAgent(db=None, interval=60)
-    alert = Alert(id="cpu-1", severity="critical", source="cpu",
-                  message="CPU high", value=95, threshold=85, timestamp="now")
 
-    with patch.object(agent._executor, "execute", new_callable=AsyncMock, side_effect=RuntimeError("fail")), \
-         patch.object(agent, "_send_webhook", new_callable=AsyncMock):
+    from app.core.devops_agent import Alert, DevOpsAgent
+
+    agent = DevOpsAgent(db=None, interval=60)
+    alert = Alert(id="cpu-1", severity="critical", source="cpu", message="CPU high", value=95, threshold=85, timestamp="now")
+
+    with (
+        patch.object(agent._executor, "execute", new_callable=AsyncMock, side_effect=RuntimeError("fail")),
+        patch.object(agent, "_send_webhook", new_callable=AsyncMock),
+    ):
         await agent._remediate(alert)
 
     assert len(agent._remediation_log) > 0
@@ -319,7 +351,9 @@ async def test_remediate_exception():
 
 async def test_check_services_all_active():
     from unittest.mock import AsyncMock, patch
+
     from app.core.devops_agent import DevOpsAgent
+
     agent = DevOpsAgent(db=None, interval=60)
 
     async def mock_exec(cmd, timeout=5):
@@ -337,7 +371,9 @@ async def test_check_services_all_active():
 
 async def test_check_services_service_down():
     from unittest.mock import AsyncMock, patch
+
     from app.core.devops_agent import DevOpsAgent
+
     agent = DevOpsAgent(db=None, interval=60)
 
     async def mock_exec(cmd, timeout=5):
@@ -363,17 +399,27 @@ async def test_check_services_service_down():
 async def test_resolve_alert_db(tmp_path, monkeypatch):
     monkeypatch.setattr("app.core.config.load_yaml_config", lambda path: {})
     from app.core.config import get_settings
+
     get_settings.cache_clear()
-    from app.core.devops_agent import DevOpsAgent, Alert
+    from app.core.devops_agent import Alert, DevOpsAgent
     from app.db.database import Database
+
     db = Database(str(tmp_path / "resolve.db"))
     await db.initialize()
     agent = DevOpsAgent(db=db, interval=60)
 
     # Store then resolve
-    alert = Alert(id="cpu-1", severity="critical", source="cpu",
-                  message="CPU high", value=95, threshold=85, timestamp="now",
-                  resolved=True, resolved_at="later")
+    alert = Alert(
+        id="cpu-1",
+        severity="critical",
+        source="cpu",
+        message="CPU high",
+        value=95,
+        threshold=85,
+        timestamp="now",
+        resolved=True,
+        resolved_at="later",
+    )
     await agent._store_alert(alert)
     await agent._resolve_alert_db(alert)
 
@@ -388,6 +434,7 @@ async def test_resolve_alert_db(tmp_path, monkeypatch):
 
 async def test_start_stop():
     from app.core.devops_agent import DevOpsAgent
+
     agent = DevOpsAgent(db=None, interval=60)
     agent.start()
     assert agent._running is True
@@ -401,8 +448,8 @@ async def test_start_stop():
 
 def test_alert_defaults():
     from app.core.devops_agent import Alert
-    a = Alert(id="x", severity="warning", source="cpu", message="test",
-              value=80, threshold=85, timestamp="now")
+
+    a = Alert(id="x", severity="warning", source="cpu", message="test", value=80, threshold=85, timestamp="now")
     assert a.resolved is False
     assert a.resolved_at is None
     assert a.remediation is None
@@ -410,6 +457,6 @@ def test_alert_defaults():
 
 def test_remediation_record():
     from app.core.devops_agent import RemediationRecord
-    r = RemediationRecord(timestamp="now", alert_source="cpu", action="log",
-                          command="ps aux", result="ok", success=True)
+
+    r = RemediationRecord(timestamp="now", alert_source="cpu", action="log", command="ps aux", result="ok", success=True)
     assert r.success is True

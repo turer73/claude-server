@@ -5,13 +5,12 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from app.core.shell_executor import ShellExecutor
 from app.core.config import get_settings
+from app.core.shell_executor import ShellExecutor
 from app.middleware.dependencies import require_admin
 
 router = APIRouter(prefix="/api/v1/social", tags=["social"])
@@ -61,22 +60,23 @@ async def _vps_run(command: str, timeout: int = 60) -> dict:
 
 # --- Content Generation ---
 
+
 class GenerateRequest(BaseModel):
     product: str = "petvet"
     content_type: str = "single_image_tip"
-    topic: Optional[str] = None
-    pillar: Optional[str] = None
-    context: Optional[str] = None
+    topic: str | None = None
+    pillar: str | None = None
+    context: str | None = None
 
 
 @router.post("/content/generate")
 async def generate_content(req: GenerateRequest, _: None = Depends(require_admin)) -> dict:
     """Generate social media content using AI."""
-    cmd = f'{CLI} generate --product {_sanitize(req.product)} --type {_sanitize(req.content_type)}'
+    cmd = f"{CLI} generate --product {_sanitize(req.product)} --type {_sanitize(req.content_type)}"
     if req.topic:
         cmd += f" --topic '{_sanitize(req.topic)}'"
     if req.pillar:
-        cmd += f' --pillar {_sanitize(req.pillar)}'
+        cmd += f" --pillar {_sanitize(req.pillar)}"
     if req.context:
         cmd += f" --context '{_sanitize(req.context)}'"
     return await _vps_run(cmd, timeout=90)
@@ -84,20 +84,21 @@ async def generate_content(req: GenerateRequest, _: None = Depends(require_admin
 
 # --- Content Management ---
 
+
 @router.get("/content/list")
 async def list_contents(
-    status: Optional[str] = Query(None),
-    product: Optional[str] = Query(None),
+    status: str | None = Query(None),
+    product: str | None = Query(None),
     limit: int = Query(20),
     _: None = Depends(require_admin),
 ) -> dict:
     """List content items with optional filters."""
-    cmd = f'{CLI} list'
+    cmd = f"{CLI} list"
     if status:
-        cmd += f' --status {_sanitize(status)}'
+        cmd += f" --status {_sanitize(status)}"
     if product:
-        cmd += f' --product {_sanitize(product)}'
-    cmd += f' --limit {int(limit)}'
+        cmd += f" --product {_sanitize(product)}"
+    cmd += f" --limit {int(limit)}"
     return await _vps_run(cmd)
 
 
@@ -121,7 +122,7 @@ class ApproveRequest(BaseModel):
 @router.put("/content/{content_id}/approve")
 async def approve_content(content_id: int, _: None = Depends(require_admin)) -> dict:
     """Approve a draft content item."""
-    cmd = f'{CLI} approve --id {int(content_id)}'
+    cmd = f"{CLI} approve --id {int(content_id)}"
     return await _vps_run(cmd)
 
 
@@ -130,9 +131,7 @@ class ScheduleRequest(BaseModel):
 
 
 @router.put("/content/{content_id}/schedule")
-async def schedule_content(
-    content_id: int, req: ScheduleRequest, _: None = Depends(require_admin)
-) -> dict:
+async def schedule_content(content_id: int, req: ScheduleRequest, _: None = Depends(require_admin)) -> dict:
     """Schedule content for future publishing."""
     cmd = f"{CLI} schedule --id {int(content_id)} --at '{_sanitize(req.scheduled_at)}'"
     return await _vps_run(cmd)
@@ -141,104 +140,109 @@ async def schedule_content(
 @router.post("/content/{content_id}/publish")
 async def publish_content(content_id: int, _: None = Depends(require_admin)) -> dict:
     """Publish a content item to Instagram."""
-    cmd = f'{CLI} publish --id {int(content_id)}'
+    cmd = f"{CLI} publish --id {int(content_id)}"
     return await _vps_run(cmd, timeout=120)
 
 
 @router.post("/content/publish-scheduled")
 async def publish_scheduled(_: None = Depends(require_admin)) -> dict:
     """Publish all content scheduled before now."""
-    cmd = f'{CLI} publish-scheduled'
+    cmd = f"{CLI} publish-scheduled"
     return await _vps_run(cmd, timeout=120)
 
 
 # --- Weekly Plans ---
 
+
 class PlanRequest(BaseModel):
     product: str = "petvet"
-    week_start: Optional[str] = None
+    week_start: str | None = None
 
 
 @router.post("/plan/generate")
 async def generate_plan(req: PlanRequest, _: None = Depends(require_admin)) -> dict:
     """Generate a weekly content plan."""
-    cmd = f'{CLI} plan-week --product {_sanitize(req.product)}'
+    cmd = f"{CLI} plan-week --product {_sanitize(req.product)}"
     if req.week_start:
-        cmd += f' --week-start {_sanitize(req.week_start)}'
+        cmd += f" --week-start {_sanitize(req.week_start)}"
     return await _vps_run(cmd, timeout=90)
 
 
 @router.get("/plan/calendar")
 async def get_calendar(
-    product: Optional[str] = Query(None),
+    product: str | None = Query(None),
     _: None = Depends(require_admin),
 ) -> dict:
     """Get content calendar view."""
-    cmd = f'{CLI} calendar'
+    cmd = f"{CLI} calendar"
     if product:
-        cmd += f' --product {_sanitize(product)}'
+        cmd += f" --product {_sanitize(product)}"
     return await _vps_run(cmd)
 
 
 # --- Analytics ---
 
+
 @router.get("/analytics/overview")
 async def analytics_overview(_: None = Depends(require_admin)) -> dict:
     """Get analytics overview for last 7 days."""
-    cmd = f'{CLI} report'
+    cmd = f"{CLI} report"
     return await _vps_run(cmd)
 
 
 @router.get("/analytics/stats")
 async def content_stats(_: None = Depends(require_admin)) -> dict:
     """Get content statistics."""
-    cmd = f'{CLI} stats'
+    cmd = f"{CLI} stats"
     return await _vps_run(cmd)
 
 
 @router.post("/analytics/collect")
 async def collect_metrics(_: None = Depends(require_admin)) -> dict:
     """Collect metrics from Instagram API."""
-    cmd = f'{CLI} collect-metrics'
+    cmd = f"{CLI} collect-metrics"
     return await _vps_run(cmd, timeout=60)
 
 
 # --- Full Week Generation ---
 
+
 class WeekGenerateRequest(BaseModel):
     product: str = "petvet"
-    week_start: Optional[str] = None
+    week_start: str | None = None
 
 
 @router.post("/content/generate-week")
 async def generate_week(req: WeekGenerateRequest, _: None = Depends(require_admin)) -> dict:
     """Generate a full week of content (plan + all posts)."""
-    cmd = f'{CLI} generate-week --product {_sanitize(req.product)}'
+    cmd = f"{CLI} generate-week --product {_sanitize(req.product)}"
     if req.week_start:
-        cmd += f' --week-start {_sanitize(req.week_start)}'
+        cmd += f" --week-start {_sanitize(req.week_start)}"
     return await _vps_run(cmd, timeout=300)
 
 
 # --- Image Generation ---
 
+
 @router.post("/content/{content_id}/generate-image")
 async def generate_image(content_id: int, _: None = Depends(require_admin)) -> dict:
     """Generate images for an existing content item."""
-    cmd = f'{CLI} generate-image --id {int(content_id)}'
+    cmd = f"{CLI} generate-image --id {int(content_id)}"
     return await _vps_run(cmd, timeout=60)
 
 
 # --- Token Management ---
 
+
 @router.get("/token/status")
 async def token_status(_: None = Depends(require_admin)) -> dict:
     """Check Instagram token validity."""
-    cmd = f'{CLI} token-check'
+    cmd = f"{CLI} token-check"
     return await _vps_run(cmd)
 
 
 @router.post("/token/refresh")
 async def token_refresh(_: None = Depends(require_admin)) -> dict:
     """Refresh Instagram token."""
-    cmd = f'{CLI} token-auto'
+    cmd = f"{CLI} token-auto"
     return await _vps_run(cmd, timeout=30)

@@ -6,8 +6,9 @@ so we can track trends, regressions, and fix success rates.
 
 from __future__ import annotations
 
-import aiosqlite
 import logging
+
+import aiosqlite
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,7 @@ def _db() -> aiosqlite.Connection:
 
 # â”€â”€ Run lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+
 async def create_run(trigger: str = "manual") -> int:
     """Start a new CI run, return its ID."""
     cursor = await _db().execute(
@@ -113,9 +115,7 @@ async def create_run(trigger: str = "manual") -> int:
     return cursor.lastrowid
 
 
-async def complete_run(
-    run_id: int, total: int, passed: int, failed: int, duration_s: float
-) -> None:
+async def complete_run(run_id: int, total: int, passed: int, failed: int, duration_s: float) -> None:
     """Mark a run as completed with aggregate stats."""
     await _db().execute(
         """UPDATE ci_runs
@@ -129,6 +129,7 @@ async def complete_run(
 
 
 # â”€â”€ Project results â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
 
 async def save_project_result(
     run_id: int,
@@ -152,6 +153,7 @@ async def save_project_result(
 
 # â”€â”€ Failures â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+
 async def save_failure(
     run_id: int,
     project: str,
@@ -170,9 +172,7 @@ async def save_failure(
     return cursor.lastrowid
 
 
-async def mark_fix_attempted(
-    run_id: int, project: str, test_name: str, success: bool
-) -> None:
+async def mark_fix_attempted(run_id: int, project: str, test_name: str, success: bool) -> None:
     """Update a failure record after a fix attempt."""
     await _db().execute(
         """UPDATE ci_failures
@@ -184,6 +184,7 @@ async def mark_fix_attempted(
 
 
 # â”€â”€ Individual test results â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
 
 async def save_tests(run_id: int, project: str, tests: list[dict]) -> int:
     """Bulk-save individual test results. Returns count saved."""
@@ -209,9 +210,7 @@ async def save_tests(run_id: int, project: str, tests: list[dict]) -> int:
     return len(tests)
 
 
-async def get_run_tests(
-    run_id: int, project: str | None = None, status: str | None = None
-) -> list[dict]:
+async def get_run_tests(run_id: int, project: str | None = None, status: str | None = None) -> list[dict]:
     """Query individual test results for a run, optionally filtered."""
     sql = "SELECT * FROM ci_test_results WHERE run_id = ?"
     params: list = [run_id]
@@ -243,6 +242,7 @@ async def get_test_history(project: str, test_name: str, limit: int = 20) -> lis
 
 # â”€â”€ Queries â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+
 async def get_runs(limit: int = 20, offset: int = 0) -> list[dict]:
     """Return recent CI runs, newest first."""
     cursor = await _db().execute(
@@ -257,9 +257,7 @@ async def get_runs(limit: int = 20, offset: int = 0) -> list[dict]:
 
 async def get_run_detail(run_id: int) -> dict | None:
     """Return a full run with project results and failures."""
-    cursor = await _db().execute(
-        "SELECT * FROM ci_runs WHERE id = ?", (run_id,)
-    )
+    cursor = await _db().execute("SELECT * FROM ci_runs WHERE id = ?", (run_id,))
     run = await cursor.fetchone()
     if not run:
         return None
@@ -297,9 +295,7 @@ async def get_project_history(project: str, limit: int = 30) -> list[dict]:
 async def get_summary() -> dict:
     """Return overall CI summary stats."""
     # Last run
-    cursor = await _db().execute(
-        "SELECT * FROM ci_runs ORDER BY id DESC LIMIT 1"
-    )
+    cursor = await _db().execute("SELECT * FROM ci_runs ORDER BY id DESC LIMIT 1")
     last_run = await cursor.fetchone()
 
     # Total runs count
@@ -314,11 +310,7 @@ async def get_summary() -> dict:
            ORDER BY id DESC LIMIT 30"""
     )
     rate_row = await cursor.fetchone()
-    success_rate = (
-        round(rate_row["green"] / rate_row["total"] * 100, 1)
-        if rate_row["total"] > 0
-        else 0
-    )
+    success_rate = round(rate_row["green"] / rate_row["total"] * 100, 1) if rate_row["total"] > 0 else 0
 
     # Most failing projects (last 30 runs)
     cursor = await _db().execute(

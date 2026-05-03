@@ -1,30 +1,24 @@
 import pytest
 from pydantic import ValidationError
+
 from app.models.schemas import (
-    KernelStatusResponse,
+    AgentDefinition,
+    AIChatRequest,
+    AlertConfig,
     CpuMetricsResponse,
-    GovernorRequest,
-    SystemInfoResponse,
+    ErrorResponse,
+    FileEditRequest,
     FileReadRequest,
     FileWriteRequest,
-    FileEditRequest,
-    ShellExecRequest,
-    HttpProxyRequest,
-    HttpProxyResponse,
-    ErrorResponse,
-    MetricsSnapshot,
-    AlertConfig,
-    AlertEntry,
-    LogSearchRequest,
-    GitStatusResponse,
     GitCommitRequest,
+    GovernorRequest,
+    HttpProxyRequest,
+    LogSearchRequest,
+    MetricsSnapshot,
     PackageInstallRequest,
-    ProcessInfo,
     ServiceAction,
-    AIChatRequest,
+    ShellExecRequest,
     SshConnectRequest,
-    SshExecRequest,
-    AgentDefinition,
 )
 
 
@@ -147,8 +141,12 @@ def test_log_search_request():
 
 def test_cpu_metrics_response():
     m = CpuMetricsResponse(
-        cpu_id=0, usage_percent=45.2, frequency_mhz=2400,
-        temperature_c=55.0, io_read_bytes=1024, io_write_bytes=512,
+        cpu_id=0,
+        usage_percent=45.2,
+        frequency_mhz=2400,
+        temperature_c=55.0,
+        io_read_bytes=1024,
+        io_write_bytes=512,
     )
     assert m.cpu_id == 0
 

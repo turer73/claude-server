@@ -1,10 +1,10 @@
 from app.exceptions import (
-    ServerError,
     AuthenticationError,
     AuthorizationError,
-    NotFoundError,
     KernelError,
+    NotFoundError,
     RateLimitError,
+    ServerError,
     ShellExecutionError,
 )
 

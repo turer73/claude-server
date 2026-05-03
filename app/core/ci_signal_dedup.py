@@ -6,6 +6,7 @@ app.db.database so they can be tested against a tmp_path DB.
 
 See: docs/plans/2026-04-18-ci-lesson-learned-signal-dedup-design.md
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -83,8 +84,20 @@ async def record_lesson(
              attempt_num, strategy, context_lessons, fix_diff, outcome, duration_ms)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (run_uuid, project, test_name, error_hash, signature, raw_error,
-         attempt_num, strategy, context_lessons, fix_diff, outcome, duration_ms),
+        (
+            run_uuid,
+            project,
+            test_name,
+            error_hash,
+            signature,
+            raw_error,
+            attempt_num,
+            strategy,
+            context_lessons,
+            fix_diff,
+            outcome,
+            duration_ms,
+        ),
     )
     return cursor.lastrowid
 
@@ -125,7 +138,10 @@ async def get_recent_occurrences(db: Database, signature: str, window: int = 3) 
 
 
 async def fetch_lesson_context(
-    db: Database, project: str, signature: str, limit: int = 5,
+    db: Database,
+    project: str,
+    signature: str,
+    limit: int = 5,
 ) -> list[dict]:
     """Return past lessons matching (project, signature), newest first."""
     rows = await db.fetch_all(

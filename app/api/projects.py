@@ -7,7 +7,6 @@ import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, Depends
 
@@ -32,7 +31,10 @@ def _git_info(path: str) -> dict:
     try:
         result = subprocess.run(
             ["git", "log", "-1", "--format=%H|%s|%ai|%an"],
-            cwd=path, capture_output=True, text=True, timeout=5,
+            cwd=path,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0 and result.stdout.strip():
             parts = result.stdout.strip().split("|", 3)
@@ -52,12 +54,18 @@ def _git_status(path: str) -> dict:
     try:
         result = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=path, capture_output=True, text=True, timeout=5,
+            cwd=path,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
-        lines = [l for l in result.stdout.strip().split("\n") if l.strip()]
+        lines = [ln for ln in result.stdout.strip().split("\n") if ln.strip()]
         branch = subprocess.run(
             ["git", "branch", "--show-current"],
-            cwd=path, capture_output=True, text=True, timeout=5,
+            cwd=path,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         return {
             "branch": branch.stdout.strip(),
@@ -89,7 +97,10 @@ def _dep_audit(path: str, project_type: str) -> dict:
 
         result = subprocess.run(
             ["npm", "audit", "--json", "--omit=dev"],
-            cwd=path, capture_output=True, text=True, timeout=30,
+            cwd=path,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         try:
             data = json.loads(result.stdout)
@@ -106,9 +117,10 @@ def _dep_audit(path: str, project_type: str) -> dict:
         return {"status": "error"}
 
 
-def _last_test_result() -> Optional[dict]:
+def _last_test_result() -> dict | None:
     """En son test runner sonucu."""
     import glob
+
     files = sorted(glob.glob("/tmp/test-results-*.json"), reverse=True)
     if files:
         try:
@@ -167,7 +179,10 @@ async def sync_repos(_=Depends(require_auth)):
         try:
             result = subprocess.run(
                 ["git", "pull", "--ff-only"],
-                cwd=path, capture_output=True, text=True, timeout=30,
+                cwd=path,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             results[proj["name"]] = {
                 "status": "ok" if result.returncode == 0 else "error",

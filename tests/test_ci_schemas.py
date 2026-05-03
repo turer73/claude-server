@@ -14,7 +14,6 @@ from app.models.schemas import (
     CITestResponse,
 )
 
-
 # --- CITestRequest ---
 
 

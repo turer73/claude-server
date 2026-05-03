@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sys
 
-from app.mcp.tools import get_tool_definitions, execute_tool
+from app.mcp.tools import execute_tool, get_tool_definitions
 
 
 class MCPServer:
@@ -22,11 +22,13 @@ class MCPServer:
         try:
             msg = json.loads(raw)
         except json.JSONDecodeError:
-            return json.dumps({
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {"code": -32700, "message": "Parse error"},
-            })
+            return json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32700, "message": "Parse error"},
+                }
+            )
 
         method = msg.get("method", "")
         msg_id = msg.get("id")
@@ -43,43 +45,51 @@ class MCPServer:
         elif method == "ping":
             return json.dumps({"jsonrpc": "2.0", "id": msg_id, "result": {}})
         else:
-            return json.dumps({
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "error": {"code": -32601, "message": f"Method not found: {method}"},
-            })
+            return json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "error": {"code": -32601, "message": f"Method not found: {method}"},
+                }
+            )
 
     def _handle_initialize(self, msg_id: int, params: dict) -> str:
         self._initialized = True
-        return json.dumps({
-            "jsonrpc": "2.0",
-            "id": msg_id,
-            "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": self._server_info,
-            },
-        })
+        return json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {"listChanged": False}},
+                    "serverInfo": self._server_info,
+                },
+            }
+        )
 
     def _handle_tools_list(self, msg_id: int) -> str:
         tools = get_tool_definitions()
-        return json.dumps({
-            "jsonrpc": "2.0",
-            "id": msg_id,
-            "result": {"tools": tools},
-        })
+        return json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {"tools": tools},
+            }
+        )
 
     def _handle_tools_call(self, msg_id: int, params: dict) -> str:
         name = params.get("name", "")
         arguments = params.get("arguments", {})
         result_text = execute_tool(name, arguments)
-        return json.dumps({
-            "jsonrpc": "2.0",
-            "id": msg_id,
-            "result": {
-                "content": [{"type": "text", "text": result_text}],
-            },
-        })
+        return json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "content": [{"type": "text", "text": result_text}],
+                },
+            }
+        )
 
     def run_stdio(self) -> None:
         """Run server on stdio (for Claude integration)."""

@@ -6,13 +6,12 @@ import asyncio
 import json
 import os
 import shutil
-from typing import Optional
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from app.middleware.dependencies import require_auth, require_admin
+from app.middleware.dependencies import require_admin, require_auth
 
 router = APIRouter(prefix="/api/v1/claude", tags=["claude-code"])
 
@@ -50,11 +49,11 @@ def _build_env():
 
 class ClaudePromptRequest(BaseModel):
     prompt: str
-    session_id: Optional[str] = None  # Resume a previous session
-    continue_last: bool = False       # Continue most recent session
-    model: Optional[str] = None
-    max_turns: Optional[int] = 10
-    cwd: Optional[str] = None
+    session_id: str | None = None  # Resume a previous session
+    continue_last: bool = False  # Continue most recent session
+    model: str | None = None
+    max_turns: int | None = 10
+    cwd: str | None = None
 
 
 @router.get("/status", dependencies=[Depends(require_auth)])
@@ -63,8 +62,10 @@ async def claude_status():
     if not binary:
         return {"available": False, "error": "Claude Code CLI bulunamadi"}
     proc = await asyncio.create_subprocess_exec(
-        binary, "--version",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        binary,
+        "--version",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
     stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
     version = stdout.decode().strip() if stdout else "unknown"
@@ -100,13 +101,16 @@ async def run_claude(body: ClaudePromptRequest):
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        cwd=cwd, env=_build_env(), stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=cwd,
+        env=_build_env(),
+        stdin=asyncio.subprocess.DEVNULL,
     )
 
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         return {"error": "Zaman asimi (5dk)"}
 
@@ -114,7 +118,7 @@ async def run_claude(body: ClaudePromptRequest):
     # Find JSON start
     output = raw
     for i, ch in enumerate(raw):
-        if ch in ('{', '['):
+        if ch in ("{", "["):
             output = raw[i:]
             break
 
@@ -164,11 +168,13 @@ async def list_sessions():
         fpath = os.path.join(sessions_dir, fname)
         try:
             stat = os.stat(fpath)
-            sessions.append({
-                "id": fname.replace(".json", ""),
-                "modified": stat.st_mtime,
-                "size": stat.st_size,
-            })
+            sessions.append(
+                {
+                    "id": fname.replace(".json", ""),
+                    "modified": stat.st_mtime,
+                    "size": stat.st_size,
+                }
+            )
         except OSError:
             pass
     return {"sessions": sessions}

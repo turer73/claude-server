@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query
 
 from app.core.config import get_settings
 from app.core.question_validator import QuestionValidator, ValidationReport
@@ -87,7 +87,7 @@ async def get_errors(
         pass
 
     total = len(errors)
-    page = [asdict(e) for e in errors[offset:offset + limit]]
+    page = [asdict(e) for e in errors[offset : offset + limit]]
     return {
         "total": total,
         "offset": offset,
@@ -105,11 +105,12 @@ async def validate_single_question(question_id: str):
     url = f"{validator._url}/rest/v1/questions"
     params = {
         "select": "id,external_id,game,category,subcategory,difficulty,level_tag,"
-                  "content,is_active,is_boss,times_answered,times_correct,source,exam_ref",
+        "content,is_active,is_boss,times_answered,times_correct,source,exam_ref",
         "id": f"eq.{question_id}",
         "limit": "1",
     }
     import httpx
+
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(url, headers=validator._headers, params=params)
         resp.raise_for_status()

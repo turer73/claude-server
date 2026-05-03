@@ -1,9 +1,9 @@
 """Tests for WebSocket terminal handler."""
 
-import pytest
 import json
-from unittest.mock import patch, AsyncMock, MagicMock
-from httpx import AsyncClient, ASGITransport
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from starlette.testclient import TestClient
 
 from tests.conftest import TEST_API_KEY
@@ -12,8 +12,8 @@ from tests.conftest import TEST_API_KEY
 @pytest.mark.anyio
 async def test_ws_terminal_session_lifecycle(app, tmp_path, monkeypatch):
     """Test terminal WebSocket creates session and handles commands."""
-    from app.db.database import Database
     from app.auth.api_key import hash_api_key
+    from app.db.database import Database
 
     db = Database(str(tmp_path / "test.db"))
     await db.initialize()

@@ -1,4 +1,5 @@
 import pytest
+
 from app.db.database import Database
 
 
@@ -13,9 +14,7 @@ async def db(tmp_path):
 
 @pytest.mark.anyio
 async def test_database_creates_tables(db):
-    tables = await db.fetch_all(
-        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-    )
+    tables = await db.fetch_all("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
     table_names = [row["name"] for row in tables]
     assert "api_keys" in table_names
     assert "audit_log" in table_names
@@ -106,9 +105,7 @@ async def test_database_not_initialized():
 
 @pytest.mark.anyio
 async def test_indexes_created(db):
-    indexes = await db.fetch_all(
-        "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
-    )
+    indexes = await db.fetch_all("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'")
     index_names = [row["name"] for row in indexes]
     assert "idx_audit_timestamp" in index_names
     assert "idx_metrics_timestamp" in index_names

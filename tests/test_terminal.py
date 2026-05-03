@@ -1,7 +1,8 @@
 """Tests for terminal manager and WebSocket terminal sessions."""
 
 import pytest
-from app.core.terminal_manager import TerminalManager, TerminalSession
+
+from app.core.terminal_manager import TerminalManager
 
 
 @pytest.fixture
@@ -37,6 +38,7 @@ def test_max_sessions(tm):
     for _ in range(3):
         tm.create_session()
     from app.exceptions import RateLimitError
+
     with pytest.raises(RateLimitError):
         tm.create_session()
 
@@ -50,6 +52,7 @@ def test_get_session(tm):
 
 def test_get_session_not_found(tm):
     from app.exceptions import NotFoundError
+
     with pytest.raises(NotFoundError):
         tm.get_session("nonexistent")
 
@@ -67,5 +70,5 @@ async def test_execute_in_session(tm):
 async def test_execute_with_error(tm):
     sid = tm.create_session()
     session = tm.get_session(sid)
-    result = await session.execute("python3 -c \"exit(42)\"")
+    result = await session.execute('python3 -c "exit(42)"')
     assert result["exit_code"] == 42

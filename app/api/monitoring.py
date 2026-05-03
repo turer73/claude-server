@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.core.monitor_agent import MonitorAgent
-from app.models.schemas import MetricsSnapshot, AlertConfig
 from app.api.webhooks import router as webhooks_router
+from app.core.monitor_agent import MonitorAgent
+from app.models.schemas import AlertConfig, MetricsSnapshot
 
 router = APIRouter(prefix="/api/v1/monitor", tags=["monitor"])
 

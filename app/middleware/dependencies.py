@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import Request, Depends
+from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.auth.jwt_handler import decode_token
 from app.core.config import Settings, get_settings
+from app.exceptions import AuthenticationError, AuthorizationError, RateLimitError
 from app.middleware.rate_limit import TokenBucketLimiter
-from app.middleware.audit_log import AuditLogger
-from app.middleware.request_id import request_id_var
-from app.exceptions import RateLimitError, AuthenticationError, AuthorizationError
 
 # ---------- Auth ----------
 _bearer = HTTPBearer(auto_error=False)

@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field, asdict
-from pathlib import Path
+from dataclasses import asdict, dataclass, field
 
 import yaml
 
@@ -14,6 +13,7 @@ from app.exceptions import NotFoundError
 @dataclass
 class AgentDefinition:
     """Agent definition — can be loaded from YAML or created programmatically."""
+
     name: str
     description: str
     trigger: str = "manual"  # manual, cron, event

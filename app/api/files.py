@@ -8,9 +8,10 @@ from app.core.config import Settings, get_settings
 from app.core.file_manager import FileManager
 from app.middleware.dependencies import rate_limit_read, rate_limit_write, require_auth, require_write
 from app.models.schemas import (
-    FileReadRequest, FileReadResponse,
-    FileWriteRequest, FileEditRequest,
-    FileInfoResponse, FileSearchRequest,
+    FileEditRequest,
+    FileInfoResponse,
+    FileReadResponse,
+    FileWriteRequest,
 )
 
 router = APIRouter(prefix="/api/v1/files", tags=["files"])

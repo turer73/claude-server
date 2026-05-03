@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import json
+import os
 import time
 from collections import deque
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
+from app.core.config import get_settings
 from app.core.monitor_agent import MonitorAgent
 from app.core.shell_executor import ShellExecutor
-from app.core.config import get_settings
 
 
 @dataclass
@@ -56,7 +56,10 @@ PLAYBOOKS: dict[str, list[dict]] = {
         {"desc": "Remove old backups", "cmd": "ls -t /data/backups/*.tar.gz 2>/dev/null | tail -n +4 | xargs rm -f 2>/dev/null || true"},
     ],
     "temperature_critical": [
-        {"desc": "Set CPU governor to powersave", "cmd": "cpufreq-set -g powersave 2>/dev/null || echo 'powersave' | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true"},
+        {
+            "desc": "Set CPU governor to powersave",
+            "cmd": "cpufreq-set -g powersave 2>/dev/null || echo 'powersave' | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true",
+        },
     ],
     "service_down": [
         {"desc": "Restart service", "cmd": "systemctl restart {service}"},
@@ -115,7 +118,7 @@ class DevOpsAgent:
         if self._running:
             return
         self._running = True
-        self._started_at = datetime.now(timezone.utc).isoformat()
+        self._started_at = datetime.now(UTC).isoformat()
         self._task = asyncio.create_task(self._run_loop())
 
     async def stop(self) -> None:
@@ -151,7 +154,7 @@ class DevOpsAgent:
             await asyncio.sleep(self._interval)
 
     async def _tick(self) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         self._last_check = now
         self._check_count += 1
 
@@ -195,10 +198,12 @@ class DevOpsAgent:
                     metrics.get("disk_percent", 0),
                     metrics.get("temperature", 0),
                     json.dumps(metrics.get("load_avg", [])),
-                    json.dumps({
-                        "sent_mb": metrics.get("network_sent_mb", 0),
-                        "recv_mb": metrics.get("network_recv_mb", 0),
-                    }),
+                    json.dumps(
+                        {
+                            "sent_mb": metrics.get("network_sent_mb", 0),
+                            "recv_mb": metrics.get("network_recv_mb", 0),
+                        }
+                    ),
                 ),
             )
         except Exception:
@@ -214,7 +219,7 @@ class DevOpsAgent:
         return sum(values) / len(values)
 
     def _detect(self, metrics: dict) -> list[Alert]:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         alerts = []
 
         checks = [
@@ -258,12 +263,11 @@ class DevOpsAgent:
 
     def _auto_resolve(self, metrics: dict) -> None:
         """Resolve alerts when metrics return to normal."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         resolved = []
 
         for source, alert in self._active_alerts.items():
-            key_map = {"cpu": "cpu_percent", "memory": "memory_percent",
-                       "disk": "disk_percent", "temperature": "temperature"}
+            key_map = {"cpu": "cpu_percent", "memory": "memory_percent", "disk": "disk_percent", "temperature": "temperature"}
             key = key_map.get(source)
             if not key:
                 continue
@@ -324,7 +328,7 @@ class DevOpsAgent:
             try:
                 result = await self._executor.execute(cmd, timeout=30)
                 record = RemediationRecord(
-                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    timestamp=datetime.now(UTC).isoformat(),
                     alert_source=alert.source,
                     action=desc,
                     command=cmd,
@@ -333,7 +337,7 @@ class DevOpsAgent:
                 )
             except Exception as e:
                 record = RemediationRecord(
-                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    timestamp=datetime.now(UTC).isoformat(),
                     alert_source=alert.source,
                     action=desc,
                     command=cmd,
@@ -350,6 +354,7 @@ class DevOpsAgent:
         """Notify via webhook for n8n integration."""
         try:
             import httpx
+
             async with httpx.AsyncClient(timeout=5) as client:
                 await client.post(
                     "http://localhost:8420/api/v1/monitor/webhooks/receive",
@@ -372,7 +377,7 @@ class DevOpsAgent:
 
     async def _check_services(self) -> None:
         """Check critical systemd services and Docker containers."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         # Systemd services
         for svc in CRITICAL_SERVICES:
@@ -386,7 +391,9 @@ class DevOpsAgent:
                             severity="critical",
                             source=source,
                             message=f"Service {svc} is not active",
-                            value=0, threshold=1, timestamp=now,
+                            value=0,
+                            threshold=1,
+                            timestamp=now,
                         )
                         self._active_alerts[source] = alert
                         await self._remediate_service(svc, alert)
@@ -396,9 +403,7 @@ class DevOpsAgent:
         # Docker containers
         for container in CRITICAL_CONTAINERS:
             try:
-                result = await self._executor.execute(
-                    f"docker ps --filter name={container} --format '{{{{.Status}}}}'", timeout=5
-                )
+                result = await self._executor.execute(f"docker ps --filter name={container} --format '{{{{.Status}}}}'", timeout=5)
                 status = result.get("stdout", "").strip()
                 if not status or "Up" not in status:
                     source = f"docker:{container}"
@@ -408,7 +413,9 @@ class DevOpsAgent:
                             severity="critical",
                             source=source,
                             message=f"Container {container} is not running",
-                            value=0, threshold=1, timestamp=now,
+                            value=0,
+                            threshold=1,
+                            timestamp=now,
                         )
                         self._active_alerts[source] = alert
                         await self._remediate_container(container, alert)
@@ -417,18 +424,20 @@ class DevOpsAgent:
 
     async def _check_vps(self) -> None:
         """Check production VPS containers via SSH bridge."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         try:
-            result = await self._executor.execute(
-                f"{VPS_SSH} 'docker ps --format \"{{{{.Names}}}}:{{{{.Status}}}}\"'", timeout=10
-            )
+            result = await self._executor.execute(f"{VPS_SSH} 'docker ps --format \"{{{{.Names}}}}:{{{{.Status}}}}\"'", timeout=10)
             if result.get("exit_code", 1) != 0:
                 source = "vps:offline"
                 if source not in self._active_alerts:
                     self._active_alerts[source] = Alert(
-                        id=f"{source}-{self._check_count}", severity="critical",
-                        source=source, message="VPS is unreachable",
-                        value=0, threshold=1, timestamp=now,
+                        id=f"{source}-{self._check_count}",
+                        severity="critical",
+                        source=source,
+                        message="VPS is unreachable",
+                        value=0,
+                        threshold=1,
+                        timestamp=now,
                     )
                 return
 
@@ -446,9 +455,13 @@ class DevOpsAgent:
                     if f"{container}:" not in running:
                         if source not in self._active_alerts:
                             self._active_alerts[source] = Alert(
-                                id=f"{source}-{self._check_count}", severity="warning",
-                                source=source, message=f"VPS container {container} not running",
-                                value=0, threshold=1, timestamp=now,
+                                id=f"{source}-{self._check_count}",
+                                severity="warning",
+                                source=source,
+                                message=f"VPS container {container} not running",
+                                value=0,
+                                threshold=1,
+                                timestamp=now,
                             )
                 else:
                     # Running — auto-resolve if was alerting
@@ -469,16 +482,21 @@ class DevOpsAgent:
         try:
             result = await self._executor.execute(cmd, timeout=15)
             record = RemediationRecord(
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                alert_source=source, action=f"Restart {service}",
-                command=cmd, result=result.get("stdout", "")[:200],
+                timestamp=datetime.now(UTC).isoformat(),
+                alert_source=source,
+                action=f"Restart {service}",
+                command=cmd,
+                result=result.get("stdout", "")[:200],
                 success=result.get("exit_code", 1) == 0,
             )
         except Exception as e:
             record = RemediationRecord(
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                alert_source=source, action=f"Restart {service}",
-                command=cmd, result=str(e)[:200], success=False,
+                timestamp=datetime.now(UTC).isoformat(),
+                alert_source=source,
+                action=f"Restart {service}",
+                command=cmd,
+                result=str(e)[:200],
+                success=False,
             )
         self._remediation_log.append(record)
         alert.remediation = f"Restart {service}"
@@ -495,16 +513,21 @@ class DevOpsAgent:
         try:
             result = await self._executor.execute(cmd, timeout=15)
             record = RemediationRecord(
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                alert_source=source, action=f"Start {container}",
-                command=cmd, result=result.get("stdout", "")[:200],
+                timestamp=datetime.now(UTC).isoformat(),
+                alert_source=source,
+                action=f"Start {container}",
+                command=cmd,
+                result=result.get("stdout", "")[:200],
                 success=result.get("exit_code", 1) == 0,
             )
         except Exception as e:
             record = RemediationRecord(
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                alert_source=source, action=f"Start {container}",
-                command=cmd, result=str(e)[:200], success=False,
+                timestamp=datetime.now(UTC).isoformat(),
+                alert_source=source,
+                action=f"Start {container}",
+                command=cmd,
+                result=str(e)[:200],
+                success=False,
             )
         self._remediation_log.append(record)
         alert.remediation = f"Start {container}"
@@ -516,9 +539,14 @@ class DevOpsAgent:
     def active_alerts(self) -> list[dict]:
         return [
             {
-                "id": a.id, "severity": a.severity, "source": a.source,
-                "message": a.message, "value": a.value, "threshold": a.threshold,
-                "timestamp": a.timestamp, "remediation": a.remediation,
+                "id": a.id,
+                "severity": a.severity,
+                "source": a.source,
+                "message": a.message,
+                "value": a.value,
+                "threshold": a.threshold,
+                "timestamp": a.timestamp,
+                "remediation": a.remediation,
             }
             for a in self._active_alerts.values()
         ]
@@ -527,9 +555,12 @@ class DevOpsAgent:
     def remediation_history(self) -> list[dict]:
         return [
             {
-                "timestamp": r.timestamp, "alert_source": r.alert_source,
-                "action": r.action, "command": r.command,
-                "result": r.result, "success": r.success,
+                "timestamp": r.timestamp,
+                "alert_source": r.alert_source,
+                "action": r.action,
+                "command": r.command,
+                "result": r.result,
+                "success": r.success,
             }
             for r in reversed(self._remediation_log)
         ]

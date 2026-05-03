@@ -1,8 +1,9 @@
 import pytest
+
+from app.auth.jwt_handler import create_token, decode_token
 from app.core.file_manager import FileManager
 from app.core.shell_executor import ShellExecutor
-from app.auth.jwt_handler import create_token, decode_token
-from app.exceptions import AuthorizationError, AuthenticationError
+from app.exceptions import AuthenticationError, AuthorizationError
 
 
 class TestPathTraversal:
@@ -21,6 +22,7 @@ class TestPathTraversal:
     def test_symlink_escape(self, fm, tmp_path):
         """Symlink pointing outside allowed paths should be blocked."""
         import os
+
         link = tmp_path / "evil_link"
         try:
             os.symlink("/etc/passwd", str(link))
@@ -163,9 +165,13 @@ class TestUnauthenticatedAccess:
     @pytest.mark.anyio
     async def test_webhooks_receive_no_auth(self, client):
         """Webhook receive endpoint is public (no auth required)."""
-        resp = await client.post("/api/v1/monitor/webhooks/receive", json={
-            "source": "test", "event": "ping",
-        })
+        resp = await client.post(
+            "/api/v1/monitor/webhooks/receive",
+            json={
+                "source": "test",
+                "event": "ping",
+            },
+        )
         assert resp.status_code == 200
 
     @pytest.mark.anyio
@@ -190,6 +196,7 @@ class TestUnauthenticatedAccess:
 class TestRateLimiter:
     def test_exhaustion(self):
         from app.middleware.rate_limit import TokenBucketLimiter
+
         limiter = TokenBucketLimiter(rate=3, per_seconds=60)
         assert limiter.allow("attacker") is True
         assert limiter.allow("attacker") is True
@@ -199,6 +206,7 @@ class TestRateLimiter:
 
     def test_key_isolation(self):
         from app.middleware.rate_limit import TokenBucketLimiter
+
         limiter = TokenBucketLimiter(rate=1, per_seconds=60)
         assert limiter.allow("user1") is True
         assert limiter.allow("user1") is False

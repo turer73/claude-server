@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.core.dev_manager import DevManager
 from app.middleware.dependencies import require_auth, require_write
-from app.models.schemas import GitStatusResponse, GitCommitRequest, GitLogEntry
+from app.models.schemas import GitCommitRequest, GitStatusResponse
 
 router = APIRouter(prefix="/api/v1/dev", tags=["dev"])
 

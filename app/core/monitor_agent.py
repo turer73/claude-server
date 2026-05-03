@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import psutil
 
@@ -18,6 +18,7 @@ class MonitorAgent:
 
         try:
             import os
+
             load = list(os.getloadavg())
         except (OSError, AttributeError):
             load = [0.0, 0.0, 0.0]
@@ -34,7 +35,7 @@ class MonitorAgent:
             pass
 
         return {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "cpu_percent": cpu,
             "memory_percent": mem.percent,
             "disk_percent": disk.percent,
@@ -56,11 +57,13 @@ class MonitorAgent:
             value = metrics.get(metric_key)
             limit = thresholds.get(threshold_key)
             if value is not None and limit is not None and value > limit:
-                alerts.append({
-                    "severity": "warning" if value <= limit + 10 else "critical",
-                    "source": source,
-                    "message": f"{source} at {value}% (threshold: {limit}%)",
-                    "value": value,
-                    "threshold": limit,
-                })
+                alerts.append(
+                    {
+                        "severity": "warning" if value <= limit + 10 else "critical",
+                        "source": source,
+                        "message": f"{source} at {value}% (threshold: {limit}%)",
+                        "value": value,
+                        "threshold": limit,
+                    }
+                )
         return alerts

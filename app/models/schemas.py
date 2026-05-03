@@ -6,8 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-
 # --- Common ---
+
 
 class ErrorResponse(BaseModel):
     error: str
@@ -17,6 +17,7 @@ class ErrorResponse(BaseModel):
 
 
 # --- Kernel ---
+
 
 class KernelStatusResponse(BaseModel):
     state: str
@@ -53,6 +54,7 @@ class FrequencyRequest(BaseModel):
 
 # --- System ---
 
+
 class SystemInfoResponse(BaseModel):
     hostname: str
     os: str
@@ -88,6 +90,7 @@ class ServiceAction(BaseModel):
 
 
 # --- Files ---
+
 
 class FileReadRequest(BaseModel):
     path: str
@@ -137,6 +140,7 @@ class FileListResponse(BaseModel):
 
 # --- Dev ---
 
+
 class GitStatusResponse(BaseModel):
     branch: str
     clean: bool
@@ -164,6 +168,7 @@ class PackageInstallRequest(BaseModel):
 
 # --- Network ---
 
+
 class HttpProxyRequest(BaseModel):
     method: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"] = "GET"
     url: str
@@ -181,6 +186,7 @@ class HttpProxyResponse(BaseModel):
 
 # --- Shell ---
 
+
 class ShellExecRequest(BaseModel):
     command: str
     timeout: int = Field(default=30, ge=1, le=300)
@@ -195,6 +201,7 @@ class ShellExecResponse(BaseModel):
 
 
 # --- SSH ---
+
 
 class SshConnectRequest(BaseModel):
     host: str
@@ -225,6 +232,7 @@ class SshTransferRequest(BaseModel):
 
 # --- Agent ---
 
+
 class AgentDefinition(BaseModel):
     name: str
     description: str
@@ -248,6 +256,7 @@ class AgentStatusResponse(BaseModel):
 
 
 # --- Monitor ---
+
 
 class MetricsSnapshot(BaseModel):
     timestamp: str
@@ -278,6 +287,7 @@ class AlertEntry(BaseModel):
 
 # --- Logs ---
 
+
 class LogSearchRequest(BaseModel):
     pattern: str
     source: str | None = None
@@ -294,6 +304,7 @@ class LogEntry(BaseModel):
 
 
 # --- AI ---
+
 
 class AIChatRequest(BaseModel):
     message: str
@@ -330,9 +341,7 @@ class CITestRequest(BaseModel):
     @classmethod
     def project_must_be_known(cls, v: str) -> str:
         if v not in VALID_CI_PROJECTS:
-            raise ValueError(
-                f"Unknown project {v!r}. Valid: {VALID_CI_PROJECTS}"
-            )
+            raise ValueError(f"Unknown project {v!r}. Valid: {VALID_CI_PROJECTS}")
         return v
 
 

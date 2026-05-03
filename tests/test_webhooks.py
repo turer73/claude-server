@@ -5,11 +5,15 @@ import pytest
 
 @pytest.mark.anyio
 async def test_receive_webhook(client, auth_headers):
-    resp = await client.post("/api/v1/monitor/webhooks/receive", headers=auth_headers, json={
-        "source": "n8n",
-        "event": "test_event",
-        "data": {"key": "value"},
-    })
+    resp = await client.post(
+        "/api/v1/monitor/webhooks/receive",
+        headers=auth_headers,
+        json={
+            "source": "n8n",
+            "event": "test_event",
+            "data": {"key": "value"},
+        },
+    )
     assert resp.status_code == 200
     data = resp.json()
     assert data["received"] is True
@@ -19,10 +23,14 @@ async def test_receive_webhook(client, auth_headers):
 
 @pytest.mark.anyio
 async def test_receive_webhook_no_data(client, auth_headers):
-    resp = await client.post("/api/v1/monitor/webhooks/receive", headers=auth_headers, json={
-        "source": "external",
-        "event": "ping",
-    })
+    resp = await client.post(
+        "/api/v1/monitor/webhooks/receive",
+        headers=auth_headers,
+        json={
+            "source": "external",
+            "event": "ping",
+        },
+    )
     assert resp.status_code == 200
     assert resp.json()["received"] is True
 
@@ -30,10 +38,14 @@ async def test_receive_webhook_no_data(client, auth_headers):
 @pytest.mark.anyio
 async def test_list_events(client, auth_headers):
     # Send a webhook first
-    await client.post("/api/v1/monitor/webhooks/receive", headers=auth_headers, json={
-        "source": "test",
-        "event": "ping",
-    })
+    await client.post(
+        "/api/v1/monitor/webhooks/receive",
+        headers=auth_headers,
+        json={
+            "source": "test",
+            "event": "ping",
+        },
+    )
     resp = await client.get("/api/v1/monitor/webhooks/events", headers=auth_headers)
     assert resp.status_code == 200
     assert len(resp.json()["events"]) >= 1
@@ -43,10 +55,14 @@ async def test_list_events(client, auth_headers):
 async def test_list_events_with_limit(client, auth_headers):
     # Send multiple webhooks
     for i in range(5):
-        await client.post("/api/v1/monitor/webhooks/receive", headers=auth_headers, json={
-            "source": "test",
-            "event": f"event_{i}",
-        })
+        await client.post(
+            "/api/v1/monitor/webhooks/receive",
+            headers=auth_headers,
+            json={
+                "source": "test",
+                "event": f"event_{i}",
+            },
+        )
     resp = await client.get("/api/v1/monitor/webhooks/events?limit=2", headers=auth_headers)
     assert resp.status_code == 200
     assert len(resp.json()["events"]) <= 2
@@ -74,14 +90,18 @@ async def test_trigger_metrics_snapshot(client, auth_headers):
 
 @pytest.mark.anyio
 async def test_trigger_alert_check(client, auth_headers):
-    resp = await client.post("/api/v1/monitor/webhooks/trigger/alert_check", headers=auth_headers, json={
-        "thresholds": {
-            "cpu_percent": 85,
-            "memory_percent": 85,
-            "disk_percent": 90,
-            "temperature_c": 80,
-        }
-    })
+    resp = await client.post(
+        "/api/v1/monitor/webhooks/trigger/alert_check",
+        headers=auth_headers,
+        json={
+            "thresholds": {
+                "cpu_percent": 85,
+                "memory_percent": 85,
+                "disk_percent": 90,
+                "temperature_c": 80,
+            }
+        },
+    )
     assert resp.status_code == 200
     data = resp.json()
     assert data["action"] == "alert_check"

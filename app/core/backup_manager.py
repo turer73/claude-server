@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import tarfile
 from datetime import datetime
-from pathlib import Path
 
 from app.exceptions import NotFoundError
 
@@ -50,12 +49,14 @@ class BackupManager:
             if f.endswith(".tar.gz"):
                 full = os.path.join(self._backup_dir, f)
                 st = os.stat(full)
-                backups.append({
-                    "filename": f,
-                    "path": full,
-                    "size": st.st_size,
-                    "created": datetime.fromtimestamp(st.st_mtime).isoformat(),
-                })
+                backups.append(
+                    {
+                        "filename": f,
+                        "path": full,
+                        "size": st.st_size,
+                        "created": datetime.fromtimestamp(st.st_mtime).isoformat(),
+                    }
+                )
         return backups
 
     def restore_backup(self, backup_path: str, target_dir: str) -> bool:

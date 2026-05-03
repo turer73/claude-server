@@ -5,14 +5,14 @@ from __future__ import annotations
 import json
 import os
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
-from app.core.shell_executor import ShellExecutor
 from app.core.config import get_settings
+from app.core.shell_executor import ShellExecutor
 from app.middleware.dependencies import require_admin
 
 router = APIRouter(prefix="/api/v1/deploy", tags=["deploy"])
@@ -40,6 +40,7 @@ def _save_registry(data: dict) -> None:
 
 class SelfDeployRequest(BaseModel):
     """Deploy the linux-ai-server project from a tarball path or auto-detect."""
+
     restart: bool = True
 
 
@@ -90,7 +91,7 @@ async def register_project(req: ProjectRegister, _: None = Depends(require_admin
         "github": req.github,
         "stack": req.stack,
         "description": req.description,
-        "registered_at": datetime.now(timezone.utc).isoformat(),
+        "registered_at": datetime.now(UTC).isoformat(),
         "last_deploy": None,
         "deploy_count": 0,
     }
@@ -126,7 +127,7 @@ async def get_project(name: str, _: None = Depends(require_admin)) -> dict:
             git_info = {
                 "branch": branch["stdout"].strip(),
                 "recent_commits": log["stdout"].strip().split("\n"),
-                "dirty_files": len([l for l in status["stdout"].strip().split("\n") if l]),
+                "dirty_files": len([ln for ln in status["stdout"].strip().split("\n") if ln]),
             }
         except Exception:
             pass
@@ -174,7 +175,7 @@ async def deploy_project(name: str, _: None = Depends(require_admin)) -> dict:
     results.append({"step": "git_pull", "exit_code": pull["exit_code"], "output": pull["stdout"][:200]})
 
     # Update deploy metadata
-    project["last_deploy"] = datetime.now(timezone.utc).isoformat()
+    project["last_deploy"] = datetime.now(UTC).isoformat()
     project["deploy_count"] = project.get("deploy_count", 0) + 1
     _save_registry(registry)
 
@@ -191,9 +192,11 @@ async def memory_context(request: Request) -> dict:
     expected = os.environ.get("API_KEY", "")
     if api_key != expected:
         from app.exceptions import AuthenticationError
+
         raise AuthenticationError("Invalid API key")
     """Full session context from memory DB for Claude hooks."""
     import sqlite3
+
     db = Path("/opt/linux-ai-server/data/claude_memory.db")
     if not db.exists():
         return {"error": "memory DB not found"}
@@ -203,7 +206,9 @@ async def memory_context(request: Request) -> dict:
         c = conn.cursor()
         result = {}
         c.execute("SELECT name, description, content FROM memories WHERE type='project' AND active=1 ORDER BY updated_at DESC")
-        result["projects"] = [{"name": r["name"], "description": r["description"], "content": (r["content"] or "")[:500]} for r in c.fetchall()]
+        result["projects"] = [
+            {"name": r["name"], "description": r["description"], "content": (r["content"] or "")[:500]} for r in c.fetchall()
+        ]
         c.execute("SELECT date, device_name, summary FROM sessions ORDER BY id DESC LIMIT 3")
         result["recent_sessions"] = [dict(r) for r in c.fetchall()]
         c.execute("SELECT project, task, status, device_name, created_at FROM tasks_log ORDER BY id DESC LIMIT 5")
@@ -224,11 +229,13 @@ async def list_notes(_: None = Depends(require_admin)) -> dict:
     if notes_dir.is_dir():
         for f in sorted(notes_dir.iterdir()):
             if f.is_file():
-                notes.append({
-                    "name": f.name,
-                    "size": f.stat().st_size,
-                    "modified": datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc).isoformat(),
-                })
+                notes.append(
+                    {
+                        "name": f.name,
+                        "size": f.stat().st_size,
+                        "modified": datetime.fromtimestamp(f.stat().st_mtime, tz=UTC).isoformat(),
+                    }
+                )
     return {"notes": notes}
 
 

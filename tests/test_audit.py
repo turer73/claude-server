@@ -1,6 +1,7 @@
 import pytest
-from app.middleware.audit_log import AuditLogger
+
 from app.db.database import Database
+from app.middleware.audit_log import AuditLogger
 
 
 @pytest.fixture

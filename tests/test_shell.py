@@ -2,6 +2,7 @@ import shutil
 import sys
 
 import pytest
+
 from app.core.shell_executor import ShellExecutor
 from app.exceptions import AuthorizationError
 
@@ -86,11 +87,11 @@ async def test_execute_not_whitelisted(executor):
 
 @pytest.mark.anyio
 async def test_execute_returns_stderr(executor):
-    result = await executor.execute(f'{_PYTHON} -c "__import__(\'sys\').stderr.write(\'err\')"')
+    result = await executor.execute(f"{_PYTHON} -c \"__import__('sys').stderr.write('err')\"")
     assert "err" in result["stderr"]
 
 
 @pytest.mark.anyio
 async def test_execute_nonzero_exit(executor):
-    result = await executor.execute(f"{_PYTHON} -c \"exit(1)\"")
+    result = await executor.execute(f'{_PYTHON} -c "exit(1)"')
     assert result["exit_code"] == 1

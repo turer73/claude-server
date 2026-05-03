@@ -2,15 +2,16 @@
 Claude Memory API v2 — Merkezi hafıza sistemi
 Duplicate koruması, FTS arama, read tracking, lifecycle yönetimi.
 """
-import os
-import sqlite3
+
 import json
+import os
 import re
-from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Query, Header
+import sqlite3
+from typing import Literal
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, field_validator
-from typing import Optional, Literal
 
 DB_PATH = "/opt/linux-ai-server/data/claude_memory.db"
 
@@ -54,66 +55,71 @@ def _track_read(db, table: str, row_id: int):
 def _sync_fts(db, disc_id: int, title: str, details: str = ""):
     """FTS index güncelle"""
     try:
-        db.execute("INSERT INTO discoveries_fts(rowid, title, details) VALUES (?, ?, ?)",
-                   (disc_id, title, details or ""))
+        db.execute("INSERT INTO discoveries_fts(rowid, title, details) VALUES (?, ?, ?)", (disc_id, title, details or ""))
     except Exception:
         pass
 
 
 # ============ Models ============
 
+
 class DeviceRegister(BaseModel):
     name: str
     platform: str
-    hostname: Optional[str] = None
-    ip: Optional[str] = None
-    tailscale_ip: Optional[str] = None
-    os_version: Optional[str] = None
-    claude_version: Optional[str] = None
-    notes: Optional[str] = None
+    hostname: str | None = None
+    ip: str | None = None
+    tailscale_ip: str | None = None
+    os_version: str | None = None
+    claude_version: str | None = None
+    notes: str | None = None
+
 
 class SessionCreate(BaseModel):
     device_name: str
-    session_num: Optional[int] = None
+    session_num: int | None = None
     summary: str
-    tasks_completed: Optional[list] = None
-    files_changed: Optional[list] = None
-    bugs_found: Optional[list] = None
-    notes: Optional[str] = None
+    tasks_completed: list | None = None
+    files_changed: list | None = None
+    bugs_found: list | None = None
+    notes: str | None = None
+
 
 class MemoryCreate(BaseModel):
     type: Literal["user", "feedback", "project", "reference"]
     name: str
     description: str
     content: str
-    source_device: Optional[str] = "klipper"
-    rationale: Optional[str] = None
+    source_device: str | None = "klipper"
+    rationale: str | None = None
+
 
 class MemoryUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    content: Optional[str] = None
-    active: Optional[int] = None
+    name: str | None = None
+    description: str | None = None
+    content: str | None = None
+    active: int | None = None
+
 
 class TaskLogCreate(BaseModel):
-    session_id: Optional[int] = None
-    device_name: Optional[str] = "klipper"
+    session_id: int | None = None
+    device_name: str | None = "klipper"
     project: str
     task: str
-    status: Optional[str] = "completed"
-    files_changed: Optional[list] = None
-    details: Optional[str] = None
-    rationale: Optional[str] = None
+    status: str | None = "completed"
+    files_changed: list | None = None
+    details: str | None = None
+    rationale: str | None = None
+
 
 class DiscoveryCreate(BaseModel):
-    session_id: Optional[int] = None
-    device_name: Optional[str] = "klipper"
+    session_id: int | None = None
+    device_name: str | None = "klipper"
     project: str
     type: str
     title: str
-    details: Optional[str] = None
-    status: Optional[str] = "active"
-    rationale: Optional[str] = None
+    details: str | None = None
+    status: str | None = "active"
+    rationale: str | None = None
 
     @field_validator("type")
     @classmethod
@@ -132,10 +138,11 @@ class DiscoveryCreate(BaseModel):
             raise ValueError(f"'{v}' test/çöp verisi — kaydetmiyorum")
         return v
 
+
 class DiscoveryUpdate(BaseModel):
-    title: Optional[str] = None
-    details: Optional[str] = None
-    status: Optional[str] = None
+    title: str | None = None
+    details: str | None = None
+    status: str | None = None
 
     @field_validator("status")
     @classmethod
@@ -144,34 +151,40 @@ class DiscoveryUpdate(BaseModel):
             raise ValueError(f"Geçersiz status: {v}. Geçerli: {', '.join(VALID_STATUSES)}")
         return v
 
+
 class TaskQueueCreate(BaseModel):
     requested_by: str
-    target_device: Optional[str] = None
+    target_device: str | None = None
     command: str
-    rationale: Optional[str] = None
+    rationale: str | None = None
+
 
 class TaskQueueClaim(BaseModel):
     claimed_by: str
 
+
 class TaskQueueResult(BaseModel):
     exit_code: int
-    stdout: Optional[str] = None
-    stderr: Optional[str] = None
+    stdout: str | None = None
+    stderr: str | None = None
     status: Literal["completed", "failed"] = "completed"
+
 
 class NoteCreate(BaseModel):
     from_device: str
-    to_device: Optional[str] = None
+    to_device: str | None = None
     title: str
     content: str
+
 
 class DeviceProjectCreate(BaseModel):
     device_name: str
     project: str
-    local_path: Optional[str] = None
+    local_path: str | None = None
 
 
 # ============ Dashboard ============
+
 
 @router.get("/dashboard")
 async def memory_dashboard():
@@ -191,40 +204,50 @@ async def memory_dashboard():
             "unread_notes": db.execute("SELECT COUNT(*) FROM notes WHERE read=0").fetchone()[0],
         }
 
-        devices = [dict(r) for r in db.execute(
-            "SELECT name, platform, hostname, tailscale_ip, last_seen FROM devices ORDER BY last_seen DESC"
-        ).fetchall()]
+        devices = [
+            dict(r)
+            for r in db.execute("SELECT name, platform, hostname, tailscale_ip, last_seen FROM devices ORDER BY last_seen DESC").fetchall()
+        ]
 
-        recent_sessions = [dict(r) for r in db.execute(
-            "SELECT session_num, date, device_name, platform, substr(summary,1,100) as summary "
-            "FROM sessions ORDER BY id DESC LIMIT 5"
-        ).fetchall()]
+        recent_sessions = [
+            dict(r)
+            for r in db.execute(
+                "SELECT session_num, date, device_name, platform, substr(summary,1,100) as summary FROM sessions ORDER BY id DESC LIMIT 5"
+            ).fetchall()
+        ]
 
-        open_bugs = [dict(r) for r in db.execute(
-            "SELECT id, project, title, device_name, created_at FROM discoveries "
-            "WHERE type='bug' AND status='active' ORDER BY created_at DESC"
-        ).fetchall()]
+        open_bugs = [
+            dict(r)
+            for r in db.execute(
+                "SELECT id, project, title, device_name, created_at FROM discoveries "
+                "WHERE type='bug' AND status='active' ORDER BY created_at DESC"
+            ).fetchall()
+        ]
 
         # Stale data — 60+ gün okunamayan active kayıtlar
-        stale = [dict(r) for r in db.execute(
-            "SELECT id, project, type, title, date(created_at) as created, read_count "
-            "FROM discoveries WHERE status='active' AND read_count=0 "
-            "AND created_at < datetime('now', '-60 days') ORDER BY created_at LIMIT 10"
-        ).fetchall()]
+        stale = [
+            dict(r)
+            for r in db.execute(
+                "SELECT id, project, type, title, date(created_at) as created, read_count "
+                "FROM discoveries WHERE status='active' AND read_count=0 "
+                "AND created_at < datetime('now', '-60 days') ORDER BY created_at LIMIT 10"
+            ).fetchall()
+        ]
 
         # Hiç okunmamış kayıt sayısı
-        never_read = db.execute(
-            "SELECT COUNT(*) FROM discoveries WHERE read_count=0"
-        ).fetchone()[0]
+        never_read = db.execute("SELECT COUNT(*) FROM discoveries WHERE read_count=0").fetchone()[0]
 
         # Proje bazlı özet
-        projects = [dict(r) for r in db.execute(
-            "SELECT project, COUNT(*) as total, "
-            "SUM(CASE WHEN type='bug' AND status='active' THEN 1 ELSE 0 END) as open_bugs, "
-            "SUM(CASE WHEN type='architecture' THEN 1 ELSE 0 END) as arch, "
-            "SUM(CASE WHEN type='plan' AND status='active' THEN 1 ELSE 0 END) as active_plans "
-            "FROM discoveries GROUP BY project ORDER BY total DESC"
-        ).fetchall()]
+        projects = [
+            dict(r)
+            for r in db.execute(
+                "SELECT project, COUNT(*) as total, "
+                "SUM(CASE WHEN type='bug' AND status='active' THEN 1 ELSE 0 END) as open_bugs, "
+                "SUM(CASE WHEN type='architecture' THEN 1 ELSE 0 END) as arch, "
+                "SUM(CASE WHEN type='plan' AND status='active' THEN 1 ELSE 0 END) as active_plans "
+                "FROM discoveries GROUP BY project ORDER BY total DESC"
+            ).fetchall()
+        ]
 
         return {
             "stats": stats,
@@ -241,6 +264,7 @@ async def memory_dashboard():
 
 # ============ Devices ============
 
+
 @router.get("/devices")
 async def list_devices():
     db = get_db()
@@ -249,11 +273,13 @@ async def list_devices():
     finally:
         db.close()
 
+
 @router.post("/devices")
 async def register_device(data: DeviceRegister):
     db = get_db()
     try:
-        db.execute("""
+        db.execute(
+            """
             INSERT INTO devices (name, platform, hostname, ip, tailscale_ip, os_version, claude_version, notes)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(name) DO UPDATE SET
@@ -261,12 +287,14 @@ async def register_device(data: DeviceRegister):
                 tailscale_ip=excluded.tailscale_ip, os_version=excluded.os_version,
                 claude_version=excluded.claude_version, notes=excluded.notes,
                 last_seen=datetime('now')
-        """, (data.name, data.platform, data.hostname, data.ip,
-              data.tailscale_ip, data.os_version, data.claude_version, data.notes))
+        """,
+            (data.name, data.platform, data.hostname, data.ip, data.tailscale_ip, data.os_version, data.claude_version, data.notes),
+        )
         db.commit()
         return {"status": "ok", "device": data.name}
     finally:
         db.close()
+
 
 @router.post("/devices/{name}/ping")
 async def ping_device(name: str):
@@ -281,8 +309,9 @@ async def ping_device(name: str):
 
 # ============ Memories ============
 
+
 @router.get("/memories")
-async def list_memories(type: Optional[str] = None, active: int = 1, search: Optional[str] = None):
+async def list_memories(type: str | None = None, active: int = 1, search: str | None = None):
     db = get_db()
     try:
         query = "SELECT id, type, name, description, source_device, read_count, date(updated_at) as updated FROM memories WHERE active=?"
@@ -298,6 +327,7 @@ async def list_memories(type: Optional[str] = None, active: int = 1, search: Opt
     finally:
         db.close()
 
+
 @router.get("/memories/{memory_id}")
 async def get_memory(memory_id: int):
     db = get_db()
@@ -310,31 +340,31 @@ async def get_memory(memory_id: int):
     finally:
         db.close()
 
+
 @router.post("/memories")
 async def create_memory(data: MemoryCreate):
     db = get_db()
     try:
         # Duplicate kontrolü
-        existing = db.execute(
-            "SELECT id FROM memories WHERE active=1 AND type=? AND name=?",
-            (data.type, data.name)
-        ).fetchone()
+        existing = db.execute("SELECT id FROM memories WHERE active=1 AND type=? AND name=?", (data.type, data.name)).fetchone()
         if existing:
             # Var olanı güncelle
             db.execute(
                 "UPDATE memories SET description=?, content=?, source_device=?, rationale=COALESCE(?, rationale), updated_at=datetime('now') WHERE id=?",
-                (data.description, data.content, data.source_device, data.rationale, existing[0])
+                (data.description, data.content, data.source_device, data.rationale, existing[0]),
             )
             db.commit()
             return {"id": existing[0], "status": "updated_existing"}
 
         cur = db.execute(
             "INSERT INTO memories (type, name, description, content, source_device, rationale) VALUES (?, ?, ?, ?, ?, ?)",
-            (data.type, data.name, data.description, data.content, data.source_device, data.rationale))
+            (data.type, data.name, data.description, data.content, data.source_device, data.rationale),
+        )
         db.commit()
         return {"id": cur.lastrowid, "status": "created"}
     finally:
         db.close()
+
 
 @router.put("/memories/{memory_id}")
 async def update_memory(memory_id: int, data: MemoryUpdate):
@@ -356,6 +386,7 @@ async def update_memory(memory_id: int, data: MemoryUpdate):
     finally:
         db.close()
 
+
 @router.delete("/memories/{memory_id}")
 async def deactivate_memory(memory_id: int):
     db = get_db()
@@ -369,8 +400,9 @@ async def deactivate_memory(memory_id: int):
 
 # ============ Sessions ============
 
+
 @router.get("/sessions")
-async def list_sessions(device: Optional[str] = None, platform: Optional[str] = None, limit: int = 20):
+async def list_sessions(device: str | None = None, platform: str | None = None, limit: int = 20):
     db = get_db()
     try:
         query = "SELECT id, session_num, date, device_name, platform, summary FROM sessions WHERE 1=1"
@@ -387,6 +419,7 @@ async def list_sessions(device: Optional[str] = None, platform: Optional[str] = 
     finally:
         db.close()
 
+
 @router.get("/sessions/{session_id}")
 async def get_session(session_id: int):
     db = get_db()
@@ -401,6 +434,7 @@ async def get_session(session_id: int):
     finally:
         db.close()
 
+
 @router.post("/sessions")
 async def create_session(data: SessionCreate):
     db = get_db()
@@ -413,14 +447,23 @@ async def create_session(data: SessionCreate):
         device_id = device[0] if device else None
         platform = device[1] if device else "unknown"
 
-        cur = db.execute("""
+        cur = db.execute(
+            """
             INSERT INTO sessions (session_num, date, summary, tasks_completed, files_changed, bugs_found, notes, device_id, platform, device_name)
             VALUES (?, date('now'), ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (data.session_num, data.summary,
-              json.dumps(data.tasks_completed) if data.tasks_completed else None,
-              json.dumps(data.files_changed) if data.files_changed else None,
-              json.dumps(data.bugs_found) if data.bugs_found else None,
-              data.notes, device_id, platform, data.device_name))
+        """,
+            (
+                data.session_num,
+                data.summary,
+                json.dumps(data.tasks_completed) if data.tasks_completed else None,
+                json.dumps(data.files_changed) if data.files_changed else None,
+                json.dumps(data.bugs_found) if data.bugs_found else None,
+                data.notes,
+                device_id,
+                platform,
+                data.device_name,
+            ),
+        )
         db.commit()
 
         if device_id:
@@ -434,8 +477,9 @@ async def create_session(data: SessionCreate):
 
 # ============ Tasks Log ============
 
+
 @router.get("/tasks")
-async def list_tasks(project: Optional[str] = None, device: Optional[str] = None, limit: int = 30):
+async def list_tasks(project: str | None = None, device: str | None = None, limit: int = 30):
     db = get_db()
     try:
         query = "SELECT id, session_id, device_name, project, task, status, rationale, date(created_at) as date FROM tasks_log WHERE 1=1"
@@ -452,23 +496,32 @@ async def list_tasks(project: Optional[str] = None, device: Optional[str] = None
     finally:
         db.close()
 
+
 @router.post("/tasks")
 async def create_task_log(data: TaskLogCreate):
     db = get_db()
     try:
         # Duplicate kontrolü — aynı proje + aynı task adı
-        existing = db.execute(
-            "SELECT id FROM tasks_log WHERE project=? AND task=?",
-            (data.project, data.task)
-        ).fetchone()
+        existing = db.execute("SELECT id FROM tasks_log WHERE project=? AND task=?", (data.project, data.task)).fetchone()
         if existing:
             return {"id": existing[0], "status": "already_exists"}
 
-        cur = db.execute("""
+        cur = db.execute(
+            """
             INSERT INTO tasks_log (session_id, device_name, project, task, status, files_changed, details, rationale)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (data.session_id, data.device_name, data.project, data.task, data.status,
-              json.dumps(data.files_changed) if data.files_changed else None, data.details, data.rationale))
+        """,
+            (
+                data.session_id,
+                data.device_name,
+                data.project,
+                data.task,
+                data.status,
+                json.dumps(data.files_changed) if data.files_changed else None,
+                data.details,
+                data.rationale,
+            ),
+        )
         db.commit()
         return {"id": cur.lastrowid, "status": "created"}
     finally:
@@ -477,17 +530,15 @@ async def create_task_log(data: TaskLogCreate):
 
 # ============ Discoveries ============
 
+
 @router.get("/discoveries")
-async def list_discoveries(
-    project: Optional[str] = None,
-    type: Optional[str] = None,
-    status: Optional[str] = None,
-    limit: int = 30
-):
+async def list_discoveries(project: str | None = None, type: str | None = None, status: str | None = None, limit: int = 30):
     db = get_db()
     try:
-        query = ("SELECT id, session_id, device_name, project, type, title, status, "
-                 "rationale, read_count, date(created_at) as date FROM discoveries WHERE 1=1")
+        query = (
+            "SELECT id, session_id, device_name, project, type, title, status, "
+            "rationale, read_count, date(created_at) as date FROM discoveries WHERE 1=1"
+        )
         params = []
         if project:
             query += " AND project=?"
@@ -504,6 +555,7 @@ async def list_discoveries(
     finally:
         db.close()
 
+
 @router.get("/discoveries/{discovery_id}")
 async def get_discovery(discovery_id: int):
     db = get_db()
@@ -516,6 +568,7 @@ async def get_discovery(discovery_id: int):
     finally:
         db.close()
 
+
 @router.post("/discoveries")
 async def create_discovery(data: DiscoveryCreate):
     """Duplicate korumalı discovery oluştur — aynı project+type+title aktif kayıt varsa günceller.
@@ -527,28 +580,32 @@ async def create_discovery(data: DiscoveryCreate):
     db = get_db()
     try:
         existing = db.execute(
-            "SELECT id FROM discoveries WHERE project=? AND type=? AND title=? AND status='active'",
-            (data.project, data.type, data.title)
+            "SELECT id FROM discoveries WHERE project=? AND type=? AND title=? AND status='active'", (data.project, data.type, data.title)
         ).fetchone()
         if existing:
             # Var olanı güncelle (details veya rationale değiştiyse)
             if data.details or data.rationale:
-                db.execute("UPDATE discoveries SET details=COALESCE(?, details), device_name=?, rationale=COALESCE(?, rationale) WHERE id=?",
-                           (data.details, data.device_name, data.rationale, existing[0]))
+                db.execute(
+                    "UPDATE discoveries SET details=COALESCE(?, details), device_name=?, rationale=COALESCE(?, rationale) WHERE id=?",
+                    (data.details, data.device_name, data.rationale, existing[0]),
+                )
                 db.commit()
             return {"id": existing[0], "status": "already_exists"}
 
-        cur = db.execute("""
+        cur = db.execute(
+            """
             INSERT INTO discoveries (session_id, device_name, project, type, title, details, status, rationale)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (data.session_id, data.device_name, data.project, data.type,
-              data.title, data.details, data.status or "active", data.rationale))
+        """,
+            (data.session_id, data.device_name, data.project, data.type, data.title, data.details, data.status or "active", data.rationale),
+        )
         db.commit()
         _sync_fts(db, cur.lastrowid, data.title, data.details)
         db.commit()
         return {"id": cur.lastrowid, "status": "created"}
     finally:
         db.close()
+
 
 @router.put("/discoveries/{discovery_id}")
 async def update_discovery(discovery_id: int, data: DiscoveryUpdate):
@@ -576,6 +633,7 @@ async def update_discovery(discovery_id: int, data: DiscoveryUpdate):
     finally:
         db.close()
 
+
 @router.put("/discoveries/{discovery_id}/resolve")
 async def resolve_discovery(discovery_id: int):
     db = get_db()
@@ -586,12 +644,15 @@ async def resolve_discovery(discovery_id: int):
     finally:
         db.close()
 
+
 @router.get("/discoveries/by-type/{dtype}")
-async def list_discoveries_by_type(dtype: str, project: Optional[str] = None, status: Optional[str] = "active"):
+async def list_discoveries_by_type(dtype: str, project: str | None = None, status: str | None = "active"):
     db = get_db()
     try:
-        query = ("SELECT id, project, type, title, details, status, read_count, "
-                 "device_name, date(created_at) as date FROM discoveries WHERE type=?")
+        query = (
+            "SELECT id, project, type, title, details, status, read_count, "
+            "device_name, date(created_at) as date FROM discoveries WHERE type=?"
+        )
         params = [dtype]
         if project:
             query += " AND project=?"
@@ -611,6 +672,7 @@ async def list_discoveries_by_type(dtype: str, project: Optional[str] = None, st
 
 # ============ Projects ============
 
+
 @router.get("/projects")
 async def list_projects_summary():
     """Proje bazlı özet — health skoru ile"""
@@ -623,8 +685,16 @@ async def list_projects_summary():
         """).fetchall():
             p = row[0]
             if p not in projects:
-                projects[p] = {"name": p, "open_bugs": 0, "fixes": 0, "architecture": 0,
-                               "active_plans": 0, "completed_plans": 0, "workarounds": 0, "tasks": 0}
+                projects[p] = {
+                    "name": p,
+                    "open_bugs": 0,
+                    "fixes": 0,
+                    "architecture": 0,
+                    "active_plans": 0,
+                    "completed_plans": 0,
+                    "workarounds": 0,
+                    "tasks": 0,
+                }
             t, s, c = row[1], row[2], row[3]
             if t == "bug" and s == "active":
                 projects[p]["open_bugs"] = c
@@ -643,56 +713,82 @@ async def list_projects_summary():
             if row[0] in projects:
                 projects[row[0]]["tasks"] = row[1]
             else:
-                projects[row[0]] = {"name": row[0], "open_bugs": 0, "fixes": 0, "architecture": 0,
-                                     "active_plans": 0, "completed_plans": 0, "workarounds": 0, "tasks": row[1]}
+                projects[row[0]] = {
+                    "name": row[0],
+                    "open_bugs": 0,
+                    "fixes": 0,
+                    "architecture": 0,
+                    "active_plans": 0,
+                    "completed_plans": 0,
+                    "workarounds": 0,
+                    "tasks": row[1],
+                }
 
         # Health skoru: mimari var, plan var, bug az = sağlıklı
         for p in projects.values():
             score = 0
-            if p["architecture"] > 0: score += 30
-            if p["active_plans"] > 0 or p["completed_plans"] > 0: score += 20
-            if p["tasks"] > 0: score += 20
-            if p["fixes"] > 0: score += 15
-            if p["open_bugs"] == 0: score += 15
-            elif p["open_bugs"] <= 2: score += 5
+            if p["architecture"] > 0:
+                score += 30
+            if p["active_plans"] > 0 or p["completed_plans"] > 0:
+                score += 20
+            if p["tasks"] > 0:
+                score += 20
+            if p["fixes"] > 0:
+                score += 15
+            if p["open_bugs"] == 0:
+                score += 15
+            elif p["open_bugs"] <= 2:
+                score += 5
             p["health"] = min(score, 100)
 
         return sorted(projects.values(), key=lambda x: x["health"], reverse=True)
     finally:
         db.close()
 
+
 @router.get("/projects/{project_name}")
 async def get_project_detail(project_name: str):
     """Proje detayı — discoveries, tasks, sessions, health"""
     db = get_db()
     try:
-        discoveries = [dict(r) for r in db.execute(
-            "SELECT id, type, title, details, status, read_count, device_name, date(created_at) as date "
-            "FROM discoveries WHERE project=? ORDER BY type, created_at DESC",
-            (project_name,)
-        ).fetchall()]
+        discoveries = [
+            dict(r)
+            for r in db.execute(
+                "SELECT id, type, title, details, status, read_count, device_name, date(created_at) as date "
+                "FROM discoveries WHERE project=? ORDER BY type, created_at DESC",
+                (project_name,),
+            ).fetchall()
+        ]
 
-        tasks = [dict(r) for r in db.execute(
-            "SELECT id, task, status, device_name, details, date(created_at) as date "
-            "FROM tasks_log WHERE project=? ORDER BY created_at DESC LIMIT 30",
-            (project_name,)
-        ).fetchall()]
+        tasks = [
+            dict(r)
+            for r in db.execute(
+                "SELECT id, task, status, device_name, details, date(created_at) as date "
+                "FROM tasks_log WHERE project=? ORDER BY created_at DESC LIMIT 30",
+                (project_name,),
+            ).fetchall()
+        ]
 
-        sessions = [dict(r) for r in db.execute(
-            "SELECT id, session_num, date, device_name, platform, substr(summary,1,120) as summary "
-            "FROM sessions WHERE summary LIKE ? ORDER BY id DESC LIMIT 10",
-            (f"%{project_name}%",)
-        ).fetchall()]
+        sessions = [
+            dict(r)
+            for r in db.execute(
+                "SELECT id, session_num, date, device_name, platform, substr(summary,1,120) as summary "
+                "FROM sessions WHERE summary LIKE ? ORDER BY id DESC LIMIT 10",
+                (f"%{project_name}%",),
+            ).fetchall()
+        ]
 
-        devices = [dict(r) for r in db.execute(
-            "SELECT device_name, local_path, datetime(last_activity) as last_activity "
-            "FROM device_projects WHERE project=?",
-            (project_name,)
-        ).fetchall()]
+        devices = [
+            dict(r)
+            for r in db.execute(
+                "SELECT device_name, local_path, datetime(last_activity) as last_activity FROM device_projects WHERE project=?",
+                (project_name,),
+            ).fetchall()
+        ]
 
         type_counts = {}
         for d in discoveries:
-            key = f"{d['type']}_{d['status']}" if d['status'] != 'active' else d['type']
+            key = f"{d['type']}_{d['status']}" if d["status"] != "active" else d["type"]
             type_counts[key] = type_counts.get(key, 0) + 1
 
         return {
@@ -711,8 +807,9 @@ async def get_project_detail(project_name: str):
 
 # ============ Notes ============
 
+
 @router.get("/notes")
-async def list_notes(device: Optional[str] = None, unread_only: bool = False):
+async def list_notes(device: str | None = None, unread_only: bool = False):
     db = get_db()
     try:
         query = "SELECT * FROM notes WHERE 1=1"
@@ -727,16 +824,20 @@ async def list_notes(device: Optional[str] = None, unread_only: bool = False):
     finally:
         db.close()
 
+
 @router.post("/notes")
 async def create_note(data: NoteCreate):
     db = get_db()
     try:
-        cur = db.execute("INSERT INTO notes (from_device, to_device, title, content) VALUES (?, ?, ?, ?)",
-                         (data.from_device, data.to_device, data.title, data.content))
+        cur = db.execute(
+            "INSERT INTO notes (from_device, to_device, title, content) VALUES (?, ?, ?, ?)",
+            (data.from_device, data.to_device, data.title, data.content),
+        )
         db.commit()
         return {"id": cur.lastrowid, "status": "created"}
     finally:
         db.close()
+
 
 @router.put("/notes/{note_id}/read")
 async def mark_note_read(note_id: int):
@@ -751,8 +852,9 @@ async def mark_note_read(note_id: int):
 
 # ============ Device Projects ============
 
+
 @router.get("/device-projects")
-async def list_device_projects(device: Optional[str] = None):
+async def list_device_projects(device: str | None = None):
     db = get_db()
     try:
         query = "SELECT * FROM device_projects"
@@ -765,16 +867,20 @@ async def list_device_projects(device: Optional[str] = None):
     finally:
         db.close()
 
+
 @router.post("/device-projects")
 async def register_device_project(data: DeviceProjectCreate):
     db = get_db()
     try:
-        db.execute("""
+        db.execute(
+            """
             INSERT INTO device_projects (device_name, project, local_path)
             VALUES (?, ?, ?)
             ON CONFLICT(device_name, project) DO UPDATE SET
                 local_path=excluded.local_path, last_activity=datetime('now')
-        """, (data.device_name, data.project, data.local_path))
+        """,
+            (data.device_name, data.project, data.local_path),
+        )
         db.commit()
         return {"status": "ok"}
     finally:
@@ -782,6 +888,7 @@ async def register_device_project(data: DeviceProjectCreate):
 
 
 # ============ Search (FTS) ============
+
 
 @router.get("/search")
 async def search_all(q: str = Query(..., min_length=2)):
@@ -796,44 +903,59 @@ async def search_all(q: str = Query(..., min_length=2)):
                 "SELECT rowid, highlight(discoveries_fts, 0, '**', '**') as title, "
                 "highlight(discoveries_fts, 1, '**', '**') as details "
                 "FROM discoveries_fts WHERE discoveries_fts MATCH ? LIMIT 15",
-                (q,)
+                (q,),
             ).fetchall()
             fts_ids = [r[0] for r in fts_rows]
             if fts_ids:
                 placeholders = ",".join("?" * len(fts_ids))
-                results["discoveries"] = [dict(r) for r in db.execute(
-                    f"SELECT id, project, type, title, status, device_name, date(created_at) as date "
-                    f"FROM discoveries WHERE id IN ({placeholders})", fts_ids
-                ).fetchall()]
+                results["discoveries"] = [
+                    dict(r)
+                    for r in db.execute(
+                        f"SELECT id, project, type, title, status, device_name, date(created_at) as date "
+                        f"FROM discoveries WHERE id IN ({placeholders})",
+                        fts_ids,
+                    ).fetchall()
+                ]
             else:
                 results["discoveries"] = []
         except Exception:
             # FTS fallback → LIKE
             pattern = f"%{q}%"
-            results["discoveries"] = [dict(r) for r in db.execute(
-                "SELECT id, project, type, title, status, device_name FROM discoveries "
-                "WHERE title LIKE ? OR details LIKE ? LIMIT 15", (pattern, pattern)
-            ).fetchall()]
+            results["discoveries"] = [
+                dict(r)
+                for r in db.execute(
+                    "SELECT id, project, type, title, status, device_name FROM discoveries WHERE title LIKE ? OR details LIKE ? LIMIT 15",
+                    (pattern, pattern),
+                ).fetchall()
+            ]
 
         # Memories — LIKE
         pattern = f"%{q}%"
-        results["memories"] = [dict(r) for r in db.execute(
-            "SELECT id, type, name, description FROM memories WHERE active=1 AND (content LIKE ? OR name LIKE ?) LIMIT 10",
-            (pattern, pattern)
-        ).fetchall()]
+        results["memories"] = [
+            dict(r)
+            for r in db.execute(
+                "SELECT id, type, name, description FROM memories WHERE active=1 AND (content LIKE ? OR name LIKE ?) LIMIT 10",
+                (pattern, pattern),
+            ).fetchall()
+        ]
 
         # Sessions — LIKE
-        results["sessions"] = [dict(r) for r in db.execute(
-            "SELECT id, session_num, date, device_name, substr(summary,1,100) as summary FROM sessions "
-            "WHERE summary LIKE ? OR tasks_completed LIKE ? LIMIT 10",
-            (pattern, pattern)
-        ).fetchall()]
+        results["sessions"] = [
+            dict(r)
+            for r in db.execute(
+                "SELECT id, session_num, date, device_name, substr(summary,1,100) as summary FROM sessions "
+                "WHERE summary LIKE ? OR tasks_completed LIKE ? LIMIT 10",
+                (pattern, pattern),
+            ).fetchall()
+        ]
 
         # Tasks — LIKE
-        results["tasks"] = [dict(r) for r in db.execute(
-            "SELECT id, project, task, device_name FROM tasks_log WHERE task LIKE ? OR details LIKE ? LIMIT 10",
-            (pattern, pattern)
-        ).fetchall()]
+        results["tasks"] = [
+            dict(r)
+            for r in db.execute(
+                "SELECT id, project, task, device_name FROM tasks_log WHERE task LIKE ? OR details LIKE ? LIMIT 10", (pattern, pattern)
+            ).fetchall()
+        ]
 
         total = sum(len(v) for v in results.values())
         return {"query": q, "total": total, "results": results}
@@ -842,6 +964,7 @@ async def search_all(q: str = Query(..., min_length=2)):
 
 
 # ============ Health & Maintenance ============
+
 
 @router.get("/health")
 async def memory_health():
@@ -853,9 +976,10 @@ async def memory_health():
         stale_60 = db.execute(
             "SELECT COUNT(*) FROM discoveries WHERE status='active' AND created_at < datetime('now', '-60 days')"
         ).fetchone()[0]
-        most_read = [dict(r) for r in db.execute(
-            "SELECT id, project, type, title, read_count FROM discoveries ORDER BY read_count DESC LIMIT 5"
-        ).fetchall()]
+        most_read = [
+            dict(r)
+            for r in db.execute("SELECT id, project, type, title, read_count FROM discoveries ORDER BY read_count DESC LIMIT 5").fetchall()
+        ]
 
         return {
             "total_discoveries": total,
@@ -868,6 +992,7 @@ async def memory_health():
     finally:
         db.close()
 
+
 @router.post("/maintenance/archive-stale")
 async def archive_stale(days: int = 90):
     """Eski, hiç okunmamış kayıtları obsolete yap"""
@@ -877,7 +1002,7 @@ async def archive_stale(days: int = 90):
             "UPDATE discoveries SET status='obsolete' "
             "WHERE status='active' AND read_count=0 AND type NOT IN ('bug') "
             "AND created_at < datetime('now', ? || ' days')",
-            (f"-{days}",)
+            (f"-{days}",),
         )
         db.commit()
         return {"archived": cur.rowcount}
@@ -887,8 +1012,9 @@ async def archive_stale(days: int = 90):
 
 # ============ Task Queue ============
 
+
 @router.get("/queue")
-async def list_queue(status: Optional[str] = None, target_device: Optional[str] = None, limit: int = 50):
+async def list_queue(status: str | None = None, target_device: str | None = None, limit: int = 50):
     db = get_db()
     try:
         q = "SELECT * FROM task_queue WHERE 1=1"
@@ -913,7 +1039,7 @@ async def create_queue_task(data: TaskQueueCreate):
     try:
         cur = db.execute(
             "INSERT INTO task_queue (requested_by, target_device, command, rationale) VALUES (?, ?, ?, ?)",
-            (data.requested_by, data.target_device, data.command, data.rationale)
+            (data.requested_by, data.target_device, data.command, data.rationale),
         )
         db.commit()
         return {"id": cur.lastrowid, "status": "pending"}
@@ -929,7 +1055,7 @@ async def claim_queue_task(task_id: int, data: TaskQueueClaim):
         cur = db.execute(
             "UPDATE task_queue SET status='claimed', claimed_by=?, claimed_at=datetime('now'), started_at=datetime('now') "
             "WHERE id=? AND status='pending'",
-            (data.claimed_by, task_id)
+            (data.claimed_by, task_id),
         )
         db.commit()
         if cur.rowcount == 0:
@@ -948,7 +1074,7 @@ async def write_queue_result(task_id: int, data: TaskQueueResult):
         cur = db.execute(
             "UPDATE task_queue SET status=?, exit_code=?, stdout=?, stderr=?, finished_at=datetime('now') "
             "WHERE id=? AND status IN ('claimed', 'running')",
-            (data.status, data.exit_code, data.stdout, data.stderr, task_id)
+            (data.status, data.exit_code, data.stdout, data.stderr, task_id),
         )
         db.commit()
         if cur.rowcount == 0:
@@ -960,6 +1086,7 @@ async def write_queue_result(task_id: int, data: TaskQueueResult):
 
 # ============ Onboarding Prompts ============
 
+
 @public_router.get("/onboard/{device_name}")
 async def get_onboard_prompt(device_name: str):
     db = get_db()
@@ -970,19 +1097,15 @@ async def get_onboard_prompt(device_name: str):
         dev = dict(device)
 
         recent = db.execute(
-            "SELECT session_num, date, device_name, substr(summary,1,80) as summary "
-            "FROM sessions ORDER BY id DESC LIMIT 5"
+            "SELECT session_num, date, device_name, substr(summary,1,80) as summary FROM sessions ORDER BY id DESC LIMIT 5"
         ).fetchall()
         recent_text = "\n".join(f"  - #{r[0]} ({r[2]}, {r[1]}): {r[3]}" for r in recent)
 
-        bugs = db.execute(
-            "SELECT project, title, device_name FROM discoveries WHERE type='bug' AND status='active'"
-        ).fetchall()
+        bugs = db.execute("SELECT project, title, device_name FROM discoveries WHERE type='bug' AND status='active'").fetchall()
         bugs_text = "\n".join(f"  - [{r[0]}] {r[1]} (bulan: {r[2]})" for r in bugs) if bugs else "  Yok"
 
         notes = db.execute(
-            "SELECT from_device, title, content FROM notes WHERE (to_device=? OR to_device IS NULL) AND read=0",
-            (device_name,)
+            "SELECT from_device, title, content FROM notes WHERE (to_device=? OR to_device IS NULL) AND read=0", (device_name,)
         ).fetchall()
         notes_text = "\n".join(f"  - {r[0]}: {r[1]} — {r[2]}" for r in notes) if notes else "  Yok"
 
@@ -995,14 +1118,14 @@ async def get_onboard_prompt(device_name: str):
         KEY = MEMORY_API_KEY
         DN = device_name
 
-        prompt = f"""# Merkezi Hafıza Sistemi — {dev['name']} ({dev['platform']})
+        prompt = f"""# Merkezi Hafıza Sistemi — {dev["name"]} ({dev["platform"]})
 
 Sen benim çoklu cihazda çalışan Claude asistanımsın. Klipper sunucumda merkezi bir hafıza sistemi var.
 
 ## Bağlantı
 - **API:** `{API}`
 - **Auth:** `X-Memory-Key: {KEY}`
-- **Cihaz:** `{DN}` | **Platform:** `{dev['platform']}` | **Oturum:** {stats}
+- **Cihaz:** `{DN}` | **Platform:** `{dev["platform"]}` | **Oturum:** {stats}
 
 ## Durum
 **Son oturumlar:**
@@ -1047,6 +1170,7 @@ Status: active, completed, obsolete, superseded
         return {"device": device_name, "platform": dev["platform"], "prompt": prompt}
     finally:
         db.close()
+
 
 @public_router.get("/onboard/{device_name}/raw")
 async def get_onboard_prompt_raw(device_name: str):

@@ -1,7 +1,9 @@
 """SystemManager — sistem bilgisi, process, signal testleri."""
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock
+
 from app.core.system_manager import SystemManager
 from app.exceptions import NotFoundError, ShellExecutionError
 
@@ -62,6 +64,7 @@ def test_send_signal_not_found(sm):
 def test_send_signal_access_denied(sm):
     with patch("psutil.Process") as mock_proc:
         import psutil
+
         mock_proc.return_value.send_signal.side_effect = psutil.AccessDenied(pid=1)
         with pytest.raises(ShellExecutionError, match="Permission denied"):
             sm.send_signal(1, signal=15)

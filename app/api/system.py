@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.core.system_manager import SystemManager
 from app.middleware.dependencies import require_auth
-from app.models.schemas import SystemInfoResponse, ProcessInfo, ProcessListResponse
+from app.models.schemas import ProcessInfo, ProcessListResponse, SystemInfoResponse
 
 router = APIRouter(prefix="/api/v1/system", tags=["system"])
 

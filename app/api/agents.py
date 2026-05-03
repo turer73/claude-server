@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.core.agent_system import AgentRegistry, AgentDefinition as AgentDef
+from app.core.agent_system import AgentDefinition as AgentDef
+from app.core.agent_system import AgentRegistry
 from app.middleware.dependencies import require_auth, require_write
-from app.models.schemas import AgentDefinition, AgentRunRequest
+from app.models.schemas import AgentDefinition
 
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 

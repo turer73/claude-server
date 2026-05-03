@@ -1,5 +1,7 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+
 from app.core.ai_inference import AIInference
 
 
@@ -31,9 +33,7 @@ async def test_chat_mock(ai):
 async def test_list_models_mock(ai):
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.json.return_value = {
-        "models": [{"name": "linux-ai-agent"}, {"name": "linux-ai-coder"}]
-    }
+    mock_resp.json.return_value = {"models": [{"name": "linux-ai-agent"}, {"name": "linux-ai-coder"}]}
 
     with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp):
         models = await ai.list_models()
@@ -45,5 +45,6 @@ async def test_list_models_mock(ai):
 async def test_chat_connection_error(ai):
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, side_effect=Exception("Connection refused")):
         from app.exceptions import ServerError
+
         with pytest.raises(ServerError):
             await ai.chat("Hello")

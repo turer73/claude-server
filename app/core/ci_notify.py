@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 
@@ -36,9 +36,7 @@ async def notify_ci_result(
 
     lines = [
         f"{emoji} *CI/CD \u2014 {status}*",
-        f"Tests: {passed}/{total} passed"
-        + (f" | Run #{run_id}" if run_id else "")
-        + f" | {trigger}",
+        f"Tests: {passed}/{total} passed" + (f" | Run #{run_id}" if run_id else "") + f" | {trigger}",
         "",
     ]
 
@@ -60,7 +58,7 @@ async def notify_ci_result(
         icon = "\u2705" if p.get("failed", 0) == 0 else "\u274c"
         lines.append(f"  {icon} `{p['project']}`: {p.get('passed', 0)}/{p.get('total', 0)}")
     lines.append("")
-    lines.append(f"\U0001f551 {datetime.now(timezone.utc).strftime('%H:%M %d/%m/%Y')}")
+    lines.append(f"\U0001f551 {datetime.now(UTC).strftime('%H:%M %d/%m/%Y')}")
 
     text = "\n".join(lines)
 

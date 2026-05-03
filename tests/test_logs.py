@@ -1,5 +1,5 @@
 import pytest
-from pathlib import Path
+
 from app.core.log_manager import LogManager
 
 
@@ -15,10 +15,7 @@ def log_mgr(tmp_path):
         "2026-03-27 10:00:04 INFO [agent] Connected\n"
     )
     log2 = tmp_path / "monitor.log"
-    log2.write_text(
-        "2026-03-27 10:00:00 INFO [monitor] Started monitoring\n"
-        "2026-03-27 10:00:05 ERROR [monitor] Disk full\n"
-    )
+    log2.write_text("2026-03-27 10:00:00 INFO [monitor] Started monitoring\n2026-03-27 10:00:05 ERROR [monitor] Disk full\n")
     sources = {
         "agent": str(log1),
         "monitor": str(log2),

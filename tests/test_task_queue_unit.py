@@ -1,7 +1,8 @@
 """Unit tests for TaskQueue class — direct testing with real temp DB."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
 
 from app.core.task_queue import TaskQueue, TaskResult
 from app.db.database import Database
@@ -11,6 +12,7 @@ from app.db.database import Database
 async def db(tmp_path, monkeypatch):
     monkeypatch.setattr("app.core.config.load_yaml_config", lambda path: {})
     from app.core.config import get_settings
+
     get_settings.cache_clear()
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()

@@ -1,8 +1,10 @@
 """ConnectionManager — async WebSocket yönetimi testleri."""
 
+from unittest.mock import AsyncMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from app.ws.connection_manager import ConnectionManager, ConnectionInfo
+
+from app.ws.connection_manager import ConnectionManager
 
 
 @pytest.fixture

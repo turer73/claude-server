@@ -1,4 +1,5 @@
 """Tests for signal normalization and signature computation."""
+
 import pytest
 
 from app.core.ci_signal_dedup import (
@@ -178,9 +179,7 @@ async def test_record_lesson_truncates_fix_diff(ci_db):
         outcome="failed",
         duration_ms=0,
     )
-    stored = await ci_db.fetch_one(
-        "SELECT fix_diff FROM ci_lesson_learned WHERE id = ?", (row_id,)
-    )
+    stored = await ci_db.fetch_one("SELECT fix_diff FROM ci_lesson_learned WHERE id = ?", (row_id,))
     assert len(stored["fix_diff"]) <= 4096
 
 

@@ -63,8 +63,15 @@ async def journal_logs(
         return {"error": f"Unit not allowed. Choose from: {allowed_units}"}
 
     proc = await asyncio.create_subprocess_exec(
-        "journalctl", "-u", unit, "--no-pager", "-n", str(n), "--output=short-iso",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        "journalctl",
+        "-u",
+        unit,
+        "--no-pager",
+        "-n",
+        str(n),
+        "--output=short-iso",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
     stdout, _ = await proc.communicate()
     lines = stdout.decode(errors="replace").strip().split("\n")

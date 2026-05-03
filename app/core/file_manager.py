@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import glob
 import os
-import stat
 from datetime import datetime
-from pathlib import Path
 
 from app.exceptions import AuthorizationError, NotFoundError
 
@@ -27,9 +25,9 @@ class FileManager:
         path = self.validate_path(path)
         if not os.path.isfile(path):
             raise NotFoundError(f"File not found: {path}")
-        with open(path, "r", errors="replace") as f:
+        with open(path, errors="replace") as f:
             lines = f.readlines()
-        selected = lines[offset:offset + limit]
+        selected = lines[offset : offset + limit]
         content = "".join(selected)
         return {
             "path": path,
@@ -50,10 +48,10 @@ class FileManager:
         path = self.validate_path(path)
         if not os.path.isfile(path):
             raise NotFoundError(f"File not found: {path}")
-        with open(path, "r") as f:
+        with open(path) as f:
             content = f.read()
         if old_string not in content:
-            raise NotFoundError(f"String not found in file")
+            raise NotFoundError("String not found in file")
         content = content.replace(old_string, new_string, 1)
         with open(path, "w") as f:
             f.write(content)
@@ -75,14 +73,16 @@ class FileManager:
             full = os.path.join(path, name)
             try:
                 st = os.stat(full)
-                entries.append({
-                    "path": full,
-                    "size": st.st_size,
-                    "is_dir": os.path.isdir(full),
-                    "permissions": oct(st.st_mode)[-3:],
-                    "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
-                    "owner": str(st.st_uid),
-                })
+                entries.append(
+                    {
+                        "path": full,
+                        "size": st.st_size,
+                        "is_dir": os.path.isdir(full),
+                        "permissions": oct(st.st_mode)[-3:],
+                        "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
+                        "owner": str(st.st_uid),
+                    }
+                )
             except OSError:
                 continue
         return entries

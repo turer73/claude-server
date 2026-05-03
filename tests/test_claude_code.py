@@ -1,9 +1,8 @@
 """Tests for Claude Code API — status, run, sessions."""
 
-import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from tests.conftest import TEST_API_KEY
+import pytest
 
 
 @pytest.mark.anyio
@@ -11,9 +10,11 @@ async def test_claude_status_available(client, auth_headers):
     mock_proc = AsyncMock()
     mock_proc.communicate.return_value = (b"1.0.0\n", b"")
 
-    with patch("app.api.claude_code._find_claude", return_value="/usr/bin/claude"), \
-         patch("app.api.claude_code._load_claude_token", return_value="test-token"), \
-         patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+    with (
+        patch("app.api.claude_code._find_claude", return_value="/usr/bin/claude"),
+        patch("app.api.claude_code._load_claude_token", return_value="test-token"),
+        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+    ):
         resp = await client.get("/api/v1/claude/status", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.json()
@@ -46,9 +47,11 @@ async def test_claude_run_success(client, auth_headers):
     )
     mock_proc.kill = MagicMock()
 
-    with patch("app.api.claude_code._find_claude", return_value="/usr/bin/claude"), \
-         patch("app.api.claude_code._build_env", return_value={}), \
-         patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+    with (
+        patch("app.api.claude_code._find_claude", return_value="/usr/bin/claude"),
+        patch("app.api.claude_code._build_env", return_value={}),
+        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+    ):
         resp = await client.post("/api/v1/claude/run", json={"prompt": "hello"}, headers=auth_headers)
         assert resp.status_code == 200
         data = resp.json()
@@ -77,12 +80,19 @@ async def test_claude_run_with_session(client, auth_headers):
     mock_proc.communicate.return_value = (b'{"result":"continued","session_id":"abc123"}', b"")
     mock_proc.kill = MagicMock()
 
-    with patch("app.api.claude_code._find_claude", return_value="/usr/bin/claude"), \
-         patch("app.api.claude_code._build_env", return_value={}), \
-         patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-        resp = await client.post("/api/v1/claude/run", json={
-            "prompt": "continue", "session_id": "abc123",
-        }, headers=auth_headers)
+    with (
+        patch("app.api.claude_code._find_claude", return_value="/usr/bin/claude"),
+        patch("app.api.claude_code._build_env", return_value={}),
+        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+    ):
+        resp = await client.post(
+            "/api/v1/claude/run",
+            json={
+                "prompt": "continue",
+                "session_id": "abc123",
+            },
+            headers=auth_headers,
+        )
         assert resp.status_code == 200
         assert resp.json()["session_id"] == "abc123"
 

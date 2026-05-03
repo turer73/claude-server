@@ -121,11 +121,15 @@ async def test_file_crud_cycle(client, auth_headers, tmp_path):
         test_path = str(tmp_path / "integration_test.txt")
 
         # Create
-        resp = await client.put("/api/v1/files/write", headers=auth_headers, json={
-            "path": test_path,
-            "content": "hello world",
-            "mode": "write",
-        })
+        resp = await client.put(
+            "/api/v1/files/write",
+            headers=auth_headers,
+            json={
+                "path": test_path,
+                "content": "hello world",
+                "mode": "write",
+            },
+        )
         assert resp.status_code == 200
 
         # Read
@@ -134,11 +138,15 @@ async def test_file_crud_cycle(client, auth_headers, tmp_path):
         assert resp.json()["content"] == "hello world"
 
         # Edit
-        resp = await client.patch("/api/v1/files/edit", headers=auth_headers, json={
-            "path": test_path,
-            "old_string": "hello",
-            "new_string": "goodbye",
-        })
+        resp = await client.patch(
+            "/api/v1/files/edit",
+            headers=auth_headers,
+            json={
+                "path": test_path,
+                "old_string": "hello",
+                "new_string": "goodbye",
+            },
+        )
         assert resp.status_code == 200
 
         # Read again
@@ -171,15 +179,27 @@ async def test_file_write_and_append(client, auth_headers, tmp_path):
         test_path = str(tmp_path / "append_test.txt")
 
         # Write initial
-        resp = await client.put("/api/v1/files/write", headers=auth_headers, json={
-            "path": test_path, "content": "first\n", "mode": "write",
-        })
+        resp = await client.put(
+            "/api/v1/files/write",
+            headers=auth_headers,
+            json={
+                "path": test_path,
+                "content": "first\n",
+                "mode": "write",
+            },
+        )
         assert resp.status_code == 200
 
         # Append
-        resp = await client.put("/api/v1/files/write", headers=auth_headers, json={
-            "path": test_path, "content": "second\n", "mode": "append",
-        })
+        resp = await client.put(
+            "/api/v1/files/write",
+            headers=auth_headers,
+            json={
+                "path": test_path,
+                "content": "second\n",
+                "mode": "append",
+            },
+        )
         assert resp.status_code == 200
 
         # Read and verify
@@ -274,12 +294,16 @@ async def test_agent_crud(client, auth_headers):
     agent_name = "test-integration-agent"
 
     # Create
-    resp = await client.post("/api/v1/agents/create", headers=auth_headers, json={
-        "name": agent_name,
-        "description": "Integration test agent",
-        "trigger": "manual",
-        "tools": ["shell_exec"],
-    })
+    resp = await client.post(
+        "/api/v1/agents/create",
+        headers=auth_headers,
+        json={
+            "name": agent_name,
+            "description": "Integration test agent",
+            "trigger": "manual",
+            "tools": ["shell_exec"],
+        },
+    )
     assert resp.status_code == 200
 
     # List

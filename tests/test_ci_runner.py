@@ -12,7 +12,6 @@ from app.core.ci_runner import (
     run_project_tests,
 )
 
-
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -45,9 +44,7 @@ class TestProjectRegistry:
     def test_framework_values_are_valid(self):
         valid_frameworks = {"pytest", "vitest"}
         for name, cfg in PROJECT_REGISTRY.items():
-            assert cfg["framework"] in valid_frameworks, (
-                f"{name} has invalid framework: {cfg['framework']}"
-            )
+            assert cfg["framework"] in valid_frameworks, f"{name} has invalid framework: {cfg['framework']}"
 
     def test_klipper_is_local(self):
         assert PROJECT_REGISTRY["klipper"]["env"] == "local"
@@ -191,9 +188,7 @@ class TestParseVitestJson:
 
 class TestParsePytestOutput:
     def test_all_pass(self):
-        raw = (
-            "430 passed in 12.34s\n"
-        )
+        raw = "430 passed in 12.34s\n"
         result = parse_pytest_output(raw)
         assert result["total"] == 430
         assert result["passed"] == 430

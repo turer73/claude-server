@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-import os
 
 from app.core.kernel_bridge import KernelBridge
-from app.core.system_manager import SystemManager
-from app.core.monitor_agent import MonitorAgent
 from app.core.log_manager import LogManager
+from app.core.monitor_agent import MonitorAgent
+from app.core.system_manager import SystemManager
 
 
 def get_tool_definitions() -> list[dict]:
@@ -440,6 +439,7 @@ def _run_async(coro):
     """Run async coroutine from sync context."""
     import asyncio
     import concurrent.futures
+
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -480,6 +480,7 @@ def execute_tool(name: str, arguments: dict) -> str:
 
         elif name == "file_read":
             from app.core.file_manager import FileManager
+
             fm = FileManager(allowed_paths=["/"], max_file_size_mb=10)
             result = fm.read_file(
                 arguments["path"],
@@ -490,6 +491,7 @@ def execute_tool(name: str, arguments: dict) -> str:
 
         elif name == "file_write":
             from app.core.file_manager import FileManager
+
             fm = FileManager(allowed_paths=["/"], max_file_size_mb=10)
             result = fm.write_file(
                 arguments["path"],
@@ -500,12 +502,14 @@ def execute_tool(name: str, arguments: dict) -> str:
 
         elif name == "file_list":
             from app.core.file_manager import FileManager
+
             fm = FileManager(allowed_paths=["/"], max_file_size_mb=10)
             entries = fm.list_directory(arguments["path"])
             return json.dumps({"path": arguments["path"], "entries": entries})
 
         elif name == "file_search":
             from app.core.file_manager import FileManager
+
             fm = FileManager(allowed_paths=["/"], max_file_size_mb=10)
             results = fm.search_files(
                 arguments["path"],
@@ -515,11 +519,13 @@ def execute_tool(name: str, arguments: dict) -> str:
             return json.dumps({"results": results})
 
         elif name == "shell_exec":
-            from app.core.shell_executor import ShellExecutor
             from app.core.config import get_settings
+            from app.core.shell_executor import ShellExecutor
+
             settings = get_settings()
             executor = ShellExecutor(whitelist=settings.shell_whitelist)
             import asyncio
+
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
@@ -527,27 +533,34 @@ def execute_tool(name: str, arguments: dict) -> str:
             if loop and loop.is_running():
                 # Already in async context — use thread pool
                 import concurrent.futures
+
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     result = pool.submit(
                         asyncio.run,
                         executor.execute(arguments["command"], timeout=arguments.get("timeout", 30)),
                     ).result()
             else:
-                result = asyncio.run(executor.execute(
-                    arguments["command"], timeout=arguments.get("timeout", 30),
-                ))
+                result = asyncio.run(
+                    executor.execute(
+                        arguments["command"],
+                        timeout=arguments.get("timeout", 30),
+                    )
+                )
             return json.dumps(result)
 
         elif name == "http_request":
             from app.core.network_proxy import NetworkProxy
+
             proxy = NetworkProxy()
             import asyncio
+
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 loop = None
             if loop and loop.is_running():
                 import concurrent.futures
+
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     result = pool.submit(
                         asyncio.run,
@@ -560,13 +573,15 @@ def execute_tool(name: str, arguments: dict) -> str:
                         ),
                     ).result()
             else:
-                result = asyncio.run(proxy.http_request(
-                    method=arguments.get("method", "GET"),
-                    url=arguments["url"],
-                    headers=arguments.get("headers"),
-                    body=arguments.get("body"),
-                    timeout=arguments.get("timeout", 30),
-                ))
+                result = asyncio.run(
+                    proxy.http_request(
+                        method=arguments.get("method", "GET"),
+                        url=arguments["url"],
+                        headers=arguments.get("headers"),
+                        body=arguments.get("body"),
+                        timeout=arguments.get("timeout", 30),
+                    )
+                )
             return json.dumps(result)
 
         elif name == "log_search":
@@ -588,47 +603,52 @@ def execute_tool(name: str, arguments: dict) -> str:
 
         elif name == "git_status":
             from app.core.dev_manager import DevManager
+
             dm = DevManager()
             return json.dumps(dm.git_status(arguments["cwd"]))
 
         elif name == "git_log":
             from app.core.dev_manager import DevManager
+
             dm = DevManager()
             entries = dm.git_log(arguments["cwd"], limit=arguments.get("limit", 10))
             return json.dumps({"entries": entries})
 
         elif name == "ssh_exec":
-            from app.core.ssh_client import SSHClient
-            ssh = SSHClient()
             session_id = arguments.get("session_id", "")
             command = arguments.get("command", "")
             if not session_id or not command:
                 return json.dumps({"error": "session_id and command required"})
             # MCP ssh_exec uses a fresh connection — for persistent sessions use REST API
-            return json.dumps({
-                "note": "MCP ssh_exec requires active session via REST API",
-                "hint": "POST /api/v1/ssh/connect first, then POST /api/v1/ssh/exec",
-                "session_id": session_id,
-                "command": command,
-            })
+            return json.dumps(
+                {
+                    "note": "MCP ssh_exec requires active session via REST API",
+                    "hint": "POST /api/v1/ssh/connect first, then POST /api/v1/ssh/exec",
+                    "session_id": session_id,
+                    "command": command,
+                }
+            )
 
         elif name == "agent_list":
             from app.core.agent_system import AgentRegistry
+
             registry = AgentRegistry()
             return json.dumps({"agents": registry.list_agents()})
 
         elif name == "agent_run":
             from app.core.agent_system import AgentRegistry, AgentRunner
+
             registry = AgentRegistry()
             agent_name = arguments.get("agent_name", "")
             if not agent_name:
                 return json.dumps({"error": "agent_name required"})
             try:
-                agent = registry.get(agent_name)
-            except Exception as e:
+                registry.get(agent_name)
+            except Exception:
                 return json.dumps({"error": f"Agent not found: {agent_name}"})
             runner = AgentRunner(registry)
             import asyncio
+
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
@@ -636,32 +656,32 @@ def execute_tool(name: str, arguments: dict) -> str:
             params = arguments.get("params", {})
             if loop and loop.is_running():
                 import concurrent.futures
+
                 with concurrent.futures.ThreadPoolExecutor() as pool:
-                    result = pool.submit(
-                        asyncio.run, runner.run(agent_name, params)
-                    ).result()
+                    result = pool.submit(asyncio.run, runner.run(agent_name, params)).result()
             else:
                 result = asyncio.run(runner.run(agent_name, params))
             return json.dumps(result)
 
         elif name == "ai_chat":
             from app.core.ai_inference import AIInference
+
             ai = AIInference()
             message = arguments.get("message", "")
             model = arguments.get("model")
             if not message:
                 return json.dumps({"error": "message required"})
             import asyncio
+
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 loop = None
             if loop and loop.is_running():
                 import concurrent.futures
+
                 with concurrent.futures.ThreadPoolExecutor() as pool:
-                    result = pool.submit(
-                        asyncio.run, ai.chat(message=message, model=model)
-                    ).result()
+                    result = pool.submit(asyncio.run, ai.chat(message=message, model=model)).result()
             else:
                 result = asyncio.run(ai.chat(message=message, model=model))
             return json.dumps(result)
@@ -669,36 +689,50 @@ def execute_tool(name: str, arguments: dict) -> str:
         # ── RAG Tools ──
         elif name == "rag_query":
             from app.core.rag_engine import RAGEngine
+
             engine = RAGEngine()
             import asyncio
-            result = _run_async(engine.query(
-                arguments["question"], n_results=arguments.get("n_results", 5), generate=False,
-            ))
+
+            result = _run_async(
+                engine.query(
+                    arguments["question"],
+                    n_results=arguments.get("n_results", 5),
+                    generate=False,
+                )
+            )
             return json.dumps(result)
 
         elif name == "rag_index_text":
             from app.core.rag_engine import RAGEngine
+
             engine = RAGEngine()
-            result = _run_async(engine.index_text(
-                arguments["text"], source=arguments.get("source", "mcp"),
-            ))
+            result = _run_async(
+                engine.index_text(
+                    arguments["text"],
+                    source=arguments.get("source", "mcp"),
+                )
+            )
             return json.dumps(result)
 
         elif name == "rag_stats":
             from app.core.rag_engine import RAGEngine
+
             engine = RAGEngine()
             return json.dumps(_run_async(engine.stats()))
 
         # ── Deploy Tools ──
         elif name == "deploy_self":
-            from app.core.shell_executor import ShellExecutor
             from app.core.config import get_settings
+            from app.core.shell_executor import ShellExecutor
+
             settings = get_settings()
             executor = ShellExecutor(whitelist=settings.shell_whitelist)
-            test_result = _run_async(executor.execute(
-                "bash -c 'cd /opt/linux-ai-server && source venv/bin/activate && python -m pytest tests/ -q --ignore=tests/test_mcp.py 2>&1 | tail -5'",
-                timeout=120,
-            ))
+            test_result = _run_async(
+                executor.execute(
+                    "bash -c 'cd /opt/linux-ai-server && source venv/bin/activate && python -m pytest tests/ -q --ignore=tests/test_mcp.py 2>&1 | tail -5'",
+                    timeout=120,
+                )
+            )
             results = [{"step": "test", "exit_code": test_result["exit_code"], "output": test_result["stdout"]}]
             if arguments.get("restart", True) and test_result["exit_code"] == 0:
                 restart = _run_async(executor.execute("systemctl restart linux-ai-server", timeout=15))
@@ -707,10 +741,12 @@ def execute_tool(name: str, arguments: dict) -> str:
 
         elif name == "project_list":
             from app.api.deploy import _load_registry
+
             return json.dumps(_load_registry())
 
         elif name == "project_info":
             from app.api.deploy import _load_registry
+
             registry = _load_registry()
             project = registry["projects"].get(arguments.get("name", ""))
             return json.dumps(project or {"error": "Project not found"})
@@ -779,6 +815,7 @@ def execute_tool(name: str, arguments: dict) -> str:
         # ── Workspace Tools ──
         elif name == "workspace_note_save":
             import os
+
             workspace = "/data/claude/workspace"
             os.makedirs(workspace, exist_ok=True)
             path = os.path.join(workspace, arguments["name"])
@@ -797,6 +834,7 @@ def execute_tool(name: str, arguments: dict) -> str:
 
         elif name == "workspace_note_list":
             import os
+
             workspace = "/data/claude/workspace"
             notes = []
             if os.path.isdir(workspace):
@@ -809,6 +847,7 @@ def execute_tool(name: str, arguments: dict) -> str:
         # ── Memory DB Tools ──
         elif name == "memory_context":
             import sqlite3
+
             db = "/opt/linux-ai-server/data/claude_memory.db"
             try:
                 conn = sqlite3.connect(db)
@@ -818,7 +857,9 @@ def execute_tool(name: str, arguments: dict) -> str:
 
                 # Active projects
                 c.execute("SELECT name, description, content FROM memories WHERE type='project' AND active=1 ORDER BY updated_at DESC")
-                result["active_projects"] = [{"name": r["name"], "description": r["description"], "content": r["content"][:500]} for r in c.fetchall()]
+                result["active_projects"] = [
+                    {"name": r["name"], "description": r["description"], "content": r["content"][:500]} for r in c.fetchall()
+                ]
 
                 # Recent sessions (last 5)
                 c.execute("SELECT date, device_name, platform, summary FROM sessions ORDER BY id DESC LIMIT 5")
@@ -847,6 +888,7 @@ def execute_tool(name: str, arguments: dict) -> str:
 
         elif name == "memory_query":
             import sqlite3
+
             sql = arguments.get("sql", "")
             if not sql.strip().upper().startswith("SELECT"):
                 return json.dumps({"error": "Only SELECT queries allowed"})
@@ -864,6 +906,7 @@ def execute_tool(name: str, arguments: dict) -> str:
         elif name == "memory_save":
             import sqlite3
             from datetime import datetime
+
             db = "/opt/linux-ai-server/data/claude_memory.db"
             try:
                 conn = sqlite3.connect(db)
@@ -873,12 +916,16 @@ def execute_tool(name: str, arguments: dict) -> str:
                 c.execute("SELECT id FROM memories WHERE name=?", (arguments["name"],))
                 existing = c.fetchone()
                 if existing:
-                    c.execute("UPDATE memories SET content=?, description=?, updated_at=?, active=1 WHERE id=?",
-                              (arguments["content"], arguments.get("description", ""), now, existing[0]))
+                    c.execute(
+                        "UPDATE memories SET content=?, description=?, updated_at=?, active=1 WHERE id=?",
+                        (arguments["content"], arguments.get("description", ""), now, existing[0]),
+                    )
                     action = "updated"
                 else:
-                    c.execute("INSERT INTO memories (type, name, description, content, created_at, updated_at, active, read_count) VALUES (?,?,?,?,?,?,1,0)",
-                              (arguments["type"], arguments["name"], arguments.get("description", ""), arguments["content"], now, now))
+                    c.execute(
+                        "INSERT INTO memories (type, name, description, content, created_at, updated_at, active, read_count) VALUES (?,?,?,?,?,?,1,0)",
+                        (arguments["type"], arguments["name"], arguments.get("description", ""), arguments["content"], now, now),
+                    )
                     action = "created"
                 conn.commit()
                 conn.close()
@@ -889,6 +936,7 @@ def execute_tool(name: str, arguments: dict) -> str:
         elif name == "memory_log_session":
             import sqlite3
             from datetime import datetime
+
             db = "/opt/linux-ai-server/data/claude_memory.db"
             try:
                 conn = sqlite3.connect(db)
@@ -896,9 +944,19 @@ def execute_tool(name: str, arguments: dict) -> str:
                 now = datetime.now().strftime("%Y-%m-%d")
                 c.execute("SELECT COALESCE(MAX(session_num),0)+1 FROM sessions")
                 next_num = c.fetchone()[0]
-                c.execute("INSERT INTO sessions (session_num, date, summary, tasks_completed, files_changed, device_name, platform, created_at) VALUES (?,?,?,?,?,?,?,?)",
-                          (next_num, now, arguments["summary"], arguments.get("tasks_completed",""), arguments.get("files_changed",""),
-                           arguments["device_name"], arguments["platform"], datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                c.execute(
+                    "INSERT INTO sessions (session_num, date, summary, tasks_completed, files_changed, device_name, platform, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        next_num,
+                        now,
+                        arguments["summary"],
+                        arguments.get("tasks_completed", ""),
+                        arguments.get("files_changed", ""),
+                        arguments["device_name"],
+                        arguments["platform"],
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    ),
+                )
                 conn.commit()
                 conn.close()
                 return json.dumps({"logged": True, "session_num": next_num})
@@ -908,15 +966,24 @@ def execute_tool(name: str, arguments: dict) -> str:
         elif name == "memory_log_task":
             import sqlite3
             from datetime import datetime
+
             db = "/opt/linux-ai-server/data/claude_memory.db"
             try:
                 conn = sqlite3.connect(db)
                 c = conn.cursor()
                 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                c.execute("INSERT INTO tasks_log (project, task, status, files_changed, details, device_name, created_at) VALUES (?,?,?,?,?,?,?)",
-                          (arguments["project"], arguments["task"], arguments["status"],
-                           arguments.get("files_changed",""), arguments.get("details",""),
-                           arguments["device_name"], now))
+                c.execute(
+                    "INSERT INTO tasks_log (project, task, status, files_changed, details, device_name, created_at) VALUES (?,?,?,?,?,?,?)",
+                    (
+                        arguments["project"],
+                        arguments["task"],
+                        arguments["status"],
+                        arguments.get("files_changed", ""),
+                        arguments.get("details", ""),
+                        arguments["device_name"],
+                        now,
+                    ),
+                )
                 conn.commit()
                 conn.close()
                 return json.dumps({"logged": True, "task": arguments["task"]})
@@ -925,26 +992,33 @@ def execute_tool(name: str, arguments: dict) -> str:
 
         # ── VPS Bridge Tools ──
         elif name == "vps_exec":
-            from app.core.shell_executor import ShellExecutor
             from app.core.config import get_settings
+            from app.core.shell_executor import ShellExecutor
+
             settings = get_settings()
             executor = ShellExecutor(whitelist=settings.shell_whitelist)
-            cmd = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 " + os.environ.get("VPS_HOST", "") + " '{arguments['command']}'"
+            cmd = "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 " + os.environ.get("VPS_HOST", "") + " '{arguments['command']}'"
             result = _run_async(executor.execute(cmd, timeout=arguments.get("timeout", 30)))
             return json.dumps(result)
 
         elif name == "vps_status":
-            from app.core.shell_executor import ShellExecutor
             from app.core.config import get_settings
+            from app.core.shell_executor import ShellExecutor
+
             settings = get_settings()
             executor = ShellExecutor(whitelist=settings.shell_whitelist)
-            cmd = "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 " + os.environ.get("VPS_HOST", "") + " 'hostname && uptime -p && free -h | head -2 && df -h / | tail -1 && docker ps --format \"{{.Names}}: {{.Status}}\" | head -15'"
+            cmd = (
+                "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "
+                + os.environ.get("VPS_HOST", "")
+                + " 'hostname && uptime -p && free -h | head -2 && df -h / | tail -1 && docker ps --format \"{{.Names}}: {{.Status}}\" | head -15'"
+            )
             result = _run_async(executor.execute(cmd, timeout=15))
             return json.dumps(result)
 
         elif name == "vps_services":
-            from app.core.shell_executor import ShellExecutor
             from app.core.config import get_settings
+            from app.core.shell_executor import ShellExecutor
+
             settings = get_settings()
             executor = ShellExecutor(whitelist=settings.shell_whitelist)
             cmd = """ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 " + os.environ.get("VPS_HOST", "") + " 'for u in https://coolify.panola.app https://uptime.panola.app https://n8n.panola.app https://analytics.panola.app; do echo "$u $(curl -s -o /dev/null -w %{http_code} $u)"; done'"""

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 from app.exceptions import ShellExecutionError
 
@@ -54,20 +53,19 @@ class DevManager:
         }
 
     def git_log(self, cwd: str, limit: int = 10) -> list[dict]:
-        result = self._run_git(
-            cwd, "log", f"--max-count={limit}",
-            "--format=%H|||%an|||%ai|||%s"
-        )
+        result = self._run_git(cwd, "log", f"--max-count={limit}", "--format=%H|||%an|||%ai|||%s")
         entries = []
         for line in result.stdout.strip().split("\n"):
             if "|||" in line:
                 parts = line.split("|||")
-                entries.append({
-                    "hash": parts[0][:8],
-                    "author": parts[1],
-                    "date": parts[2],
-                    "message": parts[3],
-                })
+                entries.append(
+                    {
+                        "hash": parts[0][:8],
+                        "author": parts[1],
+                        "date": parts[2],
+                        "message": parts[3],
+                    }
+                )
         return entries
 
     def git_diff(self, cwd: str) -> str:

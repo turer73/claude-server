@@ -103,6 +103,7 @@ def parse_vitest_json(raw: str) -> dict:
             "failures": [{"test_file": str, "test_name": str, "error": str}, ...],
         }
     """
+
     # vitest-pool-workers (Cloudflare) prefixes [vpw:info]/[vpw:debug] log
     # lines around the JSON. Find the first '{' and last '}' that look like
     # the report object.
@@ -184,14 +185,10 @@ _PYTEST_SUMMARY_RE = re.compile(
 )
 
 # Matches failure lines like: "tests/test_foo.py:42: AssertionError: bad"
-_PYTEST_FAILURE_RE = re.compile(
-    r"^(tests?/\S+\.py):(\d+):\s+(.+)$", re.MULTILINE
-)
+_PYTEST_FAILURE_RE = re.compile(r"^(tests?/\S+\.py):(\d+):\s+(.+)$", re.MULTILINE)
 
 # Matches FAILED summary lines: "FAILED tests/test_foo.py::test_name - error msg"
-_PYTEST_FAILED_RE = re.compile(
-    r"^FAILED\s+(\S+)::(\S+)\s*-\s*(.+)$", re.MULTILINE
-)
+_PYTEST_FAILED_RE = re.compile(r"^FAILED\s+(\S+)::(\S+)\s*-\s*(.+)$", re.MULTILINE)
 
 
 def parse_pytest_output(raw: str) -> dict:
@@ -265,10 +262,7 @@ async def run_project_tests(project: str) -> dict:
     Raises :class:`ValueError` if *project* is not in the registry.
     """
     if project not in PROJECT_REGISTRY:
-        raise ValueError(
-            f"Unknown project {project!r}. "
-            f"Valid: {sorted(PROJECT_REGISTRY.keys())}"
-        )
+        raise ValueError(f"Unknown project {project!r}. Valid: {sorted(PROJECT_REGISTRY.keys())}")
 
     cfg = PROJECT_REGISTRY[project]
     env = cfg["env"]
@@ -354,9 +348,7 @@ async def _run_local(cfg: dict) -> tuple[str, str, int]:
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
     )
-    stdout_bytes, stderr_bytes = await asyncio.wait_for(
-        proc.communicate(), timeout=300
-    )
+    stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=300)
     return (
         stdout_bytes.decode(errors="replace"),
         stderr_bytes.decode(errors="replace"),
@@ -367,12 +359,7 @@ async def _run_local(cfg: dict) -> tuple[str, str, int]:
 async def _run_ssh(cfg: dict) -> tuple[str, str, int]:
     """Execute test command on VPS via SSH subprocess."""
     remote_cmd = cfg["test_cmd"]
-    ssh_cmd = (
-        f"ssh -o ConnectTimeout={VPS_SSH_TIMEOUT} "
-        f"-o StrictHostKeyChecking=no "
-        f"{VPS_SSH_USER}@{VPS_SSH_HOST} "
-        f"'{remote_cmd}'"
-    )
+    ssh_cmd = f"ssh -o ConnectTimeout={VPS_SSH_TIMEOUT} -o StrictHostKeyChecking=no {VPS_SSH_USER}@{VPS_SSH_HOST} '{remote_cmd}'"
     logger.info("Running SSH: %s", ssh_cmd)
 
     proc = await asyncio.create_subprocess_shell(
@@ -380,9 +367,7 @@ async def _run_ssh(cfg: dict) -> tuple[str, str, int]:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout_bytes, stderr_bytes = await asyncio.wait_for(
-        proc.communicate(), timeout=120
-    )
+    stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=120)
     return (
         stdout_bytes.decode(errors="replace"),
         stderr_bytes.decode(errors="replace"),

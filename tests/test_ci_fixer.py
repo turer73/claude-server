@@ -115,22 +115,25 @@ class TestAttemptFix:
     @pytest.mark.asyncio
     async def test_calls_claude_and_fixes_on_first_try(self):
         """Mock Claude Code + test runner so fix succeeds on attempt 1."""
-        mock_claude = AsyncMock(return_value={
-            "answer": "Fixed the assertion",
-            "session_id": "sess-123",
-            "error": None,
-        })
-        mock_tests = AsyncMock(return_value={
-            "project": "klipper",
-            "total": 10,
-            "passed": 10,
-            "failed": 0,
-            "duration_s": 2.0,
-            "failures": [],
-        })
+        mock_claude = AsyncMock(
+            return_value={
+                "answer": "Fixed the assertion",
+                "session_id": "sess-123",
+                "error": None,
+            }
+        )
+        mock_tests = AsyncMock(
+            return_value={
+                "project": "klipper",
+                "total": 10,
+                "passed": 10,
+                "failed": 0,
+                "duration_s": 2.0,
+                "failures": [],
+            }
+        )
 
-        with patch("app.core.ci_fixer._call_claude_code", mock_claude), \
-             patch("app.core.ci_fixer.run_project_tests", mock_tests):
+        with patch("app.core.ci_fixer._call_claude_code", mock_claude), patch("app.core.ci_fixer.run_project_tests", mock_tests):
             result = await attempt_fix(
                 project="klipper",
                 test_file="tests/test_foo.py",
@@ -147,41 +150,44 @@ class TestAttemptFix:
     @pytest.mark.asyncio
     async def test_retries_on_failure_then_succeeds(self):
         """First 2 test runs fail, 3rd passes."""
-        mock_claude = AsyncMock(return_value={
-            "answer": "Trying a fix",
-            "session_id": "sess-456",
-            "error": None,
-        })
+        mock_claude = AsyncMock(
+            return_value={
+                "answer": "Trying a fix",
+                "session_id": "sess-456",
+                "error": None,
+            }
+        )
 
         # First two runs: still failing.  Third: passes.
         test_results = [
             {
                 "project": "klipper",
-                "total": 10, "passed": 9, "failed": 1,
+                "total": 10,
+                "passed": 9,
+                "failed": 1,
                 "duration_s": 2.0,
-                "failures": [{"test_file": "tests/test_foo.py",
-                              "test_name": "test_bar",
-                              "error": "still broken"}],
+                "failures": [{"test_file": "tests/test_foo.py", "test_name": "test_bar", "error": "still broken"}],
             },
             {
                 "project": "klipper",
-                "total": 10, "passed": 9, "failed": 1,
+                "total": 10,
+                "passed": 9,
+                "failed": 1,
                 "duration_s": 2.0,
-                "failures": [{"test_file": "tests/test_foo.py",
-                              "test_name": "test_bar",
-                              "error": "different error"}],
+                "failures": [{"test_file": "tests/test_foo.py", "test_name": "test_bar", "error": "different error"}],
             },
             {
                 "project": "klipper",
-                "total": 10, "passed": 10, "failed": 0,
+                "total": 10,
+                "passed": 10,
+                "failed": 0,
                 "duration_s": 2.0,
                 "failures": [],
             },
         ]
         mock_tests = AsyncMock(side_effect=test_results)
 
-        with patch("app.core.ci_fixer._call_claude_code", mock_claude), \
-             patch("app.core.ci_fixer.run_project_tests", mock_tests):
+        with patch("app.core.ci_fixer._call_claude_code", mock_claude), patch("app.core.ci_fixer.run_project_tests", mock_tests):
             result = await attempt_fix(
                 project="klipper",
                 test_file="tests/test_foo.py",
@@ -197,22 +203,25 @@ class TestAttemptFix:
     @pytest.mark.asyncio
     async def test_returns_false_after_max_attempts(self):
         """All attempts fail -> fixed=False."""
-        mock_claude = AsyncMock(return_value={
-            "answer": "Trying",
-            "session_id": None,
-            "error": None,
-        })
-        mock_tests = AsyncMock(return_value={
-            "project": "klipper",
-            "total": 10, "passed": 9, "failed": 1,
-            "duration_s": 2.0,
-            "failures": [{"test_file": "tests/test_foo.py",
-                          "test_name": "test_bar",
-                          "error": "persistent error"}],
-        })
+        mock_claude = AsyncMock(
+            return_value={
+                "answer": "Trying",
+                "session_id": None,
+                "error": None,
+            }
+        )
+        mock_tests = AsyncMock(
+            return_value={
+                "project": "klipper",
+                "total": 10,
+                "passed": 9,
+                "failed": 1,
+                "duration_s": 2.0,
+                "failures": [{"test_file": "tests/test_foo.py", "test_name": "test_bar", "error": "persistent error"}],
+            }
+        )
 
-        with patch("app.core.ci_fixer._call_claude_code", mock_claude), \
-             patch("app.core.ci_fixer.run_project_tests", mock_tests):
+        with patch("app.core.ci_fixer._call_claude_code", mock_claude), patch("app.core.ci_fixer.run_project_tests", mock_tests):
             result = await attempt_fix(
                 project="klipper",
                 test_file="tests/test_foo.py",
@@ -240,11 +249,13 @@ class TestAttemptFix:
     @pytest.mark.asyncio
     async def test_claude_error_counts_as_failed_attempt(self):
         """If Claude Code returns an error, it should still count as an attempt."""
-        mock_claude = AsyncMock(return_value={
-            "answer": "",
-            "session_id": None,
-            "error": "Claude Code CLI bulunamadi",
-        })
+        mock_claude = AsyncMock(
+            return_value={
+                "answer": "",
+                "session_id": None,
+                "error": "Claude Code CLI bulunamadi",
+            }
+        )
 
         with patch("app.core.ci_fixer._call_claude_code", mock_claude):
             result = await attempt_fix(
@@ -269,19 +280,25 @@ async def test_attempt_fix_records_a_lesson_per_attempt(ci_db, monkeypatch):
 
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
-    mock_claude = AsyncMock(return_value={
-        "answer": "Fixed it",
-        "session_id": "sess-1",
-        "error": None,
-    })
-    mock_tests = AsyncMock(return_value={
-        "project": "klipper",
-        "total": 10, "passed": 10, "failed": 0,
-        "duration_s": 2.0, "failures": [],
-    })
+    mock_claude = AsyncMock(
+        return_value={
+            "answer": "Fixed it",
+            "session_id": "sess-1",
+            "error": None,
+        }
+    )
+    mock_tests = AsyncMock(
+        return_value={
+            "project": "klipper",
+            "total": 10,
+            "passed": 10,
+            "failed": 0,
+            "duration_s": 2.0,
+            "failures": [],
+        }
+    )
 
-    with patch("app.core.ci_fixer._call_claude_code", mock_claude), \
-         patch("app.core.ci_fixer.run_project_tests", mock_tests):
+    with patch("app.core.ci_fixer._call_claude_code", mock_claude), patch("app.core.ci_fixer.run_project_tests", mock_tests):
         result = await attempt_fix(
             project="klipper",
             test_file="tests/test_foo.py",
@@ -290,10 +307,7 @@ async def test_attempt_fix_records_a_lesson_per_attempt(ci_db, monkeypatch):
         )
 
     assert result["fixed"] is True
-    rows = await ci_db.fetch_all(
-        "SELECT project, test_name, outcome, strategy, attempt_num, run_uuid "
-        "FROM ci_lesson_learned ORDER BY id"
-    )
+    rows = await ci_db.fetch_all("SELECT project, test_name, outcome, strategy, attempt_num, run_uuid FROM ci_lesson_learned ORDER BY id")
     assert len(rows) == 1
     assert rows[0]["project"] == "klipper"
     assert rows[0]["test_name"] == "test_bar"
@@ -313,17 +327,18 @@ async def test_attempt_fix_all_attempts_share_one_run_uuid(ci_db, monkeypatch):
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
     mock_claude = AsyncMock(return_value={"answer": "", "session_id": None, "error": None})
-    mock_tests = AsyncMock(return_value={
-        "project": "klipper",
-        "total": 10, "passed": 9, "failed": 1,
-        "duration_s": 2.0,
-        "failures": [{"test_file": "tests/test_foo.py",
-                      "test_name": "test_bar",
-                      "error": "still broken"}],
-    })
+    mock_tests = AsyncMock(
+        return_value={
+            "project": "klipper",
+            "total": 10,
+            "passed": 9,
+            "failed": 1,
+            "duration_s": 2.0,
+            "failures": [{"test_file": "tests/test_foo.py", "test_name": "test_bar", "error": "still broken"}],
+        }
+    )
 
-    with patch("app.core.ci_fixer._call_claude_code", mock_claude), \
-         patch("app.core.ci_fixer.run_project_tests", mock_tests):
+    with patch("app.core.ci_fixer._call_claude_code", mock_claude), patch("app.core.ci_fixer.run_project_tests", mock_tests):
         await attempt_fix(
             project="klipper",
             test_file="tests/test_foo.py",
@@ -331,9 +346,7 @@ async def test_attempt_fix_all_attempts_share_one_run_uuid(ci_db, monkeypatch):
             error="AssertionError",
         )
 
-    rows = await ci_db.fetch_all(
-        "SELECT run_uuid, attempt_num, outcome FROM ci_lesson_learned ORDER BY id"
-    )
+    rows = await ci_db.fetch_all("SELECT run_uuid, attempt_num, outcome FROM ci_lesson_learned ORDER BY id")
     assert len(rows) == 3
     assert {r["run_uuid"] for r in rows} == {rows[0]["run_uuid"]}  # all identical
     assert [r["attempt_num"] for r in rows] == [1, 2, 3]
@@ -346,6 +359,7 @@ async def test_attempt_fix_posts_memory_summary_on_success(ci_db, monkeypatch):
 
     async def fake_open_ci_db():
         return _NoCloseDB(ci_db)
+
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
     posted = []
@@ -354,15 +368,22 @@ async def test_attempt_fix_posts_memory_summary_on_success(ci_db, monkeypatch):
         posted.append(kw)
 
     mock_claude = AsyncMock(return_value={"answer": "done", "session_id": None, "error": None})
-    mock_tests = AsyncMock(return_value={
-        "project": "klipper",
-        "total": 1, "passed": 1, "failed": 0,
-        "duration_s": 0.1, "failures": [],
-    })
+    mock_tests = AsyncMock(
+        return_value={
+            "project": "klipper",
+            "total": 1,
+            "passed": 1,
+            "failed": 0,
+            "duration_s": 0.1,
+            "failures": [],
+        }
+    )
 
-    with patch("app.core.ci_fixer._call_claude_code", mock_claude), \
-         patch("app.core.ci_fixer.run_project_tests", mock_tests), \
-         patch("app.core.ci_fixer.post_lesson_summary_to_memory_api", fake_post):
+    with (
+        patch("app.core.ci_fixer._call_claude_code", mock_claude),
+        patch("app.core.ci_fixer.run_project_tests", mock_tests),
+        patch("app.core.ci_fixer.post_lesson_summary_to_memory_api", fake_post),
+    ):
         result = await attempt_fix(
             project="klipper",
             test_file="tests/test_foo.py",
@@ -382,6 +403,7 @@ async def test_attempt_fix_skips_memory_post_on_failure(ci_db, monkeypatch):
 
     async def fake_open_ci_db():
         return _NoCloseDB(ci_db)
+
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
     posted = []
@@ -390,18 +412,22 @@ async def test_attempt_fix_skips_memory_post_on_failure(ci_db, monkeypatch):
         posted.append(kw)
 
     mock_claude = AsyncMock(return_value={"answer": "", "session_id": None, "error": None})
-    mock_tests = AsyncMock(return_value={
-        "project": "klipper",
-        "total": 1, "passed": 0, "failed": 1,
-        "duration_s": 0.1,
-        "failures": [{"test_file": "tests/test_foo.py",
-                      "test_name": "test_bar",
-                      "error": "boom"}],
-    })
+    mock_tests = AsyncMock(
+        return_value={
+            "project": "klipper",
+            "total": 1,
+            "passed": 0,
+            "failed": 1,
+            "duration_s": 0.1,
+            "failures": [{"test_file": "tests/test_foo.py", "test_name": "test_bar", "error": "boom"}],
+        }
+    )
 
-    with patch("app.core.ci_fixer._call_claude_code", mock_claude), \
-         patch("app.core.ci_fixer.run_project_tests", mock_tests), \
-         patch("app.core.ci_fixer.post_lesson_summary_to_memory_api", fake_post):
+    with (
+        patch("app.core.ci_fixer._call_claude_code", mock_claude),
+        patch("app.core.ci_fixer.run_project_tests", mock_tests),
+        patch("app.core.ci_fixer.post_lesson_summary_to_memory_api", fake_post),
+    ):
         await attempt_fix(
             project="klipper",
             test_file="tests/test_foo.py",
@@ -419,6 +445,7 @@ async def test_strategy_switches_to_context_enriched_after_2_failures(ci_db, mon
 
     async def fake_open_ci_db():
         return _NoCloseDB(ci_db)
+
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
     # Seed 2 past failures with a known signature
@@ -434,16 +461,23 @@ async def test_strategy_switches_to_context_enriched_after_2_failures(ci_db, mon
         )
 
     mock_claude = AsyncMock(return_value={"answer": "fix", "session_id": None, "error": None})
-    mock_tests = AsyncMock(return_value={
-        "project": "klipper",
-        "total": 1, "passed": 1, "failed": 0,
-        "duration_s": 0.1, "failures": [],
-    })
+    mock_tests = AsyncMock(
+        return_value={
+            "project": "klipper",
+            "total": 1,
+            "passed": 1,
+            "failed": 0,
+            "duration_s": 0.1,
+            "failures": [],
+        }
+    )
 
-    with patch("app.core.ci_fixer._call_claude_code", mock_claude), \
-         patch("app.core.ci_fixer.run_project_tests", mock_tests), \
-         patch("app.core.ci_fixer.compute_signature", return_value=("h", sig)), \
-         patch("app.core.ci_fixer.post_lesson_summary_to_memory_api", AsyncMock()):
+    with (
+        patch("app.core.ci_fixer._call_claude_code", mock_claude),
+        patch("app.core.ci_fixer.run_project_tests", mock_tests),
+        patch("app.core.ci_fixer.compute_signature", return_value=("h", sig)),
+        patch("app.core.ci_fixer.post_lesson_summary_to_memory_api", AsyncMock()),
+    ):
         await attempt_fix(
             project="klipper",
             test_file="tests/test_foo.py",
@@ -451,9 +485,7 @@ async def test_strategy_switches_to_context_enriched_after_2_failures(ci_db, mon
             error="AssertionError",
         )
 
-    latest = await ci_db.fetch_one(
-        "SELECT strategy FROM ci_lesson_learned ORDER BY id DESC LIMIT 1"
-    )
+    latest = await ci_db.fetch_one("SELECT strategy FROM ci_lesson_learned ORDER BY id DESC LIMIT 1")
     assert latest["strategy"] == "context-enriched"
 
 
@@ -465,6 +497,7 @@ async def test_dedup_disabled_by_env_flag(ci_db, monkeypatch):
 
     async def fake_open_ci_db():
         return _NoCloseDB(ci_db)
+
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
     sig = "klipper::test_bar::h"
@@ -479,16 +512,23 @@ async def test_dedup_disabled_by_env_flag(ci_db, monkeypatch):
         )
 
     mock_claude = AsyncMock(return_value={"answer": "fix", "session_id": None, "error": None})
-    mock_tests = AsyncMock(return_value={
-        "project": "klipper",
-        "total": 1, "passed": 1, "failed": 0,
-        "duration_s": 0.1, "failures": [],
-    })
+    mock_tests = AsyncMock(
+        return_value={
+            "project": "klipper",
+            "total": 1,
+            "passed": 1,
+            "failed": 0,
+            "duration_s": 0.1,
+            "failures": [],
+        }
+    )
 
-    with patch("app.core.ci_fixer._call_claude_code", mock_claude), \
-         patch("app.core.ci_fixer.run_project_tests", mock_tests), \
-         patch("app.core.ci_fixer.compute_signature", return_value=("h", sig)), \
-         patch("app.core.ci_fixer.post_lesson_summary_to_memory_api", AsyncMock()):
+    with (
+        patch("app.core.ci_fixer._call_claude_code", mock_claude),
+        patch("app.core.ci_fixer.run_project_tests", mock_tests),
+        patch("app.core.ci_fixer.compute_signature", return_value=("h", sig)),
+        patch("app.core.ci_fixer.post_lesson_summary_to_memory_api", AsyncMock()),
+    ):
         await attempt_fix(
             project="klipper",
             test_file="tests/test_foo.py",
@@ -496,9 +536,7 @@ async def test_dedup_disabled_by_env_flag(ci_db, monkeypatch):
             error="AssertionError",
         )
 
-    latest = await ci_db.fetch_one(
-        "SELECT strategy FROM ci_lesson_learned ORDER BY id DESC LIMIT 1"
-    )
+    latest = await ci_db.fetch_one("SELECT strategy FROM ci_lesson_learned ORDER BY id DESC LIMIT 1")
     assert latest["strategy"] == "fix-direct"
 
 
@@ -509,10 +547,22 @@ async def test_dedup_disabled_by_env_flag(ci_db, monkeypatch):
 
 def test_prompt_contains_past_lessons_when_provided():
     lessons = [
-        {"attempt_num": 1, "strategy": "fix-direct", "outcome": "failed",
-         "fix_diff": "diff 1", "raw_error": "err", "created_at": "2026-04-17 10:00:00"},
-        {"attempt_num": 2, "strategy": "fix-direct", "outcome": "failed",
-         "fix_diff": "diff 2", "raw_error": "err", "created_at": "2026-04-18 09:00:00"},
+        {
+            "attempt_num": 1,
+            "strategy": "fix-direct",
+            "outcome": "failed",
+            "fix_diff": "diff 1",
+            "raw_error": "err",
+            "created_at": "2026-04-17 10:00:00",
+        },
+        {
+            "attempt_num": 2,
+            "strategy": "fix-direct",
+            "outcome": "failed",
+            "fix_diff": "diff 2",
+            "raw_error": "err",
+            "created_at": "2026-04-18 09:00:00",
+        },
     ]
     prompt = build_fix_prompt(
         project="klipper",
@@ -537,9 +587,14 @@ def test_prompt_truncates_long_fix_diff_to_500_chars():
     """
     long_diff = "x" * 600
     lessons = [
-        {"attempt_num": 1, "strategy": "fix-direct", "outcome": "failed",
-         "fix_diff": long_diff, "raw_error": "err",
-         "created_at": "2026-04-17 10:00:00"},
+        {
+            "attempt_num": 1,
+            "strategy": "fix-direct",
+            "outcome": "failed",
+            "fix_diff": long_diff,
+            "raw_error": "err",
+            "created_at": "2026-04-17 10:00:00",
+        },
     ]
     prompt = build_fix_prompt(
         project="klipper",
@@ -642,7 +697,9 @@ async def test_post_lesson_summary_sends_expected_request(monkeypatch, caplog):
     ids=["base_missing", "key_missing"],
 )
 async def test_post_lesson_summary_skips_when_config_missing(
-    monkeypatch, base, key,
+    monkeypatch,
+    base,
+    key,
 ):
     """When base or key is empty, no HTTP request must be made."""
     called: list = []
@@ -667,6 +724,7 @@ async def test_post_lesson_summary_skips_when_config_missing(
 @pytest.mark.asyncio
 async def test_post_lesson_summary_logs_warning_on_500(monkeypatch, caplog):
     """On 5xx, helper must log a warning and not raise into the fix loop."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, text="upstream exploded")
 
@@ -692,6 +750,7 @@ async def test_post_lesson_summary_logs_warning_on_500(monkeypatch, caplog):
 @pytest.mark.asyncio
 async def test_post_lesson_summary_logs_warning_on_401(monkeypatch, caplog):
     """On 4xx (e.g. bad key), helper logs warning, does not raise."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, text="unauthorized")
 

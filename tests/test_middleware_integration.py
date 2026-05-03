@@ -1,4 +1,3 @@
-import pytest
 from app.middleware.rate_limit import TokenBucketLimiter
 
 

@@ -26,7 +26,7 @@ class LogManager:
             if not os.path.isfile(path):
                 continue
             try:
-                with open(path, "r", errors="replace") as f:
+                with open(path, errors="replace") as f:
                     for line in f:
                         stripped = line.rstrip("\n")
                         if stripped:
@@ -70,7 +70,7 @@ class LogManager:
                 continue
             count = 0
             try:
-                with open(path, "r", errors="replace") as f:
+                with open(path, errors="replace") as f:
                     for line in f:
                         stripped = line.strip()
                         if not stripped:

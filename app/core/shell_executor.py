@@ -46,9 +46,7 @@ class ShellExecutor:
 
         return True
 
-    async def execute(
-        self, command: str, timeout: int = 30, cwd: str | None = None
-    ) -> dict:
+    async def execute(self, command: str, timeout: int = 30, cwd: str | None = None) -> dict:
         self.validate_command(command)
 
         start = time.monotonic()
@@ -60,14 +58,12 @@ class ShellExecutor:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
-        except asyncio.TimeoutError:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except TimeoutError:
             proc.kill()
             raise ShellExecutionError(f"Command timed out after {timeout}s")
         except FileNotFoundError:
-            raise ShellExecutionError(f"Command not found in shell")
+            raise ShellExecutionError("Command not found in shell")
 
         elapsed = (time.monotonic() - start) * 1000
 

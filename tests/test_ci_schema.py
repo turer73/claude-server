@@ -1,4 +1,5 @@
 """Tests for CI lesson_learned DB schema (distinct from Pydantic schemas)."""
+
 import pytest
 
 
@@ -27,9 +28,7 @@ async def test_ci_lesson_learned_table_exists(ci_db):
 
 @pytest.mark.asyncio
 async def test_ci_lesson_learned_indexes_exist(ci_db):
-    cursor = await ci_db.conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='ci_lesson_learned'"
-    )
+    cursor = await ci_db.conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='ci_lesson_learned'")
     rows = await cursor.fetchall()
     names = {r["name"] for r in rows}
     assert "idx_lesson_signature" in names

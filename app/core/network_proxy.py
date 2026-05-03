@@ -19,11 +19,13 @@ class NetworkProxy:
         for name, addr_list in addrs.items():
             addresses = []
             for addr in addr_list:
-                addresses.append({
-                    "family": str(addr.family.name) if hasattr(addr.family, "name") else str(addr.family),
-                    "address": addr.address,
-                    "netmask": addr.netmask,
-                })
+                addresses.append(
+                    {
+                        "family": str(addr.family.name) if hasattr(addr.family, "name") else str(addr.family),
+                        "address": addr.address,
+                        "netmask": addr.netmask,
+                    }
+                )
             result.append({"name": name, "addresses": addresses})
         return result
 
@@ -31,15 +33,17 @@ class NetworkProxy:
         conns = []
         for c in psutil.net_connections(kind="inet"):
             try:
-                conns.append({
-                    "fd": c.fd,
-                    "family": str(c.family),
-                    "type": str(c.type),
-                    "laddr": f"{c.laddr.ip}:{c.laddr.port}" if c.laddr else "",
-                    "raddr": f"{c.raddr.ip}:{c.raddr.port}" if c.raddr else "",
-                    "status": c.status,
-                    "pid": c.pid,
-                })
+                conns.append(
+                    {
+                        "fd": c.fd,
+                        "family": str(c.family),
+                        "type": str(c.type),
+                        "laddr": f"{c.laddr.ip}:{c.laddr.port}" if c.laddr else "",
+                        "raddr": f"{c.raddr.ip}:{c.raddr.port}" if c.raddr else "",
+                        "status": c.status,
+                        "pid": c.pid,
+                    }
+                )
             except (AttributeError, TypeError):
                 continue
         return conns
@@ -47,19 +51,19 @@ class NetworkProxy:
     async def dns_lookup(self, hostname: str) -> list[dict]:
         try:
             loop = asyncio.get_event_loop()
-            results = await loop.run_in_executor(
-                None, lambda: socket.getaddrinfo(hostname, None)
-            )
+            results = await loop.run_in_executor(None, lambda: socket.getaddrinfo(hostname, None))
             seen = set()
             entries = []
             for family, socktype, proto, canonname, sockaddr in results:
                 ip = sockaddr[0]
                 if ip not in seen:
                     seen.add(ip)
-                    entries.append({
-                        "ip": ip,
-                        "family": "IPv4" if family == socket.AF_INET else "IPv6",
-                    })
+                    entries.append(
+                        {
+                            "ip": ip,
+                            "family": "IPv4" if family == socket.AF_INET else "IPv6",
+                        }
+                    )
             return entries
         except socket.gaierror:
             return []

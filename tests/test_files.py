@@ -1,5 +1,5 @@
 import pytest
-import os
+
 from app.core.file_manager import FileManager
 from app.exceptions import AuthorizationError, NotFoundError
 

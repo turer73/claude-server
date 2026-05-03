@@ -22,7 +22,11 @@ def get_network_proxy() -> NetworkProxy:
 )
 async def proxy_request(body: HttpProxyRequest, proxy: NetworkProxy = Depends(get_network_proxy)):
     result = await proxy.http_request(
-        method=body.method, url=body.url, headers=body.headers, body=body.body, timeout=body.timeout,
+        method=body.method,
+        url=body.url,
+        headers=body.headers,
+        body=body.body,
+        timeout=body.timeout,
     )
     return HttpProxyResponse(**result)
 

@@ -1,7 +1,8 @@
-import pytest
 import subprocess
+
+import pytest
+
 from app.core.dev_manager import DevManager
-from app.exceptions import ShellExecutionError
 
 
 @pytest.fixture

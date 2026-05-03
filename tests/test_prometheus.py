@@ -1,4 +1,5 @@
 import pytest
+
 from app.core.prometheus_exporter import PrometheusExporter
 
 

@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch, MagicMock
+
 from app.core.system_manager import SystemManager
 
 

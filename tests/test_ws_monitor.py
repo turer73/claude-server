@@ -1,10 +1,8 @@
 """Tests for WebSocket monitor handler."""
 
-import pytest
-from unittest.mock import patch, MagicMock
-from starlette.testclient import TestClient
+from unittest.mock import MagicMock, patch
 
-from tests.conftest import TEST_API_KEY
+from starlette.testclient import TestClient
 
 
 def test_ws_monitor_sends_metrics(app, tmp_path, monkeypatch):

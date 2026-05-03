@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+
 import psutil
 
 
@@ -69,6 +70,7 @@ class PrometheusExporter:
         # Load average
         try:
             import os
+
             load = os.getloadavg()
             lines.append("# HELP linux_ai_load_avg System load average")
             lines.append("# TYPE linux_ai_load_avg gauge")

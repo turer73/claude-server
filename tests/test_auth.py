@@ -1,12 +1,14 @@
-import pytest
 import hashlib
+
+import pytest
+
+from app.auth.api_key import generate_api_key, hash_api_key
 from app.auth.jwt_handler import create_token, decode_token
-from app.auth.api_key import hash_api_key, generate_api_key
 from app.auth.permissions import Permission, check_permission
 from app.exceptions import AuthenticationError
 
-
 # --- JWT ---
+
 
 def test_create_and_decode_jwt():
     token = create_token(subject="admin", permissions="admin", secret="test-secret")
@@ -35,6 +37,7 @@ def test_jwt_contains_expiry():
 
 # --- API Key ---
 
+
 def test_hash_api_key():
     key = "test-api-key-12345"
     hashed = hash_api_key(key)
@@ -50,6 +53,7 @@ def test_generate_api_key():
 
 
 # --- Permissions ---
+
 
 def test_permission_read():
     assert check_permission(Permission.READ, "read")

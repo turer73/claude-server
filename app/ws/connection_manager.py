@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
-from datetime import datetime, timezone
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from fastapi import WebSocket
 
@@ -33,7 +31,7 @@ class ConnectionManager:
         await websocket.accept()
         self._connections[conn_id] = ConnectionInfo(
             websocket=websocket,
-            connected_at=datetime.now(timezone.utc).isoformat(),
+            connected_at=datetime.now(UTC).isoformat(),
             endpoint=endpoint,
         )
         self._total_connected += 1
@@ -45,7 +43,7 @@ class ConnectionManager:
     async def send_ping(self, conn_id: str) -> None:
         conn = self._connections.get(conn_id)
         if conn:
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             conn.last_ping = now
             try:
                 await conn.websocket.send_json({"type": "ping", "timestamp": now})
@@ -55,7 +53,7 @@ class ConnectionManager:
     async def handle_pong(self, conn_id: str) -> None:
         conn = self._connections.get(conn_id)
         if conn:
-            conn.last_ping = datetime.now(timezone.utc).isoformat()
+            conn.last_ping = datetime.now(UTC).isoformat()
 
     def get_stats(self) -> dict:
         return {

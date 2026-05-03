@@ -1,7 +1,9 @@
 """Tests for kernel bridge core service and REST API."""
 
+from unittest.mock import mock_open, patch
+
 import pytest
-from unittest.mock import patch, mock_open
+
 from app.core.kernel_bridge import KernelBridge
 
 
@@ -70,28 +72,28 @@ def test_get_status_without_module(bridge):
 
 def test_get_status_with_module(bridge):
     mock_content = "state: running\ngovernor: performance\ncpu_count: 4\nservices: 2\n"
-    with patch("os.path.exists", return_value=True):
-        with patch("builtins.open", mock_open(read_data=mock_content)):
-            status = bridge.get_status()
-            assert status["state"] == "running"
-            assert status["kernel_module"] is True
+    with patch("os.path.exists", return_value=True), patch("builtins.open", mock_open(read_data=mock_content)):
+        status = bridge.get_status()
+        assert status["state"] == "running"
+        assert status["kernel_module"] is True
 
 
 def test_set_governor_without_module(bridge):
     from app.exceptions import KernelError
-    with patch("os.path.exists", return_value=False):
-        with pytest.raises(KernelError):
-            bridge.set_governor("performance")
+
+    with patch("os.path.exists", return_value=False), pytest.raises(KernelError):
+        bridge.set_governor("performance")
 
 
 def test_set_governor_invalid_mode(bridge):
     from app.exceptions import KernelError
-    with patch("os.path.exists", return_value=True):
-        with pytest.raises(KernelError, match="Unknown governor"):
-            bridge.set_governor("turbo")
+
+    with patch("os.path.exists", return_value=True), pytest.raises(KernelError, match="Unknown governor"):
+        bridge.set_governor("turbo")
 
 
 # --- API Integration Tests ---
+
 
 @pytest.mark.anyio
 async def test_kernel_status_api(client, auth_headers):

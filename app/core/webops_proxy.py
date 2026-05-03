@@ -13,7 +13,7 @@ class WebOpsProxy:
         "cloudflare": "https://api.cloudflare.com/client/v4",
         "github": "https://api.github.com",
         "supabase": "",  # set from config
-        "coolify": "",   # set from config
+        "coolify": "",  # set from config
     }
 
     def __init__(

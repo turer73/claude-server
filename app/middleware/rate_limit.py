@@ -61,10 +61,7 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
 
         # Extract client IP
         forwarded = request.headers.get("x-forwarded-for", "")
-        if forwarded:
-            client_ip = forwarded.split(",")[0].strip()
-        else:
-            client_ip = request.client.host if request.client else "unknown"
+        client_ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
 
         if not self._limiter.allow(client_ip):
             return JSONResponse(

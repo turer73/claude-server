@@ -7,15 +7,15 @@ Supports: shell commands, VPS commands, deploy triggers, scheduled tasks.
 from __future__ import annotations
 
 import asyncio
-import os
 import json
+import os
 import time
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from app.core.shell_executor import ShellExecutor
 from app.core.config import get_settings
+from app.core.shell_executor import ShellExecutor
 
 
 @dataclass
@@ -65,8 +65,7 @@ class TaskQueue:
     @property
     def recent_tasks(self) -> list[dict]:
         return [
-            {"task_id": r.task_id, "type": r.type, "status": r.status,
-             "result": r.result[:200], "elapsed_ms": r.elapsed_ms}
+            {"task_id": r.task_id, "type": r.type, "status": r.status, "result": r.result[:200], "elapsed_ms": r.elapsed_ms}
             for r in reversed(self._recent)
         ]
 
@@ -76,7 +75,7 @@ class TaskQueue:
             return -1
         await self._db.execute(
             "INSERT INTO jobs (type, payload, status, created_at) VALUES (?, ?, 'pending', ?)",
-            (task_type, json.dumps(payload), datetime.now(timezone.utc).isoformat()),
+            (task_type, json.dumps(payload), datetime.now(UTC).isoformat()),
         )
         rows = await self._db.fetch_all("SELECT id FROM jobs ORDER BY id DESC LIMIT 1")
         return rows[0]["id"] if rows else -1
@@ -91,9 +90,7 @@ class TaskQueue:
     async def list_pending(self) -> list[dict]:
         if not self._db:
             return []
-        rows = await self._db.fetch_all(
-            "SELECT id, type, status, created_at FROM jobs WHERE status IN ('pending', 'running') ORDER BY id"
-        )
+        rows = await self._db.fetch_all("SELECT id, type, status, created_at FROM jobs WHERE status IN ('pending', 'running') ORDER BY id")
         return [dict(r) for r in rows]
 
     # ── Worker Loop ──────────────────────────────
@@ -111,9 +108,7 @@ class TaskQueue:
             return
 
         # Fetch oldest pending job
-        rows = await self._db.fetch_all(
-            "SELECT * FROM jobs WHERE status = 'pending' ORDER BY id ASC LIMIT 1"
-        )
+        rows = await self._db.fetch_all("SELECT * FROM jobs WHERE status = 'pending' ORDER BY id ASC LIMIT 1")
         if not rows:
             return
 
@@ -125,7 +120,7 @@ class TaskQueue:
         # Mark as running
         await self._db.execute(
             "UPDATE jobs SET status = 'running', started_at = ? WHERE id = ?",
-            (datetime.now(timezone.utc).isoformat(), job_id),
+            (datetime.now(UTC).isoformat(), job_id),
         )
 
         start = time.monotonic()
@@ -139,7 +134,11 @@ class TaskQueue:
                 success = r.get("exit_code", 1) == 0
 
             elif job_type == "vps_exec":
-                cmd = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 " + os.environ.get("VPS_HOST", "") + " '{payload.get('command', 'echo noop')}'"
+                cmd = (
+                    "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "
+                    + os.environ.get("VPS_HOST", "")
+                    + " '{payload.get('command', 'echo noop')}'"
+                )
                 r = await self._executor.execute(cmd, timeout=payload.get("timeout", 60))
                 result_text = r.get("stdout", "") + r.get("stderr", "")
                 success = r.get("exit_code", 1) == 0
@@ -156,9 +155,7 @@ class TaskQueue:
                 success = r.get("exit_code", 1) == 0
 
             elif job_type == "backup":
-                r = await self._executor.execute(
-                    "/opt/linux-ai-server/automation/daily-backup.sh", timeout=60
-                )
+                r = await self._executor.execute("/opt/linux-ai-server/automation/daily-backup.sh", timeout=60)
                 result_text = r.get("stdout", "")
                 success = r.get("exit_code", 1) == 0
 
@@ -175,11 +172,16 @@ class TaskQueue:
 
         await self._db.execute(
             "UPDATE jobs SET status = ?, completed_at = ?, result = ?, error = ? WHERE id = ?",
-            (status, datetime.now(timezone.utc).isoformat(), result_text[:2000], "" if success else result_text[:500], job_id),
+            (status, datetime.now(UTC).isoformat(), result_text[:2000], "" if success else result_text[:500], job_id),
         )
 
         self._processed += 1
-        self._recent.append(TaskResult(
-            task_id=job_id, type=job_type, status=status,
-            result=result_text[:200], elapsed_ms=elapsed,
-        ))
+        self._recent.append(
+            TaskResult(
+                task_id=job_id,
+                type=job_type,
+                status=status,
+                result=result_text[:200],
+                elapsed_ms=elapsed,
+            )
+        )

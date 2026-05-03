@@ -21,7 +21,7 @@ async def ws_logs(websocket: WebSocket):
             await websocket.close()
             return
 
-        with open(log_path, "r") as f:
+        with open(log_path) as f:
             f.seek(0, 2)  # seek to end
             while True:
                 line = f.readline()

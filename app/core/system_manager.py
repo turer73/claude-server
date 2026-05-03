@@ -38,22 +38,22 @@ class SystemManager:
             "load_avg": load,
         }
 
-    def get_processes(
-        self, limit: int = 20, sort_by: str = "cpu"
-    ) -> list[dict]:
+    def get_processes(self, limit: int = 20, sort_by: str = "cpu") -> list[dict]:
         procs = []
         for p in psutil.process_iter(["pid", "name", "cpu_percent", "memory_info", "status", "username"]):
             try:
                 info = p.info
                 mem_mb = (info["memory_info"].rss / (1024 * 1024)) if info.get("memory_info") else 0.0
-                procs.append({
-                    "pid": info["pid"],
-                    "name": info["name"] or "unknown",
-                    "cpu_percent": info.get("cpu_percent") or 0.0,
-                    "memory_mb": round(mem_mb, 1),
-                    "status": info.get("status") or "unknown",
-                    "user": info.get("username") or "unknown",
-                })
+                procs.append(
+                    {
+                        "pid": info["pid"],
+                        "name": info["name"] or "unknown",
+                        "cpu_percent": info.get("cpu_percent") or 0.0,
+                        "memory_mb": round(mem_mb, 1),
+                        "status": info.get("status") or "unknown",
+                        "user": info.get("username") or "unknown",
+                    }
+                )
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
 

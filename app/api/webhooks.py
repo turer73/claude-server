@@ -90,12 +90,15 @@ async def trigger_action(action: str, request: Request):
     elif action == "alert_check":
         monitor = MonitorAgent()
         metrics = monitor.collect_metrics()
-        thresholds = body.get("thresholds", {
-            "cpu_percent": 85,
-            "memory_percent": 85,
-            "disk_percent": 90,
-            "temperature_c": 80,
-        })
+        thresholds = body.get(
+            "thresholds",
+            {
+                "cpu_percent": 85,
+                "memory_percent": 85,
+                "disk_percent": 90,
+                "temperature_c": 80,
+            },
+        )
         alerts = monitor.check_alerts(metrics, thresholds)
         return {
             "action": "alert_check",

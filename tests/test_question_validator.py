@@ -6,11 +6,10 @@ Uses mock Supabase responses — no real network calls.
 
 from __future__ import annotations
 
-import json
-from dataclasses import asdict
 from unittest.mock import AsyncMock, patch
 
 import httpx
+
 
 # Helper to create httpx.Response with a request set (needed for raise_for_status)
 def _mock_response(status_code: int, json_data, headers: dict | None = None) -> httpx.Response:
@@ -21,18 +20,18 @@ def _mock_response(status_code: int, json_data, headers: dict | None = None) -> 
         request=httpx.Request("GET", "https://test.supabase.co/rest/v1/questions"),
     )
     return resp
+
+
 import pytest
 
 from app.core.question_validator import (
     VALID_CATEGORIES,
     VALID_GAMES,
     QuestionValidator,
-    ValidationError,
-    ValidationReport,
 )
 
-
 # --- Helpers ---
+
 
 def make_question(**overrides) -> dict:
     """Create a valid question dict with optional overrides."""
@@ -71,8 +70,11 @@ def make_wordquest(**content_overrides) -> dict:
     }
     content.update(content_overrides)
     return make_question(
-        id="test-wq-001", game="wordquest", category="vocabulary",
-        level_tag="C1", content=content,
+        id="test-wq-001",
+        game="wordquest",
+        category="vocabulary",
+        level_tag="C1",
+        content=content,
     )
 
 
@@ -88,8 +90,11 @@ def make_cloze_test(**overrides) -> dict:
     }
     content.update(overrides)
     return make_question(
-        id="test-cloze-001", game="wordquest", category="cloze_test",
-        content=content, **{k: v for k, v in overrides.items() if k not in content},
+        id="test-cloze-001",
+        game="wordquest",
+        category="cloze_test",
+        content=content,
+        **{k: v for k, v in overrides.items() if k not in content},
     )
 
 
@@ -107,8 +112,11 @@ def make_dialogue(**overrides) -> dict:
     }
     content.update(overrides)
     return make_question(
-        id="test-dialogue-001", game="wordquest", category="dialogue",
-        content=content, **{k: v for k, v in overrides.items() if k not in content},
+        id="test-dialogue-001",
+        game="wordquest",
+        category="dialogue",
+        content=content,
+        **{k: v for k, v in overrides.items() if k not in content},
     )
 
 
@@ -120,6 +128,7 @@ def validator():
 # ============================================================
 # 1. Valid questions — no errors
 # ============================================================
+
 
 class TestValidQuestions:
     def test_valid_matematik(self, validator):
@@ -148,11 +157,13 @@ class TestValidQuestions:
         assert errors == []
 
     def test_valid_5_options(self, validator):
-        q = make_question(content={
-            "question": "Hangisi doğrudur?",
-            "options": ["A", "B", "C", "D", "E"],
-            "answer": 4,
-        })
+        q = make_question(
+            content={
+                "question": "Hangisi doğrudur?",
+                "options": ["A", "B", "C", "D", "E"],
+                "answer": 4,
+            }
+        )
         errors = validator.validate_question(q)
         assert errors == []
 
@@ -160,6 +171,7 @@ class TestValidQuestions:
 # ============================================================
 # 2. Game validation
 # ============================================================
+
 
 class TestGameValidation:
     def test_invalid_game(self, validator):
@@ -186,6 +198,7 @@ class TestGameValidation:
 # 3. Category validation
 # ============================================================
 
+
 class TestCategoryValidation:
     def test_category_mismatch(self, validator):
         q = make_question(game="matematik", category="fizik")
@@ -205,6 +218,7 @@ class TestCategoryValidation:
 # ============================================================
 # 4. Content validation
 # ============================================================
+
 
 class TestContentValidation:
     def test_missing_content(self, validator):
@@ -231,12 +245,14 @@ class TestContentValidation:
 
     def test_sentence_field_accepted(self, validator):
         """WordQuest uses 'sentence' instead of 'question'."""
-        q = make_question(content={
-            "type": "multiple_choice",
-            "sentence": "The ---- of the project was delayed significantly.",
-            "options": ["completion", "compete", "complex", "compact"],
-            "correct": 0,
-        })
+        q = make_question(
+            content={
+                "type": "multiple_choice",
+                "sentence": "The ---- of the project was delayed significantly.",
+                "options": ["completion", "compete", "complex", "compact"],
+                "correct": 0,
+            }
+        )
         errors = validator.validate_question(q)
         assert not any(e.rule == "missing_question_text" for e in errors)
 
@@ -247,11 +263,13 @@ class TestContentValidation:
         assert all(e.severity == "info" for e in errors if e.rule == "too_short")
 
     def test_long_question(self, validator):
-        q = make_question(content={
-            "question": "X" * 2001,
-            "options": ["A", "B", "C", "D"],
-            "answer": 0,
-        })
+        q = make_question(
+            content={
+                "question": "X" * 2001,
+                "options": ["A", "B", "C", "D"],
+                "answer": 0,
+            }
+        )
         errors = validator.validate_question(q)
         assert any(e.rule == "too_long" for e in errors)
 
@@ -259,6 +277,7 @@ class TestContentValidation:
 # ============================================================
 # 5. Options validation
 # ============================================================
+
 
 class TestOptionsValidation:
     def test_options_not_list(self, validator):
@@ -268,48 +287,58 @@ class TestOptionsValidation:
         assert any(e.severity == "critical" for e in errors)
 
     def test_too_few_options(self, validator):
-        q = make_question(content={
-            "question": "Test sorusu?",
-            "options": ["A", "B", "C"],
-            "answer": 0,
-        })
+        q = make_question(
+            content={
+                "question": "Test sorusu?",
+                "options": ["A", "B", "C"],
+                "answer": 0,
+            }
+        )
         errors = validator.validate_question(q)
         assert any(e.rule == "too_few_options" for e in errors)
 
     def test_too_many_options(self, validator):
-        q = make_question(content={
-            "question": "Test sorusu?",
-            "options": ["A", "B", "C", "D", "E", "F"],
-            "answer": 0,
-        })
+        q = make_question(
+            content={
+                "question": "Test sorusu?",
+                "options": ["A", "B", "C", "D", "E", "F"],
+                "answer": 0,
+            }
+        )
         errors = validator.validate_question(q)
         assert any(e.rule == "too_many_options" for e in errors)
 
     def test_empty_option(self, validator):
-        q = make_question(content={
-            "question": "Test sorusu?",
-            "options": ["A", "", "C", "D"],
-            "answer": 0,
-        })
+        q = make_question(
+            content={
+                "question": "Test sorusu?",
+                "options": ["A", "", "C", "D"],
+                "answer": 0,
+            }
+        )
         errors = validator.validate_question(q)
         assert any(e.rule == "empty_option" for e in errors)
 
     def test_duplicate_options(self, validator):
-        q = make_question(content={
-            "question": "Test sorusu?",
-            "options": ["Aynı", "Farklı", "Aynı", "Başka"],
-            "answer": 1,
-        })
+        q = make_question(
+            content={
+                "question": "Test sorusu?",
+                "options": ["Aynı", "Farklı", "Aynı", "Başka"],
+                "answer": 1,
+            }
+        )
         errors = validator.validate_question(q)
         assert any(e.rule == "duplicate_options" for e in errors)
 
     def test_case_difference_not_duplicate(self, validator):
         """Case differences are NOT duplicates (e.g. yazım kuralları, genetik soruları)."""
-        q = make_question(content={
-            "question": "Hangisi doğrudur büyük küçük harf testi?",
-            "options": ["hello", "HELLO", "world", "test"],
-            "answer": 2,
-        })
+        q = make_question(
+            content={
+                "question": "Hangisi doğrudur büyük küçük harf testi?",
+                "options": ["hello", "HELLO", "world", "test"],
+                "answer": 2,
+            }
+        )
         errors = validator.validate_question(q)
         assert not any(e.rule == "duplicate_options" for e in errors)
 
@@ -317,6 +346,7 @@ class TestOptionsValidation:
 # ============================================================
 # 6. Answer validation
 # ============================================================
+
 
 class TestAnswerValidation:
     def test_missing_answer(self, validator):
@@ -326,31 +356,47 @@ class TestAnswerValidation:
         assert any(e.severity == "critical" for e in errors)
 
     def test_answer_not_int(self, validator):
-        q = make_question(content={
-            "question": "Test?", "options": ["A", "B", "C", "D"], "answer": "B",
-        })
+        q = make_question(
+            content={
+                "question": "Test?",
+                "options": ["A", "B", "C", "D"],
+                "answer": "B",
+            }
+        )
         errors = validator.validate_question(q)
         assert any(e.rule == "answer_not_int" for e in errors)
 
     def test_negative_answer(self, validator):
-        q = make_question(content={
-            "question": "Test?", "options": ["A", "B", "C", "D"], "answer": -1,
-        })
+        q = make_question(
+            content={
+                "question": "Test?",
+                "options": ["A", "B", "C", "D"],
+                "answer": -1,
+            }
+        )
         errors = validator.validate_question(q)
         assert any(e.rule == "negative_answer" for e in errors)
 
     def test_answer_out_of_bounds(self, validator):
-        q = make_question(content={
-            "question": "Test?", "options": ["A", "B", "C", "D"], "answer": 4,
-        })
+        q = make_question(
+            content={
+                "question": "Test?",
+                "options": ["A", "B", "C", "D"],
+                "answer": 4,
+            }
+        )
         errors = validator.validate_question(q)
         assert any(e.rule == "answer_out_of_bounds" for e in errors)
 
     def test_answer_exactly_at_boundary(self, validator):
         """answer=3 with 4 options is valid (0-indexed)."""
-        q = make_question(content={
-            "question": "Test sorusu?", "options": ["A", "B", "C", "D"], "answer": 3,
-        })
+        q = make_question(
+            content={
+                "question": "Test sorusu?",
+                "options": ["A", "B", "C", "D"],
+                "answer": 3,
+            }
+        )
         errors = validator.validate_question(q)
         assert not any(e.rule in ("answer_out_of_bounds", "negative_answer") for e in errors)
 
@@ -358,6 +404,7 @@ class TestAnswerValidation:
 # ============================================================
 # 7. Difficulty validation
 # ============================================================
+
 
 class TestDifficultyValidation:
     def test_difficulty_zero(self, validator):
@@ -381,6 +428,7 @@ class TestDifficultyValidation:
 # 8. Active-but-broken detection
 # ============================================================
 
+
 class TestActiveBroken:
     def test_active_with_missing_content(self, validator):
         q = make_question(is_active=True, content=None)
@@ -393,9 +441,14 @@ class TestActiveBroken:
         assert not any(e.rule == "active_but_broken" for e in errors)
 
     def test_active_with_bad_answer(self, validator):
-        q = make_question(is_active=True, content={
-            "question": "Test sorusu?", "options": ["A", "B", "C", "D"], "answer": 10,
-        })
+        q = make_question(
+            is_active=True,
+            content={
+                "question": "Test sorusu?",
+                "options": ["A", "B", "C", "D"],
+                "answer": 10,
+            },
+        )
         errors = validator.validate_question(q)
         assert any(e.rule == "active_but_broken" for e in errors)
 
@@ -403,6 +456,7 @@ class TestActiveBroken:
 # ============================================================
 # 9. Source validation
 # ============================================================
+
 
 class TestSourceValidation:
     def test_invalid_source(self, validator):
@@ -421,6 +475,7 @@ class TestSourceValidation:
 # ============================================================
 # 10. Batch validation & report
 # ============================================================
+
 
 class TestBatchValidation:
     @pytest.mark.anyio
@@ -467,6 +522,7 @@ class TestBatchValidation:
 # 11. Fetch & pagination
 # ============================================================
 
+
 class TestFetch:
     @pytest.mark.anyio
     async def test_fetch_questions(self, validator):
@@ -507,6 +563,7 @@ class TestFetch:
 # 12. Summary
 # ============================================================
 
+
 class TestSummary:
     @pytest.mark.anyio
     async def test_get_summary(self, validator):
@@ -523,6 +580,7 @@ class TestSummary:
 # ============================================================
 # 13. API endpoint tests
 # ============================================================
+
 
 class TestAPIEndpoints:
     @pytest.mark.anyio
@@ -549,6 +607,7 @@ class TestAPIEndpoints:
     async def test_errors_no_report(self, client, auth_headers):
         # Reset cached report
         import app.api.validation as val_mod
+
         val_mod._last_report = None
 
         resp = await client.get("/api/v1/validation/errors", headers=auth_headers)
@@ -560,6 +619,7 @@ class TestAPIEndpoints:
 # ============================================================
 # 14. Edge cases
 # ============================================================
+
 
 class TestEdgeCases:
     def test_question_with_all_fields_valid(self, validator):
@@ -584,22 +644,26 @@ class TestEdgeCases:
 
     def test_content_with_extra_fields(self, validator):
         """Extra fields in content should not cause errors."""
-        q = make_question(content={
-            "question": "Normal soru?",
-            "options": ["A", "B", "C", "D"],
-            "answer": 0,
-            "extra_field": "should be ignored",
-            "metadata": {"custom": True},
-        })
+        q = make_question(
+            content={
+                "question": "Normal soru?",
+                "options": ["A", "B", "C", "D"],
+                "answer": 0,
+                "extra_field": "should be ignored",
+                "metadata": {"custom": True},
+            }
+        )
         errors = validator.validate_question(q)
         assert errors == []
 
     def test_answer_zero_is_valid(self, validator):
-        q = make_question(content={
-            "question": "İlk seçenek doğru olan soru?",
-            "options": ["Doğru", "Yanlış1", "Yanlış2", "Yanlış3"],
-            "answer": 0,
-        })
+        q = make_question(
+            content={
+                "question": "İlk seçenek doğru olan soru?",
+                "options": ["Doğru", "Yanlış1", "Yanlış2", "Yanlış3"],
+                "answer": 0,
+            }
+        )
         errors = validator.validate_question(q)
         assert not any(e.rule in ("missing_answer", "negative_answer", "answer_out_of_bounds") for e in errors)
 
@@ -632,6 +696,7 @@ class TestEdgeCases:
 # 15. correct field (WordQuest format)
 # ============================================================
 
+
 class TestCorrectField:
     def test_correct_field_accepted(self, validator):
         """WordQuest uses 'correct' instead of 'answer'."""
@@ -646,12 +711,14 @@ class TestCorrectField:
 
     def test_both_answer_and_correct(self, validator):
         """If both exist, answer takes precedence."""
-        q = make_question(content={
-            "question": "Hangisi doğrudur? Birden fazla alan testi.",
-            "options": ["A", "B", "C", "D"],
-            "answer": 1,
-            "correct": 2,
-        })
+        q = make_question(
+            content={
+                "question": "Hangisi doğrudur? Birden fazla alan testi.",
+                "options": ["A", "B", "C", "D"],
+                "answer": 1,
+                "correct": 2,
+            }
+        )
         errors = validator.validate_question(q)
         assert errors == []
 
@@ -659,6 +726,7 @@ class TestCorrectField:
 # ============================================================
 # 16. Cloze test format
 # ============================================================
+
 
 class TestClozeTestFormat:
     def test_valid_cloze_test(self, validator):
@@ -682,16 +750,20 @@ class TestClozeTestFormat:
         assert any(e.rule == "missing_cloze_questions" for e in errors)
 
     def test_sub_question_bad_answer(self, validator):
-        q = make_cloze_test(questions=[
-            {"number": 1, "correct": 10, "options": ["A", "B", "C", "D"]},
-        ])
+        q = make_cloze_test(
+            questions=[
+                {"number": 1, "correct": 10, "options": ["A", "B", "C", "D"]},
+            ]
+        )
         errors = validator.validate_question(q)
         assert any(e.rule == "answer_out_of_bounds" for e in errors)
 
     def test_sub_question_missing_options(self, validator):
-        q = make_cloze_test(questions=[
-            {"number": 1, "correct": 0},
-        ])
+        q = make_cloze_test(
+            questions=[
+                {"number": 1, "correct": 0},
+            ]
+        )
         errors = validator.validate_question(q)
         assert any(e.rule == "options_not_list" for e in errors)
 
@@ -699,6 +771,7 @@ class TestClozeTestFormat:
 # ============================================================
 # 17. Dialogue format
 # ============================================================
+
 
 class TestDialogueFormat:
     def test_valid_dialogue(self, validator):
@@ -712,10 +785,12 @@ class TestDialogueFormat:
         assert any(e.rule == "missing_dialogue_lines" for e in errors)
 
     def test_no_blank_in_dialogue(self, validator):
-        q = make_dialogue(lines=[
-            {"speaker": "A", "line": "Hello"},
-            {"speaker": "B", "line": "Hi"},
-        ])
+        q = make_dialogue(
+            lines=[
+                {"speaker": "A", "line": "Hello"},
+                {"speaker": "B", "line": "Hi"},
+            ]
+        )
         errors = validator.validate_question(q)
         assert any(e.rule == "no_blank_in_dialogue" for e in errors)
 

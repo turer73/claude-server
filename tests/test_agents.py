@@ -1,7 +1,8 @@
 import pytest
 import yaml
-from pathlib import Path
-from app.core.agent_system import AgentRegistry, AgentRunner, AgentDefinition as AgentDef
+
+from app.core.agent_system import AgentDefinition as AgentDef
+from app.core.agent_system import AgentRegistry
 
 
 @pytest.fixture
@@ -47,6 +48,7 @@ def test_registry_get_agent(registry, sample_agent_yaml):
 
 def test_registry_get_not_found(registry):
     from app.exceptions import NotFoundError
+
     with pytest.raises(NotFoundError):
         registry.get("nonexistent")
 

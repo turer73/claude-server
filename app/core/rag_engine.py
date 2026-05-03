@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 from pathlib import Path
 
 import httpx
@@ -149,8 +148,7 @@ class RAGEngine:
         distances = data.get("distances", [[]])[0]
 
         results = [
-            {"text": doc, "source": meta.get("source", "?"), "distance": round(dist, 4)}
-            for doc, meta, dist in zip(docs, metas, distances)
+            {"text": doc, "source": meta.get("source", "?"), "distance": round(dist, 4)} for doc, meta, dist in zip(docs, metas, distances)
         ]
 
         if not generate:

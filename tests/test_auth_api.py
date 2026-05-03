@@ -20,10 +20,7 @@ async def test_me_endpoint_with_token(client):
     token = resp.json()["access_token"]
 
     # Use token
-    resp2 = await client.get(
-        "/api/v1/auth/me",
-        headers={"Authorization": f"Bearer {token}"}
-    )
+    resp2 = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert resp2.status_code == 200
     data = resp2.json()
     assert "name" in data
@@ -38,10 +35,7 @@ async def test_me_without_auth_header(client):
 
 @pytest.mark.anyio
 async def test_me_with_invalid_token(client):
-    resp = await client.get(
-        "/api/v1/auth/me",
-        headers={"Authorization": "Bearer invalid-token"}
-    )
+    resp = await client.get("/api/v1/auth/me", headers={"Authorization": "Bearer invalid-token"})
     assert resp.status_code == 401
 
 

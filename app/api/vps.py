@@ -5,11 +5,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.shell_executor import ShellExecutor
 from app.core.config import get_settings
+from app.core.shell_executor import ShellExecutor
 from app.middleware.dependencies import require_admin
 
 router = APIRouter(prefix="/api/v1/vps", tags=["vps"])
+
 
 def _vps_ssh():
     s = get_settings()

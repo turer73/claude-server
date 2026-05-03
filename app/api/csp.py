@@ -3,12 +3,13 @@ CSP Violation Reporting API
 Merkezi CSP violation toplama, dedup, sorgulama.
 VPS csp-collector bu endpoint'e batch gonderir.
 """
-import sqlite3
+
 import os
+import sqlite3
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, Header
+
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
-from typing import Optional
 
 DB_PATH = "/opt/linux-ai-server/data/claude_memory.db"
 
@@ -40,9 +41,9 @@ class ViolationReport(BaseModel):
     site: str
     directive: str
     blocked_uri: str
-    source_file: Optional[str] = None
+    source_file: str | None = None
     disposition: str = "enforce"
-    user_agent: Optional[str] = None
+    user_agent: str | None = None
     hit_count: int = 1
 
 
@@ -75,13 +76,16 @@ def receive_violations(
                      user_agent = COALESCE(excluded.user_agent, user_agent),
                      source_file = COALESCE(excluded.source_file, source_file),
                      resolved = 0""",
-                (v.site, v.directive, v.blocked_uri, v.source_file,
-                 v.disposition, v.user_agent, now, now, v.hit_count),
+                (v.site, v.directive, v.blocked_uri, v.source_file, v.disposition, v.user_agent, now, now, v.hit_count),
             )
-            if cur.lastrowid and db.execute(
-                "SELECT hit_count FROM csp_violations WHERE site=? AND directive=? AND blocked_uri=?",
-                (v.site, v.directive, v.blocked_uri)
-            ).fetchone()["hit_count"] == v.hit_count:
+            if (
+                cur.lastrowid
+                and db.execute(
+                    "SELECT hit_count FROM csp_violations WHERE site=? AND directive=? AND blocked_uri=?",
+                    (v.site, v.directive, v.blocked_uri),
+                ).fetchone()["hit_count"]
+                == v.hit_count
+            ):
                 new_count += 1
             else:
                 updated_count += 1
@@ -95,8 +99,8 @@ def receive_violations(
 
 @router.get("/violations")
 def list_violations(
-    site: Optional[str] = None,
-    resolved: Optional[int] = None,
+    site: str | None = None,
+    resolved: int | None = None,
     limit: int = 50,
     x_memory_key: str = Header(..., alias="X-Memory-Key"),
 ):
@@ -113,10 +117,7 @@ def list_violations(
         params.append(resolved)
 
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
-    rows = db.execute(
-        f"SELECT * FROM csp_violations {where} ORDER BY last_seen_at DESC LIMIT ?",
-        params + [limit]
-    ).fetchall()
+    rows = db.execute(f"SELECT * FROM csp_violations {where} ORDER BY last_seen_at DESC LIMIT ?", params + [limit]).fetchall()
     db.close()
     return [dict(r) for r in rows]
 
@@ -150,9 +151,7 @@ def resolve_violation(
     """Violation'i cozuldu olarak isaretle."""
     _check_key(x_memory_key)
     db = _get_db()
-    cur = db.execute(
-        "UPDATE csp_violations SET resolved=1 WHERE id=?", (violation_id,)
-    )
+    cur = db.execute("UPDATE csp_violations SET resolved=1 WHERE id=?", (violation_id,))
     db.commit()
     db.close()
     if cur.rowcount == 0:
