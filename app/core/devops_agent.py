@@ -309,10 +309,12 @@ class DevOpsAgent:
 
     async def _remediate(self, alert: Alert) -> None:
         """Execute remediation playbook for an alert."""
-        # Check cooldown
+        # Check cooldown — only blocks if we've actually remediated this source
+        # before. The previous default of 0 broke on freshly-booted hosts where
+        # time.monotonic() < cooldown_seconds.
         now = time.monotonic()
-        last = self._cooldowns.get(alert.source, 0)
-        if now - last < self._cooldown_seconds:
+        last = self._cooldowns.get(alert.source)
+        if last is not None and (now - last) < self._cooldown_seconds:
             return
 
         playbook_key = f"{alert.source}_critical"
