@@ -48,9 +48,17 @@ DANGEROUS_PATTERNS=(
   'chown[[:space:]]+-R.*[[:space:]]+/[[:space:]]'
 )
 
+# Ack: hook'un kendi env'inden VEYA komutun basina prefix olarak gelen
+# HOOK_DESTRUCTIVE_ACK=1 (bash: VAR=val cmd ...) ile kabul edilir.
+# Komut prefix yolu zorunlu cunku hook child process degil — env vars kullanici komutuyla bize gelmez.
+ack_present() {
+  [ -n "${HOOK_DESTRUCTIVE_ACK:-}" ] && return 0
+  printf '%s' "$CMD" | grep -qE '(^|[[:space:];&|])HOOK_DESTRUCTIVE_ACK=1([[:space:]]|$)'
+}
+
 for pat in "${DANGEROUS_PATTERNS[@]}"; do
   if printf '%s' "$CMD" | grep -qE "$pat"; then
-    if [ "${HOOK_AUTONOMY:-supervised}" = "autonomous" ] && [ -n "${HOOK_DESTRUCTIVE_ACK:-}" ]; then
+    if [ "${HOOK_AUTONOMY:-supervised}" = "autonomous" ] && ack_present; then
       hook_log "OTONOM BYPASS: $CMD (pattern: $pat)"
       exit 0
     fi
@@ -62,8 +70,9 @@ for pat in "${DANGEROUS_PATTERNS[@]}"; do
       echo ""
       echo "Karar:"
       echo "  - Gercekten yapilmasi gerekiyorsa kullaniciya nedenini aciklayip onay iste."
-      echo "  - Onay alindiktan sonra HOOK_DESTRUCTIVE_ACK=1 ortam degiskenini set ederek tekrar dene."
-      echo "  - Otonom modda calisiyorsan: HOOK_DESTRUCTIVE_ACK=1 set edilmedikce calistirma."
+      echo "  - Onay alindiktan sonra komutun basina HOOK_DESTRUCTIVE_ACK=1 prefix'ini ekleyerek tekrar dene."
+      echo "    Ornek: HOOK_DESTRUCTIVE_ACK=1 rm -rf /tmp/foo"
+      echo "  - Otonom modda calisiyorsan: prefix olmadan calistirma."
     } >&2
     exit 2
   fi

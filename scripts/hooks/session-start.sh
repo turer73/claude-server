@@ -13,8 +13,30 @@ if [ ! -r "$DB" ]; then
   exit 0
 fi
 
-# Stdin'i oku ama gerekli olan yok — sadece okuma
-cat > /dev/null 2>&1 || true
+# Stdin'den Claude Code hook input'u oku (cwd, session_id, hook_event_name)
+# JSON parse fail veya jq yoksa graceful degrade — eski davranis (project filter yok)
+HOOK_INPUT=$(cat 2>/dev/null)
+CWD=$(echo "$HOOK_INPUT" | jq -r '.cwd // empty' 2>/dev/null)
+
+# cwd → proje türevi. Yaygın repo kök yapıları:
+#   /data/projects/<name>          → <name>
+#   /opt/linux-ai-server[/...]     → linux-ai-server
+#   /home/klipperos/work/<name>    → <name>
+RAW_PROJECT=""
+case "$CWD" in
+  /data/projects/*)        RAW_PROJECT=$(echo "$CWD" | awk -F/ '{print $4}') ;;
+  /opt/linux-ai-server*)   RAW_PROJECT="linux-ai-server" ;;
+  /home/klipperos/work/*)  RAW_PROJECT=$(echo "$CWD" | awk -F/ '{print $5}') ;;
+esac
+
+# Fuzzy match için ilk segment (- ve . öncesi). Aile yakalar:
+#   panola → panola, panola.app, panola-social, panola.com (DB project adlari)
+#   bilge-arena → bilge → bilge-arena, bilgearena.com
+#   linux-ai-server → linux → linux-ai-server
+PROJECT_PREFIX=""
+if [ -n "$RAW_PROJECT" ]; then
+  PROJECT_PREFIX=$(echo "$RAW_PROJECT" | awk -F'[.-]' '{print $1}')
+fi
 
 {
   echo "=== HAFIZA SISTEMI — Oturum Baslangici ($DEV) ==="
@@ -25,20 +47,51 @@ cat > /dev/null 2>&1 || true
   sqlite3 "$DB" "SELECT '  Hafiza: ' || COUNT(*) || ' kayit' FROM memories WHERE active=1;" 2>/dev/null
   sqlite3 "$DB" "SELECT '  Oturum: ' || COUNT(*) || ' toplam (' || (SELECT COUNT(*) FROM sessions WHERE device_name='$DEV') || ' bu cihaz)' FROM sessions;" 2>/dev/null
   sqlite3 "$DB" "SELECT '  Otonomi modu: ' || '$HOOK_AUTONOMY';" 2>/dev/null
-
-  # Acik bug'lar
-  BUGS=$(sqlite3 "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='bug' AND status='active';" 2>/dev/null)
-  if [ "${BUGS:-0}" -gt 0 ]; then
-    echo ""
-    echo "Acik Bug'lar ($BUGS):"
-    sqlite3 "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title FROM discoveries WHERE type='bug' AND status='active' ORDER BY created_at DESC LIMIT 10;" 2>/dev/null
+  if [ -n "$PROJECT_PREFIX" ]; then
+    echo "  Proje (cwd): $RAW_PROJECT (filter prefix: $PROJECT_PREFIX*)"
   fi
 
-  # Aktif planlar
-  PLANS=$(sqlite3 "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='plan' AND status='active';" 2>/dev/null)
-  if [ "${PLANS:-0}" -gt 0 ]; then
+  # ─── Acik bug'lar — proje-bazli relevance + stale-filter ────────
+  # Stale tanımı: 30+ gün açık + read_count=0 → büyük olasılıkla flake/obsolete,
+  # session-start'ta gizle; LLM triage cron (memory-triage-llm.py) zaten temizleyecek.
+  # /memory bugs ile tam liste hala erişilebilir.
+  BUGS_TOTAL=$(sqlite3 "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='bug' AND status='active';" 2>/dev/null)
+
+  if [ "${BUGS_TOTAL:-0}" -gt 0 ] && [ -n "$PROJECT_PREFIX" ]; then
+    # Bu projedeki bug'lar — STALE FILTER YOK (proje bağlamı her zaman göster)
+    PROJ_BUGS=$(sqlite3 "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='bug' AND status='active' AND project LIKE '${PROJECT_PREFIX}%';" 2>/dev/null)
+    if [ "${PROJ_BUGS:-0}" -gt 0 ]; then
+      echo ""
+      echo "Bu Projedeki Bug'lar ($PROJ_BUGS):"
+      sqlite3 "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title FROM discoveries WHERE type='bug' AND status='active' AND project LIKE '${PROJECT_PREFIX}%' ORDER BY created_at DESC LIMIT 7;" 2>/dev/null
+    fi
+
+    # Diğer projeler — STALE FILTER (30+ gün unread'leri çıkar)
+    OTHER_BUGS=$(sqlite3 "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='bug' AND status='active' AND project NOT LIKE '${PROJECT_PREFIX}%' AND NOT (julianday('now') - julianday(created_at) > 30 AND read_count = 0);" 2>/dev/null)
+    if [ "${OTHER_BUGS:-0}" -gt 0 ]; then
+      echo ""
+      echo "Diğer Açık Bug'lar ($OTHER_BUGS, stale filtreli):"
+      sqlite3 "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title FROM discoveries WHERE type='bug' AND status='active' AND project NOT LIKE '${PROJECT_PREFIX}%' AND NOT (julianday('now') - julianday(created_at) > 30 AND read_count = 0) ORDER BY created_at DESC LIMIT 5;" 2>/dev/null
+    fi
+  elif [ "${BUGS_TOTAL:-0}" -gt 0 ]; then
+    # Proje türetilemedi — eski davranış, stale filter ile
     echo ""
-    echo "Aktif Planlar ($PLANS):"
+    echo "Acik Bug'lar ($BUGS_TOTAL, stale filtreli):"
+    sqlite3 "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title FROM discoveries WHERE type='bug' AND status='active' AND NOT (julianday('now') - julianday(created_at) > 30 AND read_count = 0) ORDER BY created_at DESC LIMIT 10;" 2>/dev/null
+  fi
+
+  # ─── Aktif planlar — aynı project relevance ─────────────────────
+  PLANS_TOTAL=$(sqlite3 "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='plan' AND status='active';" 2>/dev/null)
+  if [ "${PLANS_TOTAL:-0}" -gt 0 ] && [ -n "$PROJECT_PREFIX" ]; then
+    PROJ_PLANS=$(sqlite3 "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='plan' AND status='active' AND project LIKE '${PROJECT_PREFIX}%';" 2>/dev/null)
+    if [ "${PROJ_PLANS:-0}" -gt 0 ]; then
+      echo ""
+      echo "Bu Projedeki Planlar ($PROJ_PLANS):"
+      sqlite3 "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title FROM discoveries WHERE type='plan' AND status='active' AND project LIKE '${PROJECT_PREFIX}%' ORDER BY created_at DESC LIMIT 5;" 2>/dev/null
+    fi
+  elif [ "${PLANS_TOTAL:-0}" -gt 0 ]; then
+    echo ""
+    echo "Aktif Planlar ($PLANS_TOTAL):"
     sqlite3 "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title FROM discoveries WHERE type='plan' AND status='active' ORDER BY created_at DESC LIMIT 5;" 2>/dev/null
   fi
 
