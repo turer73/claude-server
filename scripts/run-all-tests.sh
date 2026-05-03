@@ -177,14 +177,43 @@ send_telegram() {
     status_text="BAŞARISIZ"
   fi
 
+  # Bir projenin pesi sira fail streak'ini coverage.db'den oku.
+  # save_coverage send_telegram sonrasi cagrilir; bu yuzden son run henuz tabloda yok.
+  consecutive_fails() {
+    local proj="$1"
+    sqlite3 "$COVERAGE_DB" "
+      SELECT IFNULL(json_extract(details,'\$.\"${proj}\".status'),'absent')
+      FROM test_runs ORDER BY id DESC LIMIT 30;" 2>/dev/null \
+    | awk '
+        /^fail$/ { c++; next }
+        /^pass$/ { print c+0; exit }
+        /^absent$/ { print c+0; exit }
+        END { print c+0 }'
+  }
+
   local failed_list=""
+  local persistent_count=0
   for p in "${PROJECTS[@]}"; do
     IFS=: read -r name status passed failed_count <<< "$p"
     if [ "$status" = "fail" ]; then
-      failed_list+="  ✗ $name ($failed_count failed)
+      local streak
+      streak=$(consecutive_fails "$name")
+      streak=$((${streak:-0} + 1))  # +1: bu run henuz DB'de degil
+      local tag=""
+      if [ "$streak" -ge 3 ]; then
+        tag=" 🚨 PERSISTENT (${streak}g)"
+        persistent_count=$((persistent_count + 1))
+      fi
+      failed_list+="  ✗ $name ($failed_count failed)${tag}
 "
     fi
   done
+
+  # Persistent varsa baslik emojisini cevir (kalici problem != flaky)
+  if [ "$persistent_count" -gt 0 ]; then
+    emoji="🚨🚨"
+    status_text="KALICI BAŞARISIZ ($persistent_count proje)"
+  fi
 
   local msg="$emoji *Test Runner — $status_text*
 

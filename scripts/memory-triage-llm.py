@@ -66,8 +66,10 @@ Hic okunmadi (read_count=0).
 
 Karar:
 - keep: hala gecerli, action gerekiyor (yapilmasi planlanan is veya devam eden teknik ders)
-- obsolete: artik gecerli degil (tamamlanmis veya gecersiz hale gelmis)
+- obsolete: artik gecerli degil (tamamlanmis veya gecersiz hale gelmis). Architecture turu icin: aciklamada degistirildigi/yerine yeni gectigi belirtilen servis (orn. "Coolify ile yonetiliyor" ama baska kayitta "Dokploy'a tasindi" gecmis) — obsolete say.
 - superseded: yenilesi gelmis bir kayit olabilir (eski cozum, yeni yaklasimla degistirilmiştir)
+
+Architecture icin emin degilsen "keep" sec — yanlis silmek yanlis tutmaktan daha pahali.
 
 Sadece tek kelime: keep, obsolete, veya superseded"""
 
@@ -98,6 +100,11 @@ def main():
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
+    # Two streams:
+    #  - learning/workaround/plan/config: read_count=0 AND age > MIN_AGE_DAYS
+    #  - architecture: age > 30d regardless of read_count (state snapshots
+    #    drift silently when infra changes — bkz. Coolify->Dokploy gecisi
+    #    sonrasi 24+ gun stale memory'ler)
     cur.execute(
         f"""
         SELECT id, project, type, title, details,
@@ -105,9 +112,14 @@ def main():
                CAST(julianday('now') - julianday(created_at) AS INT) as age_days
         FROM discoveries
         WHERE status='active'
-          AND read_count=0
-          AND type IN ('learning', 'workaround', 'plan', 'config')
-          AND julianday('now') - julianday(created_at) > {MIN_AGE_DAYS}
+          AND (
+            (read_count=0
+             AND type IN ('learning','workaround','plan','config')
+             AND julianday('now') - julianday(created_at) > {MIN_AGE_DAYS})
+            OR
+            (type='architecture'
+             AND julianday('now') - julianday(created_at) > 30)
+          )
         ORDER BY created_at ASC
         LIMIT {MAX_BATCH}
         """
@@ -115,7 +127,7 @@ def main():
     rows = [dict(r) for r in cur.fetchall()]
 
     if not rows:
-        log(f"no candidates (age>{MIN_AGE_DAYS}d, active+unread+learning/workaround/plan/config)")
+        log("no candidates (learning/workaround/plan/config age>14d unread, OR architecture age>30d)")
         conn.close()
         return
 
