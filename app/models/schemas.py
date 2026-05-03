@@ -316,6 +316,7 @@ VALID_CI_PROJECTS = [
     "petvet",
     "renderhane",
     "bilge-arena",
+    "koken-akademi",
     "klipper",
     "panola-rag",
 ]

@@ -19,40 +19,48 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 PROJECT_REGISTRY: dict[str, dict] = {
+    # Tüm Node projeleri scripts/run-all-tests.sh ile aynı path/cmd
+    # kullanir (2026-05-01: Windows -> Linux migrasyon, env=local).
     "panola": {
-        "path": "F:/projelerim/panola",
+        "path": "/data/projects/panola",
         "test_cmd": "npx vitest run --reporter=json",
-        "env": "remote_windows",
+        "env": "local",
         "framework": "vitest",
     },
     "kuafor-panel": {
-        "path": "F:/projelerim/kuafor/panel",
+        "path": "/data/projects/kuafor/panel",
         "test_cmd": "npx vitest run --reporter=json",
-        "env": "remote_windows",
+        "env": "local",
         "framework": "vitest",
     },
     "kuafor-worker": {
-        "path": "F:/projelerim/kuafor/worker",
+        "path": "/data/projects/kuafor/worker",
         "test_cmd": "npx vitest run --reporter=json",
-        "env": "remote_windows",
+        "env": "local",
         "framework": "vitest",
     },
     "petvet": {
-        "path": "F:/projelerim/petvet/web",
+        "path": "/data/projects/petvet/web",
         "test_cmd": "npx vitest run --reporter=json",
-        "env": "remote_windows",
+        "env": "local",
         "framework": "vitest",
     },
     "renderhane": {
-        "path": "F:/projelerim/renderhane",
+        "path": "/data/projects/renderhane",
         "test_cmd": "npx vitest run --reporter=json",
-        "env": "remote_windows",
+        "env": "local",
         "framework": "vitest",
     },
     "bilge-arena": {
-        "path": "F:/projelerim/bilge-arena",
+        "path": "/data/projects/bilge-arena",
         "test_cmd": "npx vitest run --reporter=json",
-        "env": "remote_windows",
+        "env": "local",
+        "framework": "vitest",
+    },
+    "koken-akademi": {
+        "path": "/data/projects/koken-akademi/apps/api",
+        "test_cmd": "npx vitest run --reporter=json",
+        "env": "local",
         "framework": "vitest",
     },
     "klipper": {
@@ -95,18 +103,33 @@ def parse_vitest_json(raw: str) -> dict:
             "failures": [{"test_file": str, "test_name": str, "error": str}, ...],
         }
     """
+    # vitest-pool-workers (Cloudflare) prefixes [vpw:info]/[vpw:debug] log
+    # lines around the JSON. Find the first '{' and last '}' that look like
+    # the report object.
+    def _extract_json(s: str) -> str:
+        first = s.find('{"')
+        if first < 0:
+            first = s.find("{")
+        last = s.rfind("}")
+        if first >= 0 and last > first:
+            return s[first : last + 1]
+        return s
+
     try:
         data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        logger.warning("vitest JSON parse failed: %s", exc)
-        return {
-            "total": 0,
-            "passed": 0,
-            "failed": 0,
-            "duration_s": 0.0,
-            "failures": [],
-            "error": f"JSON parse error: {exc}",
-        }
+    except json.JSONDecodeError:
+        try:
+            data = json.loads(_extract_json(raw))
+        except json.JSONDecodeError as exc:
+            logger.warning("vitest JSON parse failed: %s", exc)
+            return {
+                "total": 0,
+                "passed": 0,
+                "failed": 0,
+                "duration_s": 0.0,
+                "failures": [],
+                "error": f"JSON parse error: {exc}",
+            }
 
     # vitest JSON structure: { testResults: [...], numTotalTests, ... }
     num_total = data.get("numTotalTests", 0)
