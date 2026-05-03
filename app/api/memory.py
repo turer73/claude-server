@@ -518,11 +518,16 @@ async def get_discovery(discovery_id: int):
 
 @router.post("/discoveries")
 async def create_discovery(data: DiscoveryCreate):
-    """Duplicate korumalı discovery oluştur — aynı project+type+title varsa günceller"""
+    """Duplicate korumalı discovery oluştur — aynı project+type+title aktif kayıt varsa günceller.
+
+    Sadece status='active' kayıtları duplicate olarak kabul edilir. completed/
+    obsolete/superseded kayıtlar yeni POST'ları bloklamaz; aynı title ile yeni
+    bulgu gelirse regression olarak yeni active row oluşur.
+    """
     db = get_db()
     try:
         existing = db.execute(
-            "SELECT id FROM discoveries WHERE project=? AND type=? AND title=?",
+            "SELECT id FROM discoveries WHERE project=? AND type=? AND title=? AND status='active'",
             (data.project, data.type, data.title)
         ).fetchone()
         if existing:
