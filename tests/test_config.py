@@ -40,6 +40,23 @@ def test_monitoring_defaults():
     assert s.alert_memory_percent == 85
 
 
+def test_monitor_watchlists_defaults():
+    s = Settings()
+    assert "linux-ai-server" in s.monitor_critical_services
+    assert "dozzle" in s.monitor_critical_containers
+    assert "uptime-kuma" in s.monitor_critical_containers
+    assert "panola-postgres" in s.monitor_vps_containers
+    assert "coolify" not in s.monitor_vps_containers
+
+
+def test_monitor_watchlists_csv_env(monkeypatch):
+    monkeypatch.setenv("MONITOR_CRITICAL_CONTAINERS", "foo, bar ,baz")
+    monkeypatch.setenv("MONITOR_VPS_CONTAINERS", "alpha,beta")
+    s = Settings()
+    assert s.monitor_critical_containers == ["foo", "bar", "baz"]
+    assert s.monitor_vps_containers == ["alpha", "beta"]
+
+
 def test_webops_tokens_empty_by_default():
     s = Settings()
     assert s.vercel_token == ""

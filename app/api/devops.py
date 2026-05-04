@@ -82,10 +82,13 @@ async def remediation_log(request: Request, _: None = Depends(require_auth)) -> 
 @router.get("/playbooks")
 async def list_playbooks(_: None = Depends(require_auth)) -> dict:
     """List all defined remediation playbooks."""
-    from app.core.devops_agent import CRITICAL_CONTAINERS, CRITICAL_SERVICES, PLAYBOOKS
+    from app.core.config import get_settings
+    from app.core.devops_agent import PLAYBOOKS
 
+    settings = get_settings()
     return {
         "playbooks": {k: [s["desc"] for s in v] for k, v in PLAYBOOKS.items()},
-        "critical_services": CRITICAL_SERVICES,
-        "critical_containers": CRITICAL_CONTAINERS,
+        "critical_services": settings.monitor_critical_services,
+        "critical_containers": settings.monitor_critical_containers,
+        "vps_containers": settings.monitor_vps_containers,
     }

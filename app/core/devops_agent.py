@@ -69,11 +69,8 @@ PLAYBOOKS: dict[str, list[dict]] = {
     ],
 }
 
-CRITICAL_SERVICES = ["linux-ai-server", "ollama"]
-CRITICAL_CONTAINERS = ["n8n", "prometheus", "grafana", "chromadb", "paperless"]
 VPS_HOST = os.environ.get("VPS_HOST", "")
 VPS_SSH = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 {VPS_HOST}"
-VPS_CONTAINERS = ["coolify", "panola-postgres", "panola-caddy", "n8n", "uptime-kuma", "plausible-plausible-1"]
 
 
 class DevOpsAgent:
@@ -98,6 +95,11 @@ class DevOpsAgent:
             "disk": settings.alert_disk_percent,
             "temperature": settings.alert_temperature_c,
         }
+
+        # Watchlists (settings-driven; defaults match current host state)
+        self._critical_services = list(settings.monitor_critical_services)
+        self._critical_containers = list(settings.monitor_critical_containers)
+        self._vps_containers = list(settings.monitor_vps_containers)
 
         # Rolling metrics for baseline (last 120 samples = 1 hour at 30s interval)
         self._history: deque[dict] = deque(maxlen=120)
@@ -382,7 +384,7 @@ class DevOpsAgent:
         now = datetime.now(UTC).isoformat()
 
         # Systemd services
-        for svc in CRITICAL_SERVICES:
+        for svc in self._critical_services:
             try:
                 result = await self._executor.execute(f"systemctl is-active {svc}", timeout=5)
                 if result.get("stdout", "").strip() != "active":
@@ -403,7 +405,7 @@ class DevOpsAgent:
                 pass
 
         # Docker containers
-        for container in CRITICAL_CONTAINERS:
+        for container in self._critical_containers:
             try:
                 result = await self._executor.execute(f"docker ps --filter name={container} --format '{{{{.Status}}}}'", timeout=5)
                 status = result.get("stdout", "").strip()
@@ -450,7 +452,7 @@ class DevOpsAgent:
 
             # Check each critical container
             running = result.get("stdout", "")
-            for container in VPS_CONTAINERS:
+            for container in self._vps_containers:
                 source = f"vps:{container}"
                 if container not in running or "Up" not in running.split(container)[1].split("\n")[0] if container in running else True:
                     # Container might be down — simple check

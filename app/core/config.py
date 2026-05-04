@@ -5,8 +5,11 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 
+from typing import Annotated
+
 import yaml
-from pydantic_settings import BaseSettings
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, NoDecode
 
 DEFAULT_ENV_FILE = "/opt/linux-ai-server/.env"
 
@@ -150,6 +153,34 @@ class Settings(BaseSettings):
     alert_memory_percent: int = 85
     alert_disk_percent: int = 90
     alert_temperature_c: int = 80
+
+    # DevOps agent watchlists (CSV in env, e.g. MONITOR_CRITICAL_CONTAINERS=dozzle,uptime-kuma)
+    # NoDecode disables pydantic-settings' default JSON parse so the validator below sees raw CSV.
+    monitor_critical_services: Annotated[list[str], NoDecode] = ["linux-ai-server", "ollama"]
+    monitor_critical_containers: Annotated[list[str], NoDecode] = ["dozzle", "uptime-kuma"]
+    monitor_vps_containers: Annotated[list[str], NoDecode] = [
+        "panola-postgres",
+        "panola-caddy",
+        "panola-postgrest",
+        "panola-auth",
+        "n8n",
+        "grafana",
+        "prometheus",
+        "dokploy-traefik",
+        "plausible-plausible-1",
+    ]
+
+    @field_validator(
+        "monitor_critical_services",
+        "monitor_critical_containers",
+        "monitor_vps_containers",
+        mode="before",
+    )
+    @classmethod
+    def _split_csv_list(cls, v):
+        if isinstance(v, str):
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return v
 
     # WebOps tokens
     vercel_token: str = ""
