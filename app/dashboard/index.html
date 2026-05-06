@@ -1180,7 +1180,9 @@ function claudeAddMsg(role, text, cost) {
   const div = document.createElement('div');
   div.className = 'cmsg ' + role;
   if (role === 'bot') {
-    const costStr = cost ? ' · $' + cost.toFixed(4) : '';
+    // Auth Max OAuth uzerinden, fatura yok — bu rakam pay-per-use API'de
+    // ne kadar olacaginin teorik karsiligi. Rate-limit takibi icin tutuyoruz.
+    const costStr = cost ? ' · ≈$' + cost.toFixed(4) + ' (Max kapsami)' : '';
     div.innerHTML = '<div class="clabel">Claude' + costStr + '</div>' + claudeFmt(text);
   } else {
     div.textContent = text;
