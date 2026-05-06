@@ -158,26 +158,57 @@ async def run_claude(body: ClaudePromptRequest):
 
 @router.get("/sessions", dependencies=[Depends(require_admin)])
 async def list_sessions():
-    """List recent Claude Code sessions."""
-    sessions_dir = os.path.expanduser("~/.claude/sessions")
-    if not os.path.isdir(sessions_dir):
+    """List Claude Code sessions across all projects.
+
+    Reads `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl` — the real
+    session store as of Claude Code 2.x. The legacy `~/.claude/sessions`
+    flat directory is no longer populated; the previous implementation
+    scanned the wrong path and always returned a near-empty list.
+
+    Project name is reconstructed by treating leading "-" + remaining "-"
+    as "/" (e.g. "-opt-linux-ai-server" → "/opt/linux-ai-server"). Paths
+    with literal dashes round-trip imperfectly but are rare in practice.
+    """
+    projects_root = os.path.expanduser("~/.claude/projects")
+    if not os.path.isdir(projects_root):
         return {"sessions": []}
 
     sessions = []
-    for fname in sorted(os.listdir(sessions_dir), reverse=True)[:20]:
-        fpath = os.path.join(sessions_dir, fname)
-        try:
-            stat = os.stat(fpath)
-            sessions.append(
-                {
-                    "id": fname.replace(".json", ""),
-                    "modified": stat.st_mtime,
-                    "size": stat.st_size,
-                }
-            )
-        except OSError:
-            pass
-    return {"sessions": sessions}
+    for proj_dir in os.listdir(projects_root):
+        proj_path = os.path.join(projects_root, proj_dir)
+        if not os.path.isdir(proj_path):
+            continue
+        # Encoded dir uses "-" for both "/" and literal hyphens, so the
+        # decoded path is ambiguous. If the naive decode points to a real
+        # directory, prefer it; otherwise show the raw encoded form so
+        # the user is not misled about what their project is called.
+        if proj_dir.startswith("-"):
+            decoded = "/" + proj_dir.lstrip("-").replace("-", "/")
+            project = decoded if os.path.isdir(decoded) else proj_dir.lstrip("-")
+        else:
+            project = proj_dir
+        for fname in os.listdir(proj_path):
+            if not fname.endswith(".jsonl"):
+                continue
+            fpath = os.path.join(proj_path, fname)
+            try:
+                stat = os.stat(fpath)
+                with open(fpath, encoding="utf-8", errors="ignore") as f:
+                    line_count = sum(1 for _ in f)
+                sessions.append(
+                    {
+                        "id": fname.removesuffix(".jsonl"),
+                        "project": project,
+                        "modified": stat.st_mtime,
+                        "size_bytes": stat.st_size,
+                        "lines": line_count,
+                    }
+                )
+            except OSError:
+                pass
+
+    sessions.sort(key=lambda s: s["modified"], reverse=True)
+    return {"sessions": sessions[:20]}
 
 
 @router.get("/ui", dependencies=[Depends(require_auth)])

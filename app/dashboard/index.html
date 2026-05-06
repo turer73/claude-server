@@ -471,7 +471,16 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
           <div class="claude-bar">
             <button onclick="claudeNew()">Yeni Oturum</button>
             <button onclick="claudeContinue()">Devam Et</button>
+            <button onclick="claudeListSessions()">Oturum Sec</button>
             <span class="csid" id="claudeSid"></span>
+          </div>
+          <div id="claudeSessionPicker" style="display:none;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:12px">
+            <div style="display:flex;gap:8px;margin-bottom:8px">
+              <input id="claudeSidInput" placeholder="Session ID yapistir..." style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;font-family:ui-monospace,monospace">
+              <button class="vault-btn" onclick="claudeSetSession(document.getElementById('claudeSidInput').value)">Baglan</button>
+              <button class="vault-btn" onclick="document.getElementById('claudeSessionPicker').style.display='none'">Kapat</button>
+            </div>
+            <div id="claudeSessionList" style="max-height:280px;overflow-y:auto;font-size:12px"></div>
           </div>
           <div id="claudeMessages">
             <div class="cmsg bot"><div class="clabel">Claude</div>Oturum bazli chat. Onceki konusmayi hatirlayarak devam eder.</div>
@@ -483,7 +492,6 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
         </div>
       </div>
 
-      <!-- VAULT -->
       <!-- OPERATIONS — açık bug + okunmamış not + commit feed + pentest + digest -->
       <div id="page-operations" class="page">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;flex-wrap:wrap">
@@ -1103,6 +1111,46 @@ function claudeNew() {
 function claudeContinue() {
   if (!claudeSessionId) { claudeAddMsg('bot', 'Devam edilecek oturum yok.'); return; }
   claudeAddMsg('bot', 'Oturum devam ediyor: ' + claudeSessionId.slice(0,8));
+}
+
+function claudeSetSession(sid) {
+  sid = (sid || '').trim();
+  if (!/^[0-9a-f-]{36}$/i.test(sid)) {
+    toast('Gecersiz session id (UUID bekleniyor)', 'error');
+    return;
+  }
+  claudeSessionId = sid;
+  localStorage.setItem('claude_session_id', sid);
+  claudeUpdateSid();
+  document.getElementById('claudeSessionPicker').style.display = 'none';
+  document.getElementById('claudeMessages').innerHTML =
+    '<div class="cmsg bot"><div class="clabel">Claude</div>Eski oturuma baglandi: ' + sid.slice(0,8) +
+    '... Mesaj attiginda --resume ile devam edilecek.</div>';
+  toast('Oturum bagli: ' + sid.slice(0,8), 'success');
+}
+
+async function claudeListSessions() {
+  const picker = document.getElementById('claudeSessionPicker');
+  const list = document.getElementById('claudeSessionList');
+  picker.style.display = 'block';
+  list.innerHTML = '<div class="loading"><div class="spinner"></div>Yukleniyor...</div>';
+  const d = await api('/claude/sessions');
+  if (!d || !d.sessions) {
+    list.innerHTML = '<span style="color:var(--red)">Yuklenemedi</span>';
+    return;
+  }
+  if (!d.sessions.length) {
+    list.innerHTML = '<span style="color:var(--dim)">Kayitli oturum yok</span>';
+    return;
+  }
+  list.innerHTML = d.sessions.map(s => {
+    const when = new Date(s.modified * 1000).toLocaleString('tr');
+    const sizeKB = (s.size_bytes / 1024).toFixed(0);
+    return `<div onclick="claudeSetSession('${s.id}')" style="padding:8px;border-bottom:1px solid var(--border);cursor:pointer" onmouseover="this.style.background='var(--bg)'" onmouseout="this.style.background=''">
+      <div style="font-family:ui-monospace,monospace;color:var(--accent)">${s.id.slice(0,8)}...</div>
+      <div style="color:var(--dim);font-size:11px">${esc(s.project)} · ${s.lines} satir · ${sizeKB} KB · ${esc(when)}</div>
+    </div>`;
+  }).join('');
 }
 
 function claudeAddMsg(role, text, cost) {
