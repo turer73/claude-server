@@ -55,6 +55,30 @@ if printf '%s' "$CMD" | grep -qiE '(pytest|npm[[:space:]]+(test|run[[:space:]]+t
     fi
   fi
 
+  # Test class detection — composite cmd'lerde regex eşleşen alt-komutu sınıfla.
+  # Trigger regex bug açarken VE rc=0 sonrası resolve ederken aynı sınıfı
+  # vermeli — title'a [class] etiketi koyup ona göre eşleşelim. Etiketsiz
+  # bug açma (class boş ise) — keyword'ün rastgele bir sub-string olarak
+  # geçtiği composite komutta yanlış pozitif üretir, atlıyoruz.
+  CLASS=""
+  case "$CMD" in
+    *pytest*)                                                                                  CLASS="pytest" ;;
+    *"npm test"*|*"npm run test"*|*"npm run build"*|*"npm run lint"*|*"npm run typecheck"*)    CLASS="npm" ;;
+    *"yarn test"*|*"yarn build"*|*"yarn lint"*)                                                CLASS="yarn" ;;
+    *"pnpm test"*|*"pnpm build"*|*"pnpm lint"*|*"pnpm exec tsc"*|*"pnpm typecheck"*)           CLASS="pnpm" ;;
+    *" tsc "*|*" tsc"|"tsc "*|"tsc")                                                           CLASS="tsc" ;;
+    *" ruff "*|*" ruff"|"ruff "*|"ruff")                                                       CLASS="ruff" ;;
+    *" mypy "*|*" mypy"|"mypy "*|"mypy")                                                       CLASS="mypy" ;;
+    *vitest*)                                                                                  CLASS="vitest" ;;
+    *jest*)                                                                                    CLASS="jest" ;;
+    *playwright*)                                                                              CLASS="playwright" ;;
+    *eslint*)                                                                                  CLASS="eslint" ;;
+    *"cargo test"*|*"cargo build"*|*"cargo check"*)                                            CLASS="cargo" ;;
+    *"go test"*|*"go build"*)                                                                  CLASS="go" ;;
+    *"make test"*|*"make check"*|*"make build"*)                                               CLASS="make" ;;
+    *" black "*|"black "*)                                                                     CLASS="black" ;;
+  esac
+
   # Test FAIL (rc != 0) ise discoveries'e bug olarak kaydet —
   # ama systemctl restart/status komutlarinda atla. Servis restart olunca
   # zincirdeki curl /health vs adimlari henuz acilmamis servise dustugu
@@ -65,67 +89,50 @@ if printf '%s' "$CMD" | grep -qiE '(pytest|npm[[:space:]]+(test|run[[:space:]]+t
   if printf '%s' "$CMD" | grep -qE 'systemctl[[:space:]]+(restart|status)'; then
     SKIP_BUG=1
   fi
-  if [ -n "$RC" ] && [ "$RC" != "0" ] && [ "$SKIP_BUG" = "0" ]; then
+  # Class boş ise bug açma — regex'in rastgele match ettiği composite komut.
+  if [ -n "$RC" ] && [ "$RC" != "0" ] && [ "$SKIP_BUG" = "0" ] && [ -n "$CLASS" ]; then
     # Tum dinamik veriler env var ile gecirilir — shell injection yok
     export _PROJECT="$(basename "$PWD")"
     export _DEVICE="$HOOK_DEVICE"
     export _CMD="$CMD"
     export _RC="$RC"
+    export _CLASS="$CLASS"
     export _DETAILS="$(printf '%s' "$EXTRACT" | cut -f4)"
     BODY=$(python3 -c '
 import os, json
 cmd = os.environ.get("_CMD","")
 rc = os.environ.get("_RC","?")
+cls = os.environ.get("_CLASS","")
 print(json.dumps({
   "device_name": os.environ.get("_DEVICE","unknown"),
   "project": os.environ.get("_PROJECT","unknown"),
   "type": "bug",
-  "title": ("test-fail: " + cmd)[:120],
+  "title": (f"test-fail [{cls}]: " + cmd)[:120],
   "details": ("exit=" + rc + " | " + os.environ.get("_DETAILS",""))[:1500],
   "status": "active",
-  "rationale": ("PostToolUse-hook auto-capture on klipper. Command exited rc=" + rc + " (non-zero) which the hook treats as a build/test/lint regression. Recorded as discoveries.bug for review; resolve by fixing root cause then PUT discoveries/{id} status=completed.")[:500]
+  "rationale": (f"PostToolUse-hook auto-capture on klipper. Command class={cls} exited rc=" + rc + " — treated as test/lint/build regression. Auto-resolves on next rc=0 run of the same class in the same project; title tag [{cls}] keeps the match exact even when the failing sub-command is buried in a composite shell line.")[:500]
 }))
 ')
     mem_post "/discoveries" "$BODY" >/dev/null 2>&1 || true
-    unset _PROJECT _DEVICE _CMD _RC _DETAILS
+    unset _PROJECT _DEVICE _CMD _RC _CLASS _DETAILS
   fi
 
-  # rc=0 ise: aynı projede aynı sınıftaki eski "test-fail:" bug'larını
-  # auto-resolve et. "Sınıf" kavramı kaba — pytest passed → tüm test-fail
-  # pytest bug'ları resolve. Risk: tek dosya geçerse genel pytest bug'ı da
-  # yanlış kapanır; ama ÖNEMLİ rejresyon olduğunda bir sonraki çalıştırmada
-  # aynı bug yeniden açılır (POST dedupe-on-active garanti). Faydası: 17
-  # stale-snapshot bug'ı (bu sabah temizlenen tip) bir daha birikmez.
-  if [ "${RC:-1}" = "0" ] && [ "$SKIP_BUG" = "0" ]; then
-    CLASS=""
-    case "$CMD" in
-      *pytest*)                              CLASS="pytest" ;;
-      *"npm test"*|*"npm run test"*|*"npm run build"*|*"npm run lint"*|*"npm run typecheck"*) CLASS="npm" ;;
-      *"yarn test"*|*"yarn build"*|*"yarn lint"*)   CLASS="yarn" ;;
-      *"pnpm test"*|*"pnpm build"*|*"pnpm lint"*|*"pnpm exec tsc"*) CLASS="pnpm" ;;
-      *" tsc "*|*" tsc"|"tsc "*|"tsc")       CLASS="tsc" ;;
-      *" ruff "*|*" ruff"|"ruff "*|"ruff")   CLASS="ruff" ;;
-      *" mypy "*|*" mypy"|"mypy "*|"mypy")   CLASS="mypy" ;;
-      *vitest*)                              CLASS="vitest" ;;
-      *jest*)                                CLASS="jest" ;;
-      *playwright*)                          CLASS="playwright" ;;
-      *eslint*)                              CLASS="eslint" ;;
-      *"cargo test"*|*"cargo build"*|*"cargo check"*) CLASS="cargo" ;;
-      *"go test"*|*"go build"*)              CLASS="go" ;;
-      *"make test"*|*"make check"*|*"make build"*) CLASS="make" ;;
-      *" black "*|"black "*)                 CLASS="black" ;;
-    esac
-    if [ -n "$CLASS" ]; then
-      PROJECT_NAME="$(basename "$PWD" | sed "s/'/''/g")"
-      CLASS_ESC="$(printf '%s' "$CLASS" | sed "s/'/''/g")"
-      sqlite3 "$HOOK_DB" "UPDATE discoveries
-        SET resolved=1, status='completed'
-        WHERE project='$PROJECT_NAME'
-          AND type='bug'
-          AND status='active'
-          AND title LIKE 'test-fail:%'
-          AND lower(title) LIKE '%' || lower('$CLASS_ESC') || '%'" 2>/dev/null || true
-    fi
+  # rc=0 ise: aynı projede aynı sınıftaki eski "test-fail [class]:" bug'larını
+  # auto-resolve et. Etiket sayesinde title'da [class] aramak yeterli — composite
+  # komut nedeniyle title'da class keyword'ü bulunmasa bile etiket korunur.
+  # Risk: tek dosya geçerse genel class bug'ı da yanlış kapanır; ama gerçek
+  # regression bir sonraki çalıştırmada yeniden açılır (POST dedupe-on-active).
+  if [ "${RC:-1}" = "0" ] && [ "$SKIP_BUG" = "0" ] && [ -n "$CLASS" ]; then
+    PROJECT_NAME="$(basename "$PWD" | sed "s/'/''/g")"
+    CLASS_TAG="[$CLASS]"
+    CLASS_ESC="$(printf '%s' "$CLASS_TAG" | sed "s/'/''/g")"
+    sqlite3 "$HOOK_DB" "UPDATE discoveries
+      SET resolved=1, status='completed'
+      WHERE project='$PROJECT_NAME'
+        AND type='bug'
+        AND status='active'
+        AND title LIKE 'test-fail%'
+        AND title LIKE '%' || '$CLASS_ESC' || '%'" 2>/dev/null || true
   fi
 fi
 
