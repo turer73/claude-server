@@ -155,7 +155,7 @@ class Settings(BaseSettings):
 
     # DevOps agent watchlists (CSV in env, e.g. MONITOR_CRITICAL_CONTAINERS=dozzle,uptime-kuma)
     # NoDecode disables pydantic-settings' default JSON parse so the validator below sees raw CSV.
-    monitor_critical_services: Annotated[list[str], NoDecode] = ["linux-ai-server", "ollama"]
+    monitor_critical_services: Annotated[list[str], NoDecode] = ["linux-ai-server"]
     monitor_critical_containers: Annotated[list[str], NoDecode] = ["dozzle", "uptime-kuma"]
     monitor_vps_containers: Annotated[list[str], NoDecode] = [
         "panola-postgres",
