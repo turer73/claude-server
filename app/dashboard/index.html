@@ -477,10 +477,10 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
           <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
             <label style="font-size:11px;color:var(--dim)">Model</label>
             <select id="claudeModel" onchange="claudeSavePref()" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px">
-              <option value="">Default (hesap)</option>
               <option value="haiku">Haiku 4.5 (hizli)</option>
-              <option value="sonnet">Sonnet 4.6</option>
-              <option value="opus">Opus 4.7 (kaliteli)</option>
+              <option value="sonnet" selected>Sonnet 4.6 (gunluk)</option>
+              <option value="opus">Opus 4.7 (derin/audit)</option>
+              <option value="">Hesap default'u (Opus)</option>
             </select>
             <label style="font-size:11px;color:var(--dim);margin-left:8px">cwd</label>
             <input id="claudeCwd" placeholder="/opt/linux-ai-server" onchange="claudeSavePref()" style="flex:1;min-width:240px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;font-family:ui-monospace,monospace">
@@ -1104,8 +1104,10 @@ async function claudeInit() {
     badge.textContent = d?.available && d?.authenticated ? d.version : (d?.error || 'Auth yok');
     badge.style.background = d?.authenticated ? 'var(--accent2)' : '#ef4444';
   } catch {}
-  // Restore model + cwd preferences
-  document.getElementById('claudeModel').value = localStorage.getItem('claude_model') || '';
+  // Restore model + cwd preferences. Fallback to "sonnet" instead of "" so a
+  // fresh browser/localStorage doesn't silently pin the rate-limit-heavy Opus
+  // default — Sonnet is the cheaper and faster choice for the user's profile.
+  document.getElementById('claudeModel').value = localStorage.getItem('claude_model') ?? 'sonnet';
   document.getElementById('claudeCwd').value = localStorage.getItem('claude_cwd') || '';
   const last = localStorage.getItem('claude_last_model');
   if (last) document.getElementById('claudeLastModel').textContent = 'son: ' + last;
