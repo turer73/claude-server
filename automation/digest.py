@@ -101,12 +101,14 @@ def memory_delta(window_hours: int) -> dict:
         db.close()
 
 
-def github_commits(repo: str, since_iso: str, timeout: float = 4.0) -> list[dict]:
-    """Public GitHub commit feed — no auth (works for public repos, 404s for private)."""
+def github_commits(repo: str, since_iso: str, token: str | None = None, timeout: float = 4.0) -> list[dict]:
+    """GitHub commit feed. Public repos work without auth; private repos
+    require GITHUB_TOKEN with `repo` scope. 404 → silently returns []."""
     url = f"https://api.github.com/repos/{repo}/commits?since={urllib.parse.quote(since_iso)}&per_page=20"
-    req = urllib.request.Request(  # noqa: S310 — URL is hardcoded HTTPS
-        url, headers={"Accept": "application/vnd.github+json", "User-Agent": "klipper-digest/1"}
-    )
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "klipper-digest/1"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)  # noqa: S310 — hardcoded HTTPS
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
             data = json.loads(resp.read())
@@ -123,11 +125,11 @@ def github_commits(repo: str, since_iso: str, timeout: float = 4.0) -> list[dict
     return out
 
 
-def all_commits(window_hours: int) -> dict[str, list[dict]]:
+def all_commits(window_hours: int, token: str | None = None) -> dict[str, list[dict]]:
     since_iso = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=window_hours)).isoformat(timespec="seconds")
     out: dict[str, list[dict]] = {}
     with ThreadPoolExecutor(max_workers=len(REPOS)) as ex:
-        futs = {ex.submit(github_commits, repo, since_iso): proj for proj, repo in REPOS.items()}
+        futs = {ex.submit(github_commits, repo, since_iso, token): proj for proj, repo in REPOS.items()}
         for fut in as_completed(futs):
             proj = futs[fut]
             try:
@@ -314,10 +316,10 @@ def send_telegram(html: str, env: dict[str, str]) -> bool:
     return ok
 
 
-def gather() -> dict:
+def gather(token: str | None = None) -> dict:
     return {
         "memory": memory_delta(WINDOW_HOURS),
-        "commits": all_commits(WINDOW_HOURS),
+        "commits": all_commits(WINDOW_HOURS, token),
         "cron": cron_health(),
         "system": system_health(),
     }
@@ -331,7 +333,8 @@ def main() -> int:
     p.add_argument("--force", action="store_true", help="ignore NOTHING_NEW guard")
     args = p.parse_args()
 
-    data = gather()
+    env = load_env()
+    data = gather(token=env.get("GITHUB_TOKEN") or None)
 
     if args.json:
         print(json.dumps(data, default=str, indent=2))
@@ -342,7 +345,6 @@ def main() -> int:
         return 0
 
     if args.send:
-        env = load_env()
         ok = send_telegram(render_html(data), env)
         return 0 if ok else 1
 
