@@ -483,7 +483,8 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
               <option value="">Hesap default'u (Opus)</option>
             </select>
             <label style="font-size:11px;color:var(--dim);margin-left:8px">cwd</label>
-            <input id="claudeCwd" placeholder="/opt/linux-ai-server" onchange="claudeSavePref()" style="flex:1;min-width:240px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;font-family:ui-monospace,monospace">
+            <input id="claudeCwd" placeholder="/opt/linux-ai-server" onchange="claudeAutoModel()" style="flex:1;min-width:240px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;font-family:ui-monospace,monospace">
+            <span id="claudeAutoHint" style="font-size:11px;color:var(--dim);font-style:italic"></span>
             <span id="claudeLastModel" style="font-size:11px;color:var(--dim)"></span>
           </div>
           <div id="claudeSessionPicker" style="display:none;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:12px">
@@ -1111,12 +1112,57 @@ async function claudeInit() {
   document.getElementById('claudeCwd').value = localStorage.getItem('claude_cwd') || '';
   const last = localStorage.getItem('claude_last_model');
   if (last) document.getElementById('claudeLastModel').textContent = 'son: ' + last;
+  // Restore edilen cwd icin auto-rule hint'ini de goster (override etmez,
+  // localStorage'taki model degeriyle uyusuyorsa zaten ayni; uyusmuyorsa
+  // kullanici son cwd degisiminden sonra elle degistirmis demektir).
+  const cwd = document.getElementById('claudeCwd').value.trim();
+  if (cwd) {
+    const hint = document.getElementById('claudeAutoHint');
+    for (const rule of CLAUDE_PROJECT_RULES) {
+      if (rule.match.test(cwd)) {
+        hint.textContent = '⤳ ' + rule.model + ' (' + rule.reason + ')';
+        break;
+      }
+    }
+  }
   claudeUpdateSid();
 }
 
 function claudeSavePref() {
   localStorage.setItem('claude_model', document.getElementById('claudeModel').value);
   localStorage.setItem('claude_cwd', document.getElementById('claudeCwd').value);
+}
+
+// cwd → otomatik model: bilge/renderhane/koken'da realtime+webhook+payment
+// karmasinin Sonnet'i zorlamasi nedeniyle Opus default. Diger projelerde
+// (linux-ai, kuafor, petvet, panola, 3d-labx mağaza, media.3d-labx) Sonnet
+// yeter. Kural kaba — cwd icinde proje adi geciyor mu basit substring check.
+// Kullanici cwd degistirdiginde otomatik switchler; sonra elle baska model
+// secerse o secim bir sonraki cwd degisene kadar kalir.
+const CLAUDE_PROJECT_RULES = [
+  { match: /bilge[-_]?arena/i, model: 'opus', reason: 'realtime + scoring race' },
+  { match: /renderhane/i, model: 'opus', reason: 'webhook + iyzico + 3D math' },
+  { match: /koken[-_]?akademi/i, model: 'opus', reason: 'subscription + DO + live stream' },
+  { match: /(model[._-]?3d[-_]?labx|3dlabx[-_]?model)/i, model: 'opus', reason: 'renderhane white-label' },
+];
+
+function claudeAutoModel() {
+  claudeSavePref();
+  const cwd = document.getElementById('claudeCwd').value.trim();
+  const hint = document.getElementById('claudeAutoHint');
+  if (!cwd) { hint.textContent = ''; return; }
+  for (const rule of CLAUDE_PROJECT_RULES) {
+    if (rule.match.test(cwd)) {
+      document.getElementById('claudeModel').value = rule.model;
+      localStorage.setItem('claude_model', rule.model);
+      hint.textContent = '⤳ ' + rule.model + ' (' + rule.reason + ')';
+      return;
+    }
+  }
+  // Tanidik proje degil → guvenli default Sonnet.
+  document.getElementById('claudeModel').value = 'sonnet';
+  localStorage.setItem('claude_model', 'sonnet');
+  hint.textContent = '⤳ sonnet (default)';
 }
 
 function claudeUpdateSid() {
