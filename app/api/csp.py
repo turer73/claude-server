@@ -5,7 +5,7 @@ VPS csp-collector bu endpoint'e batch gonderir.
 """
 
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
@@ -51,7 +51,7 @@ def receive_violations(
 ):
     """VPS collector'dan batch violation al. Upsert (dedup) uygula."""
     _check_key(x_memory_key)
-    now = datetime.utcnow().isoformat(timespec="seconds")
+    now = datetime.now(UTC).replace(tzinfo=None).isoformat(timespec="seconds")
     db = _get_db()
     new_count = 0
     updated_count = 0
