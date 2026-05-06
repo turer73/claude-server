@@ -89,6 +89,44 @@ print(json.dumps({
     mem_post "/discoveries" "$BODY" >/dev/null 2>&1 || true
     unset _PROJECT _DEVICE _CMD _RC _DETAILS
   fi
+
+  # rc=0 ise: aynı projede aynı sınıftaki eski "test-fail:" bug'larını
+  # auto-resolve et. "Sınıf" kavramı kaba — pytest passed → tüm test-fail
+  # pytest bug'ları resolve. Risk: tek dosya geçerse genel pytest bug'ı da
+  # yanlış kapanır; ama ÖNEMLİ rejresyon olduğunda bir sonraki çalıştırmada
+  # aynı bug yeniden açılır (POST dedupe-on-active garanti). Faydası: 17
+  # stale-snapshot bug'ı (bu sabah temizlenen tip) bir daha birikmez.
+  if [ "${RC:-1}" = "0" ] && [ "$SKIP_BUG" = "0" ]; then
+    CLASS=""
+    case "$CMD" in
+      *pytest*)                              CLASS="pytest" ;;
+      *"npm test"*|*"npm run test"*|*"npm run build"*|*"npm run lint"*|*"npm run typecheck"*) CLASS="npm" ;;
+      *"yarn test"*|*"yarn build"*|*"yarn lint"*)   CLASS="yarn" ;;
+      *"pnpm test"*|*"pnpm build"*|*"pnpm lint"*|*"pnpm exec tsc"*) CLASS="pnpm" ;;
+      *" tsc "*|*" tsc"|"tsc "*|"tsc")       CLASS="tsc" ;;
+      *" ruff "*|*" ruff"|"ruff "*|"ruff")   CLASS="ruff" ;;
+      *" mypy "*|*" mypy"|"mypy "*|"mypy")   CLASS="mypy" ;;
+      *vitest*)                              CLASS="vitest" ;;
+      *jest*)                                CLASS="jest" ;;
+      *playwright*)                          CLASS="playwright" ;;
+      *eslint*)                              CLASS="eslint" ;;
+      *"cargo test"*|*"cargo build"*|*"cargo check"*) CLASS="cargo" ;;
+      *"go test"*|*"go build"*)              CLASS="go" ;;
+      *"make test"*|*"make check"*|*"make build"*) CLASS="make" ;;
+      *" black "*|"black "*)                 CLASS="black" ;;
+    esac
+    if [ -n "$CLASS" ]; then
+      PROJECT_NAME="$(basename "$PWD" | sed "s/'/''/g")"
+      CLASS_ESC="$(printf '%s' "$CLASS" | sed "s/'/''/g")"
+      sqlite3 "$HOOK_DB" "UPDATE discoveries
+        SET resolved=1, status='completed'
+        WHERE project='$PROJECT_NAME'
+          AND type='bug'
+          AND status='active'
+          AND title LIKE 'test-fail:%'
+          AND lower(title) LIKE '%' || lower('$CLASS_ESC') || '%'" 2>/dev/null || true
+    fi
+  fi
 fi
 
 exit 0
