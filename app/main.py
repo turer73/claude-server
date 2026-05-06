@@ -23,6 +23,7 @@ from app.api.csp import router as csp_router
 from app.api.deploy import router as deploy_router
 from app.api.dev import router as dev_router
 from app.api.devops import router as devops_router
+from app.api.digest import router as digest_router
 from app.api.files import router as files_router
 from app.api.kernel import router as kernel_router
 from app.api.logs import router as logs_router
@@ -222,6 +223,7 @@ def create_app() -> FastAPI:
     app.include_router(validation_router)
     app.include_router(csp_router)
     app.include_router(ci_router)
+    app.include_router(digest_router)
 
     @app.get("/ready")
     async def ready() -> dict:
