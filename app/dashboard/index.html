@@ -252,6 +252,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
     <div class="nav-item" onclick="nav('containers',this)"><span class="icon">&#9881;</span> Konteynerler</div>
     <div class="nav-item" onclick="nav('services',this)"><span class="icon">&#9733;</span> Servisler</div>
     <div class="nav-item" onclick="nav('projects',this)"><span class="icon">&#9830;</span> Projeler</div>
+    <div class="nav-item" onclick="nav('vps',this)"><span class="icon">&#9783;</span> VPS</div>
     <div class="nav-section">Araclar</div>
     <div class="nav-item" onclick="nav('operations',this)"><span class="icon">&#9788;</span> Operasyonlar</div>
     <div class="nav-item" onclick="nav('claude',this)"><span class="icon">&#9679;</span> Claude Code</div>
@@ -505,6 +506,38 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
         </div>
       </div>
 
+      <!-- VPS — Contabo Dokploy VPS quick-actions + free command -->
+      <div id="page-vps" class="page">
+        <div style="font-size:12px;color:var(--dim);margin-bottom:12px">Komutlar Klipper API uzerinden ssh ile vmi3160046 (Contabo) hostuna gider. Cikti asagida pre block icinde.</div>
+        <div class="card">
+          <div class="card-title">Hizli</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            <button class="vault-btn" onclick="vpsRun('hostname && uptime && nproc')">Sistem</button>
+            <button class="vault-btn" onclick="vpsRun('docker ps --format \\'table {{.Names}}\\\\t{{.Status}}\\\\t{{.Ports}}\\' | head -25')">docker ps</button>
+            <button class="vault-btn" onclick="vpsRun('docker stats --no-stream --format \\'table {{.Name}}\\\\t{{.CPUPerc}}\\\\t{{.MemPerc}}\\\\t{{.MemUsage}}\\' | head -25')">docker stats</button>
+            <button class="vault-btn" onclick="vpsRun('top -bn1 | head -20')">top</button>
+            <button class="vault-btn" onclick="vpsRun('df -h | grep -v tmpfs')">df -h</button>
+            <button class="vault-btn" onclick="vpsRun('free -h')">free -h</button>
+            <button class="vault-btn" onclick="vpsRun('journalctl -n 50 --no-pager')">journalctl son 50</button>
+            <button class="vault-btn" onclick="vpsRun('ss -tlnp | head -25')">acik portlar</button>
+            <button class="vault-btn" onclick="vpsRun('cat /etc/os-release && uname -a')">os-release</button>
+            <button class="vault-btn" onclick="confirmAction('Tum durmus konteynerleri silmek uzeresin (docker container prune -f). Devam mi?', () => vpsRun('docker container prune -f'))">prune (durmus)</button>
+            <button class="vault-btn" onclick="confirmAction('Kullanilmayan tum docker image lari silinecek (docker image prune -a -f). Bu islem geri alinamaz.', () => vpsRun('docker image prune -a -f'))">prune (image)</button>
+          </div>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <div class="card-title">Komut</div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <input id="vpsCmd" placeholder='ornek: docker logs panola-postgres --tail 100' onkeydown="if(event.key==='Enter'){event.preventDefault();vpsRunInput()}" style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:12px;font-family:ui-monospace,monospace">
+            <button class="vault-btn" onclick="vpsRunInput()">Calistir</button>
+            <button class="vault-btn" onclick="document.getElementById('vpsOut').textContent=''">Temizle</button>
+          </div>
+          <div style="font-size:11px;color:var(--dim);margin-bottom:6px">Tehlikeli sayilan kalipler (rm -rf /, dd, mkfs vs.) shell-executor BLOCKED_PATTERNS ile reddedilir.</div>
+          <pre id="vpsOut" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;max-height:520px;overflow:auto;color:var(--text);min-height:80px;margin:0">$ # cikti burada gorunecek</pre>
+          <div id="vpsMeta" style="font-size:11px;color:var(--dim);margin-top:6px"></div>
+        </div>
+      </div>
+
       <!-- OPERATIONS — açık bug + okunmamış not + commit feed + pentest + digest -->
       <div id="page-operations" class="page">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;flex-wrap:wrap">
@@ -705,6 +738,37 @@ function nav(page, el) {
   if (page==='projects') loadProjects();
   if (page==='services') loadServices();
   if (page==='operations') loadOperations();
+  if (page==='vps') setTimeout(() => { const i = document.getElementById('vpsCmd'); if (i) i.focus(); }, 50);
+}
+
+// ── VPS quick-action runner ──
+async function vpsRun(cmd) {
+  const out = document.getElementById('vpsOut');
+  const meta = document.getElementById('vpsMeta');
+  out.textContent = '$ ' + cmd + '\n\n[calistiriliyor]';
+  meta.textContent = '';
+  const t0 = performance.now();
+  try {
+    const d = await apiPost('/vps/exec', { command: cmd, timeout: 60 });
+    const dt = (performance.now() - t0) / 1000;
+    if (!d) { out.textContent = '$ ' + cmd + '\n\n[istek basarisiz]'; return; }
+    let body = '$ ' + cmd + '\n\n';
+    if (d.stdout) body += d.stdout;
+    if (d.stderr) body += (d.stdout ? '\n--- stderr ---\n' : '') + d.stderr;
+    if (!d.stdout && !d.stderr) body += '[bos cikti]';
+    out.textContent = body;
+    out.scrollTop = out.scrollHeight;
+    const exitTone = d.exit_code === 0 ? 'var(--green)' : 'var(--red)';
+    meta.innerHTML = `exit=<span style="color:${exitTone}">${d.exit_code}</span>  ·  klipper round-trip ${dt.toFixed(2)}s  ·  vps elapsed ${(d.elapsed_ms/1000).toFixed(2)}s`;
+  } catch (e) {
+    out.textContent = '$ ' + cmd + '\n\n[' + (e?.message || 'hata') + ']';
+  }
+}
+
+function vpsRunInput() {
+  const cmd = document.getElementById('vpsCmd').value.trim();
+  if (!cmd) return;
+  vpsRun(cmd);
 }
 
 // ── Operations: digest + memory bugs/notes/commits ──
