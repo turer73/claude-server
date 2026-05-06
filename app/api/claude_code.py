@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
 import shutil
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
+from app.core.config import get_settings
 from app.middleware.dependencies import require_admin, require_auth
 
 router = APIRouter(prefix="/api/v1/claude", tags=["claude-code"])
@@ -47,6 +49,118 @@ def _build_env():
     return env
 
 
+def _parse_claude_json(raw: str, cwd: str, stderr_text: str = "", host: str = "klipper") -> dict:
+    """CLI'dan donen JSON'i shape'e cevir. Hem lokal hem VPS yolu ayni.
+
+    Claude Code bazen JSON'dan once kisa metin yaziyor (banner, hint),
+    bu yuzden ilk { veya [ karakterinden itibaren parse'a basliyoruz.
+    Cikti hem dict (--output-format json) hem list (jsonl stream) olabilir.
+    """
+    output = raw
+    for i, ch in enumerate(raw):
+        if ch in ("{", "["):
+            output = raw[i:]
+            break
+
+    def _model_from_usage(d: dict) -> str | None:
+        mu = d.get("modelUsage") or {}
+        return next(iter(mu.keys()), None) if isinstance(mu, dict) else None
+
+    try:
+        result = json.loads(output)
+        session_id = None
+        answer = ""
+        cost = 0
+        is_error = False
+        model = None
+
+        if isinstance(result, dict):
+            session_id = result.get("session_id")
+            answer = result.get("result", "")
+            cost = result.get("total_cost_usd", 0)
+            is_error = result.get("is_error", False)
+            model = _model_from_usage(result)
+        elif isinstance(result, list):
+            for item in result:
+                if isinstance(item, dict):
+                    if item.get("type") == "result":
+                        session_id = item.get("session_id")
+                        answer = item.get("result", "")
+                        cost = item.get("total_cost_usd", 0)
+                        is_error = item.get("is_error", False)
+                        model = _model_from_usage(item) or model
+                    elif item.get("type") == "system" and item.get("session_id"):
+                        session_id = item["session_id"]
+
+        return {
+            "ok": not is_error,
+            "result": answer,
+            "cost": cost,
+            "session_id": session_id,
+            "model": model,
+            "cwd": cwd,
+            "host": host,
+        }
+    except json.JSONDecodeError:
+        return {"ok": False, "raw": raw, "stderr": stderr_text, "host": host}
+
+
+async def _run_on_vps(body: ClaudePromptRequest) -> dict:
+    """VPS uzerinde claude'u SSH araciligiyla calistir.
+
+    Klipper'in lokal CLI yolunun aynisi ama cmd uzaktan tetikleniyor.
+    Sessions /root/.claude altinda saklaniyor — klipper session_id'leri
+    burada gecerli degil; UI host degisirken session reset onerebilir.
+    """
+    settings = get_settings()
+    if not settings.vps_host:
+        return {"error": "VPS_HOST .env'de yapilandirilmamis"}
+
+    # `--dangerously-skip-permissions` is rejected when claude runs as root
+    # (security hard-stop in CLI), and the only login on VPS is root. Skip
+    # the flag here; -p / --output-format json mode does not prompt anyway.
+    args = ["claude", "-p", body.prompt, "--output-format", "json"]
+    if body.session_id:
+        args.extend(["--resume", body.session_id])
+    elif body.continue_last:
+        args.append("--continue")
+    if body.model:
+        args.extend(["--model", body.model])
+    if body.max_turns:
+        args.extend(["--max-turns", str(body.max_turns)])
+
+    cwd = body.cwd or "/root"
+    inner = " ".join(shlex.quote(a) for a in args)
+    remote = f"cd {shlex.quote(cwd)} && {inner}"
+    # settings.vps_host zaten "user@host" formunda (.env'de boyle saklaniyor),
+    # /api/v1/vps/exec'in de kullandigi convention. Olduğu gibi gec, prefix atma.
+    ssh_cmd = [
+        "ssh",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "ConnectTimeout=10",
+        settings.vps_host,
+        remote,
+    ]
+
+    proc = await asyncio.create_subprocess_exec(
+        *ssh_cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        stdin=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+    except TimeoutError:
+        proc.kill()
+        return {"error": "Zaman asimi (5dk)", "host": "vps"}
+
+    raw = stdout.decode() if stdout else ""
+    err = stderr.decode() if stderr else ""
+    return _parse_claude_json(raw, cwd, err, host="vps")
+
+
 class ClaudePromptRequest(BaseModel):
     prompt: str
     session_id: str | None = None  # Resume a previous session
@@ -54,6 +168,12 @@ class ClaudePromptRequest(BaseModel):
     model: str | None = None
     max_turns: int | None = 10
     cwd: str | None = None
+    # "klipper" runs the local CLI; "vps" sshes through to root@vps_host
+    # and runs the same CLI there (sessions stored under /root/.claude/).
+    # Sessions are NOT shared across hosts — switching host invalidates a
+    # klipper-side session_id and vice versa; the UI surfaces this if it
+    # cares to track host-per-session.
+    host: str = "klipper"
 
 
 @router.get("/status", dependencies=[Depends(require_auth)])
@@ -80,6 +200,9 @@ async def claude_status():
 
 @router.post("/run", dependencies=[Depends(require_admin)])
 async def run_claude(body: ClaudePromptRequest):
+    if body.host == "vps":
+        return await _run_on_vps(body)
+
     binary = _find_claude()
     if not binary:
         return {"error": "Claude Code CLI bulunamadi"}
@@ -115,56 +238,8 @@ async def run_claude(body: ClaudePromptRequest):
         return {"error": "Zaman asimi (5dk)"}
 
     raw = stdout.decode() if stdout else ""
-    # Find JSON start
-    output = raw
-    for i, ch in enumerate(raw):
-        if ch in ("{", "["):
-            output = raw[i:]
-            break
-
-    try:
-        result = json.loads(output)
-        # Extract session_id from result
-        session_id = None
-        answer = ""
-        cost = 0
-        is_error = False
-        model = None
-
-        def _model_from_usage(d: dict) -> str | None:
-            # modelUsage is keyed by the actual model id ("claude-opus-4-7"),
-            # so we read it from there rather than guess from settings.json.
-            mu = d.get("modelUsage") or {}
-            return next(iter(mu.keys()), None) if isinstance(mu, dict) else None
-
-        if isinstance(result, dict):
-            session_id = result.get("session_id")
-            answer = result.get("result", "")
-            cost = result.get("total_cost_usd", 0)
-            is_error = result.get("is_error", False)
-            model = _model_from_usage(result)
-        elif isinstance(result, list):
-            for item in result:
-                if isinstance(item, dict):
-                    if item.get("type") == "result":
-                        session_id = item.get("session_id")
-                        answer = item.get("result", "")
-                        cost = item.get("total_cost_usd", 0)
-                        is_error = item.get("is_error", False)
-                        model = _model_from_usage(item) or model
-                    elif item.get("type") == "system" and item.get("session_id"):
-                        session_id = item["session_id"]
-
-        return {
-            "ok": not is_error,
-            "result": answer,
-            "cost": cost,
-            "session_id": session_id,
-            "model": model,
-            "cwd": cwd,
-        }
-    except json.JSONDecodeError:
-        return {"ok": True, "raw": raw, "stderr": stderr.decode() if stderr else ""}
+    err = stderr.decode() if stderr else ""
+    return _parse_claude_json(raw, cwd, err, host="klipper")
 
 
 @router.get("/sessions", dependencies=[Depends(require_admin)])

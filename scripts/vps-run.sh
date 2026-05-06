@@ -12,8 +12,17 @@
 set -euo pipefail
 
 if [ $# -eq 0 ]; then
-  echo "usage: $(basename "$0") '<command>'" >&2
+  echo "usage: $(basename "$0") [-t SECONDS] '<command>'" >&2
   exit 2
+fi
+
+# Optional -t/--timeout flag: bump past the API's default 30 s for apt
+# installs, npm bootstraps, image pulls. Default kept at 60 s so a
+# typo doesn't quietly hang the API worker for ten minutes.
+TIMEOUT=60
+if [ "$1" = "-t" ] || [ "$1" = "--timeout" ]; then
+  TIMEOUT="$2"
+  shift 2
 fi
 
 CMD="$*"
@@ -31,7 +40,7 @@ TOK=$(curl -fsS -X POST "$API/auth/token" \
   -d "{\"api_key\":\"$KEY\"}" \
   | python3 -c 'import sys,json; print(json.loads(sys.stdin.read())["access_token"])')
 
-BODY=$(CMD="$CMD" python3 -c 'import json,os; print(json.dumps({"command": os.environ["CMD"]}))')
+BODY=$(CMD="$CMD" TO="$TIMEOUT" python3 -c 'import json,os; print(json.dumps({"command": os.environ["CMD"], "timeout": int(os.environ["TO"])}))')
 
 RESP=$(curl -fsS -X POST "$API/vps/exec" \
   -H "Authorization: Bearer $TOK" \

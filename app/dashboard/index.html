@@ -476,7 +476,12 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
             <span class="csid" id="claudeSid"></span>
           </div>
           <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
-            <label style="font-size:11px;color:var(--dim)">Model</label>
+            <label style="font-size:11px;color:var(--dim)">Host</label>
+            <select id="claudeHost" onchange="claudeHostChanged()" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px">
+              <option value="klipper" selected>klipper (lokal)</option>
+              <option value="vps">vps (Contabo)</option>
+            </select>
+            <label style="font-size:11px;color:var(--dim);margin-left:8px">Model</label>
             <select id="claudeModel" onchange="claudeSavePref()" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px">
               <option value="haiku">Haiku 4.5 (hizli)</option>
               <option value="sonnet" selected>Sonnet 4.6 (gunluk)</option>
@@ -1169,9 +1174,10 @@ async function claudeInit() {
     badge.textContent = d?.available && d?.authenticated ? d.version : (d?.error || 'Auth yok');
     badge.style.background = d?.authenticated ? 'var(--accent2)' : '#ef4444';
   } catch {}
-  // Restore model + cwd preferences. Fallback to "sonnet" instead of "" so a
-  // fresh browser/localStorage doesn't silently pin the rate-limit-heavy Opus
-  // default — Sonnet is the cheaper and faster choice for the user's profile.
+  // Restore host + model + cwd preferences. Fallback to "sonnet" instead of
+  // "" so a fresh browser/localStorage doesn't silently pin the rate-limit-
+  // heavy Opus default. Host defaults to klipper (lokal — fast, cheap).
+  document.getElementById('claudeHost').value = localStorage.getItem('claude_host') || 'klipper';
   document.getElementById('claudeModel').value = localStorage.getItem('claude_model') ?? 'sonnet';
   document.getElementById('claudeCwd').value = localStorage.getItem('claude_cwd') || '';
   const last = localStorage.getItem('claude_last_model');
@@ -1195,6 +1201,21 @@ async function claudeInit() {
 function claudeSavePref() {
   localStorage.setItem('claude_model', document.getElementById('claudeModel').value);
   localStorage.setItem('claude_cwd', document.getElementById('claudeCwd').value);
+  localStorage.setItem('claude_host', document.getElementById('claudeHost').value);
+}
+
+function claudeHostChanged() {
+  const host = document.getElementById('claudeHost').value;
+  // Sessions klipper ve vps icin ayri ~/.claude dizinlerinde saklanir,
+  // bir host'tan digerine session_id resume yok. Otomatik temizle ve
+  // kullaniciya kisa bir not goster.
+  if (claudeSessionId) {
+    claudeSessionId = null;
+    localStorage.removeItem('claude_session_id');
+    claudeUpdateSid();
+    claudeAddMsg('bot', 'Host: ' + host + ' — session reset (klipper/vps arasi resume yok).');
+  }
+  claudeSavePref();
 }
 
 // cwd → otomatik model: bilge/renderhane/koken'da realtime+webhook+payment
@@ -1333,6 +1354,8 @@ async function claudeSend() {
     if (m) body.model = m;
     const cw = document.getElementById('claudeCwd').value.trim();
     if (cw) body.cwd = cw;
+    const host = document.getElementById('claudeHost').value;
+    if (host) body.host = host;
 
     const d = await apiPost('/claude/run', body);
     typing.remove();
