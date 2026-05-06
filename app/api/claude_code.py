@@ -129,12 +129,20 @@ async def run_claude(body: ClaudePromptRequest):
         answer = ""
         cost = 0
         is_error = False
+        model = None
+
+        def _model_from_usage(d: dict) -> str | None:
+            # modelUsage is keyed by the actual model id ("claude-opus-4-7"),
+            # so we read it from there rather than guess from settings.json.
+            mu = d.get("modelUsage") or {}
+            return next(iter(mu.keys()), None) if isinstance(mu, dict) else None
 
         if isinstance(result, dict):
             session_id = result.get("session_id")
             answer = result.get("result", "")
             cost = result.get("total_cost_usd", 0)
             is_error = result.get("is_error", False)
+            model = _model_from_usage(result)
         elif isinstance(result, list):
             for item in result:
                 if isinstance(item, dict):
@@ -143,6 +151,7 @@ async def run_claude(body: ClaudePromptRequest):
                         answer = item.get("result", "")
                         cost = item.get("total_cost_usd", 0)
                         is_error = item.get("is_error", False)
+                        model = _model_from_usage(item) or model
                     elif item.get("type") == "system" and item.get("session_id"):
                         session_id = item["session_id"]
 
@@ -151,6 +160,8 @@ async def run_claude(body: ClaudePromptRequest):
             "result": answer,
             "cost": cost,
             "session_id": session_id,
+            "model": model,
+            "cwd": cwd,
         }
     except json.JSONDecodeError:
         return {"ok": True, "raw": raw, "stderr": stderr.decode() if stderr else ""}

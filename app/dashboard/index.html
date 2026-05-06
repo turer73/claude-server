@@ -474,6 +474,18 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
             <button onclick="claudeListSessions()">Oturum Sec</button>
             <span class="csid" id="claudeSid"></span>
           </div>
+          <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
+            <label style="font-size:11px;color:var(--dim)">Model</label>
+            <select id="claudeModel" onchange="claudeSavePref()" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px">
+              <option value="">Default (hesap)</option>
+              <option value="haiku">Haiku 4.5 (hizli)</option>
+              <option value="sonnet">Sonnet 4.6</option>
+              <option value="opus">Opus 4.7 (kaliteli)</option>
+            </select>
+            <label style="font-size:11px;color:var(--dim);margin-left:8px">cwd</label>
+            <input id="claudeCwd" placeholder="/opt/linux-ai-server" onchange="claudeSavePref()" style="flex:1;min-width:240px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;font-family:ui-monospace,monospace">
+            <span id="claudeLastModel" style="font-size:11px;color:var(--dim)"></span>
+          </div>
           <div id="claudeSessionPicker" style="display:none;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:12px">
             <div style="display:flex;gap:8px;margin-bottom:8px">
               <input id="claudeSidInput" placeholder="Session ID yapistir..." style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;font-family:ui-monospace,monospace">
@@ -1092,7 +1104,17 @@ async function claudeInit() {
     badge.textContent = d?.available && d?.authenticated ? d.version : (d?.error || 'Auth yok');
     badge.style.background = d?.authenticated ? 'var(--accent2)' : '#ef4444';
   } catch {}
+  // Restore model + cwd preferences
+  document.getElementById('claudeModel').value = localStorage.getItem('claude_model') || '';
+  document.getElementById('claudeCwd').value = localStorage.getItem('claude_cwd') || '';
+  const last = localStorage.getItem('claude_last_model');
+  if (last) document.getElementById('claudeLastModel').textContent = 'son: ' + last;
   claudeUpdateSid();
+}
+
+function claudeSavePref() {
+  localStorage.setItem('claude_model', document.getElementById('claudeModel').value);
+  localStorage.setItem('claude_cwd', document.getElementById('claudeCwd').value);
 }
 
 function claudeUpdateSid() {
@@ -1193,6 +1215,10 @@ async function claudeSend() {
   try {
     const body = { prompt };
     if (claudeSessionId) body.session_id = claudeSessionId;
+    const m = document.getElementById('claudeModel').value;
+    if (m) body.model = m;
+    const cw = document.getElementById('claudeCwd').value.trim();
+    if (cw) body.cwd = cw;
 
     const d = await apiPost('/claude/run', body);
     typing.remove();
@@ -1201,6 +1227,10 @@ async function claudeSend() {
       claudeSessionId = d.session_id;
       localStorage.setItem('claude_session_id', claudeSessionId);
       claudeUpdateSid();
+    }
+    if (d?.model) {
+      localStorage.setItem('claude_last_model', d.model);
+      document.getElementById('claudeLastModel').textContent = 'son: ' + d.model;
     }
 
     if (d?.ok && d?.result) {
