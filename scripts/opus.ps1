@@ -49,6 +49,12 @@ function opus {
     Write-Host "  Klipper $label session" -ForegroundColor Cyan
     Write-Host "  cwd: $targetCwd" -ForegroundColor DarkGray
     Write-Host "  model: $model" -ForegroundColor DarkGray
+    if ($Sonnet) {
+        Write-Host ""
+        Write-Host "  Sonnet hatirlatma: oturuma su komutla basla:" -ForegroundColor DarkYellow
+        Write-Host "    Read /opt/linux-ai-server/scripts/prompt-sonnet-uretici.md" -ForegroundColor Yellow
+        Write-Host "    ve bu prompt'taki kurallari oturum boyunca uygula." -ForegroundColor DarkYellow
+    }
     Write-Host ""
 
     # -t flag: TTY allocate (interactive Claude Code icin sart)
