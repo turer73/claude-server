@@ -29,7 +29,7 @@
 - app/claude_ui/ — Claude Code web chat
 - kernel/ — 3 ozel C kernel modulu (proc, netfilter, usb)
 - automation/ — Cron scriptleri
-- tests/ — 61 test dosyasi (pytest)
+- tests/ — 61 dosya / 737 test (pytest, asyncio_mode=auto)
 
 ## API Endpointleri
 - /dashboard — Super Dashboard v2
