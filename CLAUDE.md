@@ -2,12 +2,14 @@
 
 ## Sunucu Bilgileri
 - **Hostname:** klipper
-- **OS:** Ubuntu 24.04.4 LTS (Noble Numbat)
-- **Kernel:** 6.8.0-101-generic + 3 ozel modul (proc_linux_ai, nf_linux_ai, usb_linux_ai)
-- **CPU:** Intel i5, 4 cekirdek
-- **RAM:** 8GB DDR4
-- **Disk:** 108GB SSD, 34GB kullanildi
-- **Ag:** LAN REDACTED_LAN_IP | Tailscale REDACTED_TAILSCALE_IP
+- **Donanim:** Beelink SER8 (AZW) — BIOS V035 P8C0M0C15.14 (26/06/2025)
+- **OS:** Ubuntu 26.04 LTS (Resolute)
+- **Kernel:** 7.0.0-15-generic + 3 ozel modul (proc_linux_ai, nf_linux_ai, usb_linux_ai)
+- **CPU:** AMD Ryzen 7 8845HS w/ Radeon 780M, 8 cekirdek / 16 thread
+- **RAM:** 28GB (27946896 kB)
+- **Disk:** 98GB SSD (LVM), 28GB kullanildi
+- **Ag:** LAN 192.168.1.113 | Tailscale 100.84.251.49 (klipper-2 olarak kayitli)
+- **Python:** 3.14 (venv: /opt/linux-ai-server/venv)
 - **Kullanici:** klipperos (sudo NOPASSWD)
 
 ## Servis
@@ -18,7 +20,7 @@
 - **Systemd:** linux-ai-server.service
 
 ## Proje Yapisi
-- app/api/ — Route handlers (shell, files, system, kernel, ssh, ai, claude_code, vps, deploy, tasks, monitoring, logs, devops, rag)
+- app/api/ — 31 route dosyasi (shell, files, system, kernel, ssh, ai, claude_code, vps, deploy, tasks, monitoring, logs, devops, rag, agents, ci, backup, csp, dev, digest, network, projects, prometheus, social, validation, webhooks, webops, ws_status, memory, auth)
 - app/core/ — Is mantigi (shell_executor, terminal_manager, ai_inference, task_queue, devops_agent)
 - app/auth/ — JWT + API key
 - app/mcp/ — MCP server (Claude entegrasyonu)
@@ -27,7 +29,7 @@
 - app/claude_ui/ — Claude Code web chat
 - kernel/ — 3 ozel C kernel modulu (proc, netfilter, usb)
 - automation/ — Cron scriptleri
-- tests/ — 430+ pytest testi
+- tests/ — 61 test dosyasi (pytest)
 
 ## API Endpointleri
 - /dashboard — Super Dashboard v2
@@ -42,8 +44,13 @@
 - /api/v1/devops/* — DevOps agent
 - /ws/terminal — WebSocket terminal (PTY)
 
-## Docker Konteynerler
-Dozzle, Uptime Kuma (kalan: 2 konteyner — diger servisler VPS Dokploy altinda)
+## Docker Konteynerler (9 aktif)
+- **Gozlem:** dozzle (9999), uptime-kuma (3001), grafana (3030), prometheus (9090), node-exporter (9100), cadvisor (9080)
+- **Otomasyon/RAG:** n8n (5678), qdrant (6333/6334)
+- **Arac:** stirling-pdf (8090)
+- Ollama host'ta (11434) — modeller: bge-m3 (embed), qwen2.5:7b (LLM)
+
+VPS Dokploy uzerinde ayrica baska servisler var (asagi bkz).
 
 ## Kernel Modulleri
 - proc_linux_ai — /proc/linux_ai (CPU, RAM, uptime, esikler)
@@ -65,8 +72,8 @@ Test: REDACTED_PHONE / test1234
 ### Panola ERP (panola.app)
 Siparis/uretim/stok/CRM. React 19, Supabase. 898 test.
 
-### Linux-AI Server (REDACTED_TAILSCALE_IP:8420)
-Bu sunucu. FastAPI, kernel modulleri, 430 test.
+### Linux-AI Server (100.84.251.49:8420)
+Bu sunucu. FastAPI, kernel modulleri, 61 test dosyasi.
 GitHub: github.com/turer73/claude-server
 
 ## VPS (Contabo)
