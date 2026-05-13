@@ -18,6 +18,7 @@ build/
 *.db-wal
 *.db.bak.*
 *.pre-normalize-*
+*.pre-switchover.*
 *.log
 *.bak.*
 *.archive-*
