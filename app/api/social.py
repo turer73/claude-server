@@ -151,6 +151,47 @@ async def publish_scheduled(_: None = Depends(require_admin)) -> dict:
     return await _vps_run(cmd, timeout=120)
 
 
+_SMART_APPROVE_SCRIPT = """
+import json
+from datetime import datetime, timedelta
+from src.db import list_contents, update_content_status
+
+drafts = list_contents(status='draft', limit=50)
+if not drafts:
+    print(json.dumps({'approved': 0, 'message': 'No drafts'}))
+else:
+    approved = 0
+    base = datetime.now()
+    days_ahead = 7 - base.weekday() if base.weekday() > 0 else 7
+    monday = base + timedelta(days=days_ahead)
+    for i, d in enumerate(drafts):
+        dt = (monday + timedelta(days=i % 6)).replace(hour=9, minute=0, second=0)
+        update_content_status(d['id'], 'approved')
+        update_content_status(d['id'], 'scheduled', scheduled_at=dt.isoformat())
+        approved += 1
+    print(json.dumps({
+        'approved': approved,
+        'schedule_start': monday.strftime('%Y-%m-%d'),
+        'schedule_end': (monday + timedelta(days=5)).strftime('%Y-%m-%d'),
+    }))
+"""
+
+
+@router.post("/content/smart-approve")
+async def smart_approve(_: None = Depends(require_admin)) -> dict:
+    """Approve all drafts and schedule them across next week Mon-Sat 09:00.
+
+    Replaces legacy automation/social-auto-approve.sh inline script.
+    Triggered by n8n Pazar 11:00 workflow.
+    """
+    import base64
+
+    encoded = base64.b64encode(_SMART_APPROVE_SCRIPT.encode()).decode()
+    # base64 chars are quote-safe under SSH single-quote wrapping in _vps_run
+    cmd = f"cd {SOCIAL_DIR} && echo {encoded} | base64 -d | {PYTHON}"
+    return await _vps_run(cmd, timeout=90)
+
+
 # --- Weekly Plans ---
 
 
