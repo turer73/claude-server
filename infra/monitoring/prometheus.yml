@@ -1,0 +1,24 @@
+global:
+  scrape_interval: 15s
+  external_labels:
+    cluster: turer-infra
+
+scrape_configs:
+  - job_name: klipper-node
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          host: klipper
+  - job_name: klipper-cadvisor
+    static_configs:
+      - targets: ['cadvisor:8080']
+        labels:
+          host: klipper
+  - job_name: vps-node
+    static_configs:
+      - targets: ['100.126.113.23:9100']
+        labels:
+          host: vps
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']

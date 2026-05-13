@@ -1,0 +1,29 @@
+services:
+  n8n:
+    image: n8nio/n8n:2.20.1
+    container_name: n8n
+    restart: always
+    ports:
+      # Tailscale-only bind; LAN/internet'e acik degil
+      - "100.84.251.49:5678:5678"
+      - "127.0.0.1:5678:5678"
+    environment:
+      - N8N_SECURE_COOKIE=false
+      - GENERIC_TIMEZONE=Europe/Istanbul
+      - TZ=Europe/Istanbul
+      - N8N_API_KEY=panola-n8n-api-2026
+      - N8N_HOST=100.84.251.49
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+    volumes:
+      - n8n-data:/home/node/.n8n
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  n8n-data:

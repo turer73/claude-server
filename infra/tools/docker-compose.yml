@@ -1,0 +1,55 @@
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    ports:
+      # Tailscale + localhost only
+      - "100.84.251.49:3001:3001"
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - uptime-kuma-data:/app/data
+    restart: unless-stopped
+
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: dozzle
+    ports:
+      # Tailscale + localhost only
+      - "100.84.251.49:9999:8080"
+      - "127.0.0.1:9999:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+  stirling-pdf:
+    image: docker.stirlingpdf.com/stirlingtools/stirling-pdf:latest
+    container_name: stirling-pdf
+    ports:
+      # Tailscale + localhost only
+      - "100.84.251.49:8090:8080"
+      - "127.0.0.1:8090:8080"
+    volumes:
+      - stirling-tessdata:/usr/share/tessdata
+      - stirling-configs:/configs
+      - stirling-customfiles:/customFiles
+      - stirling-logs:/logs
+      - stirling-pipeline:/pipeline
+    environment:
+      - DOCKER_ENABLE_SECURITY=false
+      - SECURITY_ENABLELOGIN=false
+      - LANGS=eng,tur
+      - SYSTEM_DEFAULTLOCALE=tr-TR
+      - UI_APPNAME=Stirling PDF
+      - UI_HOMEDESCRIPTION=Klipper PDF Araclari
+      - METRICS_ENABLED=false
+      - SYSTEM_GOOGLEVISIBILITY=false
+    restart: unless-stopped
+
+volumes:
+  uptime-kuma-data:
+    external: true
+  stirling-tessdata:
+  stirling-configs:
+  stirling-customfiles:
+  stirling-logs:
+  stirling-pipeline:
