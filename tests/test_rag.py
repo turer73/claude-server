@@ -1,119 +1,119 @@
-"""Tests for RAG API — index, query, stats."""
+"""Tests for the RAG API (Qdrant + Ollama bge-m3 + qwen2.5 surface).
 
-from unittest.mock import AsyncMock, patch
+The old RAGEngine module attr surface was replaced by direct sync requests
+to Qdrant/Ollama in commit 0913c15. Routes covered:
+  GET  /api/v1/rag/health
+  POST /api/v1/rag/search
+  POST /api/v1/rag/ask
+  GET  /api/v1/rag/projects
+  GET  /api/v1/rag/metrics
+
+verify_key reads MEMORY_API_KEY from .env at module load; tests blank it
+via monkeypatch so request-level auth is bypassed in isolation.
+"""
+
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 
-@pytest.mark.anyio
-async def test_rag_stats(client, auth_headers):
-    mock_stats = {"collection": "documents", "document_count": 42}
-    with patch("app.api.rag._engine.stats", new_callable=AsyncMock, return_value=mock_stats):
-        resp = await client.get("/api/v1/rag/stats", headers=auth_headers)
-        assert resp.status_code == 200
-        assert resp.json()["document_count"] == 42
+@pytest.fixture(autouse=True)
+def _bypass_memory_auth(monkeypatch):
+    """Blank the module-level MEMORY_API_KEY so verify_key short-circuits."""
+    monkeypatch.setattr("app.api.memory.MEMORY_API_KEY", "")
 
 
 @pytest.mark.anyio
-async def test_rag_index_text(client, auth_headers):
-    mock_result = {"indexed": 3, "source": "test"}
-    with patch("app.api.rag._engine.index_text", new_callable=AsyncMock, return_value=mock_result):
-        resp = await client.post(
-            "/api/v1/rag/index/text",
-            json={
-                "text": "Test document content for indexing",
-                "source": "test",
-            },
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["indexed"] == 3
+async def test_rag_routes_registered(client):
+    """All 5 RAG routes must be wired into the OpenAPI surface."""
+    resp = await client.get("/openapi.json")
+    assert resp.status_code == 200
+    paths = resp.json()["paths"]
+    assert "/api/v1/rag/health" in paths
+    assert "/api/v1/rag/search" in paths
+    assert "/api/v1/rag/ask" in paths
+    assert "/api/v1/rag/projects" in paths
+    assert "/api/v1/rag/metrics" in paths
 
 
 @pytest.mark.anyio
-async def test_rag_index_text_requires_write(client, read_headers):
-    resp = await client.post(
-        "/api/v1/rag/index/text",
-        json={
-            "text": "Test",
-            "source": "test",
-        },
-        headers=read_headers,
-    )
-    assert resp.status_code in (401, 403)
+async def test_rag_health_returns_503_when_qdrant_down(client):
+    """If Qdrant is unreachable, /health surfaces 503 — not 500."""
+    with patch("app.api.rag.requests.get") as m_get:
+        m_get.side_effect = ConnectionError("qdrant offline")
+        resp = await client.get("/api/v1/rag/health")
+    assert resp.status_code == 503
 
 
 @pytest.mark.anyio
-async def test_rag_query_with_generation(client, auth_headers):
-    mock_result = {
-        "question": "What is Linux?",
-        "answer": "Linux is an operating system.",
-        "sources": [{"text": "Linux is...", "source": "doc.md", "distance": 0.15}],
-    }
-    with patch("app.api.rag._engine.query", new_callable=AsyncMock, return_value=mock_result):
-        resp = await client.post(
-            "/api/v1/rag/query",
-            json={
-                "question": "What is Linux?",
-                "n_results": 3,
-                "generate": True,
-            },
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "answer" in data
-        assert len(data["sources"]) == 1
+async def test_rag_health_ok_path(client):
+    """Qdrant + Ollama both respond → 200 with documented shape."""
+    q_resp = MagicMock(ok=True)
+    q_resp.json.return_value = {"result": {"points_count": 42}}
+    o_resp = MagicMock(ok=True)
+    o_resp.json.return_value = {"version": "0.23.2"}
+
+    def fake_get(url, **_):
+        if "collections" in url:
+            return q_resp
+        return o_resp
+
+    with patch("app.api.rag.requests.get", side_effect=fake_get):
+        resp = await client.get("/api/v1/rag/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["qdrant"]["points"] == 42
+    assert body["ollama"]["version"] == "0.23.2"
+    assert body["embed_model"] == "bge-m3"
 
 
 @pytest.mark.anyio
-async def test_rag_query_without_generation(client, auth_headers):
-    mock_result = {
-        "question": "What is Linux?",
-        "results": [{"text": "Linux is...", "source": "doc.md", "distance": 0.15}],
-    }
-    with patch("app.api.rag._engine.query", new_callable=AsyncMock, return_value=mock_result):
-        resp = await client.post(
-            "/api/v1/rag/query",
-            json={
-                "question": "What is Linux?",
-                "generate": False,
-            },
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-        assert "results" in resp.json()
+async def test_rag_projects_503_when_qdrant_unavailable(client):
+    """Qdrant non-2xx → 503."""
+    bad = MagicMock(ok=False, status_code=500)
+    with patch("app.api.rag.requests.post", return_value=bad):
+        resp = await client.get("/api/v1/rag/projects")
+    assert resp.status_code == 503
 
 
 @pytest.mark.anyio
-async def test_rag_index_file(client, auth_headers):
-    mock_result = {"indexed": 5, "source": "readme.md"}
-    with patch("app.api.rag._engine.index_file", new_callable=AsyncMock, return_value=mock_result):
-        resp = await client.post("/api/v1/rag/index/file", json={"path": "/tmp/readme.md"}, headers=auth_headers)
-        assert resp.status_code == 200
-        assert resp.json()["indexed"] == 5
+async def test_rag_projects_aggregates_by_payload(client):
+    """Counts payload.project across scrolled points; missing key → 'general'."""
+    points = [
+        {"payload": {"project": "panola"}},
+        {"payload": {"project": "panola"}},
+        {"payload": {"project": "bilge-arena"}},
+        {"payload": {}},
+    ]
+    resp_mock = MagicMock(ok=True)
+    resp_mock.json.return_value = {"result": {"points": points}}
+    with patch("app.api.rag.requests.post", return_value=resp_mock):
+        resp = await client.get("/api/v1/rag/projects")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 4
+    by_project = {row["project"]: row["count"] for row in body["projects"]}
+    assert by_project == {"panola": 2, "bilge-arena": 1, "general": 1}
 
 
 @pytest.mark.anyio
-async def test_rag_index_directory(client, auth_headers):
-    mock_result = {"files": 10, "chunks": 50, "directory": "/docs", "pattern": "*.md"}
-    with patch("app.api.rag._engine.index_directory", new_callable=AsyncMock, return_value=mock_result):
-        resp = await client.post(
-            "/api/v1/rag/index/directory",
-            json={
-                "directory": "/docs",
-                "pattern": "*.md",
-            },
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["files"] == 10
+async def test_rag_metrics_shape(client):
+    """/metrics?days=1 returns a JSON object with the documented keys.
+
+    Reads the real METRICS_DB; on a fresh server total may be 0. Asserts
+    structural keys only.
+    """
+    resp = await client.get("/api/v1/rag/metrics?days=1")
+    assert resp.status_code == 200
+    body = resp.json()
+    for key in ("period_days", "total_queries", "avg_duration_ms", "avg_hit_count", "avg_top_score", "by_endpoint", "by_project"):
+        assert key in body, f"missing key: {key}"
 
 
 @pytest.mark.anyio
-async def test_rag_delete_collection(client, auth_headers):
-    mock_result = {"deleted": "documents", "status": 200}
-    with patch("app.api.rag._engine.delete_collection", new_callable=AsyncMock, return_value=mock_result):
-        resp = await client.delete("/api/v1/rag/collection", headers=auth_headers)
-        assert resp.status_code == 200
-        assert resp.json()["deleted"] == "documents"
+async def test_rag_metrics_validates_days_range(client):
+    """days must be 1..365 per Query(..., ge=1, le=365)."""
+    resp = await client.get("/api/v1/rag/metrics?days=0")
+    assert resp.status_code == 422
+    resp = await client.get("/api/v1/rag/metrics?days=400")
+    assert resp.status_code == 422
