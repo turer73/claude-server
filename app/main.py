@@ -26,6 +26,7 @@ from app.api.devops import router as devops_router
 from app.api.digest import router as digest_router
 from app.api.files import router as files_router
 from app.api.kernel import router as kernel_router
+from app.api.llm import router as llm_router
 from app.api.logs import router as logs_router
 from app.api.memory import public_router as memory_public_router
 from app.api.memory import router as memory_router
@@ -214,6 +215,7 @@ def create_app() -> FastAPI:
     app.include_router(ws_status_router)
     app.include_router(rag_router)
     app.include_router(research_router)
+    app.include_router(llm_router)
     app.include_router(telegram_bot_router)
     app.include_router(devops_router)
     app.include_router(deploy_router)

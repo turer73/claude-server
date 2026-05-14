@@ -255,6 +255,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
     <div class="nav-item" onclick="nav('vps',this)"><span class="icon">&#9783;</span> VPS</div>
     <div class="nav-section">Araclar</div>
     <div class="nav-item" onclick="nav('operations',this)"><span class="icon">&#9788;</span> Operasyonlar</div>
+    <div class="nav-item" onclick="nav('llm',this)"><span class="icon">&#9883;</span> LLM</div>
     <div class="nav-item" onclick="nav('claude',this)"><span class="icon">&#9679;</span> Claude Code</div>
     <div class="nav-item" onclick="nav('logs',this)"><span class="icon">&#9776;</span> Log Gorunum</div>
     <div class="nav-item" onclick="nav('terminal',this)"><span class="icon">&gt;_</span> Terminal</div>
@@ -462,6 +463,16 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
         <div class="card" style="margin-top:16px">
           <div class="card-title">Son Gorevler</div>
           <div id="recentTasks"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
+        </div>
+      </div>
+
+      <!-- LLM -->
+      <div id="page-llm" class="page">
+        <div class="card">
+          <div class="card-title">LLM Stack <span class="badge" id="llmStatus">...</span>
+            <button onclick="loadLLM()" style="float:right;background:var(--card);border:1px solid var(--border);color:var(--text);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer">Yenile</button>
+          </div>
+          <div id="llmContent"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
         </div>
       </div>
 
@@ -743,6 +754,7 @@ function nav(page, el) {
   if (page==='projects') loadProjects();
   if (page==='services') loadServices();
   if (page==='operations') loadOperations();
+  if (page==='llm') loadLLM();
   if (page==='vps') setTimeout(() => { const i = document.getElementById('vpsCmd'); if (i) i.focus(); }, 50);
 }
 
@@ -777,6 +789,119 @@ function vpsRunInput() {
 }
 
 // ── Operations: digest + memory bugs/notes/commits ──
+async function loadLLM() {
+  const c = document.getElementById('llmContent');
+  const s = document.getElementById('llmStatus');
+  s.textContent = '...';
+  const d = await api('/llm/status');
+  if (!d) { c.innerHTML = '<span style="color:var(--red);font-size:12px">Yuklenemedi</span>'; s.textContent = 'hata'; return; }
+
+  const okBadge = ok => `<span style="color:${ok?'var(--green)':'var(--red)'}">${ok?'✓':'✗'}</span>`;
+  const ms = n => `${(n/1000).toFixed(1)}s`;
+  const mb = n => n >= 1024 ? `${(n/1024).toFixed(1)} GB` : `${n.toFixed(0)} MB`;
+
+  // GPU section
+  const gpu = d.gpu || {};
+  const backendClr = gpu.backend === 'vulkan' ? 'var(--green)' : 'var(--yellow)';
+  const gpuHtml = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-bottom:12px">
+      <div style="background:var(--bg);padding:10px;border-radius:6px;border:1px solid var(--border)">
+        <div style="font-size:10px;color:var(--dim);text-transform:uppercase">Backend</div>
+        <div style="font-size:14px;color:${backendClr};font-weight:600">${gpu.backend || 'cpu'}</div>
+      </div>
+      <div style="background:var(--bg);padding:10px;border-radius:6px;border:1px solid var(--border)">
+        <div style="font-size:10px;color:var(--dim);text-transform:uppercase">GPU</div>
+        <div style="font-size:12px">${gpu.gpu_name || '<span style="color:var(--dim)">yok</span>'}</div>
+      </div>
+      <div style="background:var(--bg);padding:10px;border-radius:6px;border:1px solid var(--border)">
+        <div style="font-size:10px;color:var(--dim);text-transform:uppercase">Shared VRAM</div>
+        <div style="font-size:14px">${gpu.shared_vram_gib || '-'}</div>
+      </div>
+      <div style="background:var(--bg);padding:10px;border-radius:6px;border:1px solid var(--border)">
+        <div style="font-size:10px;color:var(--dim);text-transform:uppercase">GPU Busy</div>
+        <div style="font-size:14px">${gpu.busy_percent != null ? gpu.busy_percent + '%' : '-'}</div>
+      </div>
+    </div>`;
+
+  // Ollama section
+  const ol = d.ollama || {};
+  const models = (ol.models || []).map(m => `
+    <tr>
+      <td style="padding:6px 8px;font-family:ui-monospace,monospace;font-size:12px">${m.name}</td>
+      <td style="padding:6px 8px;font-size:11px;color:var(--dim)">${m.family || '-'}</td>
+      <td style="padding:6px 8px;font-size:11px">${m.param_size || '-'}</td>
+      <td style="padding:6px 8px;font-size:11px;color:var(--dim)">${m.quant || '-'}</td>
+      <td style="padding:6px 8px;font-size:11px;text-align:right">${mb(m.size_mb)}</td>
+    </tr>`).join('');
+  const loaded = (ol.loaded || []).map(l => `<span style="background:var(--card);border:1px solid var(--green);color:var(--green);padding:2px 8px;border-radius:10px;font-size:11px;margin-right:6px">${l.name} · ${mb(l.vram_mb)} VRAM</span>`).join('');
+
+  // Anthropic
+  const an = d.anthropic || {};
+
+  // Usage
+  const u = d.usage_last_24h || {};
+  const byEp = Object.entries(u.by_endpoint || {}).map(([k, v]) => `${k}: ${v}`).join(' · ') || '-';
+
+  c.innerHTML = `
+    <div style="margin-bottom:14px">
+      <div style="font-size:11px;color:var(--dim);text-transform:uppercase;margin-bottom:6px">Runtime (Ollama + GPU)</div>
+      ${gpuHtml}
+      <div style="font-size:11px;color:var(--dim);margin-bottom:6px">Currently loaded:</div>
+      <div>${loaded || '<span style="color:var(--dim);font-size:11px">hicbir model RAM/VRAM\'da degil (idle)</span>'}</div>
+    </div>
+
+    <div style="margin-bottom:14px">
+      <div style="font-size:11px;color:var(--dim);text-transform:uppercase;margin-bottom:6px">Local modeller (${ol.models?.length || 0})</div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:6px 8px;font-size:10px;color:var(--dim);text-transform:uppercase">Name</th>
+            <th style="text-align:left;padding:6px 8px;font-size:10px;color:var(--dim);text-transform:uppercase">Family</th>
+            <th style="text-align:left;padding:6px 8px;font-size:10px;color:var(--dim);text-transform:uppercase">Param</th>
+            <th style="text-align:left;padding:6px 8px;font-size:10px;color:var(--dim);text-transform:uppercase">Quant</th>
+            <th style="text-align:right;padding:6px 8px;font-size:10px;color:var(--dim);text-transform:uppercase">Size</th>
+          </tr>
+        </thead>
+        <tbody>${models || '<tr><td colspan="5" style="padding:10px;text-align:center;color:var(--dim);font-size:11px">model yok</td></tr>'}</tbody>
+      </table>
+    </div>
+
+    <div style="margin-bottom:14px">
+      <div style="font-size:11px;color:var(--dim);text-transform:uppercase;margin-bottom:6px">Cloud (Anthropic fallback)</div>
+      <div style="display:flex;gap:8px;align-items:center;font-size:12px">
+        ${okBadge(an.configured)} <span style="font-family:ui-monospace,monospace">${an.model}</span>
+        <span style="color:var(--dim);font-size:11px;margin-left:auto">${an.fallback_threshold || ''}</span>
+      </div>
+    </div>
+
+    <div>
+      <div style="font-size:11px;color:var(--dim);text-transform:uppercase;margin-bottom:6px">Kullanim — son 24sa (rag_metrics)</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">
+        <div style="background:var(--bg);padding:10px;border-radius:6px;border:1px solid var(--border)">
+          <div style="font-size:10px;color:var(--dim);text-transform:uppercase">Toplam sorgu</div>
+          <div style="font-size:18px;color:var(--accent)">${u.total || 0}</div>
+        </div>
+        <div style="background:var(--bg);padding:10px;border-radius:6px;border:1px solid var(--border)">
+          <div style="font-size:10px;color:var(--dim);text-transform:uppercase">Ort. sure</div>
+          <div style="font-size:14px">${u.avg_duration_ms ? ms(u.avg_duration_ms) : '-'}</div>
+        </div>
+        <div style="background:var(--bg);padding:10px;border-radius:6px;border:1px solid var(--border)">
+          <div style="font-size:10px;color:var(--dim);text-transform:uppercase">Ort. hit</div>
+          <div style="font-size:14px">${u.avg_hit_count ?? '-'}</div>
+        </div>
+        <div style="background:var(--bg);padding:10px;border-radius:6px;border:1px solid var(--border)">
+          <div style="font-size:10px;color:var(--dim);text-transform:uppercase">Top score</div>
+          <div style="font-size:14px">${u.avg_top_score ?? '-'}</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--dim);margin-top:6px">Endpoint dagilim: ${byEp}</div>
+    </div>`;
+
+  s.textContent = ol.ok && (gpu.backend === 'vulkan' || gpu.backend === 'cpu') ? 'aktif' : 'sorun';
+  s.style.background = ol.ok ? 'var(--green)20' : 'var(--red)20';
+  s.style.color = ol.ok ? 'var(--green)' : 'var(--red)';
+}
+
 async function loadOperations() {
   const d = await api('/digest/data');
   if (!d) {
