@@ -36,6 +36,7 @@ from app.api.prometheus import router as prometheus_router
 from app.api.rag import router as rag_router
 from app.api.research import router as research_router
 from app.api.shell import router as shell_router
+from app.api.telegram_bot import router as telegram_bot_router
 from app.api.social import router as social_router
 from app.api.ssh import router as ssh_router
 from app.api.system import router as system_router
@@ -213,6 +214,7 @@ def create_app() -> FastAPI:
     app.include_router(ws_status_router)
     app.include_router(rag_router)
     app.include_router(research_router)
+    app.include_router(telegram_bot_router)
     app.include_router(devops_router)
     app.include_router(deploy_router)
     app.include_router(vps_router)

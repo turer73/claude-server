@@ -25,7 +25,7 @@ import time
 from typing import Optional
 
 import requests
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.api import rag as rag_module
@@ -265,7 +265,7 @@ class AskRequest(BaseModel):
 
 
 @router.post("/ask")
-def research_ask(req: AskRequest, request: Request):
+def research_ask(req: AskRequest):
     t0 = time.time()
     chunks: list[dict] = []
     errors: dict[str, str] = {}

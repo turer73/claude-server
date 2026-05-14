@@ -1,0 +1,18 @@
+[Unit]
+Description=Klipper Telegram long-polling worker (/research)
+After=network-online.target linux-ai-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=klipperos
+Group=klipperos
+WorkingDirectory=/opt/linux-ai-server
+EnvironmentFile=/opt/linux-ai-server/.env
+ExecStart=/opt/linux-ai-server/venv/bin/python3 /opt/linux-ai-server/scripts/telegram_poller.py
+Restart=always
+RestartSec=10
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target
