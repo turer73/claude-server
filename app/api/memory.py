@@ -13,6 +13,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, field_validator
 
 from app.core.config import read_env_var
+from app.core.privacy import redact
 
 DB_PATH = "/opt/linux-ai-server/data/claude_memory.db"
 
@@ -341,25 +342,44 @@ async def get_memory(memory_id: int):
 
 @router.post("/memories")
 async def create_memory(data: MemoryCreate):
+    # Privacy: secret/token strip
+    desc_clean, desc_labels = redact(data.description)
+    content_clean, content_labels = redact(data.content)
+    redacted_labels = sorted(set(desc_labels) | set(content_labels))
+
     db = get_db()
     try:
-        # Duplicate kontrolü
+        # 5-dakika exact-match dedup window (agentmemory pattern):
+        # ayni name+description+content son 5 dk icinde varsa skip et.
+        recent_dup = db.execute(
+            "SELECT id FROM memories WHERE active=1 AND type=? AND name=? "
+            "AND COALESCE(description,'')=? AND COALESCE(content,'')=? "
+            "AND updated_at > datetime('now','-5 minutes')",
+            (data.type, data.name, desc_clean or "", content_clean or ""),
+        ).fetchone()
+        if recent_dup:
+            return {
+                "id": recent_dup[0],
+                "status": "duplicate_skipped_5min",
+                "secrets_redacted": redacted_labels,
+            }
+
+        # Duplicate kontrolu (name+type bazli upsert — eski davranis)
         existing = db.execute("SELECT id FROM memories WHERE active=1 AND type=? AND name=?", (data.type, data.name)).fetchone()
         if existing:
-            # Var olanı güncelle
             db.execute(
                 "UPDATE memories SET description=?, content=?, source_device=?, rationale=COALESCE(?, rationale), updated_at=datetime('now') WHERE id=?",
-                (data.description, data.content, data.source_device, data.rationale, existing[0]),
+                (desc_clean, content_clean, data.source_device, data.rationale, existing[0]),
             )
             db.commit()
-            return {"id": existing[0], "status": "updated_existing"}
+            return {"id": existing[0], "status": "updated_existing", "secrets_redacted": redacted_labels}
 
         cur = db.execute(
             "INSERT INTO memories (type, name, description, content, source_device, rationale) VALUES (?, ?, ?, ?, ?, ?)",
-            (data.type, data.name, data.description, data.content, data.source_device, data.rationale),
+            (data.type, data.name, desc_clean, content_clean, data.source_device, data.rationale),
         )
         db.commit()
-        return {"id": cur.lastrowid, "status": "created"}
+        return {"id": cur.lastrowid, "status": "created", "secrets_redacted": redacted_labels}
     finally:
         db.close()
 
@@ -574,33 +594,53 @@ async def create_discovery(data: DiscoveryCreate):
     Sadece status='active' kayıtları duplicate olarak kabul edilir. completed/
     obsolete/superseded kayıtlar yeni POST'ları bloklamaz; aynı title ile yeni
     bulgu gelirse regression olarak yeni active row oluşur.
+
+    Iki ekstra koruma:
+    - Privacy: details icindeki secret/token redact edilir (app.core.privacy).
+    - 5dk dedup window: ayni project+title+details son 5dk icinde varsa skip.
     """
+    details_clean, redacted_labels = redact(data.details)
+
     db = get_db()
     try:
+        # 5-dakika exact-match dedup window
+        recent_dup = db.execute(
+            "SELECT id FROM discoveries WHERE project=? AND type=? AND title=? "
+            "AND COALESCE(details,'')=? "
+            "AND created_at > datetime('now','-5 minutes')",
+            (data.project, data.type, data.title, details_clean or ""),
+        ).fetchone()
+        if recent_dup:
+            return {
+                "id": recent_dup[0],
+                "status": "duplicate_skipped_5min",
+                "secrets_redacted": redacted_labels,
+            }
+
         existing = db.execute(
             "SELECT id FROM discoveries WHERE project=? AND type=? AND title=? AND status='active'", (data.project, data.type, data.title)
         ).fetchone()
         if existing:
             # Var olanı güncelle (details veya rationale değiştiyse)
-            if data.details or data.rationale:
+            if details_clean or data.rationale:
                 db.execute(
                     "UPDATE discoveries SET details=COALESCE(?, details), device_name=?, rationale=COALESCE(?, rationale) WHERE id=?",
-                    (data.details, data.device_name, data.rationale, existing[0]),
+                    (details_clean, data.device_name, data.rationale, existing[0]),
                 )
                 db.commit()
-            return {"id": existing[0], "status": "already_exists"}
+            return {"id": existing[0], "status": "already_exists", "secrets_redacted": redacted_labels}
 
         cur = db.execute(
             """
             INSERT INTO discoveries (session_id, device_name, project, type, title, details, status, rationale)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-            (data.session_id, data.device_name, data.project, data.type, data.title, data.details, data.status or "active", data.rationale),
+            (data.session_id, data.device_name, data.project, data.type, data.title, details_clean, data.status or "active", data.rationale),
         )
         db.commit()
-        _sync_fts(db, cur.lastrowid, data.title, data.details)
+        _sync_fts(db, cur.lastrowid, data.title, details_clean)
         db.commit()
-        return {"id": cur.lastrowid, "status": "created"}
+        return {"id": cur.lastrowid, "status": "created", "secrets_redacted": redacted_labels}
     finally:
         db.close()
 
@@ -825,14 +865,30 @@ async def list_notes(device: str | None = None, unread_only: bool = False):
 
 @router.post("/notes")
 async def create_note(data: NoteCreate):
+    # Privacy + dedup eklendi
+    content_clean, redacted_labels = redact(data.content)
     db = get_db()
     try:
+        recent_dup = db.execute(
+            "SELECT id FROM notes WHERE from_device=? "
+            "AND COALESCE(to_device,'')=COALESCE(?,'') "
+            "AND title=? AND content=? "
+            "AND created_at > datetime('now','-5 minutes')",
+            (data.from_device, data.to_device, data.title, content_clean),
+        ).fetchone()
+        if recent_dup:
+            return {
+                "id": recent_dup[0],
+                "status": "duplicate_skipped_5min",
+                "secrets_redacted": redacted_labels,
+            }
+
         cur = db.execute(
             "INSERT INTO notes (from_device, to_device, title, content) VALUES (?, ?, ?, ?)",
-            (data.from_device, data.to_device, data.title, data.content),
+            (data.from_device, data.to_device, data.title, content_clean),
         )
         db.commit()
-        return {"id": cur.lastrowid, "status": "created"}
+        return {"id": cur.lastrowid, "status": "created", "secrets_redacted": redacted_labels}
     finally:
         db.close()
 
