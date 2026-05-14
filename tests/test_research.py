@@ -40,9 +40,7 @@ async def test_health_all_deps(client):
     # memory_db: gercek dosyaya yazmak istemiyoruz; sqlite3.connect'i mock'la
     fake_conn = MagicMock()
     fake_conn.execute.return_value.fetchone.return_value = (42,)
-    with patch("app.api.research.requests.get", side_effect=fake_get), patch(
-        "app.api.research.sqlite3.connect", return_value=fake_conn
-    ):
+    with patch("app.api.research.requests.get", side_effect=fake_get), patch("app.api.research.sqlite3.connect", return_value=fake_conn):
         resp = await client.get("/api/v1/research/health")
     assert resp.status_code == 200
     body = resp.json()
@@ -103,9 +101,7 @@ async def test_ask_full_pipeline_with_citation_validation(client, monkeypatch):
 @pytest.mark.anyio
 async def test_ask_caps_chunks_at_max(client, monkeypatch):
     """max_chunks asilirsa kesilir — qwen 7B prompt boyu hassasiyeti."""
-    big_list = [
-        {"type": "discovery", "id": str(i), "title": f"d{i}", "text": "x"} for i in range(20)
-    ]
+    big_list = [{"type": "discovery", "id": str(i), "title": f"d{i}", "text": "x"} for i in range(20)]
     monkeypatch.setattr("app.api.research._qdrant_chunks", lambda *a, **kw: [])
     monkeypatch.setattr("app.api.research._discovery_chunks", lambda *a, **kw: big_list)
     monkeypatch.setattr("app.api.research._memory_chunks", lambda *a, **kw: [])
@@ -126,8 +122,10 @@ async def test_engine_claude_uses_anthropic_when_requested(client, monkeypatch):
     monkeypatch.setattr("app.api.research._memory_chunks", lambda *a, **kw: [])
     # ANTHROPIC_API_KEY'i mock'la (modul yuklemesinde okunmus olabilir bos)
     monkeypatch.setattr("app.api.research.ANTHROPIC_API_KEY", "sk-test-fake")
-    with patch("app.api.research._anthropic_generate", return_value="cevap [discovery:5]") as cl, \
-         patch("app.api.research._ollama_generate") as ol:
+    with (
+        patch("app.api.research._anthropic_generate", return_value="cevap [discovery:5]") as cl,
+        patch("app.api.research._ollama_generate") as ol,
+    ):
         resp = await client.post(
             "/api/v1/research/ask",
             json={"q": "test", "engine": "claude", "include_rag": False},
@@ -148,8 +146,7 @@ async def test_engine_auto_picks_claude_when_chunks_high(client, monkeypatch):
     monkeypatch.setattr("app.api.research._discovery_chunks", lambda *a, **kw: many)
     monkeypatch.setattr("app.api.research._memory_chunks", lambda *a, **kw: [])
     monkeypatch.setattr("app.api.research.ANTHROPIC_API_KEY", "sk-test")
-    with patch("app.api.research._anthropic_generate", return_value="ok") as cl, \
-         patch("app.api.research._ollama_generate") as ol:
+    with patch("app.api.research._anthropic_generate", return_value="ok") as cl, patch("app.api.research._ollama_generate") as ol:
         resp = await client.post(
             "/api/v1/research/ask",
             json={"q": "test", "engine": "auto", "include_rag": False, "max_chunks": 10},
@@ -166,8 +163,7 @@ async def test_engine_auto_falls_back_to_local_without_key(client, monkeypatch):
     monkeypatch.setattr("app.api.research._discovery_chunks", lambda *a, **kw: many)
     monkeypatch.setattr("app.api.research._memory_chunks", lambda *a, **kw: [])
     monkeypatch.setattr("app.api.research.ANTHROPIC_API_KEY", "")  # key yok
-    with patch("app.api.research._ollama_generate", return_value="ok") as ol, \
-         patch("app.api.research._anthropic_generate") as cl:
+    with patch("app.api.research._ollama_generate", return_value="ok") as ol, patch("app.api.research._anthropic_generate") as cl:
         resp = await client.post(
             "/api/v1/research/ask",
             json={"q": "test", "engine": "auto", "include_rag": False, "max_chunks": 10},
@@ -196,7 +192,8 @@ async def test_fts_query_hyphens_normalised():
 
     out = _fts_q("bilge-arena security header")
     # Tire kelimeleri ayirir, kucuk kelimeler (<3 char) atilir
-    assert "bilge" in out and "arena" in out
+    assert "bilge" in out
+    assert "arena" in out
     assert "OR" in out
     # FTS5'in column-prefix sentaksini tetikleyecek karakterler yok
     for forbidden in ('"', "*", ":"):

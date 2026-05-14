@@ -22,7 +22,6 @@ from __future__ import annotations
 import re
 import sqlite3
 import time
-from typing import Optional
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException
@@ -51,7 +50,7 @@ router = APIRouter(prefix="/api/v1/research", tags=["research"], dependencies=[D
 # ───────── kaynak fetchers ─────────
 
 
-def _qdrant_chunks(question: str, top_k: int = 5, project: Optional[str] = None) -> list[dict]:
+def _qdrant_chunks(question: str, top_k: int = 5, project: str | None = None) -> list[dict]:
     """rag._embed + rag._search uzerinden Qdrant top-K."""
     vec = rag_module._embed(question)
     hits = rag_module._search(vec, top_k=top_k, project=project)
@@ -149,8 +148,7 @@ def _notes_chunks(question: str, limit: int = 3) -> list[dict]:
     db.row_factory = sqlite3.Row
     try:
         rows = db.execute(
-            f"SELECT id, from_device, title, content FROM notes "
-            f"WHERE ({' OR '.join(conds)}) ORDER BY created_at DESC LIMIT ?",
+            f"SELECT id, from_device, title, content FROM notes WHERE ({' OR '.join(conds)}) ORDER BY created_at DESC LIMIT ?",
             params,
         ).fetchall()
         return [
@@ -250,7 +248,7 @@ def _validate_citations(answer: str, chunks: list[dict]) -> dict:
 class AskRequest(BaseModel):
     q: str
     top_k: int = 3  # Qdrant top-K (cogu durumda 3-5 yeter)
-    project: Optional[str] = None
+    project: str | None = None
     # Default lokal qwen2.5:7b icin: discoveries+memories yeter, RAG genis context'i
     # cogu zaman yavaslatir (12 kaynak prompt -> ~70sn synth). include_rag=true ise
     # max_chunks=8 ile sinirlandirilir.

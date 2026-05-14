@@ -635,7 +635,16 @@ async def create_discovery(data: DiscoveryCreate):
             INSERT INTO discoveries (session_id, device_name, project, type, title, details, status, rationale)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-            (data.session_id, data.device_name, data.project, data.type, data.title, details_clean, data.status or "active", data.rationale),
+            (
+                data.session_id,
+                data.device_name,
+                data.project,
+                data.type,
+                data.title,
+                details_clean,
+                data.status or "active",
+                data.rationale,
+            ),
         )
         db.commit()
         _sync_fts(db, cur.lastrowid, data.title, details_clean)

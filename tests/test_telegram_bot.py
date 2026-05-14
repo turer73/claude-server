@@ -29,11 +29,10 @@ def _fake_update(text: str, chat_id: int = 123, msg_id: int = 1) -> dict:
 def test_process_update_skips_non_research():
     from app.api.telegram_bot import process_update
 
-    with patch("app.api.telegram_bot._send_message") as snd, patch(
-        "app.api.telegram_bot.research_ask"
-    ) as ask:
+    with patch("app.api.telegram_bot._send_message") as snd, patch("app.api.telegram_bot.research_ask") as ask:
         out = process_update(_fake_update("merhaba"))
-    assert out["ok"] and out["skipped"] == "not /research"
+    assert out["ok"]
+    assert out["skipped"] == "not /research"
     snd.assert_not_called()
     ask.assert_not_called()
 
@@ -41,9 +40,7 @@ def test_process_update_skips_non_research():
 def test_process_update_help_when_empty_question():
     from app.api.telegram_bot import process_update
 
-    with patch("app.api.telegram_bot._send_message") as snd, patch(
-        "app.api.telegram_bot.research_ask"
-    ) as ask:
+    with patch("app.api.telegram_bot._send_message") as snd, patch("app.api.telegram_bot.research_ask") as ask:
         out = process_update(_fake_update("/research"))
     assert out["action"] == "help"
     snd.assert_called_once()
@@ -63,9 +60,11 @@ def test_process_update_calls_research_and_sends_reply():
         "citations": {"used": ["discovery:323"], "hallucinated": [], "unused": []},
         "duration_ms": {"total": 1234, "retrieval": 5, "synthesis": 1229},
     }
-    with patch("app.api.telegram_bot.research_ask", return_value=fake_result) as ask, patch(
-        "app.api.telegram_bot._send_message"
-    ) as snd, patch("app.api.telegram_bot._send_typing"):
+    with (
+        patch("app.api.telegram_bot.research_ask", return_value=fake_result) as ask,
+        patch("app.api.telegram_bot._send_message") as snd,
+        patch("app.api.telegram_bot._send_typing"),
+    ):
         out = process_update(_fake_update("/research petvet headers"))
     assert out["action"] == "answered"
     ask.assert_called_once()
@@ -81,9 +80,20 @@ def test_process_update_calls_research_and_sends_reply():
 def test_process_update_handles_bot_mention():
     from app.api.telegram_bot import process_update
 
-    with patch("app.api.telegram_bot.research_ask", return_value={"answer": "x", "engine": "local", "source_count": 0, "citations": {"used": [], "hallucinated": [], "unused": []}, "duration_ms": {"total": 1}}), patch(
-        "app.api.telegram_bot._send_message"
-    ), patch("app.api.telegram_bot._send_typing"):
+    with (
+        patch(
+            "app.api.telegram_bot.research_ask",
+            return_value={
+                "answer": "x",
+                "engine": "local",
+                "source_count": 0,
+                "citations": {"used": [], "hallucinated": [], "unused": []},
+                "duration_ms": {"total": 1},
+            },
+        ),
+        patch("app.api.telegram_bot._send_message"),
+        patch("app.api.telegram_bot._send_typing"),
+    ):
         # /research@botname formati
         out = process_update(_fake_update("/research@vps_backup_3dlabx_bot test"))
     assert out["action"] == "answered"

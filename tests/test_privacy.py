@@ -84,7 +84,7 @@ def test_bearer_token_redacted():
 
 
 def test_multiple_secrets_in_one_text():
-    text = f"gh={'ghp_' + 'a'*36} aws={'AKIA' + 'Q'*16}"
+    text = f"gh={'ghp_' + 'a' * 36} aws={'AKIA' + 'Q' * 16}"
     out, labels = redact(text)
     assert "[REDACTED:github_pat_classic]" in out
     assert "[REDACTED:aws_access_key]" in out

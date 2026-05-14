@@ -13,7 +13,6 @@ verify_key gerek yok (bu router public-mountlu).
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 import requests
 from fastapi import APIRouter, Header, HTTPException
@@ -28,7 +27,7 @@ TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 router = APIRouter(prefix="/webhooks/telegram", tags=["telegram-webhook"])
 
 
-def _send_message(chat_id: int, text: str, reply_to: Optional[int] = None) -> None:
+def _send_message(chat_id: int, text: str, reply_to: int | None = None) -> None:
     """Markdown sendMessage helper. Best-effort, sessizce fail eder."""
     if not TELEGRAM_BOT_TOKEN:
         return
@@ -83,7 +82,7 @@ def _format_reply(result: dict, q: str) -> str:
 
     parts = [f"*Q:* {_md_escape(q[:200])}", "", answer[:2500]]
     if used:
-        cite_str = ", ".join(used[:6]) + (f" +{len(used)-6}" if len(used) > 6 else "")
+        cite_str = ", ".join(used[:6]) + (f" +{len(used) - 6}" if len(used) > 6 else "")
         parts.extend(["", f"_Kaynaklar:_ {cite_str}"])
     footer = f"`{engine}` · {src_count} kaynak · {dur}ms"
     if halu:
@@ -131,7 +130,7 @@ def process_update(update: dict) -> dict:
 @router.post("/update")
 def telegram_update(
     update: dict,
-    x_telegram_bot_api_secret_token: Optional[str] = Header(None),
+    x_telegram_bot_api_secret_token: str | None = Header(None),
 ):
     """Telegram webhook receiver. Secret_token ile auth."""
     if TELEGRAM_WEBHOOK_SECRET:

@@ -36,11 +36,11 @@ from app.api.prometheus import router as prometheus_router
 from app.api.rag import router as rag_router
 from app.api.research import router as research_router
 from app.api.shell import router as shell_router
-from app.api.telegram_bot import router as telegram_bot_router
 from app.api.social import router as social_router
 from app.api.ssh import router as ssh_router
 from app.api.system import router as system_router
 from app.api.tasks import router as tasks_router
+from app.api.telegram_bot import router as telegram_bot_router
 from app.api.validation import router as validation_router
 from app.api.vps import router as vps_router
 from app.api.webops import router as webops_router

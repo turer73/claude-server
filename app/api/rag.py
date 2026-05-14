@@ -1,12 +1,13 @@
 """
 RAG API + metric logging (Qdrant + Ollama bge-m3 + qwen2.5)
 """
-import requests
+
 import sqlite3
 import time
-import json
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request
+
+import requests
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+
 from app.api.memory import verify_key
 
 QDRANT_URL = "http://localhost:6333"
@@ -57,10 +58,13 @@ def _log_query(endpoint, query, project, source, top_k, hits, duration_ms, token
             ip = request.client.host if request.client else None
             ua = request.headers.get("user-agent", "")[:200]
         top_score = float(hits[0]["score"]) if hits else None
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO rag_queries (ts, endpoint, query, project, source, top_k, hit_count, top_score, duration_ms, tokens, tokens_per_sec, client_ip, user_agent)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (int(time.time()), endpoint, query[:500], project, source, top_k, len(hits), top_score, duration_ms, tokens, tps, ip, ua))
+        """,
+            (int(time.time()), endpoint, query[:500], project, source, top_k, len(hits), top_score, duration_ms, tokens, tps, ip, ua),
+        )
         conn.commit()
         conn.close()
     except Exception:
@@ -71,8 +75,7 @@ def _embed(text):
     text = (text or "")[:8000]
     if not text.strip():
         raise HTTPException(400, "empty text")
-    r = requests.post(f"{OLLAMA_URL}/api/embeddings",
-                      json={"model": EMBED_MODEL, "prompt": text}, timeout=60)
+    r = requests.post(f"{OLLAMA_URL}/api/embeddings", json={"model": EMBED_MODEL, "prompt": text}, timeout=60)
     if not r.ok:
         raise HTTPException(503, f"embed fail: {r.status_code}")
     return r.json().get("embedding", [])
@@ -87,8 +90,7 @@ def _search(vec, top_k=5, project=None, source=None):
     body = {"vector": vec, "limit": top_k, "with_payload": True}
     if filt["must"]:
         body["filter"] = filt
-    r = requests.post(f"{QDRANT_URL}/collections/{COLLECTION}/points/search",
-                      json=body, timeout=30)
+    r = requests.post(f"{QDRANT_URL}/collections/{COLLECTION}/points/search", json=body, timeout=30)
     if not r.ok:
         raise HTTPException(503, f"qdrant fail: {r.status_code}")
     return r.json().get("result", [])
@@ -118,8 +120,8 @@ def search(
     request: Request,
     q: str = Body(..., embed=True),
     top_k: int = Body(5, embed=True),
-    project: Optional[str] = Body(None, embed=True),
-    source: Optional[str] = Body(None, embed=True),
+    project: str | None = Body(None, embed=True),
+    source: str | None = Body(None, embed=True),
 ):
     t0 = time.time()
     vec = _embed(q)
@@ -142,7 +144,8 @@ def search(
                 "session_id": h["payload"].get("session_id"),
                 "task_id": h["payload"].get("task_id"),
                 "file_path": h["payload"].get("file_path"),
-            } for h in hits
+            }
+            for h in hits
         ],
     }
 
@@ -151,7 +154,7 @@ def search(
 def ask(
     request: Request,
     q: str = Body(..., embed=True),
-    project: Optional[str] = Body(None, embed=True),
+    project: str | None = Body(None, embed=True),
     top_k: int = Body(5, embed=True),
     temperature: float = Body(0.2, embed=True),
     max_tokens: int = Body(400, embed=True),
@@ -160,7 +163,7 @@ def ask(
     vec = _embed(q)
     hits = _search(vec, top_k=top_k, project=project)
     context = "\n\n".join(
-        f"--- Kaynak {i+1} ({h['payload']['source']}, skor {h['score']:.2f}) ---\n{h['payload'].get('text', '')[:1500]}"
+        f"--- Kaynak {i + 1} ({h['payload']['source']}, skor {h['score']:.2f}) ---\n{h['payload'].get('text', '')[:1500]}"
         for i, h in enumerate(hits)
     )
     prompt = (
@@ -168,10 +171,16 @@ def ask(
         f"Kaynaklarda bulunmuyorsa 'Hafizamda yetersiz bilgi' de. Madde madde yaz.\n\n"
         f"KAYNAKLAR:\n{context}\n\nSORU: {q}\n\nCEVAP (Turkce, kaynaklara dayali):"
     )
-    r = requests.post(f"{OLLAMA_URL}/api/generate",
-                      json={"model": LLM_MODEL, "prompt": prompt, "stream": False,
-                            "options": {"temperature": temperature, "num_predict": max_tokens, "num_ctx": 8192}},
-                      timeout=300)
+    r = requests.post(
+        f"{OLLAMA_URL}/api/generate",
+        json={
+            "model": LLM_MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": temperature, "num_predict": max_tokens, "num_ctx": 8192},
+        },
+        timeout=300,
+    )
     if not r.ok:
         raise HTTPException(503, f"ollama fail: {r.status_code}")
     res = r.json()
@@ -190,7 +199,8 @@ def ask(
                 "source": h["payload"].get("source"),
                 "project": h["payload"].get("project"),
                 "title": h["payload"].get("name") or h["payload"].get("title") or h["payload"].get("task") or h["payload"].get("file_path"),
-            } for h in hits
+            }
+            for h in hits
         ],
         "stats": {
             "retrieval_count": len(hits),
@@ -205,9 +215,12 @@ def ask(
 @router.get("/projects")
 def projects():
     from collections import Counter
-    r = requests.post(f"{QDRANT_URL}/collections/{COLLECTION}/points/scroll",
-                      json={"limit": 10000, "with_payload": ["project"], "with_vector": False},
-                      timeout=30)
+
+    r = requests.post(
+        f"{QDRANT_URL}/collections/{COLLECTION}/points/scroll",
+        json={"limit": 10000, "with_payload": ["project"], "with_vector": False},
+        timeout=30,
+    )
     if not r.ok:
         raise HTTPException(503, f"qdrant fail: {r.status_code}")
     pts = r.json()["result"]["points"]
@@ -224,45 +237,57 @@ def metrics(days: int = Query(30, ge=1, le=365)):
     since = int(time.time()) - days * 86400
     conn = sqlite3.connect(METRICS_DB, timeout=5)
     cur = conn.cursor()
-    
+
     # Toplam istatistik
     cur.execute("SELECT COUNT(*), AVG(duration_ms), AVG(hit_count), AVG(top_score) FROM rag_queries WHERE ts >= ?", (since,))
     total, avg_dur, avg_hits, avg_score = cur.fetchone()
-    
+
     # Endpoint dagilim
     cur.execute("SELECT endpoint, COUNT(*) FROM rag_queries WHERE ts >= ? GROUP BY endpoint", (since,))
     by_endpoint = dict(cur.fetchall())
-    
+
     # Proje dagilim
     cur.execute("SELECT COALESCE(project, '(all)'), COUNT(*) FROM rag_queries WHERE ts >= ? GROUP BY project ORDER BY 2 DESC", (since,))
     by_project = [{"project": p, "count": c} for p, c in cur.fetchall()]
-    
+
     # Top 20 sorgu (sik)
-    cur.execute("""
+    cur.execute(
+        """
         SELECT query, COUNT(*) cnt, AVG(top_score) score, AVG(duration_ms) dur
         FROM rag_queries WHERE ts >= ?
         GROUP BY query ORDER BY cnt DESC LIMIT 20
-    """, (since,))
+    """,
+        (since,),
+    )
     top_queries = [{"query": r[0], "count": r[1], "avg_score": r[2], "avg_duration_ms": r[3]} for r in cur.fetchall()]
-    
+
     # Son 10 sorgu
-    cur.execute("""
+    cur.execute(
+        """
         SELECT ts, endpoint, query, project, hit_count, top_score, duration_ms, tokens
         FROM rag_queries WHERE ts >= ?
         ORDER BY ts DESC LIMIT 10
-    """, (since,))
-    recent = [{"ts": r[0], "endpoint": r[1], "query": r[2], "project": r[3], "hits": r[4], "top_score": r[5], "duration_ms": r[6], "tokens": r[7]} for r in cur.fetchall()]
-    
+    """,
+        (since,),
+    )
+    recent = [
+        {"ts": r[0], "endpoint": r[1], "query": r[2], "project": r[3], "hits": r[4], "top_score": r[5], "duration_ms": r[6], "tokens": r[7]}
+        for r in cur.fetchall()
+    ]
+
     # Gunluk dagilim
-    cur.execute("""
+    cur.execute(
+        """
         SELECT DATE(ts, 'unixepoch') d, COUNT(*) cnt
         FROM rag_queries WHERE ts >= ?
         GROUP BY d ORDER BY d DESC LIMIT 30
-    """, (since,))
+    """,
+        (since,),
+    )
     daily = [{"date": r[0], "count": r[1]} for r in cur.fetchall()]
-    
+
     conn.close()
-    
+
     return {
         "period_days": days,
         "total_queries": total or 0,
