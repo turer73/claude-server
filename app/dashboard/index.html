@@ -5,10 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Linux-AI Control Center</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
-<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
 <style>
 :root {
   --bg: #06060b; --surface: #0d0d14; --card: #11111b; --border: #1a1a2e;
@@ -140,16 +136,6 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
 .log-controls button { background: var(--accent2); color: white; border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; }
 
 /* Terminal */
-#termContainer { background: #000; border-radius: 8px; padding: 4px; height: 420px; }
-#termContainer .xterm { height: 100%; }
-.term-bar { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
-.term-bar button, .term-bar select { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; }
-.term-bar button:hover { border-color: var(--accent); color: var(--accent); }
-.term-bar button.active { background: var(--accent); color: white; border-color: var(--accent); }
-.term-status { font-size: 11px; margin-left: auto; }
-.term-status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
-.term-status .dot.on { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
-.term-status .dot.off { background: #ef4444; }
 
 /* Claude Chat */
 #claudeMessages { display: flex; flex-direction: column; gap: 10px; height: 420px; overflow-y: auto; background: #000; border-radius: 8px; padding: 12px; }
@@ -258,7 +244,6 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
     <div class="nav-item" onclick="nav('llm',this)"><span class="icon">&#9883;</span> LLM</div>
     <div class="nav-item" onclick="nav('claude',this)"><span class="icon">&#9679;</span> Claude Code</div>
     <div class="nav-item" onclick="nav('logs',this)"><span class="icon">&#9776;</span> Log Gorunum</div>
-    <div class="nav-item" onclick="nav('terminal',this)"><span class="icon">&gt;_</span> Terminal</div>
     <div class="nav-item" onclick="nav('tasks',this)"><span class="icon">&#9654;</span> Gorevler</div>
     <div class="nav-section">Guvenlik</div>
     <div class="nav-item" onclick="nav('vault',this)"><span class="icon">&#9919;</span> Sifre Kasasi</div>
@@ -424,25 +409,6 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
       </div>
 
       <!-- TERMINAL -->
-      <div id="page-terminal" class="page">
-        <div class="card">
-          <div class="card-title">Uzak Terminal</div>
-          <div class="term-bar">
-            <button id="termBtnConnect" onclick="termConnect()">Baglan</button>
-            <button id="termBtnDisconnect" onclick="termDisconnect()" style="display:none">Kes</button>
-            <select id="termTarget">
-              <option value="ws">WebSocket (PTY)</option>
-              <option value="rest">REST (tek komut)</option>
-            </select>
-            <div class="term-status">
-              <span class="dot off" id="termDot"></span>
-              <span id="termStatusText" style="color:var(--dim)">Bagli degil</span>
-            </div>
-          </div>
-          <div id="termContainer"></div>
-        </div>
-      </div>
-
       <!-- TASKS -->
       <div id="page-tasks" class="page">
         <div class="row row-2">
@@ -749,7 +715,6 @@ function nav(page, el) {
   if (page==='vault') vaultRender();
   if (page==='alerts') { loadActiveAlerts(); loadAlertHistory(); }
   if (page==='containers') { loadDevContainers(); loadVPSContainers(); }
-  if (page==='terminal') { termInit(); setTimeout(() => termFit && termFit.fit(), 100); }
   if (page==='claude') { claudeInit(); }
   if (page==='projects') loadProjects();
   if (page==='services') loadServices();
@@ -1513,173 +1478,6 @@ async function claudeSend() {
   }
 }
 
-// ── Terminal (xterm.js + WebSocket) ─────
-let term = null, termWs = null, termFit = null, termSessionId = null;
-let termRestHandler = null;
-let wsReconnectTimer = null;
-let wsReconnectAttempts = 0;
-const WS_MAX_RECONNECT = 5;
-
-function termInit() {
-  if (term) return;
-  term = new Terminal({
-    cursorBlink: true, fontSize: 13, fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-    theme: { background: '#000000', foreground: '#33ff33', cursor: '#33ff33', selectionBackground: '#33ff3344' },
-    scrollback: 5000, convertEol: true,
-  });
-  termFit = new FitAddon.FitAddon();
-  term.loadAddon(termFit);
-  term.loadAddon(new WebLinksAddon.WebLinksAddon());
-  term.open(document.getElementById('termContainer'));
-  termFit.fit();
-  window.addEventListener('resize', () => { if (termFit && _activePage==='terminal') termFit.fit(); });
-
-  // Single unified key handler (fixes duplicate handler bug)
-  let wsCmdBuf = '';
-  term.onKey(({key, domEvent}) => {
-    // WS mode
-    if (termWs && termWs.readyState === 1) {
-      if (domEvent.key === 'Enter') {
-        term.writeln('');
-        if (wsCmdBuf.trim()) {
-          termWs.send(JSON.stringify({ command: wsCmdBuf.trim() }));
-        } else {
-          term.write('\x1b[32m$ \x1b[0m');
-        }
-        wsCmdBuf = '';
-      } else if (domEvent.key === 'Backspace') {
-        if (wsCmdBuf.length > 0) { wsCmdBuf = wsCmdBuf.slice(0,-1); term.write('\b \b'); }
-      } else if (domEvent.key === 'Tab') {
-        domEvent.preventDefault();
-      } else if (key.length === 1 && !domEvent.ctrlKey && !domEvent.altKey) {
-        wsCmdBuf += key; term.write(key);
-      }
-      return;
-    }
-    // REST mode
-    if (termRestHandler) {
-      if (domEvent.key === 'Enter') {
-        term.writeln('');
-        if (termRestHandler.buf.trim()) {
-          const cmd = termRestHandler.buf.trim();
-          termRestHandler.buf = '';
-          apiPost('/shell/exec', {command: cmd}).then(d => {
-            const out = d?.stdout || d?.stderr || JSON.stringify(d);
-            term.writeln(out.replace(/\n/g, '\r\n'));
-            term.write('\x1b[32m$ \x1b[0m');
-          });
-        } else { term.write('\x1b[32m$ \x1b[0m'); }
-      } else if (domEvent.key === 'Backspace') {
-        if (termRestHandler.buf.length > 0) { termRestHandler.buf = termRestHandler.buf.slice(0,-1); term.write('\b \b'); }
-      } else if (key.length === 1 && !domEvent.ctrlKey && !domEvent.altKey) {
-        termRestHandler.buf += key; term.write(key);
-      }
-    }
-  });
-
-  term.onResize(({cols, rows}) => {
-    if (termWs && termWs.readyState === 1) {
-      termWs.send(JSON.stringify({ type: 'resize', cols, rows }));
-    }
-  });
-  term.writeln('\x1b[1;36m── Linux-AI Terminal ──\x1b[0m');
-  term.writeln('\x1b[90mBaglan butonuna basin veya REST modunda komut yazin.\x1b[0m\r\n');
-}
-
-function termSetStatus(connected) {
-  document.getElementById('termDot').className = 'dot ' + (connected ? 'on' : 'off');
-  document.getElementById('termStatusText').textContent = connected ? 'Bagli' : 'Bagli degil';
-  document.getElementById('termBtnConnect').style.display = connected ? 'none' : '';
-  document.getElementById('termBtnDisconnect').style.display = connected ? '' : 'none';
-}
-
-function termConnect() {
-  const mode = document.getElementById('termTarget').value;
-  termInit();
-  wsReconnectAttempts = 0;
-  if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
-
-  if (mode === 'rest') {
-    termSetStatus(true);
-    termRestHandler = { buf: '' };
-    term.writeln('\x1b[33m[REST modu] Komut yazin, Enter ile calistirin.\x1b[0m');
-    term.write('\x1b[32m$ \x1b[0m');
-    return;
-  }
-
-  // WebSocket PTY mode
-  termRestHandler = null;
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const wsUrl = `${proto}://${location.host}/ws/terminal`;
-  term.writeln(`\x1b[90mBaglaniyor: ${wsUrl}\x1b[0m`);
-
-  termWs = new WebSocket(wsUrl);
-  termWs.onopen = () => {
-    termSetStatus(true);
-    wsReconnectAttempts = 0;
-    term.writeln('\x1b[32mBaglandi!\x1b[0m\r\n');
-    toast('Terminal baglandi', 'success');
-    termFit.fit();
-    const {cols, rows} = term;
-    termWs.send(JSON.stringify({ type: 'resize', cols, rows }));
-  };
-  termWs.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      if (msg.type === 'session_created') {
-        termSessionId = msg.session_id;
-        term.writeln(`\x1b[90mOturum: ${msg.session_id}\x1b[0m`);
-        term.write('\x1b[32m$ \x1b[0m');
-      } else if (msg.type === 'output') {
-        const txt = msg.stdout || msg.output || '';
-        if (txt) term.write(txt.replace(/\n/g, '\r\n'));
-        if (msg.stderr) term.write(`\x1b[31m${msg.stderr.replace(/\n/g, '\r\n')}\x1b[0m`);
-        term.write('\r\n\x1b[32m$ \x1b[0m');
-      } else if (msg.type === 'pty_output') {
-        term.write(msg.data);
-      } else if (msg.error) {
-        term.writeln(`\x1b[31mHata: ${msg.error}\x1b[0m`);
-      }
-    } catch { term.write(e.data); }
-  };
-  termWs.onclose = (e) => {
-    termSetStatus(false);
-    termSessionId = null;
-    const wasConnected = termWs !== null;
-    termWs = null;
-    // Auto-reconnect with exponential backoff
-    if (wasConnected && wsReconnectAttempts < WS_MAX_RECONNECT && _activePage === 'terminal') {
-      wsReconnectAttempts++;
-      const delay = Math.min(1000 * Math.pow(2, wsReconnectAttempts - 1), 10000);
-      term.writeln(`\r\n\x1b[33mBaglanti koptu. ${(delay/1000).toFixed(0)}s icinde yeniden deneniyor... (${wsReconnectAttempts}/${WS_MAX_RECONNECT})\x1b[0m`);
-      wsReconnectTimer = setTimeout(() => {
-        if (_activePage === 'terminal') {
-          document.getElementById('termTarget').value = 'ws';
-          termConnect();
-        }
-      }, delay);
-    } else {
-      term.writeln('\r\n\x1b[31mBaglanti kapandi.\x1b[0m');
-      if (wsReconnectAttempts >= WS_MAX_RECONNECT) {
-        toast('Terminal baglantisi kurulamadi', 'error');
-      }
-    }
-  };
-  termWs.onerror = () => {
-    termSetStatus(false);
-    term.writeln('\r\n\x1b[31mBaglanti hatasi.\x1b[0m');
-  };
-}
-
-function termDisconnect() {
-  if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
-  wsReconnectAttempts = WS_MAX_RECONNECT;
-  if (termWs) { termWs.close(); termWs = null; }
-  termRestHandler = null;
-  termSetStatus(false);
-  termSessionId = null;
-  if (term) term.writeln('\r\n\x1b[33mBaglanti kesildi.\x1b[0m');
-}
 
 // ── Tasks ───────────────────────────────
 async function loadTasks() {
