@@ -31,6 +31,12 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setenv("DB_PATH", str(tmp_path / "test.db"))
     monkeypatch.setenv("DEFAULT_API_KEY", TEST_API_KEY)
     monkeypatch.setenv("JWT_SECRET", TEST_JWT_SECRET)
+    # rag.py METRICS_DB path: prod /opt/linux-ai-server/data/rag_metrics.db
+    # CI runner'da yok; tmp_path uzerinde test-only metrics dosyasi kullan.
+    rag_metrics = tmp_path / "rag_metrics.db"
+    monkeypatch.setenv("RAG_METRICS_DB", str(rag_metrics))
+    # rag modulu zaten yuklenmis olabilir; module-level constant da yamala.
+    monkeypatch.setattr("app.api.rag.METRICS_DB", str(rag_metrics))
     # Prevent YAML config from being loaded (nested keys break flat Settings)
     monkeypatch.setattr("app.core.config.load_yaml_config", lambda path: {})
 

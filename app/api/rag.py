@@ -2,6 +2,7 @@
 RAG API + metric logging (Qdrant + Ollama bge-m3 + qwen2.5)
 """
 
+import os
 import sqlite3
 import time
 
@@ -15,7 +16,7 @@ OLLAMA_URL = "http://localhost:11434"
 COLLECTION = "klipper-memory"
 EMBED_MODEL = "bge-m3"
 LLM_MODEL = "qwen2.5:7b"
-METRICS_DB = "/opt/linux-ai-server/data/rag_metrics.db"
+METRICS_DB = os.environ.get("RAG_METRICS_DB", "/opt/linux-ai-server/data/rag_metrics.db")
 
 router = APIRouter(prefix="/api/v1/rag", tags=["rag"], dependencies=[Depends(verify_key)])
 
@@ -107,6 +108,7 @@ def health():
     try:
         q = requests.get(f"{QDRANT_URL}/collections/{COLLECTION}", timeout=5).json()
         o = requests.get(f"{OLLAMA_URL}/api/version", timeout=5).json()
+        _init_metrics_db()  # Idempotent — CI/fresh-install path icin garanti
         conn = sqlite3.connect(METRICS_DB, timeout=2)
         total_queries = conn.execute("SELECT COUNT(*) FROM rag_queries").fetchone()[0]
         conn.close()
@@ -241,6 +243,7 @@ def projects():
 def metrics(days: int = Query(30, ge=1, le=365)):
     """RAG kullanim metric ozeti (son N gun)"""
     since = int(time.time()) - days * 86400
+    _init_metrics_db()  # Idempotent — bos DB'de tabloyu garanti et
     conn = sqlite3.connect(METRICS_DB, timeout=5)
     cur = conn.cursor()
 
