@@ -15,14 +15,18 @@ from app.middleware.dependencies import require_auth
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
 PROJECTS = [
-    {"name": "linux-ai-server", "path": "/opt/linux-ai-server", "type": "python"},
-    {"name": "panola", "path": "/data/projects/panola", "type": "node"},
-    {"name": "bilge-arena", "path": "/data/projects/bilge-arena", "type": "node"},
-    {"name": "renderhane", "path": "/data/projects/renderhane", "type": "node"},
-    {"name": "koken-akademi", "path": "/data/projects/koken-akademi", "type": "node"},
-    {"name": "kuafor", "path": "/data/projects/kuafor", "type": "node"},
-    {"name": "petvet", "path": "/data/projects/petvet", "type": "node"},
-    {"name": "demo-saas", "path": "/data/projects/demo-saas", "type": "node"},
+    # Klipper'da aktif gelistirilen — write
+    {"name": "linux-ai-server", "path": "/opt/linux-ai-server", "type": "python", "read_only": False},
+    # Diger projeler /data/projects altinda salt-okunur referans (RAG indexing,
+    # cross-project memory query, code-search). Gercek gelistirme baska makinede
+    # (surer Windows) yapilir; bu klonlar pull-only.
+    {"name": "panola", "path": "/data/projects/panola", "type": "node", "read_only": True},
+    {"name": "bilge-arena", "path": "/data/projects/bilge-arena", "type": "node", "read_only": True},
+    {"name": "renderhane", "path": "/data/projects/renderhane", "type": "node", "read_only": True},
+    {"name": "koken-akademi", "path": "/data/projects/koken-akademi", "type": "node", "read_only": True},
+    {"name": "kuafor", "path": "/data/projects/kuafor", "type": "node", "read_only": True},
+    {"name": "petvet", "path": "/data/projects/petvet", "type": "node", "read_only": True},
+    {"name": "demo-saas", "path": "/data/projects/demo-saas", "type": "node", "read_only": True},
 ]
 
 
@@ -172,6 +176,7 @@ async def project_health(_=Depends(require_auth)):
             "name": proj["name"],
             "path": path,
             "exists": exists,
+            "read_only": proj.get("read_only", False),
         }
         if exists:
             info["git"] = _git_info(path)

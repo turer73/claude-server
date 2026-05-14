@@ -1586,18 +1586,26 @@ async function loadProjects() {
     if (!p.exists) return `<div class="metric"><span class="l">${esc(p.name)}</span><span class="v" style="color:var(--red)">Bulunamadi</span></div>`;
     const git = p.git || {};
     const gs = p.git_status || {};
+    const ro = p.read_only === true;
     const dirty = gs.dirty_files || 0;
     const ahead = gs.ahead || 0;
     const behind = gs.behind || 0;
-    const dirtyBadge = dirty > 0 ? `<span style="color:var(--yellow);font-size:10px" title="uncommitted dosya"> ✎ ${dirty}</span>` : '';
-    const aheadBadge = ahead > 0 ? `<span style="color:var(--blue);font-size:10px" title="push edilmemis commit"> ↑${ahead}</span>` : '';
-    const behindBadge = behind > 0 ? `<span style="color:var(--red);font-size:10px" title="pull edilmemis commit"> ↓${behind}</span>` : '';
+    // Read-only repolarda badge renkleri muted (sari/mavi/kirmizi yerine gri) —
+    // bunlar 'salt-okunur referans' oldugu icin sinyal noise olarak gosterme.
+    const dColor = ro ? 'var(--muted)' : 'var(--yellow)';
+    const aColor = ro ? 'var(--muted)' : 'var(--blue)';
+    const bColor = ro ? 'var(--muted)' : 'var(--red)';
+    const dirtyBadge = dirty > 0 ? `<span style="color:${dColor};font-size:10px" title="uncommitted dosya"> ✎ ${dirty}</span>` : '';
+    const aheadBadge = ahead > 0 ? `<span style="color:${aColor};font-size:10px" title="push edilmemis commit"> ↑${ahead}</span>` : '';
+    const behindBadge = behind > 0 ? `<span style="color:${bColor};font-size:10px" title="pull edilmemis commit"> ↓${behind}</span>` : '';
     const noUpstream = gs.has_upstream === false ? `<span style="color:var(--muted);font-size:10px" title="upstream takipsiz branch"> [local]</span>` : '';
+    const roBadge = ro ? `<span style="background:var(--card);border:1px solid var(--muted);color:var(--muted);padding:0 6px;border-radius:8px;font-size:9px;margin-left:4px" title="salt-okunur referans (RAG/indexing)">REF</span>` : '';
     const branch = gs.branch ? `<span style="color:var(--muted);font-size:10px">${esc(gs.branch)}</span>` : '';
     const msg = git.message ? git.message.slice(0,40) : '';
     const date = git.date ? git.date.slice(0,10) : '';
+    const nameStyle = ro ? 'style="color:var(--muted)"' : '';
     return `<div class="metric">
-      <span class="l">${esc(p.name)} ${branch}${dirtyBadge}${aheadBadge}${behindBadge}${noUpstream}</span>
+      <span class="l"><span ${nameStyle}>${esc(p.name)}</span>${roBadge} ${branch}${dirtyBadge}${aheadBadge}${behindBadge}${noUpstream}</span>
       <span class="v" style="font-size:12px;font-weight:400"><span style="color:var(--accent)">${esc(git.sha||'')}</span> ${esc(msg)} <span style="color:var(--muted)">${date}</span></span>
     </div>`;
   }).join('');
