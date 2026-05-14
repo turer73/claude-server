@@ -38,9 +38,22 @@ send_telegram() {
 }
 
 log()  { echo "[$TS] $*" >> "$LOG"; }
-fail() { log "FAIL: $*"; send_telegram "🔴 *VPS Backup BAŞARISIZ*
+
+kuma_push() {
+  # Uptime Kuma push monitor heartbeat. status=up|down, msg url-encoded.
+  [ -z "${KUMA_BACKUP_PUSH_URL:-}" ] && return 0
+  local status="$1" msg="${2:-}"
+  curl -fsS --max-time 5 "${KUMA_BACKUP_PUSH_URL}?status=${status}&msg=$(printf %s "$msg" | jq -sRr @uri 2>/dev/null || echo OK)" >/dev/null 2>&1 || true
+}
+
+fail() {
+  log "FAIL: $*"
+  send_telegram "🔴 *VPS Backup BAŞARISIZ*
 \`$TS\`
-$1"; exit 1; }
+$1"
+  kuma_push down "$1"
+  exit 1
+}
 
 mkdir -p "$DEST" || fail "mkdir $DEST"
 log "=== START backup -> $DEST ==="
@@ -114,3 +127,6 @@ send_telegram "✅ *VPS Backup — $DATE*
 📦 Toplam: \`$TOTAL\`
 🗑 Eski snapshot silindi: $DELETED
 🕐 \`$TS\`"
+
+# Uptime Kuma push monitor heartbeat — basari icin "up"
+kuma_push up "vol=$VOL_OK ch=$CH_OK size=$TOTAL"
