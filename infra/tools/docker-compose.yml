@@ -43,6 +43,9 @@ services:
       - UI_HOMEDESCRIPTION=Klipper PDF Araclari
       - METRICS_ENABLED=false
       - SYSTEM_GOOGLEVISIBILITY=false
+      # AutoPipeline bos /pipeline/watchedFolders'i tarayip NullPointer atiyordu
+      # (saatte ~16 ERROR/log). Automation endpoint grubunu kapat.
+      - SYSTEM_ENDPOINTS_GROUPSTOREMOVE=Automation
     restart: unless-stopped
 
 volumes:
