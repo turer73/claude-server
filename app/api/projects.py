@@ -50,26 +50,56 @@ def _git_info(path: str) -> dict:
 
 
 def _git_status(path: str) -> dict:
-    """Uncommitted changes count."""
+    """Uncommitted changes count + ahead/behind vs origin/<branch>.
+
+    Dort kanal:
+      - dirty_files: working tree uncommitted (porcelain satir sayisi)
+      - ahead: HEAD'in origin'den N commit onde (push bekleyenler)
+      - behind: origin'in HEAD'den N commit onde (pull bekleyenler)
+      - has_upstream: 'origin/<branch>' var mi (detached/local-only branch detection)
+    """
     try:
-        result = subprocess.run(
+        porcelain = subprocess.run(
             ["git", "status", "--porcelain"],
             cwd=path,
             capture_output=True,
             text=True,
             timeout=5,
         )
-        lines = [ln for ln in result.stdout.strip().split("\n") if ln.strip()]
-        branch = subprocess.run(
+        lines = [ln for ln in porcelain.stdout.strip().split("\n") if ln.strip()]
+
+        br = subprocess.run(
             ["git", "branch", "--show-current"],
             cwd=path,
             capture_output=True,
             text=True,
             timeout=5,
         )
+        branch = br.stdout.strip()
+
+        ahead = behind = 0
+        has_upstream = False
+        if branch:
+            # rev-list --left-right --count A...B -> "behind\tahead" tab-separated
+            counts = subprocess.run(
+                ["git", "rev-list", "--left-right", "--count", f"origin/{branch}...HEAD"],
+                cwd=path,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if counts.returncode == 0 and counts.stdout.strip():
+                parts = counts.stdout.strip().split()
+                if len(parts) == 2:
+                    behind, ahead = int(parts[0]), int(parts[1])
+                    has_upstream = True
+
         return {
-            "branch": branch.stdout.strip(),
+            "branch": branch,
             "dirty_files": len(lines),
+            "ahead": ahead,
+            "behind": behind,
+            "has_upstream": has_upstream,
         }
     except Exception:
         return {}

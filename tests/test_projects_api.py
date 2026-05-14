@@ -51,6 +51,18 @@ async def test_health_with_real_repo(client, auth_headers, real_git_projects):
     assert by_name["missing"]["exists"] is False
 
 
+async def test_git_status_has_ahead_behind_fields(client, auth_headers, real_git_projects):
+    """_git_status must expose ahead/behind/has_upstream alongside dirty_files."""
+    resp = await client.get("/api/v1/projects/health", headers=auth_headers)
+    self_gs = next(p["git_status"] for p in resp.json()["projects"] if p["name"] == "self")
+    for key in ("ahead", "behind", "has_upstream", "dirty_files", "branch"):
+        assert key in self_gs, f"missing key {key}"
+    assert isinstance(self_gs["ahead"], int)
+    assert isinstance(self_gs["behind"], int)
+    assert self_gs["ahead"] >= 0
+    assert self_gs["behind"] >= 0
+
+
 async def test_audit_default(client, auth_headers):
     resp = await client.get("/api/v1/projects/audit", headers=auth_headers)
     assert resp.status_code == 200
