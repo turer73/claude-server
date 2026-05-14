@@ -19,11 +19,22 @@ RH_KEY=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${VPS_HOST:?Set VP
 
 cd "$DIR" || exit 1
 
-# Run tests (skip API v1 to save credits — run manually when needed)
-RENDERHANE_API_KEY="$RH_KEY" \
-E2E_EMAIL="${E2E_EMAIL:-demo@panola.app}" \
-E2E_PASSWORD="${E2E_PASSWORD:?Set E2E_PASSWORD in .env}" \
-npx playwright test --grep-invert="API v1" --reporter=json 2>/dev/null > results.json
+# Playwright Ubuntu 26.04 (klipper host) destegi henuz yok; resmi imaj noble (24.04)
+# tabanlidir ve hostta sorunsuz koser. Mount + same-user ile rapor/results.json
+# dosyalari host kullanicisi olarak yazilir.
+: "${E2E_PASSWORD:?Set E2E_PASSWORD in .env}"
+PLAYWRIGHT_IMAGE="mcr.microsoft.com/playwright:v1.60.0-noble"
+
+docker run --rm \
+  -v "$DIR:/work" \
+  -w /work \
+  --user "$(id -u):$(id -g)" \
+  -e HOME=/tmp \
+  -e RENDERHANE_API_KEY="$RH_KEY" \
+  -e E2E_EMAIL="${E2E_EMAIL:-demo@panola.app}" \
+  -e E2E_PASSWORD="$E2E_PASSWORD" \
+  "$PLAYWRIGHT_IMAGE" \
+  npx playwright test --grep-invert="API v1" --reporter=json 2>/dev/null > results.json
 
 # Parse results
 TOTAL=$(python3 -c "
