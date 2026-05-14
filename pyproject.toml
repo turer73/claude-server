@@ -21,6 +21,7 @@ dependencies = [
     "pyyaml>=6.0",
     "structlog>=24.0.0",
     "paramiko>=3.4.0",
+    "requests>=2.32.0",  # rag.py, research.py, telegram_bot.py sync calls
 ]
 
 [project.optional-dependencies]
@@ -106,7 +107,8 @@ ignore = [
 # hashes, paramiko AutoAdd is deliberate, SQL f-strings interpolate trusted
 # column/table names (not user input), 0.0.0.0 binding is intentional, /tmp
 # paths are controlled, tarfile extracts our own backups.
-skips = ["B104", "B108", "B202", "B324", "B507", "B601", "B608"]
+skips = ["B104", "B108", "B202", "B310", "B324", "B507", "B601", "B608"]
+# B310: urllib.urlopen — app/core/digest.py whitelisted internal URL'lere POST/GET
 
 [tool.mypy]
 python_version = "3.11"
