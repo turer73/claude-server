@@ -12,7 +12,8 @@
 # E2E Live Site Tests — günlük 07:00
 0 7 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh e2e-live-test /opt/linux-ai-server/automation/e2e-live-test.sh
 # Klipper HDD backup — VPS + Dokploy + Klipper yerel (30 gun retention)
-0 4 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh pull-vps-backup bash -c "/data/backups/pull-vps-backup.sh >> /data/backups/cron.log 2>&1"
+# DISABLED: /data/backups/pull-vps-backup.sh yeni makineye tasinmadi (TODO restore)
+# 0 4 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh pull-vps-backup bash -c "/data/backups/pull-vps-backup.sh >> /data/backups/cron.log 2>&1"
 # Bilge Arena failover — Dokploy down ise Vercel e gecis (3dk kontrol)
 # Hafiza maintenance: 90+ gun eski okunmamis discoveries arsivle
 30 2 * * * bash /opt/linux-ai-server/scripts/memory-archive-stale.sh
