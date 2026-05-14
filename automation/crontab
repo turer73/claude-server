@@ -13,6 +13,8 @@
 0 7 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh e2e-live-test /opt/linux-ai-server/automation/e2e-live-test.sh
 # Klipper HDD backup — VPS Dokploy + volumes (7 gun retention)
 0 4 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh pull-vps-backup /opt/linux-ai-server/automation/pull-vps-backup.sh
+# One-shot: gozlem haftasi sonu hatirlatma (2026-05-21, self-cleaning)
+0 9 21 5 * /opt/linux-ai-server/scripts/observation-week-end-reminder.sh > /var/log/linux-ai-server/observation-reminder.log 2>&1
 # Bilge Arena failover — Dokploy down ise Vercel e gecis (3dk kontrol)
 # Hafiza maintenance: 90+ gun eski okunmamis discoveries arsivle
 30 2 * * * bash /opt/linux-ai-server/scripts/memory-archive-stale.sh
