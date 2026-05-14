@@ -30,12 +30,20 @@ from pydantic import BaseModel
 
 from app.api import rag as rag_module
 from app.api.memory import verify_key
+from app.core.config import read_env_var
 
 MEMORY_DB = "/opt/linux-ai-server/data/claude_memory.db"
 LLM_MODEL = "qwen2.5:7b"
 OLLAMA_URL = "http://localhost:11434"
 LLM_TIMEOUT = 90
 LLM_NUM_PREDICT = 300  # 7B model + 8K context, 300 token ~30-45sn
+
+# Anthropic fallback — daha hizli + daha iyi citation
+ANTHROPIC_API_KEY = read_env_var("ANTHROPIC_API_KEY")
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
+ANTHROPIC_MAX_TOKENS = 600
+ANTHROPIC_TIMEOUT = 30
 
 router = APIRouter(prefix="/api/v1/research", tags=["research"], dependencies=[Depends(verify_key)])
 
@@ -196,6 +204,33 @@ def _ollama_generate(prompt: str) -> str:
     return r.json().get("response", "").strip()
 
 
+def _anthropic_generate(system: str, user: str) -> str:
+    """Claude Haiku 4.5 — synthesis fallback. Citation izlemede daha tutarli."""
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(503, "ANTHROPIC_API_KEY .env'de tanimli degil")
+    r = requests.post(
+        ANTHROPIC_URL,
+        headers={
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        json={
+            "model": ANTHROPIC_MODEL,
+            "max_tokens": ANTHROPIC_MAX_TOKENS,
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+        },
+        timeout=ANTHROPIC_TIMEOUT,
+    )
+    if not r.ok:
+        raise HTTPException(503, f"anthropic fail: {r.status_code} {r.text[:200]}")
+    data = r.json()
+    parts = data.get("content", [])
+    text_parts = [p.get("text", "") for p in parts if p.get("type") == "text"]
+    return "".join(text_parts).strip()
+
+
 _CITE_RE = re.compile(r"\[([a-z]+):([^\]\s]+)\]")
 
 
@@ -224,6 +259,9 @@ class AskRequest(BaseModel):
     include_memories: bool = True
     include_notes: bool = False  # gurultu cogu zaman
     max_chunks: int = 8
+    # Engine: "local" (qwen2.5:7b, ucretsiz, 20-70sn) veya "claude" (haiku 4.5,
+    # 1-3sn, ~$0.007/call, citation tutarli) veya "auto" (max_chunks>=8 ise claude)
+    engine: str = "auto"
 
 
 @router.post("/ask")
@@ -270,9 +308,22 @@ def research_ask(req: AskRequest, request: Request):
             "errors": errors or None,
         }
 
+    # Engine secimi
+    engine = req.engine
+    if engine == "auto":
+        # Yuksek kaynak yoğunluğu = Claude (qwen yavaş + citation tutarsız)
+        engine = "claude" if len(chunks) >= 8 and ANTHROPIC_API_KEY else "local"
+
     t1 = time.time()
-    prompt = f"{SYS_PROMPT}\n\n# Kaynaklar:\n{_compose_context(chunks)}\n\n# Soru: {req.q}\n\n# Cevap:"
-    answer = _ollama_generate(prompt)
+    context = _compose_context(chunks)
+    if engine == "claude":
+        user_msg = f"# Kaynaklar:\n{context}\n\n# Soru: {req.q}"
+        answer = _anthropic_generate(SYS_PROMPT, user_msg)
+    elif engine == "local":
+        prompt = f"{SYS_PROMPT}\n\n# Kaynaklar:\n{context}\n\n# Soru: {req.q}\n\n# Cevap:"
+        answer = _ollama_generate(prompt)
+    else:
+        raise HTTPException(400, f"engine must be local|claude|auto, got: {engine}")
     duration_synth = int((time.time() - t1) * 1000)
 
     citations = _validate_citations(answer, chunks)
@@ -290,6 +341,7 @@ def research_ask(req: AskRequest, request: Request):
     return {
         "question": req.q,
         "answer": answer,
+        "engine": engine,
         "sources": sources,
         "source_count": len(sources),
         "citations": citations,
@@ -325,4 +377,5 @@ def research_health():
         db.close()
     except Exception as e:
         out["memory_db"] = {"ok": False, "error": str(e)[:100]}
+    out["anthropic"] = {"configured": bool(ANTHROPIC_API_KEY), "model": ANTHROPIC_MODEL}
     return out

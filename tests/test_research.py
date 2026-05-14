@@ -118,6 +118,78 @@ async def test_ask_caps_chunks_at_max(client, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_engine_claude_uses_anthropic_when_requested(client, monkeypatch):
+    """engine='claude' -> _anthropic_generate cagrilir, _ollama_generate degil."""
+    chunk = {"type": "discovery", "id": "5", "title": "x", "text": "y"}
+    monkeypatch.setattr("app.api.research._qdrant_chunks", lambda *a, **kw: [])
+    monkeypatch.setattr("app.api.research._discovery_chunks", lambda *a, **kw: [chunk])
+    monkeypatch.setattr("app.api.research._memory_chunks", lambda *a, **kw: [])
+    # ANTHROPIC_API_KEY'i mock'la (modul yuklemesinde okunmus olabilir bos)
+    monkeypatch.setattr("app.api.research.ANTHROPIC_API_KEY", "sk-test-fake")
+    with patch("app.api.research._anthropic_generate", return_value="cevap [discovery:5]") as cl, \
+         patch("app.api.research._ollama_generate") as ol:
+        resp = await client.post(
+            "/api/v1/research/ask",
+            json={"q": "test", "engine": "claude", "include_rag": False},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["engine"] == "claude"
+    cl.assert_called_once()
+    ol.assert_not_called()
+    assert "discovery:5" in body["citations"]["used"]
+
+
+@pytest.mark.anyio
+async def test_engine_auto_picks_claude_when_chunks_high(client, monkeypatch):
+    """8+ kaynak ve ANTHROPIC_API_KEY varsa auto -> claude."""
+    many = [{"type": "discovery", "id": str(i), "title": "x", "text": "y"} for i in range(10)]
+    monkeypatch.setattr("app.api.research._qdrant_chunks", lambda *a, **kw: [])
+    monkeypatch.setattr("app.api.research._discovery_chunks", lambda *a, **kw: many)
+    monkeypatch.setattr("app.api.research._memory_chunks", lambda *a, **kw: [])
+    monkeypatch.setattr("app.api.research.ANTHROPIC_API_KEY", "sk-test")
+    with patch("app.api.research._anthropic_generate", return_value="ok") as cl, \
+         patch("app.api.research._ollama_generate") as ol:
+        resp = await client.post(
+            "/api/v1/research/ask",
+            json={"q": "test", "engine": "auto", "include_rag": False, "max_chunks": 10},
+        )
+    assert resp.json()["engine"] == "claude"
+    cl.assert_called_once()
+    ol.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_engine_auto_falls_back_to_local_without_key(client, monkeypatch):
+    """ANTHROPIC_API_KEY yoksa auto -> local."""
+    many = [{"type": "discovery", "id": str(i), "title": "x", "text": "y"} for i in range(10)]
+    monkeypatch.setattr("app.api.research._discovery_chunks", lambda *a, **kw: many)
+    monkeypatch.setattr("app.api.research._memory_chunks", lambda *a, **kw: [])
+    monkeypatch.setattr("app.api.research.ANTHROPIC_API_KEY", "")  # key yok
+    with patch("app.api.research._ollama_generate", return_value="ok") as ol, \
+         patch("app.api.research._anthropic_generate") as cl:
+        resp = await client.post(
+            "/api/v1/research/ask",
+            json={"q": "test", "engine": "auto", "include_rag": False, "max_chunks": 10},
+        )
+    assert resp.json()["engine"] == "local"
+    ol.assert_called_once()
+    cl.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_engine_invalid_rejected(client, monkeypatch):
+    chunk = {"type": "discovery", "id": "1", "title": "x", "text": "y"}
+    monkeypatch.setattr("app.api.research._discovery_chunks", lambda *a, **kw: [chunk])
+    monkeypatch.setattr("app.api.research._memory_chunks", lambda *a, **kw: [])
+    resp = await client.post(
+        "/api/v1/research/ask",
+        json={"q": "test", "engine": "gpt5", "include_rag": False},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.anyio
 async def test_fts_query_hyphens_normalised():
     """'bilge-arena' -> 'bilge OR arena' (FTS5 column-prefix patlamasini engeller)."""
     from app.api.research import _fts_q
