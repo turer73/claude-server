@@ -158,14 +158,13 @@ class Settings(BaseSettings):
     monitor_critical_services: Annotated[list[str], NoDecode] = ["linux-ai-server"]
     monitor_critical_containers: Annotated[list[str], NoDecode] = ["dozzle", "uptime-kuma"]
     monitor_vps_containers: Annotated[list[str], NoDecode] = [
+        # 2026-05-14: n8n + grafana + prometheus + dokploy-traefik VPS'ten
+        # klipper'a tasindi (infra/{n8n,monitoring}/). Bu container'lar VPS'te
+        # artik yok, alert false positive uretiyordu — listeden cikarildi.
         "panola-postgres",
         "panola-caddy",
         "panola-postgrest",
         "panola-auth",
-        "n8n",
-        "grafana",
-        "prometheus",
-        "dokploy-traefik",
         "plausible-plausible-1",
     ]
 
