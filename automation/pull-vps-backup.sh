@@ -18,13 +18,19 @@ TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 DATE=$(date +%Y-%m-%d)
 DEST="$TARGET_ROOT/$DATE"
 
-# Yedek alinacak volume'ler — VPS'te runtime'da kesfet (Dokploy isimleri
-# deploy ID'siyle prefix alabilir, statik liste kirilgan). Pattern:
+# Yedek alinacak volume'ler — VPS'te runtime'da kesfet. Pattern:
 #   - dokploy* (postgres, redis, traefik konfig)
 #   - *n8n-data (Dokploy UUID prefix'li)
-#   - plausible_* (db + events)
+#   - plausible_db* (Postgres user/site meta)
 #   - grafana-data
-VOLUME_PATTERN='^dokploy|n8n-data$|^plausible|^grafana-data$'
+# plausible_event-data (ClickHouse) volume tar etmiyoruz — 449MB'i sistem
+# log/WAL, gercek data sadece 3.4 MiB. Logical dump asagida (step 2.5).
+VOLUME_PATTERN='^dokploy|n8n-data$|^plausible_db|^grafana-data$'
+
+# ClickHouse Plausible event tablolari (her biri Native format, gzip)
+CH_CONTAINER='plausible-plausible_events_db-1'
+CH_DATABASE='plausible_events_db'
+CH_TABLES='events_v2 sessions_v2 location_data ingest_counters schema_migrations'
 
 send_telegram() {
   curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
@@ -72,6 +78,28 @@ VOL_SKIP=$((VOL_COUNT - VOL_OK))
 # VPS'te birikmis eski temp tar.gz'leri temizle (onceki crashed run'lardan).
 $SSH "rm -f /tmp/vol-*-*.tar.gz /tmp/dokploy-cfg-*.tar.gz 2>/dev/null" || true
 
+# 2.5. ClickHouse Plausible event_data logical dump
+#  Native format + gzip stream. Volume tarball'dan ~100x kucuk, restore icin
+#  schema ile birlikte alinir.
+log "step 2.5: ClickHouse $CH_DATABASE (logical)"
+mkdir -p "$DEST/clickhouse"
+CH_OK=0
+for table in $CH_TABLES; do
+  # Schema (CREATE TABLE)
+  $SSH "docker exec $CH_CONTAINER clickhouse-client --query \"SHOW CREATE TABLE $CH_DATABASE.$table FORMAT TabSeparatedRaw\" 2>/dev/null" \
+    > "$DEST/clickhouse/$table.schema.sql" || { log "  - ch:$table schema FAIL"; rm -f "$DEST/clickhouse/$table.schema.sql"; continue; }
+  # Data (Native binary, gzip)
+  out="$DEST/clickhouse/$table.native.gz"
+  if $SSH "docker exec $CH_CONTAINER clickhouse-client --query \"SELECT * FROM $CH_DATABASE.$table FORMAT Native\" 2>/dev/null | gzip" > "$out"; then
+    size=$(du -h "$out" 2>/dev/null | cut -f1)
+    log "  + ch:$table OK ($size)"
+    CH_OK=$((CH_OK+1))
+  else
+    log "  - ch:$table data FAIL"
+    rm -f "$out"
+  fi
+done
+
 # 3. Retention temizligi (7+ gun eski)
 log "step 3/3: retention temizlik (>$RETENTION_DAYS gun)"
 DELETED=$(find "$TARGET_ROOT" -maxdepth 1 -type d -mtime +$RETENTION_DAYS -print -exec rm -rf {} + 2>/dev/null | wc -l)
@@ -82,6 +110,7 @@ log "=== DONE — volumes: $VOL_OK OK / $VOL_SKIP skip, snapshot toplam: $TOTAL 
 
 send_telegram "✅ *VPS Backup — $DATE*
 🗂 Volumeler: $VOL_OK alındı / $VOL_SKIP yok
+🦌 ClickHouse: $CH_OK tablo logical dump
 📦 Toplam: \`$TOTAL\`
 🗑 Eski snapshot silindi: $DELETED
 🕐 \`$TS\`"
