@@ -47,7 +47,13 @@ def _init_metrics_db():
     conn.close()
 
 
-_init_metrics_db()
+# Modul-load zamani init: CI veya path-eksik ortamda fail edebilir, sessiz gec.
+# _log_query ve /metrics ilk cagrildiginda dogal olarak CREATE TABLE IF NOT EXISTS
+# tetiklenir (sqlite3.connect dosyayi olusturur).
+try:
+    _init_metrics_db()
+except sqlite3.OperationalError:
+    pass
 
 
 def _log_query(endpoint, query, project, source, top_k, hits, duration_ms, tokens=None, tps=None, request=None):
