@@ -10,7 +10,10 @@ from app.middleware.dependencies import require_admin
 router = APIRouter(prefix="/api/v1/backup", tags=["backup"])
 
 _manager = BackupManager(
-    source_dirs=["/var/AI-stump/", "/etc/linux-ai-server/"],
+    # /opt/linux-ai-server/data/: server.db (API auth, audit, devops), claude_memory.db
+    # (cross-session knowledge), rag_metrics.db, ci_tests.db. /etc/linux-ai-server/:
+    # server.yml. /var/AI-stump/: opsiyonel AI scratch (yoksa skip eder).
+    source_dirs=["/opt/linux-ai-server/data/", "/etc/linux-ai-server/", "/var/AI-stump/"],
     backup_dir="/var/lib/linux-ai-server/backups",
 )
 
