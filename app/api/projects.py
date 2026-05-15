@@ -26,7 +26,8 @@ PROJECTS = [
     {"name": "koken-akademi", "path": "/data/projects/koken-akademi", "type": "node", "read_only": True},
     {"name": "kuafor", "path": "/data/projects/kuafor", "type": "node", "read_only": True},
     {"name": "petvet", "path": "/data/projects/petvet", "type": "node", "read_only": True},
-    {"name": "demo-saas", "path": "/data/projects/demo-saas", "type": "node", "read_only": True},
+    # demo-saas SER8 migration sonrasi tasinmadi (path /data/projects/demo-saas
+    # yok). PROJECTS'tan cikarildi; gerek olursa klone + listeye geri eklenir.
 ]
 
 
