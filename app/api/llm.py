@@ -150,8 +150,7 @@ def _usage_stats(hours: int = 24) -> dict:
         conn = sqlite3.connect(rag_module.METRICS_DB, timeout=2)
         cur = conn.cursor()
         cur.execute(
-            "SELECT COUNT(*), AVG(duration_ms), AVG(hit_count), AVG(top_score) "
-            "FROM rag_queries WHERE ts >= ?",
+            "SELECT COUNT(*), AVG(duration_ms), AVG(hit_count), AVG(top_score) FROM rag_queries WHERE ts >= ?",
             (since,),
         )
         total, avg_dur, avg_hits, avg_score = cur.fetchone()

@@ -46,9 +46,11 @@ async def test_happy_path_with_mocked_deps(client, auth_headers):
             m.json.return_value = fake_loaded
         return m
 
-    with patch("app.api.llm.requests.get", side_effect=fake_get), patch(
-        "app.api.llm._gpu_status", return_value={"vulkan_enabled": False, "backend": "cpu", "busy_percent": 0}
-    ), patch("app.api.llm._usage_stats", return_value={"ok": True, "total": 0}):
+    with (
+        patch("app.api.llm.requests.get", side_effect=fake_get),
+        patch("app.api.llm._gpu_status", return_value={"vulkan_enabled": False, "backend": "cpu", "busy_percent": 0}),
+        patch("app.api.llm._usage_stats", return_value={"ok": True, "total": 0}),
+    ):
         resp = await client.get("/api/v1/llm/status", headers=auth_headers)
     assert resp.status_code == 200
     body = resp.json()
@@ -63,9 +65,11 @@ async def test_happy_path_with_mocked_deps(client, auth_headers):
 @pytest.mark.anyio
 async def test_ollama_down_does_not_crash(client, auth_headers):
     """Ollama unreachable -> ollama.ok=false, endpoint hala 200."""
-    with patch("app.api.llm.requests.get", side_effect=ConnectionError("ollama offline")), patch(
-        "app.api.llm._gpu_status", return_value={"vulkan_enabled": False, "backend": "cpu"}
-    ), patch("app.api.llm._usage_stats", return_value={"ok": False, "total": 0}):
+    with (
+        patch("app.api.llm.requests.get", side_effect=ConnectionError("ollama offline")),
+        patch("app.api.llm._gpu_status", return_value={"vulkan_enabled": False, "backend": "cpu"}),
+        patch("app.api.llm._usage_stats", return_value={"ok": False, "total": 0}),
+    ):
         resp = await client.get("/api/v1/llm/status", headers=auth_headers)
     assert resp.status_code == 200
     body = resp.json()
