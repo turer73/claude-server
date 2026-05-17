@@ -27,3 +27,5 @@
 0 4 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh nuclei-scan /opt/linux-ai-server/automation/nuclei-scan.sh
 # DB retention — server.db + ci_tests.db (haftalik Pazar 02:00)
 0 2 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh db-retention /opt/linux-ai-server/automation/db-retention.sh
+# Claude Code global npm guncelleme (haftalik Pazar 05:00)
+0 5 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh claude-code-update /opt/linux-ai-server/automation/claude-code-update.sh
