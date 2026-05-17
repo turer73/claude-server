@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Read(//opt/linux-ai-server/**)",
+      "Read(//home/klipperos/work/**)",
+      "Read(//home/klipperos/.claude/**)",
+      "Read(//tmp/**)",
+
+      "Edit(//opt/linux-ai-server/**)",
+      "Edit(//home/klipperos/work/**)",
+      "Write(//opt/linux-ai-server/**)",
+      "Write(//home/klipperos/work/**)",
+      "Write(//tmp/**)",
+
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git branch*)",
+      "Bash(git show*)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git checkout -b *)",
+      "Bash(git checkout *)",
+      "Bash(git stash *)",
+
+      "Bash(npx tsc*)",
+      "Bash(npx eslint*)",
+      "Bash(npx vitest*)",
+      "Bash(npm run test*)",
+      "Bash(npm run lint*)",
+      "Bash(npm run typecheck*)",
+      "Bash(python3 -m pytest*)",
+      "Bash(ruff *)",
+
+      "Bash(sqlite3 /opt/linux-ai-server/data/claude_memory.db *)",
+
+      "Bash(curl -sS http://127.0.0.1:8420/*)",
+      "Bash(curl -X PUT http://127.0.0.1:8420/api/v1/memory/*)",
+      "Bash(curl -X POST http://127.0.0.1:8420/api/v1/memory/*)",
+      "Bash(curl http://127.0.0.1:11434/*)",
+
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(grep *)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(echo *)",
+      "Bash(wc *)",
+      "Bash(date*)",
+      "Bash(jq *)",
+      "Bash(bash -n *)",
+      "Bash(mktemp*)"
+    ],
+    "deny": [
+      "Bash(rm *)",
+      "Bash(dd *)",
+      "Bash(sudo *)",
+      "Bash(systemctl *)",
+      "Bash(docker *)",
+      "Bash(ssh *)",
+      "Bash(scp *)",
+      "Bash(rsync *)",
+      "Bash(git push *)",
+      "Bash(git reset --hard*)",
+      "Bash(git rebase*)",
+      "Bash(gh pr merge*)",
+      "Bash(gh pr close*)",
+      "Bash(/opt/linux-ai-server/scripts/vps-run.sh*)",
+      "WebFetch",
+      "WebSearch"
+    ]
+  }
+}
