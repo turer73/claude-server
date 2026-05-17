@@ -55,12 +55,15 @@ def main() -> int:
         log("stop_hook_active=true, skip (loop prevention)")
         return 0
 
-    # Unread notes query
+    # Unread notes query — klipper-targeted VEYA broadcast (to_device IS NULL)
+    # Broadcast'lar herkese acik notlardir; klipper'in da gormesi gerekir.
     try:
         con = sqlite3.connect(DB_PATH)
         cur = con.execute(
             "SELECT id, from_device, title, substr(content, 1, 400) "
-            "FROM notes WHERE to_device=? AND read=0 ORDER BY id",
+            "FROM notes "
+            "WHERE (to_device=? OR to_device IS NULL) AND read=0 "
+            "ORDER BY id",
             (DEVICE,),
         )
         rows = cur.fetchall()

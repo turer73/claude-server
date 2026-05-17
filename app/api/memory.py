@@ -913,6 +913,20 @@ async def mark_note_read(note_id: int):
         db.close()
 
 
+@router.put("/notes/{note_id}/unread")
+async def mark_note_unread(note_id: int):
+    """Test/debug için: notu tekrar unread yap. Üretim akışında kullanılmaz."""
+    db = get_db()
+    try:
+        cur = db.execute("UPDATE notes SET read=0 WHERE id=?", (note_id,))
+        db.commit()
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="note not found")
+        return {"status": "unread"}
+    finally:
+        db.close()
+
+
 # ============ Device Projects ============
 
 
