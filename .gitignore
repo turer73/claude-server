@@ -47,3 +47,4 @@ e2e-live/playwright-report/
 e2e-live/results.json
 e2e-live/report/
 e2e-live/node_modules/
+tmp/
