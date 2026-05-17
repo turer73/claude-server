@@ -29,22 +29,34 @@ OLLAMA_URL = "http://127.0.0.1:11434"
 DEFAULT_MODEL = "qwen2.5:7b"
 
 CLASSIFIER_PROMPT_TEMPLATE = (
-    "You are a strict classifier for an inter-agent note system. "
-    "Read the note and output EXACTLY ONE of these four labels "
-    "(uppercase, no other text):\n\n"
-    "ACK         - acknowledgment, thanks, status update, FYI; no action needed\n"
-    "ACTIONABLE  - concrete work requested: code commit, file edit, "
-    "run tests, fix bug, count something, lookup data\n"
-    "DISCUSSION  - asks for opinion, decision, review, recommendation, design choice\n"
-    "URGENT      - hard deadline, security incident, production outage, "
-    "data breach, KVKK/GDPR compliance window\n\n"
-    "Note content may be in any language (Turkish/English). "
-    "Classify based on structural intent, not language. "
-    "Your output goes to an automated router — "
-    "output ONLY the label word, nothing else.\n\n"
+    "SYSTEM: You are a message router. Classify the note into exactly one "
+    "category. Output only the category word, nothing else.\n\n"
+    "Categories:\n"
+    'ACK         - Acknowledgement, confirmation: "done", "ok", "received", '
+    '"live", "tamam", "alindi", "tamamlandi", "calisiyor"\n'
+    "ACTIONABLE  - Has explicit tasks: commit, fix, test, PR, implement, "
+    'deploy, "gorev paketi", "adimlar", "basari kriteri", JSON task structure\n'
+    'DISCUSSION  - Needs human decision: strategy, tradeoff, review request, '
+    '"karar", "oneri", "strateji", "ne dusunuyorsun"\n'
+    'URGENT      - Security/legal/incident: breach, KVKK, CVE, "saldiri", '
+    '"acil", "kritik", data leak, "madde 9"\n\n'
+    "Rules:\n"
+    '- If title starts with "ACK" -> ACK (regardless of body)\n'
+    '- If body contains JSON with "gorev_paketi" key -> ACTIONABLE\n'
+    '- If title contains "URGENT" or "ACIL" -> URGENT\n'
+    "- When ambiguous between ACTIONABLE and DISCUSSION -> DISCUSSION (human decides)\n"
+    "- When ambiguous between ACK and anything else -> ACK\n\n"
+    "Examples:\n"
+    'Title: "ACK #155 - refactor live"                              -> ACK\n'
+    'Title: "Gorev Paketi: bilge-arena fix" + JSON body             -> ACTIONABLE\n'
+    'Title: "Hangi mimari secmeliyiz?"                              -> DISCUSSION\n'
+    'Title: "KVKK breach tespit edildi"                             -> URGENT\n'
+    'Title: "Phase 2 kapandi - handoff"                             -> ACK\n'
+    'Title: "PR #154 review lazim"                                  -> DISCUSSION\n'
+    'Title: "fix(security): CSRF bypass" + commit steps             -> ACTIONABLE\n\n'
     "--- NOTE TITLE ---\n{title}\n\n"
-    "--- NOTE CONTENT ---\n{content}\n\n"
-    "--- OUTPUT (one label only) ---"
+    "--- NOTE CONTENT (first 300 chars) ---\n{content}\n\n"
+    "Category:"
 )
 
 VALID_LABELS = ("URGENT", "ACTIONABLE", "DISCUSSION", "ACK")

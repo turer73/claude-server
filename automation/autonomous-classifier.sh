@@ -30,22 +30,37 @@ CONTENT="$3"
 # Content'i 800 char'a kirp (qwen prompt budget)
 CONTENT_SHORT=$(printf '%s' "$CONTENT" | head -c 800)
 
-PROMPT="You are a strict classifier for an inter-agent note system. Read the note and output EXACTLY ONE of these four labels (uppercase, no other text):
+PROMPT="SYSTEM: You are a message router. Classify the note into exactly one category. Output only the category word, nothing else.
 
-ACK         - acknowledgment, thanks, status update, FYI; no action needed
-ACTIONABLE  - concrete work requested: code commit, file edit, run tests, fix bug, count something, lookup data
-DISCUSSION  - asks for opinion, decision, review, recommendation, design choice
-URGENT      - hard deadline, security incident, production outage, data breach, KVKK/GDPR compliance window
+Categories:
+ACK         - Acknowledgement, confirmation: \"done\", \"ok\", \"received\", \"live\", \"tamam\", \"alindi\", \"tamamlandi\", \"calisiyor\"
+ACTIONABLE  - Has explicit tasks: commit, fix, test, PR, implement, deploy, \"gorev paketi\", \"adimlar\", \"basari kriteri\", JSON task structure
+DISCUSSION  - Needs human decision: strategy, tradeoff, review request, \"karar\", \"oneri\", \"strateji\", \"ne dusunuyorsun\"
+URGENT      - Security/legal/incident: breach, KVKK, CVE, \"saldiri\", \"acil\", \"kritik\", data leak, \"madde 9\"
 
-Note content may be in any language (Turkish/English). Classify based on structural intent, not language. Your output goes to an automated router — output ONLY the label word, nothing else.
+Rules:
+- If title starts with \"ACK\" -> ACK (regardless of body)
+- If body contains JSON with \"gorev_paketi\" key -> ACTIONABLE
+- If title contains \"URGENT\" or \"ACIL\" -> URGENT
+- When ambiguous between ACTIONABLE and DISCUSSION -> DISCUSSION (human decides)
+- When ambiguous between ACK and anything else -> ACK
+
+Examples:
+Title: \"ACK #155 - refactor live\"                              -> ACK
+Title: \"Gorev Paketi: bilge-arena fix\" + JSON body             -> ACTIONABLE
+Title: \"Hangi mimari secmeliyiz?\"                              -> DISCUSSION
+Title: \"KVKK breach tespit edildi\"                             -> URGENT
+Title: \"Phase 2 kapandi - handoff\"                             -> ACK
+Title: \"PR #154 review lazim\"                                  -> DISCUSSION
+Title: \"fix(security): CSRF bypass\" + commit steps             -> ACTIONABLE
 
 --- NOTE TITLE ---
 $TITLE
 
---- NOTE CONTENT ---
+--- NOTE CONTENT (first 300 chars) ---
 $CONTENT_SHORT
 
---- OUTPUT (one label only) ---"
+Category:"
 
 # Ollama API call - generate endpoint, non-streaming
 RESPONSE=$(curl -sS --max-time 15 "$OLLAMA_URL/api/generate" \
