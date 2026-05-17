@@ -33,6 +33,11 @@ docker run --rm \
   -e RENDERHANE_API_KEY="$RH_KEY" \
   -e E2E_EMAIL="${E2E_EMAIL:-demo@panola.app}" \
   -e E2E_PASSWORD="$E2E_PASSWORD" \
+  -e KUAFOR_PHONE="$KUAFOR_PHONE" \
+  -e KUAFOR_PASS="$KUAFOR_PASS" \
+  -e PETVET_PHONE="$PETVET_PHONE" \
+  -e PETVET_PASS="$PETVET_PASS" \
+  -e PETVET_PIN="$PETVET_PIN" \
   "$PLAYWRIGHT_IMAGE" \
   npx playwright test --grep-invert="API v1" --reporter=json 2>/dev/null > results.json
 
