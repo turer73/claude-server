@@ -100,6 +100,25 @@ PY
     printf '{"last_seen_id": %s, "last_poll_at": "%s"}\n' "$max_new" "$(ts)" > "$STATE_FILE"
 
     log "new notes: $count (ids up to $max_new) -> $PENDING_FILE"
+
+    # Otonom mod: yeni not basina autonomous-claude.sh spawn et
+    if [ "${AUTONOMOUS_MODE:-0}" = "1" ]; then
+        printf '%s' "$new_notes" | python3 -c "
+import json, sys, subprocess, shlex, os
+notes = json.load(sys.stdin)
+for n in notes:
+    nid = n['id']
+    frm = n['from_device']
+    title = (n['title'] or '')[:200]
+    preview = (n['preview'] or '')[:500]
+    cmd = ['/opt/linux-ai-server/automation/autonomous-claude.sh',
+           str(nid), frm, title, preview]
+    subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
+                     stdout=open('/dev/null', 'w'),
+                     stderr=subprocess.STDOUT, start_new_session=True)
+    print(f'spawned: #{nid}')
+" 2>>"$LOG_FILE" || log "autonomous spawn error"
+    fi
 }
 
 run_daemon() {
