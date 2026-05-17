@@ -68,8 +68,13 @@ if ! flock -n -w 10 9; then
     exit 0
 fi
 
-# ---------- Interactive Claude detection ----------
-if [ "${SKIP_INTERACTIVE_CHECK:-0}" != "1" ]; then
+# ---------- Interactive Claude detection (OPT-IN) ----------
+# Default OFF — autonomous parallel calisabilir. Lock dosyasi concurrent
+# autonomous spawn'i zaten engelliyor. Eger sen interactive'sen ve autonomous
+# da ayni anda calisirsa farkli dosyalarda farkli isleri yaparlar; same-file
+# Edit conflict olursa son yazan kazanir + git ile cozulur.
+# ENFORCE_INTERACTIVE_CHECK=1 ile eski davranisa donulebilir.
+if [ "${ENFORCE_INTERACTIVE_CHECK:-0}" = "1" ]; then
     INTERACTIVE_FOUND=0
     for pid in $(pgrep -u klipperos -x "claude" 2>/dev/null || true); do
         [ "$pid" = "$$" ] && continue
