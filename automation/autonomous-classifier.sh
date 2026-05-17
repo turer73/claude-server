@@ -30,20 +30,22 @@ CONTENT="$3"
 # Content'i 800 char'a kirp (qwen prompt budget)
 CONTENT_SHORT=$(printf '%s' "$CONTENT" | head -c 800)
 
-PROMPT="Asagidaki notu siniflandir. Tek kelime cevap ver: ACK, ACTIONABLE, DISCUSSION, URGENT.
+PROMPT="You are a strict classifier for an inter-agent note system. Read the note and output EXACTLY ONE of these four labels (uppercase, no other text):
 
-Tanimlar:
-- ACK: alindi/tesekkurler/onay/durum guncellemesi, hicbir is gerektirmez
-- ACTIONABLE: somut yapilacak is var (commit, fix, dosya edit, test cag, deploy)
-- DISCUSSION: gorus istiyor, karar bekliyor, review, oneri, soru
-- URGENT: KVKK deadline, security/saldiri, prod outage, hizli mudahale gerek
+ACK         - acknowledgment, thanks, status update, FYI; no action needed
+ACTIONABLE  - concrete work requested: code commit, file edit, run tests, fix bug, count something, lookup data
+DISCUSSION  - asks for opinion, decision, review, recommendation, design choice
+URGENT      - hard deadline, security incident, production outage, data breach, KVKK/GDPR compliance window
 
-Note title: $TITLE
+Note content may be in any language (Turkish/English). Classify based on structural intent, not language. Your output goes to an automated router — output ONLY the label word, nothing else.
 
-Note content:
+--- NOTE TITLE ---
+$TITLE
+
+--- NOTE CONTENT ---
 $CONTENT_SHORT
 
-Cevap (yalniz tek kelime):"
+--- OUTPUT (one label only) ---"
 
 # Ollama API call - generate endpoint, non-streaming
 RESPONSE=$(curl -sS --max-time 15 "$OLLAMA_URL/api/generate" \
