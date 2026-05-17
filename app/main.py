@@ -31,6 +31,7 @@ from app.api.logs import router as logs_router
 from app.api.memory import public_router as memory_public_router
 from app.api.memory import router as memory_router
 from app.api.monitoring import router as monitoring_router
+from app.api.n8n import router as n8n_router
 from app.api.network import router as network_router
 from app.api.projects import router as projects_router
 from app.api.prometheus import router as prometheus_router
@@ -206,6 +207,7 @@ def create_app() -> FastAPI:
     app.include_router(webops_router)
     app.include_router(ai_router)
     app.include_router(monitoring_router)
+    app.include_router(n8n_router)
     app.include_router(logs_router)
     app.include_router(ws_monitor_router)
     app.include_router(ws_terminal_router)

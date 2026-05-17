@@ -355,6 +355,12 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
             <div id="vpsSvc"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
           </div>
         </div>
+        <div class="row">
+          <div class="card">
+            <div class="card-title">n8n Workflow'lari <span class="badge" id="n8nCount">0</span> <button onclick="loadN8n()" style="float:right;padding:2px 8px;font-size:11px">Yenile</button></div>
+            <div id="n8nWidget"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
+          </div>
+        </div>
       </div>
 
       <!-- PROJECTS -->
@@ -717,7 +723,7 @@ function nav(page, el) {
   if (page==='containers') { loadDevContainers(); loadVPSContainers(); }
   if (page==='claude') { claudeInit(); }
   if (page==='projects') loadProjects();
-  if (page==='services') loadServices();
+  if (page==='services') { loadServices(); loadN8n(); }
   if (page==='operations') loadOperations();
   if (page==='llm') loadLLM();
   if (page==='vps') setTimeout(() => { const i = document.getElementById('vpsCmd'); if (i) i.focus(); }, 50);
@@ -1178,6 +1184,31 @@ function loadServices() {
   document.getElementById('vpsSvc').innerHTML = vps.map(s =>
     `<div class="svc"><a href="${s.u}" target="_blank">${s.n}</a><span class="svc-status up">SSL</span></div>`
   ).join('');
+}
+
+async function loadN8n() {
+  const el = document.getElementById('n8nWidget');
+  if (!el) return;
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>Yukleniyor...</div>';
+  const d = await api('/n8n/workflows-status');
+  if (!d || !d.workflows) {
+    el.innerHTML = '<div class="svc"><span style="color:#f87171">n8n erisilemedi</span></div>';
+    return;
+  }
+  document.getElementById('n8nCount').textContent = d.count;
+  el.innerHTML = d.workflows.map(w => {
+    const last = w.last;
+    let badge = '<span class="svc-status check">—</span>';
+    if (last) {
+      const st = last.status || '?';
+      const cls = st==='success' ? 'up' : (st==='error' ? 'down' : 'check');
+      const when = last.startedAt ? last.startedAt.slice(0,16).replace('T',' ') : '?';
+      badge = `<span class="svc-status ${cls}" title="${esc(when)} UTC">${esc(st)}</span>`;
+    }
+    const fail = w.fail24h>0 ? `<span style="color:#f87171;font-size:11px"> ✗${w.fail24h}</span>` : '';
+    const ok = w.ok24h>0 ? `<span style="color:#4ade80;font-size:11px"> ✓${w.ok24h}</span>` : '';
+    return `<div class="svc"><a href="${esc(w.editorUrl)}" target="_blank">${esc(w.name)}</a>${ok}${fail}${badge}</div>`;
+  }).join('');
 }
 
 async function checkSvc(port) {
