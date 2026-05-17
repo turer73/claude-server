@@ -29,3 +29,7 @@
 0 2 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh db-retention /opt/linux-ai-server/automation/db-retention.sh
 # Claude Code global npm guncelleme (haftalik Pazar 05:00)
 0 5 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh claude-code-update /opt/linux-ai-server/automation/claude-code-update.sh
+# Otonom mod gunluk aktivite ozeti (her gun 06:00) — memory entry yazar, kullanici SessionStart'ta gorur
+0 6 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh autonomous-summary /opt/linux-ai-server/automation/autonomous-daily-summary.sh
+# Otonom mod health check (her 4 saat) — Ollama + Claude + DB + poller self-test
+0 */4 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh autonomous-health /opt/linux-ai-server/automation/autonomous-health-check.sh

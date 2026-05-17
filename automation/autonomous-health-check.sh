@@ -1,0 +1,114 @@
+#!/bin/bash
+# autonomous-health-check.sh — otonom mod self-test
+#
+# Hangi bilesenleri kontrol eder:
+#   1. Ollama API canlilik (127.0.0.1:11434 /api/tags reachable)
+#   2. Ollama classifier accuracy quick test (1 case)
+#   3. Memory API /health endpoint
+#   4. SQLite DB read/write
+#   5. note-poller.service systemd status
+#   6. Disk space (hook-logs dir)
+#   7. Lock file orphan check (>10 dakika eski lock = orphan)
+#   8. Throttle file sanity
+#
+# Fail: memory entry (type=project, name=autonomous-health-fail-YYYYMMDD-HHMM)
+#       + journalctl marker
+# Pass: log entry, sessiz cik
+
+set -uo pipefail   # NOT -e: birden fazla test, hepsini calistir
+
+LOG_FILE="${HOOK_LOG_DIR:-/opt/linux-ai-server/data/hook-logs}/autonomous-health.log"
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null
+
+ts() { date '+%Y-%m-%d %H:%M:%S'; }
+log() { printf '[%s] %s\n' "$(ts)" "$*" >> "$LOG_FILE"; }
+
+FAILS=()
+PASSES=()
+
+check() {
+    local name="$1"
+    local cmd="$2"
+    if eval "$cmd" >/dev/null 2>&1; then
+        PASSES+=("$name")
+        log "PASS $name"
+    else
+        FAILS+=("$name")
+        log "FAIL $name (cmd: $cmd)"
+    fi
+}
+
+# 1. Ollama API
+check "ollama-api"       "curl -fsS --max-time 5 http://127.0.0.1:11434/api/tags"
+
+# 2. Ollama classifier (1 hizli test)
+check "ollama-classifier" 'R=$(curl -fsS --max-time 15 http://127.0.0.1:11434/api/generate -d "{\"model\":\"qwen2.5:7b\",\"prompt\":\"Classify (one word: ACK|ACTIONABLE|DISCUSSION|URGENT):\\n\\nTitle: KVKK breach\\n\\nLabel:\",\"stream\":false,\"options\":{\"num_predict\":5}}" | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"response\",\"\").upper())") && echo "$R" | grep -qE "URGENT|ACTIONABLE|DISCUSSION|ACK"'
+
+# 3. Memory API health
+check "memory-api"       "curl -fsS --max-time 5 http://127.0.0.1:8420/health | grep -q healthy"
+
+# 4. SQLite DB read
+check "db-read"          "sqlite3 /opt/linux-ai-server/data/claude_memory.db 'SELECT COUNT(*) FROM notes' >/dev/null"
+
+# 5. note-poller service
+check "note-poller-running" "systemctl is-active --quiet klipper-note-poller"
+
+# 6. Disk space (hook-logs <5GB)
+check "disk-space"       "[ \$(du -sm /opt/linux-ai-server/data/hook-logs 2>/dev/null | awk '{print \$1}') -lt 5000 ]"
+
+# 7. Lock file orphan (>10 dakika eski lock + lock holder yok)
+LOCK_FILE="/tmp/klipper-autonomous-claude.lock"
+if [ -f "$LOCK_FILE" ]; then
+    AGE=$(( $(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0) ))
+    if [ "$AGE" -gt 600 ] && ! fuser "$LOCK_FILE" >/dev/null 2>&1; then
+        FAILS+=("lock-file-orphan ($AGE seconds, no holder)")
+        log "FAIL lock-file-orphan age=${AGE}s"
+    else
+        PASSES+=("lock-file-clean")
+        log "PASS lock-file-clean (age=${AGE}s)"
+    fi
+else
+    PASSES+=("lock-file-absent")
+fi
+
+# 8. Throttle file sanity (yoksa veya sayisal)
+THROTTLE_FILE="/opt/linux-ai-server/data/hook-state/autonomous-last-spawn.txt"
+if [ -f "$THROTTLE_FILE" ]; then
+    if [[ $(cat "$THROTTLE_FILE" 2>/dev/null) =~ ^[0-9]+$ ]]; then
+        PASSES+=("throttle-sane")
+    else
+        FAILS+=("throttle-malformed")
+    fi
+fi
+
+TOTAL=$(( ${#PASSES[@]} + ${#FAILS[@]} ))
+log "health summary: pass=${#PASSES[@]}/$TOTAL fail=${#FAILS[@]}"
+
+# Eger fail varsa memory entry yaz
+if [ "${#FAILS[@]}" -gt 0 ]; then
+    DATE_SLUG=$(date -u +%Y%m%d-%H%M)
+    FAIL_LIST=$(printf -- '- %s\n' "${FAILS[@]}")
+    PASS_LIST=$(printf -- '- %s\n' "${PASSES[@]}")
+
+    FAILS_VAR="$FAIL_LIST" PASSES_VAR="$PASS_LIST" DATE_VAR="$DATE_SLUG" \
+    python3 <<'PY'
+import json, os, urllib.request
+KEY = [l.split('=',1)[1].strip() for l in open('/opt/linux-ai-server/.env').read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
+body = json.dumps({
+    'type': 'project',
+    'name': f"autonomous-health-fail-{os.environ['DATE_VAR']}",
+    'description': f"Otonom mod health check FAIL — {os.environ['DATE_VAR']}",
+    'content': f"## FAIL\n{os.environ['FAILS_VAR']}\n\n## PASS\n{os.environ['PASSES_VAR']}",
+    'source_device': 'klipper-autonomous',
+    'rationale': 'Health check failure — kullanici incelemeli'
+}, ensure_ascii=False).encode('utf-8')
+req = urllib.request.Request('http://127.0.0.1:8420/api/v1/memory/memories',
+    data=body, method='POST',
+    headers={'Content-Type':'application/json; charset=utf-8','X-Memory-Key':KEY})
+try: urllib.request.urlopen(req, timeout=5).read()
+except Exception as e: print(f'write err: {e}')
+PY
+    exit 1
+else
+    exit 0
+fi

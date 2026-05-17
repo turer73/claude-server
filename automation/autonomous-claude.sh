@@ -26,7 +26,7 @@ THROTTLE_MIN_SECONDS="${AUTONOMOUS_THROTTLE_S:-60}"
 SETTINGS_FILE="${AUTONOMOUS_SETTINGS:-/opt/linux-ai-server/automation/autonomous-claude-settings.json}"
 GUARDRAILS="${AUTONOMOUS_GUARDRAILS:-/opt/linux-ai-server/automation/autonomous-claude-guardrails.md}"
 MODEL="${AUTONOMOUS_MODEL:-claude-sonnet-4-6}"
-CLASSIFIER="${AUTONOMOUS_CLASSIFIER:-/opt/linux-ai-server/automation/autonomous-classifier.sh}"
+CLASSIFIER="${AUTONOMOUS_CLASSIFIER:-/opt/linux-ai-server/automation/autonomous-classifier-v2.sh}"
 DB="${HOOK_DB:-/opt/linux-ai-server/data/claude_memory.db}"
 API_BASE="${HOOK_API:-http://127.0.0.1:8420/api/v1/memory}"
 ENV_FILE="${HOOK_ENV_FILE:-/opt/linux-ai-server/.env}"
@@ -94,10 +94,21 @@ fi
 FULL_CONTENT=$(sqlite3 "$DB" "SELECT content FROM notes WHERE id=$NOTE_ID" 2>/dev/null || echo "$PREVIEW")
 [ -z "$FULL_CONTENT" ] && FULL_CONTENT="$PREVIEW"
 
-# ---------- TIER 1: Ollama classifier ----------
+# ---------- TIER 1: Ollama classifier (with confidence) ----------
 log "classifying note #$NOTE_ID ..."
-CLASSIFICATION=$(bash "$CLASSIFIER" "$NOTE_ID" "$TITLE" "$FULL_CONTENT" 2>>"$LOG_FILE" || echo "DISCUSSION")
-log "note #$NOTE_ID classified as: $CLASSIFICATION"
+CLASSIFIER_OUT=$(bash "$CLASSIFIER" "$NOTE_ID" "$TITLE" "$FULL_CONTENT" 2>>"$LOG_FILE" || printf 'DISCUSSION\nLOW')
+CLASSIFICATION=$(printf '%s' "$CLASSIFIER_OUT" | sed -n 1p)
+CONFIDENCE=$(printf '%s' "$CLASSIFIER_OUT" | sed -n 2p)
+[ -z "$CONFIDENCE" ] && CONFIDENCE="LOW"
+log "note #$NOTE_ID classified as: $CLASSIFICATION (confidence=$CONFIDENCE)"
+
+# LOW confidence override: low-confidence ACTIONABLE/URGENT'lari defer'a cek.
+# Sebep: Otonom Claude yanlis is yapmasin, kullanici karar versin.
+# HIGH ACK ve HIGH DISCUSSION ile devam ederiz.
+if [ "$CONFIDENCE" = "LOW" ] && [ "$CLASSIFICATION" != "ACK" ]; then
+    log "LOW confidence + non-ACK -> defer route (safety override)"
+    CLASSIFICATION="DISCUSSION"
+fi
 
 # ---------- TIER 2: routing ----------
 KEY=$(get_key)
