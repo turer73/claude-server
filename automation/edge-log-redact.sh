@@ -16,14 +16,14 @@
 
 set -euo pipefail
 
-SALT_FILE="/etc/edge-log-salt"
-RETAIN_FULL_DAYS=14   # IP raw kalir
-RETAIN_HASH_DAYS=90   # IP hash'lenmis kalir; sonra satir silinir
+SALT_FILE="${SALT_FILE:-/etc/edge-log-salt}"
+RETAIN_FULL_DAYS="${RETAIN_FULL_DAYS:-14}"   # IP raw kalir
+RETAIN_HASH_DAYS="${RETAIN_HASH_DAYS:-90}"   # IP hash'lenmis kalir; sonra satir silinir
 
-LOGS=(
-    "/var/log/edge/traefik-access.log:ClientHost"
-    "/var/log/caddy/access.log:request.remote_ip"
-)
+# Log listesi env ile override edilebilir (test/staging icin).
+# Format: virgulle ayrilmis "path:field" ciftleri.
+LOGS_CONFIG="${LOGS_CONFIG:-/var/log/edge/traefik-access.log:ClientHost,/var/log/caddy/access.log:request.remote_ip}"
+IFS=',' read -r -a LOGS <<< "$LOGS_CONFIG"
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 log() { echo "[$(ts)] $*"; }
@@ -92,8 +92,11 @@ except Exception:
 
         if [ "$row_ts" -lt "$CUTOFF_HASH" ]; then
             # 14-90 gun arasi - IP hash'le
+            # NOT: env var'lari python3'e gecirmek icin process'in BAS'inda
+            # set ediyoruz; here-string ile stdin'i veriyoruz. echo|python3 ile
+            # birlikte env atamak yanlis (echo'ya gider, python3'e degil).
             local hashed_line
-            hashed_line=$(SALT_VAL="$SALT" FIELD="$ip_field" echo "$line" | python3 -c "
+            hashed_line=$(SALT_VAL="$SALT" FIELD="$ip_field" python3 -c "
 import json, sys, hashlib, os
 try:
     d = json.loads(sys.stdin.read())
@@ -113,10 +116,14 @@ try:
         h = hashlib.sha256((salt + ip).encode()).hexdigest()[:16]
         target[leaf] = 'REDACTED_' + h
     print(json.dumps(d, separators=(',', ':'), ensure_ascii=False))
-except Exception as e:
-    # Hata: orijinal satir korunur
-    sys.stdout.write(sys.stdin.read())
-" 2>/dev/null) || hashed_line="$line"
+except Exception:
+    # Hata: orijinal satir aynen yazilir
+    sys.stdout.write(os.environ.get('ORIG_LINE',''))
+" <<< "$line" 2>/dev/null)
+            # Bos cikis veya hata -> orijinal satir korunur
+            if [ -z "$hashed_line" ]; then
+                hashed_line="$line"
+            fi
             echo "$hashed_line" >> "$tmp"
             hashed=$((hashed + 1))
         else
