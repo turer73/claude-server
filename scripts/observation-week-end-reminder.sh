@@ -11,34 +11,61 @@ if [ "$(date +%Y)" != "2026" ]; then
     exit 0
 fi
 
-MSG='🔔 *Gozlem haftasi sonu — 1 hafta dolduran karar zamani*
+MSG='🔔 *Gozlem haftasi sonu — 21 May karar bloku (REVIZE 2026-05-17)*
 
-2026-05-14 oturumunda eklenenler icin bugun (21 May) checklist:
+⚠️ Bu mesaj 17 May Bilge Arena PII saldirisi sonrasi guncellendi.
+Once asagidaki 17 May durumu oku, sonra orjinal checkliste gec.
 
-1. Telegram /research bot — kac sorgu geldi?
-   \`sqlite3 /opt/linux-ai-server/data/rag_metrics.db "SELECT COUNT(*) FROM rag_queries WHERE ts > strftime(%s,\"2026-05-14\")"\`
+═══ 17 MAY OLAY ZINCIRI (oku, karari etkiler) ═══
 
-2. Cron 7 gun — alert/audit/health Telegrama geldi mi?
-   \`ls -la /var/log/linux-ai-server/\` — her log dosyasinda satir birikmesi
+• 16 May 22:58 TR: Bilge Arena 191 profil PII dump bildirimi (Ensar/insider)
+• 17 May 00-05 TR: Saldiri kapanisi (8 RPC anon REVOKE, 35 bot, 31 domain block)
+• 17 May 12:49-12:54 TR: Madde 9 #5/#6 MERGED, #7 (PR #148) OPEN
+• 17 May: Service-role JWT rotate baslatildi (surer-side, beklenen rapor)
+• 17 May: KVKK avukat brief hazirlandi (tmp/kvkk-avukat-brief-2026-05-17.md)
 
-3. /data/backups/vps/ — 7 snapshot dizini olmali (gunluk 04:00)
+Acik:
+- KVKK 72 saat deadline: 19 May 22:58 TR (bildirim karari verildi mi?)
+- Service-role rotate tamamlandi mi? (Vercel + VPS + n8n + .env.local)
+- #148 BLOCKER fixleri (B1 use-auth flag, B2 cooldown, B3 UUID regex) merge oldu mu?
+- Madde 9 #8/#9/#10 21 May SONRASI karari teyit (memory #568)
 
-4. n8n smart-approve Pazar 11:00 calisti mi?
+═══ 21 MAY KARAR KALEMLERI ═══
+
+A) /research bot — orjinal eski karar *dondur* yonune kayiyor:
+   17 May itibariyla 1 sorgu/7 gun. Eski matriste 0-2 = dondur.
+   AMA: Bilge Arena ONCELIK modu (note #102) bu kararı override edebilir.
+   Karar: Faz 4/6 vs dondurma vs Bilge LoRA odakli reorganizasyon.
+
+B) Madde 9 #8/#9/#10 sprint — memory #568 erteleme karari:
+   Bugun (21 May) gozden gecirilecek: baslat / ertelemeye devam / iptal.
+   #10 final REVOKE sadece rotate dogrulandi ise yapilabilir.
+
+C) Bilge Arena ONCELIK modu resmilestir:
+   Memory #501 Ay 2 LoRA hedefi Bilge Arena icin guclendi (191 gercek kullanici).
+   Karar: Stripe/iyzico premium odeme (#172) + #346 Realtime DB mismatch oncelikli mi?
+
+═══ ORJINAL OPERASYONEL CHECKLIST ═══
+
+1. Cron 7 gun — alert/audit/health Telegrama geldi mi?
+   \`ls -la /var/log/linux-ai-server/\`
+
+2. /data/backups/vps/ — 7 snapshot dizini olmali (gunluk 04:00)
+
+3. n8n smart-approve Pazar 11:00 calisti mi?
    \`sqlite3 .../n8n/database.sqlite "SELECT status,startedAt FROM execution_entity WHERE workflowId=panola_auto_approve ORDER BY id DESC LIMIT 3"\`
 
-5. Petvet/Kuafor PR — merge edildi mi? Canli header verify?
-   \`gh pr list --repo turer73/petvet\`
+4. Petvet/Kuafor PR — merge edildi (0 acik teyit) + canli header verify
+   \`curl -sIL https://petvet.panola.app | grep -i strict-transport\`
 
-6. Stirling AutoPipeline — 0 error of 7 gun?
+5. Stirling AutoPipeline — 0 error of 7 gun?
 
-7. Self-pentest Pazar 03:30 — yeni bug?
+6. Self-pentest Pazar 03:30 — yeni bug?
 
-KARAR:
-- Yuksek kullanim → Faz 4/6 (web search, memory consolidator)
-- Dusuk kullanim → feature dondur
-- qwen kalitesiz → Claude haiku default
+7. Vulkan Ollama stable mi (memory #560 madde 2)?
 
-Detay: memory #555 (claude-memory.sh get 555)'
+Detay: memory #555, #560, #568 + notes #102, #103, #104.
+\`bash /opt/linux-ai-server/scripts/claude-memory.sh get 568\`'
 
 curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
     -d chat_id="${TELEGRAM_CHAT_ID}" \
