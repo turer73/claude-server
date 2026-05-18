@@ -94,19 +94,56 @@ existing = existing[-50:]
 pending_path.write_text(json.dumps(existing, ensure_ascii=False, indent=2))
 PY
 
-    # State guncelle
-    local max_new
-    max_new=$(printf '%s' "$new_notes" | python3 -c "import json,sys; d=json.load(sys.stdin); print(max(n['id'] for n in d) if d else 0)" 2>/dev/null || echo 0)
-    printf '{"last_seen_id": %s, "last_poll_at": "%s"}\n' "$max_new" "$(ts)" > "$STATE_FILE"
-
-    log "new notes: $count (ids up to $max_new) -> $PENDING_FILE"
+    log "new notes: $count -> $PENDING_FILE (priority sort + rate limit pending)"
 
     # Otonom mod: yeni not basina autonomous-claude.sh spawn et
+    # xAI x-algorithm pattern 7 (priority queue, Key #4) + 8 (source diversity inspired):
+    #   - Title'da URGENT/ACIL/breach varsa priority 1000 (en once spawn -> ilk lock)
+    #   - ACK only patterns sona (priority -100, throttle'a takilirsa kayip dusuk)
+    #   - Ayni source'tan ardarda max 3 (4+ deferred -> next poll'da pick olur)
+    #
+    # State guncellemesi: SADECE spawned not ID'lerinin maxi. Deferred (rate-limit)
+    # notlar bir sonraki poll'da yine new_notes listesine girer.
+    local spawned_max_id
+    spawned_max_id=$last_seen
     if [ "${AUTONOMOUS_MODE:-0}" = "1" ]; then
-        printf '%s' "$new_notes" | python3 -c "
-import json, sys, subprocess, shlex, os
+        spawned_max_id=$(printf '%s' "$new_notes" | python3 -c "
+import json, sys, subprocess, os, re
 notes = json.load(sys.stdin)
-for n in notes:
+
+# Priority scoring (yuksek = once spawn)
+def score(n):
+    title = (n['title'] or '').upper()
+    s = 0
+    # URGENT keyword bonus
+    if any(k in title for k in ('URGENT', 'ACIL', 'BREACH', 'KVKK', 'CVE', 'SALDIRI', 'INCIDENT')):
+        s += 1000
+    # Gorev paketi structure -> ACTIONABLE early
+    if 'GOREV PAKETI' in title or 'gorev_paketi' in (n.get('preview') or '').lower():
+        s += 500
+    # ACK prefix -> low priority
+    if title.startswith('ACK'):
+        s -= 100
+    # Recency bonus (newer first)
+    s += n['id']  # id monotonic
+    return -s  # ters cevir (sort asc -> high priority first)
+
+# Source diversity rate limit: ayni source'tan max 3 spawn bu batch'te
+sorted_notes = sorted(notes, key=score)
+source_count = {}
+spawned = []
+deferred_rate_limit = []
+for n in sorted_notes:
+    src = n['from_device']
+    cnt = source_count.get(src, 0)
+    if cnt >= 3:
+        deferred_rate_limit.append(n['id'])
+        continue
+    source_count[src] = cnt + 1
+    spawned.append(n)
+
+# Spawn (priority order)
+for n in spawned:
     nid = n['id']
     frm = n['from_device']
     title = (n['title'] or '')[:200]
@@ -116,9 +153,25 @@ for n in notes:
     subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
                      stdout=open('/dev/null', 'w'),
                      stderr=subprocess.STDOUT, start_new_session=True)
-    print(f'spawned: #{nid}')
-" 2>>"$LOG_FILE" || log "autonomous spawn error"
+
+# State guncellemesi: SADECE spawned not ID'lerinin maxi.
+# Deferred'lar bir sonraki poll'da yine pickup'lanir.
+import sys
+if spawned:
+    spawned_max = max(n['id'] for n in spawned)
+else:
+    spawned_max = $last_seen
+sys.stderr.write(f'spawned (priority order): {[n[\"id\"] for n in spawned]} deferred: {deferred_rate_limit}\n')
+print(spawned_max)
+" 2>>"$LOG_FILE" || echo $last_seen)
+    else
+        # AUTONOMOUS_MODE=0: tum batch state'e gec
+        spawned_max_id=$(printf '%s' "$new_notes" | python3 -c "import json,sys; d=json.load(sys.stdin); print(max(n['id'] for n in d) if d else 0)" 2>/dev/null || echo 0)
     fi
+
+    # State guncelle
+    printf '{"last_seen_id": %s, "last_poll_at": "%s"}\n' "$spawned_max_id" "$(ts)" > "$STATE_FILE"
+    log "state updated: last_seen_id=$spawned_max_id"
 }
 
 run_daemon() {
