@@ -56,13 +56,29 @@ check "note-poller-running" "systemctl is-active --quiet klipper-note-poller"
 # 6. Disk space (hook-logs <5GB)
 check "disk-space"       "[ \$(du -sm /opt/linux-ai-server/data/hook-logs 2>/dev/null | awk '{print \$1}') -lt 5000 ]"
 
-# 7. Lock file orphan (>10 dakika eski lock + lock holder yok)
+# 7. Lock file orphan (>10 dakika eski lock + lock holder yok) + AUTO-CLEANUP
 LOCK_FILE="/tmp/klipper-autonomous-claude.lock"
+CLEANUP_RECOVERED=0
+CLEANUP_AGE=0
 if [ -f "$LOCK_FILE" ]; then
     AGE=$(( $(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0) ))
     if [ "$AGE" -gt 600 ] && ! fuser "$LOCK_FILE" >/dev/null 2>&1; then
-        FAILS+=("lock-file-orphan ($AGE seconds, no holder)")
-        log "FAIL lock-file-orphan age=${AGE}s"
+        # Race-koruma: 1sn sonra tekrar dogrula (lock o anda alinmis olabilir)
+        sleep 1
+        if ! fuser "$LOCK_FILE" >/dev/null 2>&1; then
+            if rm -f "$LOCK_FILE" 2>/dev/null && [ ! -f "$LOCK_FILE" ]; then
+                CLEANUP_RECOVERED=1
+                CLEANUP_AGE="$AGE"
+                PASSES+=("lock-orphan-cleaned (age=${AGE}s)")
+                log "RECOVER lock-orphan-cleaned age=${AGE}s"
+            else
+                FAILS+=("lock-file-orphan-rm-failed ($AGE seconds)")
+                log "FAIL lock-file-orphan-rm-failed age=${AGE}s"
+            fi
+        else
+            PASSES+=("lock-file-clean (race-recovered)")
+            log "PASS lock-file-clean (race-recovered age=${AGE}s)"
+        fi
     else
         PASSES+=("lock-file-clean")
         log "PASS lock-file-clean (age=${AGE}s)"
@@ -82,7 +98,30 @@ if [ -f "$THROTTLE_FILE" ]; then
 fi
 
 TOTAL=$(( ${#PASSES[@]} + ${#FAILS[@]} ))
-log "health summary: pass=${#PASSES[@]}/$TOTAL fail=${#FAILS[@]}"
+log "health summary: pass=${#PASSES[@]}/$TOTAL fail=${#FAILS[@]} cleanup=${CLEANUP_RECOVERED}"
+
+# Cleanup recovery audit entry (FAIL olmasa bile)
+if [ "$CLEANUP_RECOVERED" = "1" ]; then
+    DATE_SLUG=$(date -u +%Y%m%d-%H%M)
+    AGE_VAR="$CLEANUP_AGE" DATE_VAR="$DATE_SLUG" \
+    python3 <<'PY' 2>/dev/null || true
+import json, os, urllib.request
+KEY = [l.split('=',1)[1].strip() for l in open('/opt/linux-ai-server/.env').read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
+body = json.dumps({
+    'type': 'project',
+    'name': f"autonomous-lock-cleanup-{os.environ['DATE_VAR']}",
+    'description': f"Otonom mod orphan lock cleanup — {os.environ['DATE_VAR']}",
+    'content': f"## Recovery\nOrphan lock dosyasi tespit edildi ve otomatik temizlendi.\n\n- Lock: /tmp/klipper-autonomous-claude.lock\n- Yas: {os.environ['AGE_VAR']} saniye (>600s threshold)\n- Holder process: yok (fuser bos)\n- Eylem: rm -f basarili, dogrulandi\n\nKullanici aksiyon gerekmiyor — autonomous spawn'lar tekrar calisabilir.",
+    'source_device': 'klipper-autonomous',
+    'rationale': 'Automated lock recovery — audit log, no user attention needed'
+}, ensure_ascii=False).encode('utf-8')
+req = urllib.request.Request('http://127.0.0.1:8420/api/v1/memory/memories',
+    data=body, method='POST',
+    headers={'Content-Type':'application/json; charset=utf-8','X-Memory-Key':KEY})
+try: urllib.request.urlopen(req, timeout=5).read()
+except Exception as e: print(f'recovery write err: {e}')
+PY
+fi
 
 # Eger fail varsa memory entry yaz
 if [ "${#FAILS[@]}" -gt 0 ]; then
