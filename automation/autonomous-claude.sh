@@ -270,11 +270,24 @@ Result: <bir-iki cumle>"
         bash /opt/linux-ai-server/automation/autonomous-spawn-audit.sh \
             "$NOTE_ID" >> "$LOG_FILE" 2>&1 &
         log "audit spawned (background) for #$NOTE_ID"
+        # P1.6: Threat indicator scanner — spawn_log icinde credential read,
+        # exfil, persistence, lateral, anti-forensic, reverse shell pattern'leri.
+        # Tespit -> memory + Telegram. Auto-block YOK.
+        bash /opt/linux-ai-server/automation/autonomous-spawn-threat-detect.sh \
+            "$NOTE_ID" "$spawn_log" >> "$LOG_FILE" 2>&1 &
+        log "threat-detect spawned (background) for #$NOTE_ID"
         # P0.2: Manuel retry sonrasi success path — mevcut DLQ row varsa archive et
         sqlite3 -cmd ".timeout 5000" "$DB" "UPDATE spawn_failures SET status='archived', archived_at=datetime('now') WHERE note_id=$NOTE_ID AND status IN ('pending_retry','poison')" 2>>"$LOG_FILE" || true
     else
         # P0.2: rc!=0 — DLQ insert/upsert (sessiz kayip onleme)
         dlq_record_failure "$NOTE_ID" "$rc" "$spawn_log"
+        # P1.6: Threat scan rc!=0'da da; fail olsa bile suspicious pattern
+        # tetiklenmis olabilir
+        if [ -f "$spawn_log" ]; then
+            bash /opt/linux-ai-server/automation/autonomous-spawn-threat-detect.sh \
+                "$NOTE_ID" "$spawn_log" >> "$LOG_FILE" 2>&1 &
+            log "threat-detect spawned (background, rc!=0 path) for #$NOTE_ID"
+        fi
     fi
 }
 
