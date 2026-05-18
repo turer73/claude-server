@@ -247,6 +247,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
     <div class="nav-item" onclick="nav('tasks',this)"><span class="icon">&#9654;</span> Gorevler</div>
     <div class="nav-section">Guvenlik</div>
     <div class="nav-item" onclick="nav('vault',this)"><span class="icon">&#9919;</span> Sifre Kasasi</div>
+    <div class="nav-item" onclick="nav('secrets',this)"><span class="icon">&#128273;</span> .env Secrets</div>
     <div class="bottom">
       <div class="nav-item" onclick="logout()"><span class="icon">&#10005;</span> Cikis</div>
     </div>
@@ -575,6 +576,23 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
         </div>
       </div>
 
+      <div id="page-secrets" class="page">
+        <div class="card">
+          <div class="card-title">.env Secrets <span class="badge">Sunucu</span></div>
+          <p style="font-size:12px;color:var(--dim);margin-bottom:12px">/opt/linux-ai-server/.env dosyasina API key / token upsert. Value sunucuda saklanir, response'da DONMEZ. Idempotent (varsa update, yoksa append).</p>
+          <div class="vault-form" style="grid-template-columns:1fr 2fr auto">
+            <input id="secKey" placeholder="KEY (UPPERCASE_UNDERSCORE)" style="text-transform:uppercase">
+            <input id="secVal" placeholder="Value (gizli)" type="password" autocomplete="new-password">
+            <button onclick="addSecret()">Kaydet</button>
+          </div>
+          <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center">
+            <button class="vault-btn" onclick="loadSecrets()">Yenile</button>
+            <span id="secStatus" style="font-size:12px;color:var(--dim)"></span>
+          </div>
+          <div id="secretsList"></div>
+        </div>
+      </div>
+
     </div><!-- /content -->
   </div><!-- /main -->
 </div>
@@ -719,6 +737,7 @@ function nav(page, el) {
   if (page==='logs') { loadLogSources(); loadLogs(); }
   if (page==='tasks') loadTasks();
   if (page==='vault') vaultRender();
+  if (page==='secrets') loadSecrets();
   if (page==='alerts') { loadActiveAlerts(); loadAlertHistory(); }
   if (page==='containers') { loadDevContainers(); loadVPSContainers(); }
   if (page==='claude') { claudeInit(); }
@@ -1605,6 +1624,50 @@ function vaultRender() {
       </span>
     </div>`
   ).join('');
+}
+
+// ── Secrets (.env upsert) ──────────────────
+async function loadSecrets() {
+  document.getElementById('secStatus').textContent = 'yukleniyor...';
+  try {
+    const d = await api('/memory/secrets');
+    if (!d) {
+      document.getElementById('secStatus').textContent = 'erisim hatasi';
+      return;
+    }
+    document.getElementById('secStatus').textContent = `${d.count} secret`;
+    if (d.count === 0) {
+      document.getElementById('secretsList').innerHTML = '<div style="color:var(--dim);font-size:12px;padding:8px 0">.env bos</div>';
+      return;
+    }
+    document.getElementById('secretsList').innerHTML = d.keys.map(k =>
+      `<div class="vault-row">
+        <span class="sname">${esc(k.key)}</span>
+        <span class="suser">len=${k.length}</span>
+        <span></span>
+      </div>`
+    ).join('');
+  } catch (e) {
+    document.getElementById('secStatus').textContent = 'hata';
+    toast('Yukleme hatasi: ' + e.message, 'error');
+  }
+}
+
+async function addSecret() {
+  const key = document.getElementById('secKey').value.trim().toUpperCase();
+  const value = document.getElementById('secVal').value;
+  if (!key || !value) { toast('Key ve value gerekli', 'warning'); return; }
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) { toast('Key formati: UPPERCASE + _ + digit', 'warning'); return; }
+  try {
+    const r = await apiPost('/memory/secrets', {key, value});
+    if (!r) { toast('API hatasi', 'error'); return; }
+    toast(r.action || ('kaydedildi: ' + r.key), 'success');
+    document.getElementById('secKey').value = '';
+    document.getElementById('secVal').value = '';
+    loadSecrets();
+  } catch (e) {
+    toast('Kaydetme hatasi: ' + e.message, 'error');
+  }
 }
 
 // ── Projects ────────────────────────────
