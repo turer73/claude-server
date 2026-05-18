@@ -219,6 +219,15 @@ Result: <bir-iki cumle>"
     set -e
 
     log "spawn complete: note #$NOTE_ID rc=$rc log=$spawn_log"
+
+    # Tier 3: Ollama summarizer — spawn output'tan 3-cumle ozet, memory entry yaz
+    # (OpenHuman TokenJuice + agentmemory LLM compression pattern)
+    # Kullanici sabah dashboard'da "ne yapildi" net gorur, spawn-<id>.log acmaya gerek yok
+    if [ -f "$spawn_log" ] && [ "$rc" -eq 0 ]; then
+        bash /opt/linux-ai-server/automation/autonomous-spawn-summarize.sh \
+            "$NOTE_ID" "$spawn_log" >> "$LOG_FILE" 2>&1 &
+        log "summarizer spawned (background) for #$NOTE_ID"
+    fi
 }
 
 handle_discussion() {
