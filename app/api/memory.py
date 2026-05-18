@@ -182,6 +182,13 @@ class DeviceProjectCreate(BaseModel):
     local_path: str | None = None
 
 
+class SpawnFailureRetryResponse(BaseModel):
+    id: int
+    note_id: int
+    status: str
+    message: str
+
+
 # ============ Dashboard ============
 
 
@@ -1157,6 +1164,64 @@ async def write_queue_result(task_id: int, data: TaskQueueResult):
         if cur.rowcount == 0:
             raise HTTPException(409, "Task not claimed/running or does not exist")
         return {"id": task_id, "status": data.status}
+    finally:
+        db.close()
+
+
+# ============ DLQ: Spawn Failures (P0.2) ============
+
+@router.get("/spawn-failures")
+async def list_spawn_failures(
+    status: str | None = Query(None, regex="^(pending_retry|poison|archived|orphaned)$"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Autonomous Claude spawn fail DLQ listesi. Filter: status."""
+    db = get_db()
+    try:
+        q = "SELECT * FROM spawn_failures WHERE 1=1"
+        params: list = []
+        if status:
+            q += " AND status=?"
+            params.append(status)
+        q += " ORDER BY first_failed_at DESC LIMIT ?"
+        params.append(limit)
+        rows = [dict(r) for r in db.execute(q, params).fetchall()]
+        return {"count": len(rows), "rows": rows}
+    finally:
+        db.close()
+
+
+@router.post("/spawn-failures/{failure_id}/retry")
+async def retry_spawn_failure(failure_id: int):
+    """
+    Manuel retry: DLQ row'unu pending_retry'a geri al (attempt_num=0 reset, fresh start).
+    Bir sonraki cron tick'inde (~15dk) hemen cekilir.
+    """
+    db = get_db()
+    try:
+        row = db.execute(
+            "SELECT id, note_id, status FROM spawn_failures WHERE id=?",
+            (failure_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "spawn_failure not found")
+        if row["status"] == "archived":
+            return SpawnFailureRetryResponse(
+                id=row["id"], note_id=row["note_id"],
+                status="archived",
+                message="Already archived (success). No-op.",
+            ).model_dump()
+        db.execute(
+            "UPDATE spawn_failures SET status='pending_retry', "
+            "last_retry_at=NULL, attempt_num=0 WHERE id=?",
+            (failure_id,),
+        )
+        db.commit()
+        return SpawnFailureRetryResponse(
+            id=row["id"], note_id=row["note_id"],
+            status="pending_retry",
+            message="Reset for retry. Next cron tick (~15min) will pick up.",
+        ).model_dump()
     finally:
         db.close()
 

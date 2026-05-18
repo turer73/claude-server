@@ -33,3 +33,5 @@
 0 6 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh autonomous-summary /opt/linux-ai-server/automation/autonomous-daily-summary.sh
 # Otonom mod health check (her 4 saat) — Ollama + Claude + DB + poller self-test
 0 */4 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh autonomous-health /opt/linux-ai-server/automation/autonomous-health-check.sh
+# Otonom mod DLQ retry (her 15 dakika) — spawn_failures pending_retry'lari yeniden dene; 3x fail -> poison + Telegram
+*/15 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh autonomous-retry /opt/linux-ai-server/automation/autonomous-spawn-retry.sh

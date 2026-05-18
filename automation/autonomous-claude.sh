@@ -113,6 +113,39 @@ fi
 # ---------- TIER 2: routing ----------
 KEY=$(get_key)
 
+# ---------- DLQ helper (P0.2) ----------
+# Claude spawn rc!=0 ise spawn_failures tablosuna UPSERT.
+# attempt_num >= 3 olduysa status=poison (cron retry script Telegram alert atar).
+# Telegram alert burada YOK — cron handle eder (sessiz kayip koruma katmani 2).
+dlq_record_failure() {
+    local nid="$1" rc="$2" sl="$3"
+    local err_slug=""
+    if [ -f "$sl" ]; then
+        err_slug=$(tail -c 1500 "$sl" 2>/dev/null | tr -d '\000' || echo "")
+    fi
+    local title_sql from_sql preview_sql err_sql
+    title_sql=$(printf '%s' "$TITLE" | sed "s/'/''/g")
+    from_sql=$(printf '%s' "$FROM" | sed "s/'/''/g")
+    preview_sql=$(printf '%s' "$PREVIEW" | sed "s/'/''/g")
+    err_sql=$(printf '%s' "$err_slug" | sed "s/'/''/g")
+
+    sqlite3 -cmd ".timeout 5000" "$DB" <<SQL 2>>"$LOG_FILE" || { log "DLQ insert FAILED note=#$nid"; return 1; }
+INSERT INTO spawn_failures
+    (note_id, from_device, title, preview, attempt_num, exit_code, error_log, spawn_log_path, status, first_failed_at)
+VALUES
+    ($nid, '$from_sql', '$title_sql', '$preview_sql', 1, $rc, '$err_sql', '$sl', 'pending_retry', datetime('now'))
+ON CONFLICT(note_id) DO UPDATE SET
+    attempt_num = attempt_num + 1,
+    exit_code = $rc,
+    error_log = '$err_sql',
+    spawn_log_path = '$sl',
+    last_retry_at = datetime('now'),
+    status = CASE WHEN attempt_num + 1 >= 3 THEN 'poison' ELSE 'pending_retry' END,
+    poisoned_at = CASE WHEN attempt_num + 1 >= 3 AND poisoned_at IS NULL THEN datetime('now') ELSE poisoned_at END;
+SQL
+    log "DLQ recorded: note=#$nid rc=$rc"
+}
+
 handle_ack() {
     # Local handle: mark read + brief memory entry. No LLM.
     log "ACK route #$NOTE_ID — local handle (no Claude)"
@@ -220,13 +253,19 @@ Result: <bir-iki cumle>"
 
     log "spawn complete: note #$NOTE_ID rc=$rc log=$spawn_log"
 
-    # Tier 3: Ollama summarizer — spawn output'tan 3-cumle ozet, memory entry yaz
-    # (OpenHuman TokenJuice + agentmemory LLM compression pattern)
-    # Kullanici sabah dashboard'da "ne yapildi" net gorur, spawn-<id>.log acmaya gerek yok
-    if [ -f "$spawn_log" ] && [ "$rc" -eq 0 ]; then
-        bash /opt/linux-ai-server/automation/autonomous-spawn-summarize.sh \
-            "$NOTE_ID" "$spawn_log" >> "$LOG_FILE" 2>&1 &
-        log "summarizer spawned (background) for #$NOTE_ID"
+    if [ "$rc" -eq 0 ]; then
+        # Tier 3: Ollama summarizer — spawn output'tan 3-cumle ozet, memory entry
+        # (OpenHuman TokenJuice + agentmemory LLM compression pattern)
+        if [ -f "$spawn_log" ]; then
+            bash /opt/linux-ai-server/automation/autonomous-spawn-summarize.sh \
+                "$NOTE_ID" "$spawn_log" >> "$LOG_FILE" 2>&1 &
+            log "summarizer spawned (background) for #$NOTE_ID"
+        fi
+        # P0.2: Manuel retry sonrasi success path — mevcut DLQ row varsa archive et
+        sqlite3 -cmd ".timeout 5000" "$DB" "UPDATE spawn_failures SET status='archived', archived_at=datetime('now') WHERE note_id=$NOTE_ID AND status IN ('pending_retry','poison')" 2>>"$LOG_FILE" || true
+    else
+        # P0.2: rc!=0 — DLQ insert/upsert (sessiz kayip onleme)
+        dlq_record_failure "$NOTE_ID" "$rc" "$spawn_log"
     fi
 }
 
