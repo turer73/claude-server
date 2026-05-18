@@ -257,8 +257,27 @@ PY
 }
 
 handle_urgent() {
-    log "URGENT route #$NOTE_ID — info gather + memory + mark read YAPILMADI"
-    NOTE_ID_VAR="$NOTE_ID" FROM_VAR="$FROM" TITLE_VAR="$TITLE" CONTENT_VAR="$FULL_CONTENT" \
+    log "URGENT route #$NOTE_ID — telegram push + info gather + memory + mark read YAPILMADI"
+
+    # 1. Telegram push (failure non-blocking, set -e bypass)
+    set +e
+    bash /opt/linux-ai-server/automation/telegram-alert.sh \
+        --kind urgent_note \
+        --note-id "$NOTE_ID" \
+        --from "$FROM" \
+        --title "$TITLE" \
+        --preview "$FULL_CONTENT" \
+        --confidence "${CONFIDENCE:-UNKNOWN}" \
+        >> "$LOG_FILE" 2>&1
+    local push_rc=$?
+    set -e
+
+    local push_status="sent"
+    [ "$push_rc" -ne 0 ] && push_status="FAILED (rc=$push_rc) — kullanici memory'den gormeli"
+    log "telegram push: $push_status"
+
+    # 2. Memory entry (push status dahil)
+    PUSH_STATUS_VAR="$push_status" NOTE_ID_VAR="$NOTE_ID" FROM_VAR="$FROM" TITLE_VAR="$TITLE" CONTENT_VAR="$FULL_CONTENT" \
     python3 <<'PY'
 import json, os, urllib.request
 key = open('/opt/linux-ai-server/.env').read()
@@ -267,7 +286,7 @@ body = json.dumps({
     'type': 'project',
     'name': f"autonomous-urgent-{os.environ['NOTE_ID_VAR']}",
     'description': f"!!! URGENT !!! note #{os.environ['NOTE_ID_VAR']} from {os.environ['FROM_VAR']}",
-    'content': f"!!! URGENT !!!\n\nNote #{os.environ['NOTE_ID_VAR']} ({os.environ['FROM_VAR']}: {os.environ['TITLE_VAR'][:100]}) qwen2.5:7b ile URGENT olarak siniflandirildi. Otonom mod bilgi topladi ama harekete gecmedi — kullanici/insan onayi gerek.\n\nFull content:\n{os.environ['CONTENT_VAR'][:2000]}\n\nMark read YAPILMADI — kullanici siradaki oturumda hemen gormeli.",
+    'content': f"!!! URGENT !!!\n\nNote #{os.environ['NOTE_ID_VAR']} ({os.environ['FROM_VAR']}: {os.environ['TITLE_VAR'][:100]}) qwen2.5:7b ile URGENT olarak siniflandirildi. Otonom mod bilgi topladi ama harekete gecmedi — kullanici/insan onayi gerek.\n\nTelegram push: {os.environ['PUSH_STATUS_VAR']}\n\nFull content:\n{os.environ['CONTENT_VAR'][:2000]}\n\nMark read YAPILMADI — kullanici siradaki oturumda hemen gormeli.",
     'source_device': 'klipper-autonomous',
     'rationale': 'Autonomous mode URGENT classification — alert and defer'
 }, ensure_ascii=False).encode('utf-8')
