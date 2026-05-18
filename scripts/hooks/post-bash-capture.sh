@@ -89,6 +89,15 @@ if printf '%s' "$CMD" | grep -qiE '(pytest|npm[[:space:]]+(test|run[[:space:]]+t
   if printf '%s' "$CMD" | grep -qE 'systemctl[[:space:]]+(restart|status)'; then
     SKIP_BUG=1
   fi
+  # False-positive koruma: composite shell line'da (echo + ssh + git + gh ...)
+  # son alt-komutun rc'si fail olabilir ama test runner cikti SUCCESS sinyali
+  # tasiyor olabilir. Cikti icinde explicit pass keyword'leri varsa SKIP.
+  # Bug #465 + #466 root cause — vitest "Test pass" + gh "mergeStateStatus CLEAN"
+  # composite line'in sonundaki ssh fail nedeniyle false bug aciliyor.
+  DETAILS_PEEK=$(printf '%s' "$EXTRACT" | cut -f4 | head -c 4000)
+  if printf '%s' "$DETAILS_PEEK" | grep -qE 'Test pass[[:space:]]|all tests passed|[0-9]+[[:space:]]+passed|0 failing|mergeStateStatus["][[:space:]:]*["]CLEAN["]'; then
+    SKIP_BUG=1
+  fi
   # Class boş ise bug açma — regex'in rastgele match ettiği composite komut.
   if [ -n "$RC" ] && [ "$RC" != "0" ] && [ "$SKIP_BUG" = "0" ] && [ -n "$CLASS" ]; then
     # Tum dinamik veriler env var ile gecirilir — shell injection yok
