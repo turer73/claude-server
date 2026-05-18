@@ -186,6 +186,10 @@ handle_actionable() {
     log "ACTIONABLE route #$NOTE_ID — spawn Claude (Max plan, $MODEL, allowlist)"
     date +%s > "$THROTTLE_FILE"
 
+    # P0.5: spawn oncesi git HEAD'i kaydet — audit script post-spawn diff icin kullanir
+    mkdir -p /opt/linux-ai-server/data/hook-state 2>/dev/null || true
+    git -C /opt/linux-ai-server rev-parse HEAD > "/opt/linux-ai-server/data/hook-state/spawn-head-${NOTE_ID}.txt" 2>/dev/null || true
+
     local prompt spawn_log
     prompt="Otonom modda spawn edildin. Yeni bir not geldi:
 
@@ -261,6 +265,11 @@ Result: <bir-iki cumle>"
                 "$NOTE_ID" "$spawn_log" >> "$LOG_FILE" 2>&1 &
             log "summarizer spawned (background) for #$NOTE_ID"
         fi
+        # P0.5: Passive audit — spawn'in yarattigi commit'leri sasirtici pattern icin
+        # incele, suspicious ise memory + Telegram alert. Auto-revert YOK.
+        bash /opt/linux-ai-server/automation/autonomous-spawn-audit.sh \
+            "$NOTE_ID" >> "$LOG_FILE" 2>&1 &
+        log "audit spawned (background) for #$NOTE_ID"
         # P0.2: Manuel retry sonrasi success path — mevcut DLQ row varsa archive et
         sqlite3 -cmd ".timeout 5000" "$DB" "UPDATE spawn_failures SET status='archived', archived_at=datetime('now') WHERE note_id=$NOTE_ID AND status IN ('pending_retry','poison')" 2>>"$LOG_FILE" || true
     else
