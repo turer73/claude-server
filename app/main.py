@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBearer
 
 from app import __version__
+from app.api.admin import router as admin_router
 from app.api.agents import router as agents_router
 from app.api.ai import router as ai_router
 from app.api.auth import router as auth_router
@@ -230,6 +231,7 @@ def create_app() -> FastAPI:
     app.include_router(social_router)
     app.include_router(memory_router)
     app.include_router(memory_public_router)
+    app.include_router(admin_router)
     app.include_router(validation_router)
     app.include_router(csp_router)
     app.include_router(ci_router)

@@ -190,27 +190,7 @@ class SpawnFailureRetryResponse(BaseModel):
     message: str
 
 
-class SecretSet(BaseModel):
-    key: str
-    value: str
-
-    @field_validator("key")
-    @classmethod
-    def validate_key(cls, v: str) -> str:
-        if not re.match(r"^[A-Z_][A-Z0-9_]*$", v):
-            raise ValueError("key must match ^[A-Z_][A-Z0-9_]*$ (uppercase + underscore + digit)")
-        if len(v) > 80:
-            raise ValueError("key too long (>80)")
-        return v
-
-    @field_validator("value")
-    @classmethod
-    def validate_value(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("value cannot be empty")
-        if len(v) > 4000:
-            raise ValueError("value too long (>4000)")
-        return v
+# NOTE: SecretSet model moved to app/api/admin.py (single source).
 
 
 # ============ Dashboard ============
@@ -1192,64 +1172,9 @@ async def write_queue_result(task_id: int, data: TaskQueueResult):
         db.close()
 
 
-# ============ Secrets (.env upsert via helper) ============
-
-@router.get("/secrets")
-async def list_secrets():
-    """
-    .env dosyasindaki KEY listesi (value'lar maskelenmis — sadece key + length).
-    Yorum satirlari ve bos satirlar haricte tutulur.
-    """
-    env_path = "/opt/linux-ai-server/.env"
-    if not os.path.exists(env_path):
-        return {"count": 0, "keys": []}
-    keys = []
-    try:
-        with open(env_path) as f:
-            for line in f:
-                line = line.rstrip("\n\r")
-                if not line or line.startswith("#"):
-                    continue
-                if "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                k = k.strip()
-                if not re.match(r"^[A-Z_][A-Z0-9_]*$", k):
-                    continue
-                keys.append({"key": k, "length": len(v)})
-    except OSError as e:
-        raise HTTPException(500, f"read failed: {e}")
-    return {"count": len(keys), "keys": sorted(keys, key=lambda r: r["key"])}
-
-
-@router.post("/secrets")
-async def set_secret(data: SecretSet):
-    """
-    .env'e KEY=VALUE upsert. set-env-secret.sh helper'ini cagirir
-    (idempotent: varsa update, yoksa append). Value response'da DONMEZ.
-    """
-    import subprocess
-    helper = "/opt/linux-ai-server/scripts/set-env-secret.sh"
-    if not os.path.exists(helper):
-        raise HTTPException(500, f"helper missing: {helper}")
-    try:
-        proc = subprocess.run(
-            ["bash", helper, data.key],
-            input=data.value,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except subprocess.TimeoutExpired:
-        raise HTTPException(500, "helper timeout")
-    if proc.returncode != 0:
-        # stderr'da token gozukmemeli — helper -s value yazdirmadi, ama defansif
-        raise HTTPException(400, f"helper failed rc={proc.returncode}: {proc.stderr.strip()[:200]}")
-    return {
-        "key": data.key,
-        "action": proc.stdout.strip(),
-        "value_length": len(data.value),
-    }
+# NOTE: Secrets endpoints moved to app/api/admin.py — they use JWT auth
+# (require_auth) for dashboard compatibility, separate from the X-Memory-Key
+# auth this router uses.
 
 
 # ============ DLQ: Spawn Failures (P0.2) ============

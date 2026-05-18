@@ -1630,7 +1630,7 @@ function vaultRender() {
 async function loadSecrets() {
   document.getElementById('secStatus').textContent = 'yukleniyor...';
   try {
-    const d = await api('/memory/secrets');
+    const d = await api('/admin/secrets');
     if (!d) {
       document.getElementById('secStatus').textContent = 'erisim hatasi';
       return;
@@ -1659,7 +1659,7 @@ async function addSecret() {
   if (!key || !value) { toast('Key ve value gerekli', 'warning'); return; }
   if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) { toast('Key formati: UPPERCASE + _ + digit', 'warning'); return; }
   try {
-    const r = await apiPost('/memory/secrets', {key, value});
+    const r = await apiPost('/admin/secrets', {key, value});
     if (!r) { toast('API hatasi', 'error'); return; }
     toast(r.action || ('kaydedildi: ' + r.key), 'success');
     document.getElementById('secKey').value = '';
