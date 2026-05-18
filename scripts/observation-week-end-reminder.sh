@@ -23,12 +23,13 @@ Once asagidaki 17 May durumu oku, sonra orjinal checkliste gec.
 • 17 May 12:49-12:54 TR: Madde 9 #5/#6 MERGED, #7 (PR #148) OPEN
 • 17 May: Service-role JWT rotate baslatildi (surer-side, beklenen rapor)
 • 17 May: KVKK avukat brief hazirlandi (tmp/kvkk-avukat-brief-2026-05-17.md)
+• 18 May: KVKK durum KAPANDI (kullanici teyidi — sorun yok)
 
-Acik:
-- KVKK 72 saat deadline: 19 May 22:58 TR (bildirim karari verildi mi?)
+Acik (revize 2026-05-18):
 - Service-role rotate tamamlandi mi? (Vercel + VPS + n8n + .env.local)
 - #148 BLOCKER fixleri (B1 use-auth flag, B2 cooldown, B3 UUID regex) merge oldu mu?
 - Madde 9 #8/#9/#10 21 May SONRASI karari teyit (memory #568)
+- CSRF startsWith trailing dash fix (sürer concern)
 
 ═══ 21 MAY KARAR KALEMLERI ═══
 
