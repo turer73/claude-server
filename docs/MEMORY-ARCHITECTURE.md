@@ -121,7 +121,7 @@ cron entry (daily-backup, test-runner, weekly-audit, demo-reset, e2e-live, pull-
 
 | name | platform | tailscale_ip | aktif |
 |------|----------|--------------|-------|
-| `klipper` | linux | 100.113.153.62 | ✓ canli |
+| `klipper` | linux | 100.84.251.49 | ✓ canli |
 | `windows-masaustu` | windows | - | ✓ canli |
 | `windows-laptop` | windows | - | ⚠ stale (Apr 26) |
 | `android-telefon` | android | - | ⚠ stale (Apr 03) |

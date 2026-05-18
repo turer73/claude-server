@@ -12,7 +12,7 @@ set +e
 EVENT="${1:-unknown}"
 DETAILS="${2:-}"
 
-API="http://100.113.153.62:8420/api/v1/memory/tasks"
+API="http://100.84.251.49:8420/api/v1/memory/tasks"
 # .env den MEMORY_API_KEY oku (hardcoded yerine)
 ENV_FILE="/opt/linux-ai-server/.env"
 KEY=""

@@ -82,7 +82,7 @@ function opus-inbox {
         return
     }
     $headers = @{ "X-Memory-Key" = $env:KLIPPER_MEMORY_KEY }
-    $uri = "http://100.113.153.62:8420/api/v1/memory/notes?device=klipper&unread_only=true"
+    $uri = "http://100.84.251.49:8420/api/v1/memory/notes?device=klipper&unread_only=true"
     try {
         $res = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
         if ($res.Count -eq 0) {

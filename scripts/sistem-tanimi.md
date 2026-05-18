@@ -6,10 +6,10 @@ Iki makine, iki ajan, bir hafiza sistemi:
 
 | Makine    | Model | Rol              | Konum                        |
 |-----------|-------|------------------|------------------------------|
-| Klipper   | Opus  | Kontrolcu/Beyin  | 100.113.153.62 (Linux)       |
+| Klipper   | Opus  | Kontrolcu/Beyin  | 100.84.251.49 (Linux)       |
 | Windows   | Sonnet| Uretici/Eller    | LAPTOP / DESKTOP (Windows)   |
 
-Haberlesme kanali: `http://100.113.153.62:8420/api/v1/memory/notes`  
+Haberlesme kanali: `http://100.84.251.49:8420/api/v1/memory/notes`  
 Auth: `X-Memory-Key: $env:KLIPPER_MEMORY_KEY` (Windows User env var)
 
 ---
@@ -127,7 +127,7 @@ F:\projelerim\scripts\
 
 ## Hafiza Sistemi
 
-- **Endpoint:** `http://100.113.153.62:8420/api/v1/memory`
+- **Endpoint:** `http://100.84.251.49:8420/api/v1/memory`
 - **Auth header:** `X-Memory-Key: $env:KLIPPER_MEMORY_KEY`
 - **Cihaz adi (Windows):** `surer`
 - **Cihaz adi (Klipper):** `klipper`
@@ -142,7 +142,7 @@ Gorev koordinasyonu `notes` tablosu uzerinden yurutuluyor:
 
 ## Cok-Ajan Sistemi: klipper-opus Rolu
 
-Bu Linux makinesi (klipper, 100.113.153.62) **kontrolcu/koordinator ajan** rolundedir.
+Bu Linux makinesi (klipper, 100.84.251.49) **kontrolcu/koordinator ajan** rolundedir.
 Uygulayici ajan: surer (Sonnet, Windows). Aktif altyapi:
 - `SessionStart` hook: oturum basinda unread notlari + acik bug'lari + son test sonuclarini yukler
 - `UserPromptSubmit` hook: yeni note geldiginde otomatik mesaj basina inject eder (live arrival)
@@ -175,7 +175,7 @@ Uygulayici ajan: surer (Sonnet, Windows). Aktif altyapi:
 ## Cok-Ajan Sistemi: surer-sonnet Rolu
 
 Bu Windows makinesi (surer) **uygulayici ajan** rolundedir.
-Kontrolcu ajan: klipper (Opus, 100.113.153.62).
+Kontrolcu ajan: klipper (Opus, 100.84.251.49).
 Haberlesme kanali: `POST /api/v1/memory/notes` (X-Memory-Key header).
 
 ### Is Akisi

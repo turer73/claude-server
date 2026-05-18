@@ -47,7 +47,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "http://100.113.153.62:8420/api/v1/devops/status",
+        "url": "http://100.84.251.49:8420/api/v1/devops/status",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {
@@ -92,7 +92,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://100.113.153.62:8420/api/v1/monitor/webhooks/trigger/health_check",
+        "url": "http://100.84.251.49:8420/api/v1/monitor/webhooks/trigger/health_check",
         "options": {
           "timeout": 15000
         }
@@ -106,7 +106,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://100.113.153.62:8420/api/v1/monitor/webhooks/trigger/remediate",
+        "url": "http://100.84.251.49:8420/api/v1/monitor/webhooks/trigger/remediate",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ source: $('Klipper Alert Webhook').item.json.alert.source, value: $('Klipper Alert Webhook').item.json.alert.value, threshold: $('Klipper Alert Webhook').item.json.alert.threshold }) }}",
@@ -134,7 +134,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://100.113.153.62:8420/api/v1/monitor/webhooks/trigger/verify",
+        "url": "http://100.84.251.49:8420/api/v1/monitor/webhooks/trigger/verify",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ source: $('Klipper Alert Webhook').item.json.alert.source }) }}",
