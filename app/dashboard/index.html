@@ -1836,7 +1836,7 @@ function renderAutoTimeline(events) {
       ? `classify-${e.label.toLowerCase()}`
       : e.type;
     const badgeText = e.label || e.type.replace(/_/g,' ').toUpperCase();
-    const nid = e.note_id != null ? `<span class="nid">#${e.note_id}</span>` : '';
+    const nid = e.note_id != null ? ` <span class="nid">#${e.note_id}</span>` : '';
     const details = e.details ? ` <span class="nid">— ${esc(e.details)}</span>` : '';
     return `<div class="auto-event">
       <span class="et">${esc(tm)}</span>

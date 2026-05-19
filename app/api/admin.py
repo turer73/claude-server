@@ -47,7 +47,9 @@ _NOTE_ID_RE = re.compile(r"-(\d+)(?:-|$)")
 
 # Note-id'si olmayan event tipleri — _extract_note_id butun -DDDD- match'lerini
 # yakalar; bu tiplerde tarih kismi yanlislikla note_id zannedilir.
-_NO_NOTE_ID_TYPES = {"health", "lock_cleanup", "daily_summary"}
+# 'memory' fallback de note_id'siz (bilinmeyen autonomous-* slug, ornek
+# autonomous-research-* tarih yakalanmasin).
+_NO_NOTE_ID_TYPES = {"health", "lock_cleanup", "daily_summary", "memory"}
 
 
 def _classify_memory(name: str) -> tuple[str, str | None, str]:
