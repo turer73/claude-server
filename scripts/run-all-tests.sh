@@ -117,6 +117,14 @@ run_project() {
     status="fail"
     FAILED=1
     log "  ✗ FAIL — $passed passed, $failed failed"
+    # P1.D: Fail output'unu kalici log'a yaz — flaky test forensics icin
+    # Sadece fail durumunda saklanir; pass'te disk doldurmaz.
+    local fail_log="${LOG_DIR:-/opt/linux-ai-server/logs}/test-fail-${name}-$(date +%Y%m%d-%H%M%S).log"
+    mkdir -p "$(dirname "$fail_log")" 2>/dev/null
+    printf '%s\n' "$output" > "$fail_log" 2>/dev/null
+    log "    detay: $fail_log"
+    # Eski fail log'lari temizle (30 gun)
+    find "${LOG_DIR:-/opt/linux-ai-server/logs}" -name "test-fail-*.log" -mtime +30 -delete 2>/dev/null || true
   else
     log "  ✓ PASS — $passed passed"
   fi
