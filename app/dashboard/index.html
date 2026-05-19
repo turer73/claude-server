@@ -190,6 +190,28 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
 .confirm-box button { padding: 6px 16px; border-radius: 8px; cursor: pointer; font-size: 12px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
 .confirm-box button.danger { background: var(--red); color: white; border-color: var(--red); }
 
+/* P1.1 Otonom Akis */
+.auto-event { display: grid; grid-template-columns: 110px 100px 1fr; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; align-items: center; }
+.auto-event:last-child { border: none; }
+.auto-event .et { color: var(--dim); font-family: 'SF Mono', Consolas, monospace; font-size: 10px; }
+.auto-event .eb { padding: 2px 8px; border-radius: 4px; font-size: 9px; font-weight: 600; text-align: center; text-transform: uppercase; letter-spacing: 0.04em; }
+.auto-event .ed { color: var(--text); line-height: 1.4; }
+.auto-event .ed .nid { color: var(--dim); font-size: 10px; margin-left: 4px; }
+.eb.classify-ack         { background: #64748b30; color: var(--dim); }
+.eb.classify-actionable  { background: #34d39930; color: var(--green); }
+.eb.classify-discussion  { background: #fbbf2430; color: var(--yellow); }
+.eb.classify-urgent      { background: #f8717140; color: var(--red); }
+.eb.spawn                { background: #34d39930; color: var(--green); }
+.eb.dlq                  { background: #f8717130; color: var(--red); }
+.eb.audit                { background: #818cf830; color: var(--accent); }
+.eb.threat               { background: #ef444450; color: #fee2e2; }
+.eb.urgent               { background: #f8717140; color: var(--red); }
+.eb.health               { background: #fbbf2430; color: var(--yellow); }
+.eb.lock_cleanup         { background: #64748b20; color: var(--muted); }
+.eb.daily_summary        { background: #60a5fa30; color: var(--blue); }
+.eb.new_note             { background: #60a5fa20; color: var(--blue); }
+.eb.memory               { background: #64748b20; color: var(--dim); }
+
 @media (max-width: 900px) {
   .sidebar { transform: translateX(-100%); }
   .sidebar.open { transform: translateX(0); }
@@ -234,6 +256,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
     <div class="nav-item active" onclick="nav('overview',this)"><span class="icon">&#9632;</span> Genel Bakis</div>
     <div class="nav-item" onclick="nav('graphs',this)"><span class="icon">&#9650;</span> Grafikler</div>
     <div class="nav-item" onclick="nav('alerts',this)"><span class="icon">&#9888;</span> Uyarilar</div>
+    <div class="nav-item" onclick="nav('autonomous',this)"><span class="icon">&#8678;</span> Otonom Akis</div>
     <div class="nav-section">Yonetim</div>
     <div class="nav-item" onclick="nav('containers',this)"><span class="icon">&#9881;</span> Konteynerler</div>
     <div class="nav-item" onclick="nav('services',this)"><span class="icon">&#9733;</span> Servisler</div>
@@ -576,6 +599,45 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
         </div>
       </div>
 
+      <div id="page-autonomous" class="page">
+        <div class="row row-4">
+          <div class="stat" id="autoStatAck">       <div class="label">ACK</div>       <div class="value">--</div></div>
+          <div class="stat" id="autoStatActionable"><div class="label">ACTIONABLE</div><div class="value">--</div></div>
+          <div class="stat" id="autoStatDiscussion"><div class="label">DISCUSSION</div><div class="value">--</div></div>
+          <div class="stat" id="autoStatUrgent">    <div class="label">URGENT</div>    <div class="value">--</div></div>
+        </div>
+        <div class="row row-3">
+          <div class="card">
+            <div class="card-title">DLQ <span class="badge" id="autoDlqTotal">0</span></div>
+            <div id="autoDlqDetail" style="font-size:12px;color:var(--dim);line-height:1.6"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Spawn Basari</div>
+            <div id="autoSpawnRate" style="font-size:22px;font-weight:700"></div>
+            <div id="autoSpawnSub" style="font-size:11px;color:var(--dim);margin-top:4px"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Uyarilar</div>
+            <div id="autoAlerts" style="font-size:12px;line-height:1.7"></div>
+          </div>
+        </div>
+        <div class="row row-2">
+          <div class="card">
+            <div class="card-title">Etiket Dagilimi (son 7 gun)</div>
+            <div style="position:relative;height:240px"><canvas id="autoPie"></canvas></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Son Olaylar
+              <span style="display:flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0">
+                <span id="autoStatus" style="font-size:11px;color:var(--dim)"></span>
+                <button class="vault-btn" onclick="loadAutonomous()">Yenile</button>
+              </span>
+            </div>
+            <div id="autoTimeline" style="max-height:480px;overflow-y:auto"></div>
+          </div>
+        </div>
+      </div>
+
       <div id="page-secrets" class="page">
         <div class="card">
           <div class="card-title">.env Secrets <span class="badge">Sunucu</span></div>
@@ -738,6 +800,8 @@ function nav(page, el) {
   if (page==='tasks') loadTasks();
   if (page==='vault') vaultRender();
   if (page==='secrets') loadSecrets();
+  if (page==='autonomous') { loadAutonomous(); startAutoPolling(); }
+  else if (page !== 'autonomous' && _autoPollTimer) { stopAutoPolling(); }
   if (page==='alerts') { loadActiveAlerts(); loadAlertHistory(); }
   if (page==='containers') { loadDevContainers(); loadVPSContainers(); }
   if (page==='claude') { claudeInit(); }
@@ -1668,6 +1732,128 @@ async function addSecret() {
   } catch (e) {
     toast('Kaydetme hatasi: ' + e.message, 'error');
   }
+}
+
+// ── Autonomous Flow (P1.1) ─────────────────
+let _autoChart = null;
+let _autoPollTimer = null;
+const AUTO_POLL_MS = 30000;
+
+async function loadAutonomous() {
+  const st = document.getElementById('autoStatus');
+  st.textContent = 'yukleniyor...';
+  const [tl, stats] = await Promise.all([
+    api('/admin/autonomous/timeline?limit=50'),
+    api('/admin/autonomous/stats?days=7'),
+  ]);
+  if (!tl || !stats) {
+    st.textContent = 'erisim hatasi';
+    return;
+  }
+  renderAutoStats(stats);
+  renderAutoPie(stats.classification);
+  renderAutoTimeline(tl.events || []);
+  st.textContent = 'son: ' + new Date().toLocaleTimeString('tr-TR');
+}
+
+function renderAutoStats(s) {
+  const c = s.classification || {};
+  document.querySelector('#autoStatAck .value').textContent = c.ACK ?? 0;
+  document.querySelector('#autoStatActionable .value').textContent = c.ACTIONABLE ?? 0;
+  document.querySelector('#autoStatDiscussion .value').textContent = c.DISCUSSION ?? 0;
+  document.querySelector('#autoStatUrgent .value').textContent = c.URGENT ?? 0;
+  const dlq = s.dlq || {};
+  const dlqTotal = (dlq.pending_retry||0) + (dlq.poison||0) + (dlq.orphaned||0);
+  document.getElementById('autoDlqTotal').textContent = dlqTotal;
+  document.getElementById('autoDlqDetail').innerHTML =
+    `pending: <b>${dlq.pending_retry||0}</b><br>` +
+    `poison: <b style="color:var(--red)">${dlq.poison||0}</b><br>` +
+    `orphaned: <b>${dlq.orphaned||0}</b><br>` +
+    `archived: <b style="color:var(--dim)">${dlq.archived||0}</b>`;
+  const sr = s.spawn_rate || {};
+  const pct = sr.success_pct;
+  document.getElementById('autoSpawnRate').innerHTML = pct == null
+    ? '<span style="color:var(--dim)">-</span>'
+    : `<span style="color:${pct>=80?'var(--green)':pct>=50?'var(--yellow)':'var(--red)'}">${pct.toFixed(1)}%</span>`;
+  document.getElementById('autoSpawnSub').textContent = `${sr.success||0} basarili / ${sr.fail||0} basarisiz`;
+  const a = s.alerts || {};
+  document.getElementById('autoAlerts').innerHTML =
+    `URGENT: <b style="color:var(--red)">${a.urgent||0}</b><br>` +
+    `Audit: <b style="color:var(--accent)">${a.audit||0}</b><br>` +
+    `Threat: <b style="color:var(--red)">${a.threat||0}</b><br>` +
+    `Health-fail: <b style="color:var(--yellow)">${a.health_fail||0}</b>`;
+}
+
+function renderAutoPie(cls) {
+  const labels = ['ACK','ACTIONABLE','DISCUSSION','URGENT'];
+  const data = labels.map(l => (cls && cls[l]) || 0);
+  const total = data.reduce((a,b)=>a+b,0);
+  const ctxParent = document.getElementById('autoPie').parentElement;
+  if (_autoChart) { _autoChart.destroy(); _autoChart = null; }
+  if (total === 0) {
+    ctxParent.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:240px;color:var(--dim);font-size:12px">Veri yok</div>';
+    return;
+  }
+  // Canvas re-create (parent innerHTML degisebilir)
+  if (!document.getElementById('autoPie')) {
+    ctxParent.innerHTML = '<canvas id="autoPie"></canvas>';
+  }
+  const ctx = document.getElementById('autoPie').getContext('2d');
+  _autoChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data,
+        backgroundColor: ['#64748b','#34d399','#fbbf24','#f87171'],
+        borderColor: '#11111b', borderWidth: 2,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { color: '#e2e8f0', font:{size:11}, padding:8 } },
+        tooltip: { callbacks: { label: c => `${c.label}: ${c.parsed} (${(c.parsed/total*100).toFixed(1)}%)` } },
+      },
+    },
+  });
+}
+
+function renderAutoTimeline(events) {
+  const el = document.getElementById('autoTimeline');
+  if (!events.length) {
+    el.innerHTML = '<div style="color:var(--dim);font-size:12px;padding:12px 0">Henuz olay yok</div>';
+    return;
+  }
+  el.innerHTML = events.map(e => {
+    let tm = '-';
+    if (e.at) {
+      // SQLite UTC string -> TR locale
+      const d = new Date((e.at.includes('T') ? e.at : e.at.replace(' ','T')) + (e.at.endsWith('Z') ? '' : 'Z'));
+      tm = isNaN(d) ? e.at : d.toLocaleString('tr-TR',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+    }
+    const badgeClass = e.type === 'classify' && e.label
+      ? `classify-${e.label.toLowerCase()}`
+      : e.type;
+    const badgeText = e.label || e.type.replace(/_/g,' ').toUpperCase();
+    const nid = e.note_id != null ? `<span class="nid">#${e.note_id}</span>` : '';
+    const details = e.details ? ` <span class="nid">— ${esc(e.details)}</span>` : '';
+    return `<div class="auto-event">
+      <span class="et">${esc(tm)}</span>
+      <span class="eb ${badgeClass}">${esc(badgeText)}</span>
+      <span class="ed">${esc(e.title || '')}${nid}${details}</span>
+    </div>`;
+  }).join('');
+}
+
+function startAutoPolling() {
+  stopAutoPolling();
+  _autoPollTimer = setInterval(() => {
+    if (_activePage === 'autonomous') loadAutonomous();
+  }, AUTO_POLL_MS);
+}
+function stopAutoPolling() {
+  if (_autoPollTimer) { clearInterval(_autoPollTimer); _autoPollTimer = null; }
 }
 
 // ── Projects ────────────────────────────
