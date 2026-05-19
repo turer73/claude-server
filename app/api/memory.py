@@ -885,10 +885,15 @@ async def list_notes(device: str | None = None, unread_only: bool = False):
 
 @router.post("/notes")
 async def create_note(data: NoteCreate):
-    # Privacy + dedup eklendi
+    # Privacy + dedup
+    # NOT: BEGIN IMMEDIATE ile race condition kapatildi (paralel POST iki
+    # SELECT'inde de dup gormezken ikisi de INSERT eden senaryo — #169/#170
+    # 9-saniye dup pattern'i).
     content_clean, redacted_labels = redact(data.content)
     db = get_db()
     try:
+        db.execute("BEGIN IMMEDIATE")
+        # 1. Tam dup (content identical) — 5dk pencere
         recent_dup = db.execute(
             "SELECT id FROM notes WHERE from_device=? "
             "AND COALESCE(to_device,'')=COALESCE(?,'') "
@@ -897,9 +902,29 @@ async def create_note(data: NoteCreate):
             (data.from_device, data.to_device, data.title, content_clean),
         ).fetchone()
         if recent_dup:
+            db.rollback()
             return {
                 "id": recent_dup[0],
                 "status": "duplicate_skipped_5min",
+                "secrets_redacted": redacted_labels,
+            }
+
+        # 2. Title-only soft dedup — 30sn cok-kisa pencere, race + double-fire
+        # icin defansif. Content farkli olsa bile ayni title ayni from_device
+        # 30sn icinde tekrar gelirse: ikinci handler invocation (Surer
+        # autonomous handler double-fire) — bu API katmaninda durdur.
+        title_dup = db.execute(
+            "SELECT id FROM notes WHERE from_device=? "
+            "AND COALESCE(to_device,'')=COALESCE(?,'') "
+            "AND title=? "
+            "AND created_at > datetime('now','-30 seconds')",
+            (data.from_device, data.to_device, data.title),
+        ).fetchone()
+        if title_dup:
+            db.rollback()
+            return {
+                "id": title_dup[0],
+                "status": "duplicate_title_30s",
                 "secrets_redacted": redacted_labels,
             }
 
