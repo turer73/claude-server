@@ -147,7 +147,7 @@ fi
 # Memory'e yaz
 RESP=$(SUMMARY="$SUMMARY_CONTENT" SLUG="$SLUG" DATE="$DATE" python3 <<'PY'
 import json, os, urllib.request
-KEY = [l.split('=',1)[1].strip() for l in open('/opt/linux-ai-server/.env').read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
+KEY = [l.split('=',1)[1].strip() for l in open(os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')).read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
 body = json.dumps({
     'type': 'project',
     'name': os.environ['SLUG'],

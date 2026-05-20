@@ -11,6 +11,7 @@ htmlcov/
 dist/
 build/
 .env
+.env.autonomous
 .env.backup*
 .env.bak.*
 *.db

@@ -24,8 +24,23 @@
 
 set -uo pipefail   # NOT -e: tek not fail tum loop'u kesmesin
 
+# Isolation: cron'dan klipperos olarak tetikleniyor; otonom Claude'u
+# klipper-auto altinda calistirmaliyiz (note-poller systemd unit ile ayni
+# guvenlik modeli). Self-drop-privs: eger klipperos olarak girilirse, sudo
+# ile klipper-auto'ya re-exec et.
+if [ "$(id -un)" = "klipperos" ] && [ -z "${RETRY_PRIVS_DROPPED:-}" ]; then
+    exec sudo -n -u klipper-auto \
+        env RETRY_PRIVS_DROPPED=1 \
+            HOME=/home/klipper-auto \
+            HOOK_ENV_FILE=/opt/linux-ai-server/.env.autonomous \
+            TELEGRAM_ENV_FILE=/opt/linux-ai-server/.env.autonomous \
+            AUTONOMOUS_LOCK=/opt/linux-ai-server/data/hook-state/klipper-autonomous-claude.lock \
+            RETRY_LOCK=/opt/linux-ai-server/data/hook-state/klipper-autonomous-spawn-retry.lock \
+        "$0" "$@"
+fi
+
 LOG_FILE="${RETRY_LOG:-/opt/linux-ai-server/data/hook-logs/autonomous-spawn-retry.log}"
-LOCK_FILE="${RETRY_LOCK:-/tmp/klipper-autonomous-spawn-retry.lock}"
+LOCK_FILE="${RETRY_LOCK:-/opt/linux-ai-server/data/hook-state/klipper-autonomous-spawn-retry.lock}"
 DB="${HOOK_DB:-/opt/linux-ai-server/data/claude_memory.db}"
 SETTINGS_FILE="${AUTONOMOUS_SETTINGS:-/opt/linux-ai-server/automation/autonomous-claude-settings.json}"
 GUARDRAILS="${AUTONOMOUS_GUARDRAILS:-/opt/linux-ai-server/automation/autonomous-claude-guardrails.md}"
@@ -102,7 +117,7 @@ dlq_poison_alert() {
     DATE_VAR="$(date -u +%Y%m%d-%H%M)" \
     python3 <<'PY' 2>>"$LOG_FILE" || true
 import json, os, urllib.request
-KEY = [l.split('=',1)[1].strip() for l in open('/opt/linux-ai-server/.env').read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
+KEY = [l.split('=',1)[1].strip() for l in open(os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')).read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
 body = json.dumps({
     'type': 'project',
     'name': f"autonomous-spawn-poison-{os.environ['NOTE_ID_VAR']}-{os.environ['DATE_VAR']}",
@@ -211,6 +226,19 @@ Result: <bir-iki cumle>"
     local err_slug new_attempt
     err_slug=$(tail -c 1500 "$spawn_log" 2>/dev/null | tr -d '\000' | sed "s/'/''/g" || echo "")
     new_attempt=$((attempt + 1))
+
+    # OAuth race detection: 401 marker spawn JSON output icinde
+    if grep -q '"api_error_status":401' "$spawn_log" 2>/dev/null; then
+        log "OAUTH 401 detected retry note=#$note_id attempt=$new_attempt — possible refresh race"
+        set +e
+        bash /opt/linux-ai-server/automation/telegram-alert.sh \
+            --kind oauth_race \
+            --note-id "$note_id" \
+            --spawn-log "$spawn_log" \
+            --attempt "$new_attempt" \
+            >> "$LOG_FILE" 2>&1
+        set -e
+    fi
 
     if [ "$new_attempt" -ge "$POISON_THRESHOLD" ]; then
         sqlite3 -cmd ".timeout 5000" "$DB" "UPDATE spawn_failures SET attempt_num=$new_attempt, exit_code=$rc, error_log='$err_slug', spawn_log_path='$spawn_log', last_retry_at=datetime('now'), status='poison', poisoned_at=datetime('now') WHERE id=$dlq_id"

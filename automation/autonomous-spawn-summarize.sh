@@ -123,7 +123,7 @@ TURNS_VAR="$TURNS" DURATION_VAR="$DURATION_MS" COST_VAR="$COST" \
 SUBTYPE_VAR="$SUBTYPE" \
 python3 <<'PY'
 import json, os, urllib.request
-KEY = [l.split('=',1)[1].strip() for l in open('/opt/linux-ai-server/.env').read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
+KEY = [l.split('=',1)[1].strip() for l in open(os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')).read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
 content = f"""## Autonomous Spawn Ozeti — Note #{os.environ['NOTE_ID_VAR']}
 
 {os.environ['SUMMARY_VAR']}

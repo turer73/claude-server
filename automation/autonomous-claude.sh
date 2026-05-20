@@ -62,11 +62,27 @@ if [ -f "$THROTTLE_FILE" ]; then
 fi
 
 # ---------- Lock ----------
+# #471 fix — orphan lock root cause:
+# `bash ... &` background spawn'lar (summarize/audit/threat-detect) parent'in
+# fd 9'unu inherit eder. Parent exit etse bile fd ucta yasiyor -> flock kapanmiyor.
+# Fix: bg spawn'larda `9>&-` ile fd kapat (asagidaki spawn'larda yapildi).
+# Ek defansif: stale lock detection — eski lock dosyasi varsa flock acan PID
+# yoksa, dosyayi force-temizle ve devam et.
+if [ -f "$LOCK_FILE" ] && ! fuser "$LOCK_FILE" >/dev/null 2>&1; then
+    AGE=$(( $(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0) ))
+    if [ "$AGE" -gt 300 ]; then
+        log "stale lock detected (age=${AGE}s, no holder) — clearing"
+        rm -f "$LOCK_FILE"
+    fi
+fi
 exec 9>"$LOCK_FILE"
 if ! flock -n -w 10 9; then
     log "lock failed: another autonomous run active"
     exit 0
 fi
+# Trap: panic/signal durumunda da fd kapat ve lock release et (kernel zaten
+# kapatir ama defansif). Lock dosyasini SILME — flock fd-based, dosya bos kalir.
+trap 'flock -u 9 2>/dev/null; exec 9>&- 2>/dev/null' EXIT INT TERM
 
 # ---------- Interactive Claude detection (OPT-IN) ----------
 # Default OFF — autonomous parallel calisabilir. Lock dosyasi concurrent
@@ -162,7 +178,7 @@ handle_ack() {
     NOTE_ID_VAR="$NOTE_ID" FROM_VAR="$FROM" TITLE_VAR="$TITLE" SLUG_VAR="$slug" \
     python3 <<'PY'
 import json, os, urllib.request
-key = open('/opt/linux-ai-server/.env').read()
+key = open(os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')).read()
 key = [l.split('=',1)[1].strip() for l in key.splitlines() if l.startswith('MEMORY_API_KEY=')][0]
 body = json.dumps({
     'type': 'project',
@@ -260,32 +276,47 @@ Result: <bir-iki cumle>"
     if [ "$rc" -eq 0 ]; then
         # Tier 3: Ollama summarizer — spawn output'tan 3-cumle ozet, memory entry
         # (OpenHuman TokenJuice + agentmemory LLM compression pattern)
+        # #471 fix: 9>&- ile fd 9 (flock) child'a inherit edilmesin -> orphan lock yok
         if [ -f "$spawn_log" ]; then
             bash /opt/linux-ai-server/automation/autonomous-spawn-summarize.sh \
-                "$NOTE_ID" "$spawn_log" >> "$LOG_FILE" 2>&1 &
+                "$NOTE_ID" "$spawn_log" >> "$LOG_FILE" 2>&1 9>&- &
             log "summarizer spawned (background) for #$NOTE_ID"
         fi
         # P0.5: Passive audit — spawn'in yarattigi commit'leri sasirtici pattern icin
         # incele, suspicious ise memory + Telegram alert. Auto-revert YOK.
         bash /opt/linux-ai-server/automation/autonomous-spawn-audit.sh \
-            "$NOTE_ID" >> "$LOG_FILE" 2>&1 &
+            "$NOTE_ID" >> "$LOG_FILE" 2>&1 9>&- &
         log "audit spawned (background) for #$NOTE_ID"
         # P1.6: Threat indicator scanner — spawn_log icinde credential read,
         # exfil, persistence, lateral, anti-forensic, reverse shell pattern'leri.
         # Tespit -> memory + Telegram. Auto-block YOK.
         bash /opt/linux-ai-server/automation/autonomous-spawn-threat-detect.sh \
-            "$NOTE_ID" "$spawn_log" >> "$LOG_FILE" 2>&1 &
+            "$NOTE_ID" "$spawn_log" >> "$LOG_FILE" 2>&1 9>&- &
         log "threat-detect spawned (background) for #$NOTE_ID"
         # P0.2: Manuel retry sonrasi success path — mevcut DLQ row varsa archive et
         sqlite3 -cmd ".timeout 5000" "$DB" "UPDATE spawn_failures SET status='archived', archived_at=datetime('now') WHERE note_id=$NOTE_ID AND status IN ('pending_retry','poison')" 2>>"$LOG_FILE" || true
     else
         # P0.2: rc!=0 — DLQ insert/upsert (sessiz kayip onleme)
         dlq_record_failure "$NOTE_ID" "$rc" "$spawn_log"
+        # OAuth race detection: klipperos + klipper-auto concurrent refresh
+        # senaryosunda spawn 401 alir. Telegram alert (no dedup — frequency
+        # observation icin).
+        if [ -f "$spawn_log" ] && grep -q '"api_error_status":401' "$spawn_log" 2>/dev/null; then
+            log "OAUTH 401 detected note=#$NOTE_ID — possible refresh race"
+            set +e
+            bash /opt/linux-ai-server/automation/telegram-alert.sh \
+                --kind oauth_race \
+                --note-id "$NOTE_ID" \
+                --spawn-log "$spawn_log" \
+                --attempt "1" \
+                >> "$LOG_FILE" 2>&1
+            set -e
+        fi
         # P1.6: Threat scan rc!=0'da da; fail olsa bile suspicious pattern
         # tetiklenmis olabilir
         if [ -f "$spawn_log" ]; then
             bash /opt/linux-ai-server/automation/autonomous-spawn-threat-detect.sh \
-                "$NOTE_ID" "$spawn_log" >> "$LOG_FILE" 2>&1 &
+                "$NOTE_ID" "$spawn_log" >> "$LOG_FILE" 2>&1 9>&- &
             log "threat-detect spawned (background, rc!=0 path) for #$NOTE_ID"
         fi
     fi
@@ -297,7 +328,7 @@ handle_discussion() {
     NOTE_ID_VAR="$NOTE_ID" FROM_VAR="$FROM" TITLE_VAR="$TITLE" \
     python3 <<'PY'
 import json, os, urllib.request
-key = open('/opt/linux-ai-server/.env').read()
+key = open(os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')).read()
 key = [l.split('=',1)[1].strip() for l in key.splitlines() if l.startswith('MEMORY_API_KEY=')][0]
 body = json.dumps({
     'type': 'project',
@@ -341,7 +372,7 @@ handle_urgent() {
     PUSH_STATUS_VAR="$push_status" NOTE_ID_VAR="$NOTE_ID" FROM_VAR="$FROM" TITLE_VAR="$TITLE" CONTENT_VAR="$FULL_CONTENT" \
     python3 <<'PY'
 import json, os, urllib.request
-key = open('/opt/linux-ai-server/.env').read()
+key = open(os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')).read()
 key = [l.split('=',1)[1].strip() for l in key.splitlines() if l.startswith('MEMORY_API_KEY=')][0]
 body = json.dumps({
     'type': 'project',

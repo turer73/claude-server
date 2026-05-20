@@ -57,7 +57,7 @@ check "note-poller-running" "systemctl is-active --quiet klipper-note-poller"
 check "disk-space"       "[ \$(du -sm /opt/linux-ai-server/data/hook-logs 2>/dev/null | awk '{print \$1}') -lt 5000 ]"
 
 # 7. Lock file orphan (>10 dakika eski lock + lock holder yok) + AUTO-CLEANUP
-LOCK_FILE="/tmp/klipper-autonomous-claude.lock"
+LOCK_FILE="${AUTONOMOUS_LOCK:-/opt/linux-ai-server/data/hook-state/klipper-autonomous-claude.lock}"
 CLEANUP_RECOVERED=0
 CLEANUP_AGE=0
 if [ -f "$LOCK_FILE" ]; then
@@ -106,7 +106,7 @@ if [ "$CLEANUP_RECOVERED" = "1" ]; then
     AGE_VAR="$CLEANUP_AGE" DATE_VAR="$DATE_SLUG" \
     python3 <<'PY' 2>/dev/null || true
 import json, os, urllib.request
-KEY = [l.split('=',1)[1].strip() for l in open('/opt/linux-ai-server/.env').read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
+KEY = [l.split('=',1)[1].strip() for l in open(os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')).read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
 body = json.dumps({
     'type': 'project',
     'name': f"autonomous-lock-cleanup-{os.environ['DATE_VAR']}",
@@ -132,7 +132,7 @@ if [ "${#FAILS[@]}" -gt 0 ]; then
     FAILS_VAR="$FAIL_LIST" PASSES_VAR="$PASS_LIST" DATE_VAR="$DATE_SLUG" \
     python3 <<'PY'
 import json, os, urllib.request
-KEY = [l.split('=',1)[1].strip() for l in open('/opt/linux-ai-server/.env').read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
+KEY = [l.split('=',1)[1].strip() for l in open(os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')).read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
 body = json.dumps({
     'type': 'project',
     'name': f"autonomous-health-fail-{os.environ['DATE_VAR']}",

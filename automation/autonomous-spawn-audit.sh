@@ -125,7 +125,7 @@ DATE_VAR="$(date -u +%Y%m%d-%H%M)" \
 RANGE_VAR="${OLD_HEAD:0:8}..${NEW_HEAD:0:8}" \
 python3 <<'PY' 2>>"$LOG_FILE" || true
 import json, os, urllib.request
-KEY = [l.split('=',1)[1].strip() for l in open('/opt/linux-ai-server/.env').read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
+KEY = [l.split('=',1)[1].strip() for l in open(os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')).read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
 body = json.dumps({
     'type': 'project',
     'name': f"autonomous-audit-suspicious-{os.environ['NOTE_ID_VAR']}-{os.environ['DATE_VAR']}",

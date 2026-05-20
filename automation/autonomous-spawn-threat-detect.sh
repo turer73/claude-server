@@ -95,7 +95,7 @@ DATE_VAR="$(date -u +%Y%m%d-%H%M)" SPAWN_LOG_VAR="$SPAWN_LOG" \
 HIT_COUNT_VAR="${#HITS[@]}" \
 python3 <<'PY' 2>>"$LOG_FILE" || true
 import json, os, urllib.request
-KEY = [l.split('=',1)[1].strip() for l in open('/opt/linux-ai-server/.env').read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
+KEY = [l.split('=',1)[1].strip() for l in open(os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')).read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
 body = json.dumps({
     'type': 'project',
     'name': f"autonomous-threat-detect-{os.environ['NOTE_ID_VAR']}-{os.environ['DATE_VAR']}",

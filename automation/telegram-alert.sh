@@ -45,6 +45,8 @@ while [ $# -gt 0 ]; do
         --preview)     PREVIEW="$2"; shift 2 ;;
         --confidence)  CONFIDENCE="$2"; shift 2 ;;
         --text)        TEXT="$2"; shift 2 ;;
+        --spawn-log)   SPAWN_LOG="$2"; shift 2 ;;
+        --attempt)     ATTEMPT="$2"; shift 2 ;;
         *) log "bad arg: $1"; exit 3 ;;
     esac
 done
@@ -57,6 +59,11 @@ case "$KIND" in
         ;;
     generic)
         if [ -z "$TEXT" ]; then log "generic: --text bos"; exit 3; fi
+        ;;
+    oauth_race)
+        # OAuth refresh divergence detection — klipperos vs klipper-auto race.
+        # Only NOTE_ID required; spawn_log + attempt opsiyonel ama context faydali.
+        if [ -z "$NOTE_ID" ]; then log "oauth_race: --note-id bos"; exit 3; fi
         ;;
     *) log "unknown kind: $KIND"; exit 3 ;;
 esac
@@ -119,6 +126,30 @@ if [ "$KIND" = "urgent_note" ]; then
 <i>Yapılan:</i> Otonom mod bilgi topladı, mark-read YAPMADI.
 
 <i>İncele:</i> <code>bash /opt/linux-ai-server/scripts/claude-memory.sh notes show ${NOTE_ID}</code>"
+elif [ "$KIND" = "oauth_race" ]; then
+    # OAuth refresh divergence — klipperos + klipper-auto concurrent refresh
+    # senaryosunda biri invalid_grant -> 401 alir. Gozlem icin alert.
+    SPAWN_LOG_ESC=$(printf '%s' "${SPAWN_LOG:-?}" | escape_html)
+    ATTEMPT_ESC=$(printf '%s' "${ATTEMPT:-1}" | escape_html)
+    TS=$(date '+%Y-%m-%d %H:%M:%S')
+
+    MSG="<b>🔐 OAuth Race — klipper-auto auth fail</b>
+
+<b>Note:</b> #${NOTE_ID}
+<b>Attempt:</b> ${ATTEMPT_ESC}
+<b>When:</b> ${TS}
+<b>Symptom:</b> <code>api_error_status:401</code> Invalid auth credentials
+
+<i>Olası neden:</i> klipperos + klipper-auto eş zamanlı OAuth refresh; refresh_token tek kullanımlık → biri invalid_grant alır.
+
+<i>Tanı:</i>
+<pre>ls -la /home/klipper-auto/.claude/.credentials.json
+sudo -u klipper-auto HOME=/home/klipper-auto claude --version</pre>
+
+<i>Spawn log:</i>
+<code>${SPAWN_LOG_ESC}</code>
+
+<i>Tek sefer ise race kabul edilir; tekrarlanıyorsa: ANTHROPIC_API_KEY fallback düşün.</i>"
 else
     MSG="$TEXT"
 fi
