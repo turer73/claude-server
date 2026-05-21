@@ -8,13 +8,26 @@ HOOK_NAME=user-prompt-log
 INPUT=$(cat)
 
 # Stdin'i Python'a pipe ile gecir — heredoc yerine -c kullan
+# Token/credential patternleri redact edilir (GitHub PAT, OpenAI, Anthropic, AWS keys).
 EXTRACT=$(printf '%s' "$INPUT" | python3 -c '
-import json, sys
+import json, re, sys
 try:
     d = json.loads(sys.stdin.read())
 except Exception:
     sys.exit(0)
 prompt = (d.get("prompt") or "")[:2000].replace("\t"," ").replace("\n"," ")
+# Redact common credential patterns
+patterns = [
+    r"ghp_[A-Za-z0-9]{30,}",          # GitHub classic PAT
+    r"github_pat_[A-Za-z0-9_]{30,}",  # GitHub fine-grained PAT
+    r"gho_[A-Za-z0-9]{30,}",          # GitHub OAuth
+    r"ghs_[A-Za-z0-9]{30,}",          # GitHub server-to-server
+    r"sk-ant-[A-Za-z0-9_-]{30,}",     # Anthropic
+    r"sk-[A-Za-z0-9]{30,}",           # OpenAI
+    r"AKIA[0-9A-Z]{16}",              # AWS access key
+]
+for p in patterns:
+    prompt = re.sub(p, "<REDACTED>", prompt)
 sid = (d.get("session_id") or "")[:12]
 cwd = d.get("cwd") or ""
 print(f"{sid}\t{cwd}\t{prompt}")
