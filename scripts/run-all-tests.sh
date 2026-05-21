@@ -194,8 +194,7 @@ send_telegram() {
       FROM test_runs ORDER BY id DESC LIMIT 30;" 2>/dev/null \
     | awk '
         /^fail$/ { c++; next }
-        /^pass$/ { print c+0; exit }
-        /^absent$/ { print c+0; exit }
+        { exit }
         END { print c+0 }'
   }
 

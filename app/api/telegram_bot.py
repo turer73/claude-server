@@ -101,15 +101,25 @@ def process_update(update: dict) -> dict:
     if not chat_id:
         return {"ok": True, "skipped": "no chat_id"}
 
-    # /research veya /research@bot_username
-    if not re.match(r"^/research(@\w+)?(\s|$)", text):
+    # /research, /research-hi, /research-claude (or @bot_username variants)
+    m = re.match(r"^/research(-hi|-claude)?(@\w+)?(\s|$)", text)
+    if not m:
         return {"ok": True, "skipped": "not /research"}
 
-    question = re.sub(r"^/research(@\w+)?\s*", "", text).strip()
+    suffix = m.group(1) or ""
+    engine = {"": "auto", "-hi": "local-hi", "-claude": "claude"}[suffix]
+
+    question = re.sub(r"^/research(-hi|-claude)?(@\w+)?\s*", "", text).strip()
     if not question:
         _send_message(
             chat_id,
-            "*Kullanim:*\n`/research <soru>`\n\n*Ornek:*\n`/research bilge-arena security header eksiklikleri`",
+            (
+                "*Kullanim:*\n"
+                "`/research <soru>` — auto (cogu zaman qwen2.5:3b)\n"
+                "`/research-hi <soru>` — aya:8b (Turkce yuksek dogruluk)\n"
+                "`/research-claude <soru>` — Claude Haiku (en hizli + en tutarli citation)\n\n"
+                "*Ornek:*\n`/research bilge-arena security header eksiklikleri`"
+            ),
             reply_to=msg_id,
         )
         return {"ok": True, "action": "help"}
@@ -117,14 +127,14 @@ def process_update(update: dict) -> dict:
     _send_typing(chat_id)
 
     try:
-        req = AskRequest(q=question, engine="auto")
+        req = AskRequest(q=question, engine=engine)
         result = research_ask(req)
         reply = _format_reply(result, question)
     except Exception as e:
         reply = f"❌ *Research hatasi:*\n`{str(e)[:300]}`"
 
     _send_message(chat_id, reply, reply_to=msg_id)
-    return {"ok": True, "action": "answered"}
+    return {"ok": True, "action": "answered", "engine": engine}
 
 
 @router.post("/update")

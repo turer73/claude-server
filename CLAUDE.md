@@ -20,7 +20,7 @@
 - **Systemd:** linux-ai-server.service
 
 ## Proje Yapisi
-- app/api/ — 31 route dosyasi (shell, files, system, kernel, ssh, ai, claude_code, vps, deploy, tasks, monitoring, logs, devops, rag, agents, ci, backup, csp, dev, digest, network, projects, prometheus, social, validation, webhooks, webops, ws_status, memory, auth)
+- app/api/ — 37 route dosyasi (admin, agents, ai, auth, backup, ci, classifier, claude_code, csp, deploy, dev, devops, digest, files, kernel, llm, logs, memory, monitoring, n8n, network, projects, prometheus, rag, research, shell, social, ssh, system, tasks, telegram_bot, validation, vps, webhooks, webops, ws_status)
 - app/core/ — Is mantigi (shell_executor, terminal_manager, ai_inference, task_queue, devops_agent)
 - app/auth/ — JWT + API key
 - app/mcp/ — MCP server (Claude entegrasyonu)
@@ -29,7 +29,7 @@
 - app/claude_ui/ — Claude Code web chat
 - kernel/ — 3 ozel C kernel modulu (proc, netfilter, usb)
 - automation/ — Cron scriptleri
-- tests/ — 61 dosya / 737 test (pytest, asyncio_mode=auto)
+- tests/ — 64 dosya / 782 test (pytest, asyncio_mode=auto)
 
 ## API Endpointleri
 - /dashboard — Super Dashboard v2
@@ -95,6 +95,12 @@ D1: kuafor-db, petvet-db
 - **Tablolar:** memories, sessions, tasks_log, discoveries, notes, devices, device_projects, command_log
 
 Oturum basinda hook DB durumunu otomatik yukler. Her oturum sonunda /memory save ile oturumu kaydet.
+
+## Log Dizinleri (amac ayrimi)
+- `/var/log/linux-ai-server/` — Cron job stdout/stderr (klipper-cron-wrap.sh per-job log). Append, rotate yok.
+- `/opt/linux-ai-server/logs/` — Test runner gunluk rotated log (`test-runner-YYYYMMDD.log`) + fail snapshots (`test-fail-*`) + artifact dirs (`e2e/`)
+- `/opt/linux-ai-server/data/` — Database files (server.db, claude_memory.db, coverage.db) + autonomous spawn logs (`hook-logs/`) + lock/hook state (`hook-state/`)
+- `/opt/linux-ai-server/data/klipper-event.log` — klipper-event.sh systemd/cron event log
 
 ## Komutlar
 sudo systemctl restart linux-ai-server

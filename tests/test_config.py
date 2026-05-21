@@ -57,7 +57,13 @@ def test_monitor_watchlists_csv_env(monkeypatch):
     assert s.monitor_vps_containers == ["alpha", "beta"]
 
 
-def test_webops_tokens_empty_by_default():
+def test_webops_tokens_empty_by_default(monkeypatch):
+    # test-runner sources .env into os.environ; explicitly clear webops tokens
+    # so this test reflects the actual Settings default (empty) regardless of
+    # what the deployed .env happens to contain.
+    monkeypatch.delenv("VERCEL_TOKEN", raising=False)
+    monkeypatch.delenv("CLOUDFLARE_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     s = Settings()
     assert s.vercel_token == ""
     assert s.cloudflare_token == ""

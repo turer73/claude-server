@@ -32,10 +32,11 @@ from app.api.memory import verify_key
 from app.core.config import read_env_var
 
 MEMORY_DB = "/opt/linux-ai-server/data/claude_memory.db"
-LLM_MODEL = "qwen2.5:7b"
+LLM_MODEL = "qwen2.5:3b"  # default: ~35 tok/s, Turkce yeterli
+LLM_MODEL_HI = "aya:8b"  # high-accuracy TR: Cohere aya-23, ~16 tok/s, daha dogal Turkce
 OLLAMA_URL = "http://localhost:11434"
 LLM_TIMEOUT = 90
-LLM_NUM_PREDICT = 300  # 7B model + 8K context, 300 token ~30-45sn
+LLM_NUM_PREDICT = 300  # 3B model @ ~35 tok/s -> 300 token ~9sn
 
 # Anthropic fallback — daha hizli + daha iyi citation
 ANTHROPIC_API_KEY = read_env_var("ANTHROPIC_API_KEY")
@@ -186,11 +187,11 @@ def _compose_context(chunks: list[dict]) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
-def _ollama_generate(prompt: str) -> str:
+def _ollama_generate(prompt: str, model: str = LLM_MODEL) -> str:
     r = requests.post(
         f"{OLLAMA_URL}/api/generate",
         json={
-            "model": LLM_MODEL,
+            "model": model,
             "prompt": prompt,
             "stream": False,
             "options": {"temperature": 0.2, "num_predict": LLM_NUM_PREDICT},
@@ -257,8 +258,11 @@ class AskRequest(BaseModel):
     include_memories: bool = True
     include_notes: bool = False  # gurultu cogu zaman
     max_chunks: int = 8
-    # Engine: "local" (qwen2.5:7b, ucretsiz, 20-70sn) veya "claude" (haiku 4.5,
-    # 1-3sn, ~$0.007/call, citation tutarli) veya "auto" (max_chunks>=8 ise claude)
+    # Engine:
+    #   "local"    -> qwen2.5:3b (default, ~35 tok/s, 5-10sn)
+    #   "local-hi" -> aya:8b (high-accuracy Turkce, ~16 tok/s, 10-20sn)
+    #   "claude"   -> haiku 4.5 (~1-3sn, ~$0.007/call, citation tutarli)
+    #   "auto"     -> max_chunks>=8 ise claude, yoksa local
     engine: str = "auto"
 
 
@@ -319,9 +323,12 @@ def research_ask(req: AskRequest):
         answer = _anthropic_generate(SYS_PROMPT, user_msg)
     elif engine == "local":
         prompt = f"{SYS_PROMPT}\n\n# Kaynaklar:\n{context}\n\n# Soru: {req.q}\n\n# Cevap:"
-        answer = _ollama_generate(prompt)
+        answer = _ollama_generate(prompt, model=LLM_MODEL)
+    elif engine == "local-hi":
+        prompt = f"{SYS_PROMPT}\n\n# Kaynaklar:\n{context}\n\n# Soru: {req.q}\n\n# Cevap:"
+        answer = _ollama_generate(prompt, model=LLM_MODEL_HI)
     else:
-        raise HTTPException(400, f"engine must be local|claude|auto, got: {engine}")
+        raise HTTPException(400, f"engine must be local|local-hi|claude|auto, got: {engine}")
     duration_synth = int((time.time() - t1) * 1000)
 
     citations = _validate_citations(answer, chunks)

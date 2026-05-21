@@ -8,14 +8,22 @@ set +e
 NAME="${1:-unknown-cron}"
 shift
 
+LOG_DIR="/var/log/linux-ai-server"
+LOG="${LOG_DIR}/${NAME}.log"
+mkdir -p "$LOG_DIR" 2>/dev/null
+
 if [ $# -eq 0 ]; then
     /opt/linux-ai-server/scripts/klipper-event.sh "cron-${NAME}" "MISSING-COMMAND"
     exit 2
 fi
 
 CMD_STR="$*"
-"$@"
+TS_START=$(date -Iseconds)
+echo "[$TS_START] === START ${NAME}: ${CMD_STR} ===" >> "$LOG"
+"$@" >> "$LOG" 2>&1
 RC=$?
+TS_END=$(date -Iseconds)
+echo "[$TS_END] === END ${NAME}: rc=${RC} ===" >> "$LOG"
 
 if [ "$RC" -eq 0 ]; then
     /opt/linux-ai-server/scripts/klipper-event.sh "cron-${NAME}" "OK"
