@@ -88,6 +88,23 @@ if [ -d "$HOOK_STATE_DIR" ]; then
     fi
 fi
 
+# Hook-logs TTL — autonomous-claude-spawn-{noteid}-{ts}.log per-spawn cikti.
+# Append-mode top-level log'lar (autonomous-claude.log vb.) ad bazli pattern'a girmez.
+HOOK_LOGS_DIR=${HOOK_LOGS_DIR:-/opt/linux-ai-server/data/hook-logs}
+if [ -d "$HOOK_LOGS_DIR" ]; then
+    for pattern in "autonomous-claude-spawn-*.log" "autonomous-claude-retry-spawn-*.log"; do
+        pre_count=$(find "$HOOK_LOGS_DIR" -name "$pattern" -type f 2>/dev/null | wc -l)
+        if [ "$DRY_RUN" = "1" ]; then
+            purge_count=$(find "$HOOK_LOGS_DIR" -name "$pattern" -type f -mtime +30 2>/dev/null | wc -l)
+            log "  [dry-run] hook-logs $pattern: ${purge_count}/${pre_count} would be deleted"
+        else
+            find "$HOOK_LOGS_DIR" -name "$pattern" -type f -mtime +30 -delete 2>/dev/null || true
+            post_count=$(find "$HOOK_LOGS_DIR" -name "$pattern" -type f 2>/dev/null | wc -l)
+            log "  hook-logs $pattern: ${pre_count}→${post_count}"
+        fi
+    done
+fi
+
 if [ "$DRY_RUN" = "1" ]; then
     log "DRY RUN complete — exiting before VACUUM"
     exit 0

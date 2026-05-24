@@ -39,12 +39,16 @@ TODAY_LOG=$(awk -v since="$SINCE" '
     }
 ' "$LOG_DIR/autonomous-claude.log" 2>/dev/null)
 
-SPAWN_COUNT=$(printf '%s\n' "$TODAY_LOG" | grep -c "spawn complete" 2>/dev/null | head -1 | tr -d ' \n' || echo 0)
-CLASSIFIED_COUNT=$(printf '%s\n' "$TODAY_LOG" | grep -c "classified as:" 2>/dev/null | head -1 | tr -d ' \n' || echo 0)
-ACK_COUNT=$(printf '%s\n' "$TODAY_LOG" | grep -c "ACK route" 2>/dev/null | head -1 | tr -d ' \n' || echo 0)
-ACTIONABLE_COUNT=$(printf '%s\n' "$TODAY_LOG" | grep -c "ACTIONABLE route" 2>/dev/null | head -1 | tr -d ' \n' || echo 0)
-DISCUSSION_COUNT=$(printf '%s\n' "$TODAY_LOG" | grep -c "DISCUSSION route" 2>/dev/null | head -1 | tr -d ' \n' || echo 0)
-URGENT_COUNT=$(printf '%s\n' "$TODAY_LOG" | grep -c "URGENT route" 2>/dev/null | head -1 | tr -d ' \n' || echo 0)
+# Why `|| true`: grep -c no-match'te 0 yazip exit=1 doner.
+# Eski `... | tr -d... || echo 0` patterni hem grep'in 0'ini hem echo'nun 0'ini
+# basinca SPAWN_COUNT="00" gibi cosmetic bug uretiyordu. grep -c zaten her zaman
+# valid bir sayisal cikti veriyor; sadece exit-code'u true ile maskeliyoruz.
+SPAWN_COUNT=$(printf '%s\n' "$TODAY_LOG" | grep -c "spawn complete" || true)
+CLASSIFIED_COUNT=$(printf '%s\n' "$TODAY_LOG" | grep -c "classified as:" || true)
+ACK_COUNT=$(printf '%s\n' "$TODAY_LOG" | grep -c "ACK route" || true)
+ACTIONABLE_COUNT=$(printf '%s\n' "$TODAY_LOG" | grep -c "ACTIONABLE route" || true)
+DISCUSSION_COUNT=$(printf '%s\n' "$TODAY_LOG" | grep -c "DISCUSSION route" || true)
+URGENT_COUNT=$(printf '%s\n' "$TODAY_LOG" | grep -c "URGENT route" || true)
 SKIP_COUNT=$(printf '%s\n' "$TODAY_LOG" | grep -c "^skip\|^throttled" 2>/dev/null | head -1 | tr -d ' \n' || echo 0)
 LOW_CONF_COUNT=$(printf '%s\n' "$TODAY_LOG" | grep -c "LOW confidence" 2>/dev/null | head -1 | tr -d ' \n' || echo 0)
 
