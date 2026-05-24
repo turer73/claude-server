@@ -213,13 +213,6 @@ class DevOpsAgent:
 
     # ── Detector ───────────────────────────────────────
 
-    def _baseline(self, key: str) -> float | None:
-        """Calculate rolling average for a metric."""
-        values = [m.get(key, 0) for m in self._history if key in m]
-        if len(values) < 10:
-            return None
-        return sum(values) / len(values)
-
     def _detect(self, metrics: dict) -> list[Alert]:
         now = datetime.now(UTC).isoformat()
         alerts = []
@@ -241,11 +234,6 @@ class DevOpsAgent:
                 severity = "critical"
             elif value >= threshold * 0.9:
                 severity = "warning"
-            else:
-                # Check baseline anomaly (50% above average)
-                baseline = self._baseline(key)
-                if baseline and baseline > 0 and value > baseline * 1.5:
-                    severity = "warning"
 
             if severity and source not in self._active_alerts:
                 alert = Alert(

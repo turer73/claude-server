@@ -149,38 +149,6 @@ async def test_no_duplicate_alerts():
     assert len(alerts2) == 0
 
 
-async def test_baseline_calculation():
-    from app.core.devops_agent import DevOpsAgent
-
-    agent = DevOpsAgent(db=None, interval=60)
-
-    # Not enough data
-    assert agent._baseline("cpu_percent") is None
-
-    # Fill 20 samples
-    for _ in range(20):
-        agent._history.append({"cpu_percent": 25})
-
-    assert agent._baseline("cpu_percent") == 25.0
-
-
-async def test_baseline_anomaly_detection():
-    from app.core.devops_agent import DevOpsAgent
-
-    agent = DevOpsAgent(db=None, interval=60)
-
-    # Fill baseline at 20%
-    for _ in range(20):
-        agent._history.append({"cpu_percent": 20, "memory_percent": 30, "disk_percent": 40, "temperature": 35})
-
-    # baseline=20 * 1.5 = 30, so 52% is anomalous. Must also be >= threshold*0.6 (85*0.6=51)
-    metrics = {"cpu_percent": 52, "memory_percent": 30, "disk_percent": 40, "temperature": 35}
-    alerts = agent._detect(metrics)
-    assert len(alerts) == 1
-    assert alerts[0].source == "cpu"
-    assert alerts[0].severity == "warning"
-
-
 async def test_status_property():
     from app.core.devops_agent import DevOpsAgent
 
