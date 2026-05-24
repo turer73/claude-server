@@ -100,8 +100,11 @@ run_project() {
     return
   fi
 
-  output=$(cd "$dir" && eval "$cmd" 2>&1) || true
-  local exit_code=${PIPESTATUS[0]:-$?}
+  # Exit code'u dogru yakala — `|| true` veya PIPESTATUS cmd substitution'da calismaz
+  local exit_code=0
+  if ! output=$(cd "$dir" && eval "$cmd" 2>&1); then
+    exit_code=$?
+  fi
 
   # Parse test counts
   if echo "$output" | grep -qE '[0-9]+ passed'; then
@@ -113,10 +116,24 @@ run_project() {
     tests=$((tests + failed))
   fi
 
+  # Silent-fail tespiti: vitest startup error veya 0-test-detected
+  # Why: exit code=0 + parser hicbirini yakalayamadiginda PASS olarak sayilir (panola/petvet/koken 9 gun boyunca 0 PASS).
+  local startup_fail=0
+  if [ "${passed:-0}" -eq 0 ] && [ "${failed:-0}" -eq 0 ]; then
+    if echo "$output" | grep -qE 'ERR_MODULE_NOT_FOUND|Cannot find package|Startup Error|failed to load config|No test files found'; then
+      startup_fail=1
+      exit_code=1
+    fi
+  fi
+
   if [ "${failed:-0}" -gt 0 ] || [ "$exit_code" -ne 0 ]; then
     status="fail"
     FAILED=1
-    log "  ✗ FAIL — $passed passed, $failed failed"
+    if [ "$startup_fail" -eq 1 ]; then
+      log "  ✗ FAIL — startup error (deps eksik / config bozuk)"
+    else
+      log "  ✗ FAIL — $passed passed, $failed failed (exit=$exit_code)"
+    fi
     # P1.D: Fail output'unu kalici log'a yaz — flaky test forensics icin
     # Sadece fail durumunda saklanir; pass'te disk doldurmaz.
     local fail_log="${LOG_DIR:-/opt/linux-ai-server/logs}/test-fail-${name}-$(date +%Y%m%d-%H%M%S).log"
