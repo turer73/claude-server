@@ -325,6 +325,12 @@ def research_ask(req: AskRequest):
         prompt = f"{SYS_PROMPT}\n\n# Kaynaklar:\n{context}\n\n# Soru: {req.q}\n\n# Cevap:"
         answer = _ollama_generate(prompt, model=LLM_MODEL)
     elif engine == "local-hi":
+        # aya:8b dogal TR icin, citation icin DEGIL — 2026-05-24 prompt-tuning
+        # testlerinde (v1/v2/v3) "kararli citation + relevance" dengesi
+        # yakalanamadi. v1 (no per-engine tweak): 0 cit, konu-odakli. v2 (sert
+        # kural): 4 cit ama konu-disi paragraflar. v3 (esnek): 0 cit. Aya 8B
+        # structured format'i prompt icinden tutamiyor. Citation isteyen
+        # kullanici /research-claude'a yonlendirilsin.
         prompt = f"{SYS_PROMPT}\n\n# Kaynaklar:\n{context}\n\n# Soru: {req.q}\n\n# Cevap:"
         answer = _ollama_generate(prompt, model=LLM_MODEL_HI)
     else:

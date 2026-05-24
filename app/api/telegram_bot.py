@@ -13,6 +13,7 @@ verify_key gerek yok (bu router public-mountlu).
 from __future__ import annotations
 
 import re
+import threading
 
 import requests
 from fastapi import APIRouter, Header, HTTPException
@@ -115,16 +116,27 @@ def process_update(update: dict) -> dict:
             chat_id,
             (
                 "*Kullanim:*\n"
-                "`/research <soru>` — auto (cogu zaman qwen2.5:3b)\n"
-                "`/research-hi <soru>` — aya:8b (Turkce yuksek dogruluk)\n"
-                "`/research-claude <soru>` — Claude Haiku (en hizli + en tutarli citation)\n\n"
+                "`/research <soru>` — auto (qwen2.5:3b veya Claude, ~3-10s)\n"
+                "`/research-hi <soru>` — aya:8b dogal Turkce (~15-30s, citation zayif)\n"
+                "`/research-claude <soru>` — Claude Haiku (~3s, en tutarli citation)\n\n"
                 "*Ornek:*\n`/research bilge-arena security header eksiklikleri`"
             ),
             reply_to=msg_id,
         )
         return {"ok": True, "action": "help"}
 
-    _send_typing(chat_id)
+    # Periodic typing keep-alive — Telegram typing indicator ~5sn'de soner;
+    # aya:8b (engine=local-hi) ~27sn surer, kullanici "stuck" sanir. Her 4sn'de
+    # bir typing re-trigger. Threading.Event ile temiz cleanup.
+    stop = threading.Event()
+
+    def _keepalive():
+        _send_typing(chat_id)
+        while not stop.wait(4.0):
+            _send_typing(chat_id)
+
+    keepalive_thread = threading.Thread(target=_keepalive, daemon=True)
+    keepalive_thread.start()
 
     try:
         req = AskRequest(q=question, engine=engine)
@@ -132,6 +144,9 @@ def process_update(update: dict) -> dict:
         reply = _format_reply(result, question)
     except Exception as e:
         reply = f"❌ *Research hatasi:*\n`{str(e)[:300]}`"
+    finally:
+        stop.set()
+        keepalive_thread.join(timeout=1.0)
 
     _send_message(chat_id, reply, reply_to=msg_id)
     return {"ok": True, "action": "answered", "engine": engine}
