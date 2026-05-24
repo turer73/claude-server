@@ -108,15 +108,21 @@ if printf '%s' "$CMD" | grep -qiE '(pytest|npm[[:space:]]+(test|run[[:space:]]+t
     export _CLASS="$CLASS"
     export _DETAILS="$(printf '%s' "$EXTRACT" | cut -f4)"
     BODY=$(python3 -c '
-import os, json
+import os, json, re
 cmd = os.environ.get("_CMD","")
 rc = os.environ.get("_RC","?")
 cls = os.environ.get("_CLASS","")
+# Title icin komutu normalize: ilk satir, ilk sub-command, whitespace collapse
+# Why: multi-line/heredoc/composite komutlar title alanini bozuyordu (#482 vakasi)
+cmd_title = cmd.split("\n", 1)[0]
+for sep in ("&&", ";", "||", "|"):
+    cmd_title = cmd_title.split(sep, 1)[0]
+cmd_title = re.sub(r"\s+", " ", cmd_title).strip()
 print(json.dumps({
   "device_name": os.environ.get("_DEVICE","unknown"),
   "project": os.environ.get("_PROJECT","unknown"),
   "type": "bug",
-  "title": (f"test-fail [{cls}]: " + cmd)[:120],
+  "title": (f"test-fail [{cls}]: " + cmd_title)[:120],
   "details": ("exit=" + rc + " | " + os.environ.get("_DETAILS",""))[:1500],
   "status": "active",
   "rationale": (f"PostToolUse-hook auto-capture on klipper. Command class={cls} exited rc=" + rc + " — treated as test/lint/build regression. Auto-resolves on next rc=0 run of the same class in the same project; title tag [{cls}] keeps the match exact even when the failing sub-command is buried in a composite shell line.")[:500]

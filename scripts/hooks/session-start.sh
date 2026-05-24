@@ -108,6 +108,18 @@ fi
   echo "Son Oturumlar:"
   sqlite3 "$DB" "SELECT '  #' || session_num || ' (' || device_name || ', ' || date || '): ' || substr(summary,1,70) FROM sessions ORDER BY id DESC LIMIT 3;" 2>/dev/null
 
+  # Aktif feedback memoriler (top 8: read_count ASC = en az gorulen once)
+  # Why: feedback memoriler claude'un davranisini sekillendirir; dormant kalmasinlar.
+  # Read tracking icin de session basina bump.
+  FEEDBACK_IDS=$(sqlite3 "$DB" "SELECT id FROM memories WHERE active=1 AND type='feedback' ORDER BY read_count ASC, updated_at DESC LIMIT 8;" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+  if [ -n "$FEEDBACK_IDS" ]; then
+    echo ""
+    echo "Aktif Feedback (en az gorulen 8):"
+    sqlite3 "$DB" "SELECT '  #' || id || ' [' || source_device || '] ' || name || ' — ' || substr(description,1,90) FROM memories WHERE id IN ($FEEDBACK_IDS) ORDER BY read_count, updated_at DESC;" 2>/dev/null
+    # Read bump — bu feedback'leri context'e dahil ettik, gosterim sayilir
+    sqlite3 "$DB" "UPDATE memories SET read_count=read_count+1, last_read_at=datetime('now') WHERE id IN ($FEEDBACK_IDS);" 2>/dev/null
+  fi
+
   # Son test/build sonuclari (hook ile yakalananlar)
   if [ -r "$HOOK_LOG_DIR/last-test-results.tsv" ]; then
     echo ""

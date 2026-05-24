@@ -48,6 +48,8 @@ services:
       - /sys:/host/sys:ro
       - /:/rootfs:ro
     command: --path.procfs=/host/proc --path.sysfs=/host/sys --path.rootfs=/rootfs
+    # No internal healthcheck: scratch image (no shell/wget/curl). Prometheus
+    # scrape itself is the canonical liveness signal; alert on scrape failure.
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest

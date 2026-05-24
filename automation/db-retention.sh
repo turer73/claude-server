@@ -73,6 +73,21 @@ else
     log "  ci_runs pruned: $n rows (cascades to results/failures, keep ${CI_KEEP_DAYS}d)"
 fi
 
+# Hook-state TTL — edited-files-*.log per-session log'lari, kullanildiktan sonra
+# inceleme degeri yok. 30 gun TTL. VACUUM erken-exit'inden once cunku DB ile ilgisiz.
+HOOK_STATE_DIR=${HOOK_STATE_DIR:-/opt/linux-ai-server/data/hook-state}
+if [ -d "$HOOK_STATE_DIR" ]; then
+    pre_count=$(find "$HOOK_STATE_DIR" -name "edited-files-*.log" -type f 2>/dev/null | wc -l)
+    if [ "$DRY_RUN" = "1" ]; then
+        purge_count=$(find "$HOOK_STATE_DIR" -name "edited-files-*.log" -type f -mtime +30 2>/dev/null | wc -l)
+        log "  [dry-run] hook-state edited-files: ${purge_count}/${pre_count} would be deleted"
+    else
+        find "$HOOK_STATE_DIR" -name "edited-files-*.log" -type f -mtime +30 -delete 2>/dev/null || true
+        post_count=$(find "$HOOK_STATE_DIR" -name "edited-files-*.log" -type f 2>/dev/null | wc -l)
+        log "  hook-state edited-files: ${pre_count}→${post_count}"
+    fi
+fi
+
 if [ "$DRY_RUN" = "1" ]; then
     log "DRY RUN complete — exiting before VACUUM"
     exit 0

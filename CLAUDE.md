@@ -15,9 +15,10 @@
 ## Servis
 - **Port:** 8420
 - **Framework:** FastAPI + Uvicorn (2 worker)
-- **DB:** SQLite (/opt/linux-ai-server/data/server.db)
+- **DB:** 5 SQLite — server.db (ana, alerts/jobs/audit_log/metrics), claude_memory.db (hafiza/sessions/tasks), ci_tests.db (CI sonuclari), coverage.db (test trend), rag_metrics.db (RAG)
 - **Auth:** JWT + API Key
 - **Systemd:** linux-ai-server.service
+- **Endpoint sayisi:** 157 (OpenAPI'den)
 
 ## Proje Yapisi
 - app/api/ — 37 route dosyasi (admin, agents, ai, auth, backup, ci, classifier, claude_code, csp, deploy, dev, devops, digest, files, kernel, llm, logs, memory, monitoring, n8n, network, projects, prometheus, rag, research, shell, social, ssh, system, tasks, telegram_bot, validation, vps, webhooks, webops, ws_status)
@@ -29,7 +30,7 @@
 - app/claude_ui/ — Claude Code web chat
 - kernel/ — 3 ozel C kernel modulu (proc, netfilter, usb)
 - automation/ — Cron scriptleri
-- tests/ — 64 dosya / 782 test (pytest, asyncio_mode=auto)
+- tests/ — 64 dosya / 780 test (pytest, asyncio_mode=auto)
 
 ## API Endpointleri
 - /dashboard — Super Dashboard v2
@@ -48,7 +49,7 @@
 - **Gozlem:** dozzle (9999), uptime-kuma (3001), grafana (3030), prometheus (9090), node-exporter (9100), cadvisor (9080)
 - **Otomasyon/RAG:** n8n (5678), qdrant (6333/6334)
 - **Arac:** stirling-pdf (8090)
-- Ollama host'ta (11434) — modeller: bge-m3 (embed), qwen2.5:7b (LLM)
+- Ollama host'ta (11434) — modeller: qwen2.5:3b (default LLM), qwen2.5:7b, qwen2.5-coder:7b, aya:8b (TR-hi), bge-m3 + nomic-embed-text (embed)
 
 VPS Dokploy uzerinde ayrica baska servisler var (asagi bkz).
 
