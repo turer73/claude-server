@@ -267,7 +267,6 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
     <div class="nav-item" onclick="nav('llm',this)"><span class="icon">&#9883;</span> LLM</div>
     <div class="nav-item" onclick="nav('claude',this)"><span class="icon">&#9679;</span> Claude Code</div>
     <div class="nav-item" onclick="nav('logs',this)"><span class="icon">&#9776;</span> Log Gorunum</div>
-    <div class="nav-item" onclick="nav('tasks',this)"><span class="icon">&#9654;</span> Gorevler</div>
     <div class="nav-section">Guvenlik</div>
     <div class="nav-item" onclick="nav('vault',this)"><span class="icon">&#9919;</span> Sifre Kasasi</div>
     <div class="nav-item" onclick="nav('secrets',this)"><span class="icon">&#128273;</span> .env Secrets</div>
@@ -439,28 +438,6 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
       </div>
 
       <!-- TERMINAL -->
-      <!-- TASKS -->
-      <div id="page-tasks" class="page">
-        <div class="row row-2">
-          <div class="card">
-            <div class="card-title">Gorev Kuyrugu</div>
-            <div id="taskQueueStatus"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
-          </div>
-          <div class="card">
-            <div class="card-title">Hizli Gorev</div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap">
-              <button class="vault-btn" onclick="quickTask('backup')">Yedekleme</button>
-              <button class="vault-btn" onclick="quickTask('deploy')">Deploy</button>
-              <button class="vault-btn" onclick="confirmAction('Sistem guncelleme baslatilacak. Emin misiniz?', () => quickTask('shell',{command:'apt update && apt upgrade -y'}))">Sistem Guncelle</button>
-              <button class="vault-btn" onclick="quickTask('shell',{command:'docker system prune -f'})">Docker Temizle</button>
-            </div>
-          </div>
-        </div>
-        <div class="card" style="margin-top:16px">
-          <div class="card-title">Son Gorevler</div>
-          <div id="recentTasks"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
-        </div>
-      </div>
 
       <!-- LLM -->
       <div id="page-llm" class="page">
@@ -797,7 +774,6 @@ function nav(page, el) {
 
   if (page==='graphs') loadGraphs(60);
   if (page==='logs') { loadLogSources(); loadLogs(); }
-  if (page==='tasks') loadTasks();
   if (page==='vault') vaultRender();
   if (page==='secrets') loadSecrets();
   if (page==='autonomous') { loadAutonomous(); startAutoPolling(); }
@@ -1592,27 +1568,6 @@ async function claudeSend() {
   }
 }
 
-
-// ── Tasks ───────────────────────────────
-async function loadTasks() {
-  const [status, recent] = await Promise.all([api('/tasks/status'), api('/tasks/recent')]);
-  document.getElementById('taskQueueStatus').innerHTML =
-    mt('Durum', status?.running ? '<span style="color:var(--green)">&#9679; Aktif</span>' : '<span style="color:var(--red)">&#9675; Durdu</span>') +
-    mt('Tamamlanan', status?.processed||0) + mt('Kuyruk', status?.recent_count||0);
-  document.getElementById('recentTasks').innerHTML = (recent?.tasks||[]).map(t =>
-    `<div class="task-row"><span>#${t.task_id}</span><span class="task-status ${t.status}">${t.status}</span><span>${esc(t.type)}</span><span style="color:var(--dim)">${esc(t.result?.slice(0,50)||'-')}</span><span style="color:var(--dim)">${t.elapsed_ms}ms</span></div>`
-  ).join('') || '<div style="color:var(--dim);font-size:12px">Gorev yok</div>';
-}
-
-async function quickTask(type, payload={}) {
-  const d = await apiPost('/tasks/enqueue', {type, payload});
-  if (d?.task_id) {
-    toast(`Gorev #${d.task_id} kuyruga eklendi`, 'success');
-  } else {
-    toast('Gorev eklenemedi', 'error');
-  }
-  setTimeout(loadTasks, 3000);
-}
 
 // ── Vault (Client-side encrypted) ───────
 function vaultKey() {
