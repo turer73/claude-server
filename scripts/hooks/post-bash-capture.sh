@@ -98,6 +98,14 @@ if printf '%s' "$CMD" | grep -qiE '(pytest|npm[[:space:]]+(test|run[[:space:]]+t
   if printf '%s' "$DETAILS_PEEK" | grep -qE 'Test pass[[:space:]]|all tests passed|[0-9]+[[:space:]]+passed|0 failing|mergeStateStatus["][[:space:]:]*["]CLEAN["]'; then
     SKIP_BUG=1
   fi
+  # Self-test/fixture probe — 'echo "Test: ..."' ile baslayan composite komutlar
+  # hook'un kendi normalize/regex davranisini test eden fixture'lardir; gerçek
+  # test runner cagrisi degil. Bug #483 vakasi: cwd=linux-ai-server iken composite
+  # cmd icinde 'vitest' kelimesi gectigi icin CLASS=vitest tagged → linux-ai-server'da
+  # vitest hic kosmadigi icin auto-resolve asla tetiklenmez, kalici sahte bug.
+  if printf '%s' "$CMD" | grep -qE "^[[:space:]]*echo[[:space:]]+['\"]Test:"; then
+    SKIP_BUG=1
+  fi
   # Class boş ise bug açma — regex'in rastgele match ettiği composite komut.
   if [ -n "$RC" ] && [ "$RC" != "0" ] && [ "$SKIP_BUG" = "0" ] && [ -n "$CLASS" ]; then
     # Tum dinamik veriler env var ile gecirilir — shell injection yok
