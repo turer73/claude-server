@@ -43,7 +43,6 @@ from app.api.shell import router as shell_router
 from app.api.social import router as social_router
 from app.api.ssh import router as ssh_router
 from app.api.system import router as system_router
-from app.api.tasks import router as tasks_router
 from app.api.telegram_bot import router as telegram_bot_router
 from app.api.validation import router as validation_router
 from app.api.vps import router as vps_router
@@ -89,13 +88,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.devops_agent = devops
     devops.start()
 
-    # Start Task Queue worker
-    from app.core.task_queue import TaskQueue
-
-    task_queue = TaskQueue(db=db)
-    app.state.task_queue = task_queue
-    task_queue.start()
-
     # Klipper telemetry: app fully initialized, fire-and-forget event POST.
     # CLAUDE.md zorunlu kayit kurali -- service-start event'i tasks_log'a dusmeli.
     # subprocess.Popen non-blocking; start_new_session=True ile parent kapanirsa
@@ -132,7 +124,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         pass
 
     # Graceful shutdown
-    await task_queue.stop()
     await devops.stop()
     await db.close()
 
@@ -225,7 +216,6 @@ def create_app() -> FastAPI:
     app.include_router(devops_router)
     app.include_router(deploy_router)
     app.include_router(vps_router)
-    app.include_router(tasks_router)
     app.include_router(claude_code_router)
     app.include_router(projects_router)
     app.include_router(social_router)

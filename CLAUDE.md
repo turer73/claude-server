@@ -15,10 +15,10 @@
 ## Servis
 - **Port:** 8420
 - **Framework:** FastAPI + Uvicorn (2 worker)
-- **DB:** 5 SQLite — server.db (ana, alerts/jobs/audit_log/metrics), claude_memory.db (hafiza/sessions/tasks), ci_tests.db (CI sonuclari), coverage.db (test trend), rag_metrics.db (RAG)
+- **DB:** 5 SQLite — server.db (ana, alerts/audit_log/metrics), claude_memory.db (hafiza/sessions/tasks_log), ci_tests.db (CI sonuclari), coverage.db (test trend), rag_metrics.db (RAG)
 - **Auth:** JWT + API Key
 - **Systemd:** linux-ai-server.service
-- **Endpoint sayisi:** 157 (OpenAPI'den)
+- **Endpoint sayisi:** 149 (OpenAPI'den)
 
 ## Proje Yapisi
 - app/api/ — 37 route dosyasi (admin, agents, ai, auth, backup, ci, classifier, claude_code, csp, deploy, dev, devops, digest, files, kernel, llm, logs, memory, monitoring, n8n, network, projects, prometheus, rag, research, shell, social, ssh, system, tasks, telegram_bot, validation, vps, webhooks, webops, ws_status)

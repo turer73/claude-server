@@ -20,7 +20,6 @@ async def test_database_creates_tables(db):
     assert "audit_log" in table_names
     assert "metrics_history" in table_names
     assert "alerts" in table_names
-    assert "jobs" in table_names
 
 
 @pytest.mark.anyio
@@ -86,17 +85,6 @@ async def test_alerts_insert(db):
 
 
 @pytest.mark.anyio
-async def test_jobs_insert(db):
-    await db.execute(
-        "INSERT INTO jobs (type, payload) VALUES (?, ?)",
-        ("backup", '{"target": "/var/AI-stump/"}'),
-    )
-    row = await db.fetch_one("SELECT * FROM jobs WHERE type = ?", ("backup",))
-    assert row is not None
-    assert row["status"] == "pending"
-
-
-@pytest.mark.anyio
 async def test_database_not_initialized():
     database = Database("/tmp/not-init.db")
     with pytest.raises(RuntimeError, match="not initialized"):
@@ -109,4 +97,3 @@ async def test_indexes_created(db):
     index_names = [row["name"] for row in indexes]
     assert "idx_audit_timestamp" in index_names
     assert "idx_metrics_timestamp" in index_names
-    assert "idx_jobs_status" in index_names

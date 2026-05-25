@@ -48,23 +48,10 @@ CREATE TABLE IF NOT EXISTS alerts (
     resolved_at TEXT
 );
 
-CREATE TABLE IF NOT EXISTS jobs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    type TEXT NOT NULL,
-    payload TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    started_at TEXT,
-    completed_at TEXT,
-    result TEXT,
-    error TEXT
-);
-
 CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user);
 CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics_history(timestamp);
 CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);
-CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 
 CREATE TABLE IF NOT EXISTS ci_lesson_learned (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

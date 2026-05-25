@@ -152,24 +152,6 @@ class DiscoveryUpdate(BaseModel):
         return v
 
 
-class TaskQueueCreate(BaseModel):
-    requested_by: str
-    target_device: str | None = None
-    command: str
-    rationale: str | None = None
-
-
-class TaskQueueClaim(BaseModel):
-    claimed_by: str
-
-
-class TaskQueueResult(BaseModel):
-    exit_code: int
-    stdout: str | None = None
-    stderr: str | None = None
-    status: Literal["completed", "failed"] = "completed"
-
-
 class NoteCreate(BaseModel):
     from_device: str
     to_device: str | None = None
@@ -1123,83 +1105,13 @@ async def archive_stale(days: int = 90):
         db.close()
 
 
-# ============ Task Queue ============
-
-
-@router.get("/queue")
-async def list_queue(status: str | None = None, target_device: str | None = None, limit: int = 50):
-    db = get_db()
-    try:
-        q = "SELECT * FROM task_queue WHERE 1=1"
-        params = []
-        if status:
-            q += " AND status=?"
-            params.append(status)
-        if target_device:
-            q += " AND (target_device=? OR target_device IS NULL)"
-            params.append(target_device)
-        q += " ORDER BY id DESC LIMIT ?"
-        params.append(limit)
-        rows = db.execute(q, params).fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        db.close()
-
-
-@router.post("/queue")
-async def create_queue_task(data: TaskQueueCreate):
-    db = get_db()
-    try:
-        cur = db.execute(
-            "INSERT INTO task_queue (requested_by, target_device, command, rationale) VALUES (?, ?, ?, ?)",
-            (data.requested_by, data.target_device, data.command, data.rationale),
-        )
-        db.commit()
-        return {"id": cur.lastrowid, "status": "pending"}
-    finally:
-        db.close()
-
-
-@router.put("/queue/{task_id}/claim")
-async def claim_queue_task(task_id: int, data: TaskQueueClaim):
-    """Atomic claim - only succeeds if task still pending."""
-    db = get_db()
-    try:
-        cur = db.execute(
-            "UPDATE task_queue SET status='claimed', claimed_by=?, claimed_at=datetime('now'), started_at=datetime('now') "
-            "WHERE id=? AND status='pending'",
-            (data.claimed_by, task_id),
-        )
-        db.commit()
-        if cur.rowcount == 0:
-            raise HTTPException(409, "Task not in pending state or does not exist")
-        row = db.execute("SELECT * FROM task_queue WHERE id=?", (task_id,)).fetchone()
-        return dict(row)
-    finally:
-        db.close()
-
-
-@router.put("/queue/{task_id}/result")
-async def write_queue_result(task_id: int, data: TaskQueueResult):
-    """Worker writes back exit code + stdout/stderr."""
-    db = get_db()
-    try:
-        cur = db.execute(
-            "UPDATE task_queue SET status=?, exit_code=?, stdout=?, stderr=?, finished_at=datetime('now') "
-            "WHERE id=? AND status IN ('claimed', 'running')",
-            (data.status, data.exit_code, data.stdout, data.stderr, task_id),
-        )
-        db.commit()
-        if cur.rowcount == 0:
-            raise HTTPException(409, "Task not claimed/running or does not exist")
-        return {"id": task_id, "status": data.status}
-    finally:
-        db.close()
-
-
 # NOTE: Secrets endpoints moved to app/api/admin.py — they use JWT auth
 # (require_auth) for dashboard compatibility, separate from the X-Memory-Key
 # auth this router uses.
+#
+# NOTE: Task Queue endpoints (GET/POST /queue, PUT /queue/{id}/claim, /result)
+# removed 2026-05-25 along with task_queue table — 1 ay kullanilmadi, smoke
+# test'ten oteye gecmedi. Aktif iş günlüğü tasks_log (/tasks endpoint'leri).
 
 
 # ============ DLQ: Spawn Failures (P0.2) ============

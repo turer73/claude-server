@@ -112,22 +112,6 @@ CREATE VIRTUAL TABLE discoveries_fts USING fts5(
     title, details, content=discoveries, content_rowid=id
 );
 
-CREATE TABLE task_queue (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    requested_by TEXT NOT NULL,
-    target_device TEXT,
-    command TEXT NOT NULL,
-    rationale TEXT,
-    status TEXT DEFAULT 'pending',
-    claimed_by TEXT,
-    claimed_at TEXT,
-    started_at TEXT,
-    finished_at TEXT,
-    exit_code INTEGER,
-    stdout TEXT,
-    stderr TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-);
 """
 
 
@@ -629,60 +613,6 @@ async def test_archive_stale_excludes_bugs(client, memory_db):
 
     resp = await client.post("/api/v1/memory/maintenance/archive-stale?days=30")
     assert resp.json()["archived"] == 0
-
-
-# ---------------------------------------------------------------------------
-# Task queue
-# ---------------------------------------------------------------------------
-
-
-async def test_task_queue_lifecycle(client, memory_db):
-    resp = await client.post(
-        "/api/v1/memory/queue",
-        json={"requested_by": "klipper", "command": "echo hi", "rationale": "test"},
-    )
-    assert resp.status_code == 200
-    tid = resp.json()["id"]
-
-    # List
-    resp = await client.get("/api/v1/memory/queue")
-    assert len(resp.json()) == 1
-
-    # Filtered list
-    resp = await client.get("/api/v1/memory/queue?status=pending")
-    assert len(resp.json()) == 1
-
-    # Claim
-    resp = await client.put(f"/api/v1/memory/queue/{tid}/claim", json={"claimed_by": "worker-1"})
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "claimed"
-
-    # Re-claim same task -> 409
-    resp = await client.put(f"/api/v1/memory/queue/{tid}/claim", json={"claimed_by": "worker-2"})
-    assert resp.status_code == 409
-
-    # Result
-    resp = await client.put(
-        f"/api/v1/memory/queue/{tid}/result",
-        json={"exit_code": 0, "stdout": "hi", "stderr": "", "status": "completed"},
-    )
-    assert resp.status_code == 200
-
-    # Re-write result on completed task -> 409
-    resp = await client.put(
-        f"/api/v1/memory/queue/{tid}/result",
-        json={"exit_code": 0, "status": "completed"},
-    )
-    assert resp.status_code == 409
-
-
-async def test_task_queue_target_filter(client, memory_db):
-    await client.post(
-        "/api/v1/memory/queue",
-        json={"requested_by": "klipper", "command": "x", "target_device": "windows-laptop"},
-    )
-    resp = await client.get("/api/v1/memory/queue?target_device=windows-laptop")
-    assert len(resp.json()) == 1
 
 
 # ---------------------------------------------------------------------------
