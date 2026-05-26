@@ -5,6 +5,9 @@
 
 set +e
 
+# Cron PATH minimaldir — webhook auth icin .env'den WEBHOOK_SECRET'i yukle
+[ -f /opt/linux-ai-server/.env ] && set -a && source /opt/linux-ai-server/.env && set +a
+
 NAME="${1:-unknown-cron}"
 shift
 
@@ -36,8 +39,9 @@ else
     BODY="{\"alert\":{\"source\":\"klipper-cron-${NAME}\",\"severity\":\"critical\",\"message\":\"cron ${NAME} FAIL rc=${RC} (${SAFE_CMD})\",\"value\":${RC},\"threshold\":0},\"meta\":{\"type\":\"cron_failure\",\"project\":\"klipper-cron\",\"device\":\"klipper\",\"command\":\"${SAFE_CMD}\",\"exit_code\":\"${RC}\",\"auto_fix_eligible\":true,\"hook_source\":\"klipper-cron-wrap\"}}"
     curl -s -X POST --max-time 3 \
         -H "Content-Type: application/json" \
+        -H "X-Webhook-Secret: ${WEBHOOK_SECRET:-MISSING}" \
         -d "${BODY}" \
-        "http://194.163.134.239:5678/webhook/klipper-alert" > /dev/null 2>&1 || true
+        "http://localhost:5678/webhook/klipper-alert" > /dev/null 2>&1 || true
 fi
 
 exit $RC

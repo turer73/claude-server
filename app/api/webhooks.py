@@ -5,8 +5,10 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
+
+from app.middleware.dependencies import require_admin
 
 # No prefix here — will be mounted via monitoring router with explicit prefix
 router = APIRouter(tags=["webhooks"])
@@ -30,7 +32,7 @@ MAX_EVENTS = 100
 
 
 @router.post("/receive", response_model=WebhookResponse)
-async def receive_webhook(event: WebhookEvent):
+async def receive_webhook(event: WebhookEvent, _: dict = Depends(require_admin)):
     """Receive webhook from n8n or external sources."""
     event_id = str(uuid.uuid4())[:8]
     entry = {
@@ -51,13 +53,13 @@ async def receive_webhook(event: WebhookEvent):
 
 
 @router.get("/events")
-async def list_events(limit: int = 20):
+async def list_events(limit: int = 20, _: dict = Depends(require_admin)):
     """List recent webhook events."""
     return {"events": _events[-limit:]}
 
 
 @router.post("/trigger/{action}")
-async def trigger_action(action: str, request: Request):
+async def trigger_action(action: str, request: Request, _: dict = Depends(require_admin)):
     """Trigger predefined actions (for n8n workflow integration).
 
     Supported actions:

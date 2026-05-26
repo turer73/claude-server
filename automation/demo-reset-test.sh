@@ -59,20 +59,36 @@ fi
 # ─── 2. E2E Testleri ───
 log "🧪 E2E testleri başlıyor..."
 
-if npx playwright test --reporter=json >> "$LOG_FILE" 2>&1; then
+# Playwright --reporter=json JSON'u stdout'a yazar. Ayri bir dosyaya yonlendir,
+# stderr LOG_FILE'a dussun. (Eski versiyon: >> LOG_FILE 2>&1 ile JSON log'a karisip
+# e2e-results.json hic olusmuyordu → grep dosya yok → 0/0 sahte rapor.)
+PLAYWRIGHT_RESULTS="$RESULTS_DIR/playwright-results-$TIMESTAMP.json"
+PLAYWRIGHT_RC=0
+npx playwright test --reporter=json > "$PLAYWRIGHT_RESULTS" 2>>"$LOG_FILE" || PLAYWRIGHT_RC=$?
+
+if [ "$PLAYWRIGHT_RC" -eq 0 ]; then
   log "✅ Tüm E2E testleri geçti"
   TEST_STATUS="✅ PASSED"
-  PASSED=$(grep -c '"status": "passed"' e2e-results.json 2>/dev/null || echo 0)
-  FAILED=0
 else
-  log "❌ Bazı E2E testleri başarısız"
+  log "❌ Bazı E2E testleri başarısız (playwright rc=$PLAYWRIGHT_RC)"
   TEST_STATUS="❌ FAILED"
-  PASSED=$(grep -c '"status": "passed"' e2e-results.json 2>/dev/null || echo 0)
-  FAILED=$(grep -c '"status": "failed"' e2e-results.json 2>/dev/null || echo 0)
+fi
+
+# JSON dosyasi var ve gecerli mi? Yoksa sahte 0/0 yerine gorunur fail.
+if [ ! -s "$PLAYWRIGHT_RESULTS" ] || ! jq -e . "$PLAYWRIGHT_RESULTS" >/dev/null 2>&1; then
+  log "⚠️ Playwright JSON ciktisi bos veya bozuk: $PLAYWRIGHT_RESULTS"
+  TEST_STATUS="⚠️ UNKNOWN (JSON missing/invalid)"
+  PASSED=0
+  FAILED=0
+  SKIPPED=0
+else
+  PASSED=$(jq -r '.stats.expected // 0' "$PLAYWRIGHT_RESULTS")
+  FAILED=$(jq -r '.stats.unexpected // 0' "$PLAYWRIGHT_RESULTS")
+  SKIPPED=$(jq -r '.stats.skipped // 0' "$PLAYWRIGHT_RESULTS")
 fi
 
 # ─── 3. Rapor ───
-TOTAL=$((PASSED + FAILED))
+TOTAL=$((PASSED + FAILED + SKIPPED))
 REPORT="<b>🧪 Panola ERP E2E Rapor</b>
 <code>$(date '+%Y-%m-%d %H:%M')</code>
 
@@ -80,6 +96,7 @@ Seed: $SEED_STATUS
 Test: $TEST_STATUS
 Geçen: $PASSED / $TOTAL
 Başarısız: $FAILED
+Atlanan: $SKIPPED
 
 Ortam: $E2E_BASE_URL"
 

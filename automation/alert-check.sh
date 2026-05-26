@@ -9,7 +9,7 @@
 #   3) Daima: lokal /receive ring buffer (debug + audit)
 
 API=http://localhost:8420
-N8N_WEBHOOK="https://n8n.panola.app/webhook/klipper-alert"
+N8N_WEBHOOK="http://localhost:5678/webhook/klipper-alert"
 
 # .env'den oku
 if [ -f /opt/linux-ai-server/.env ]; then
@@ -75,6 +75,7 @@ if [ $ALERT -eq 1 ]; then
     # Lokal ring buffer (debug, izleme)
     curl -s -X POST $API/api/v1/monitor/webhooks/receive \
       -H 'Content-Type: application/json' \
+      -H "X-API-Key: ${INTERNAL_API_KEY:-MISSING}" \
       -d "{\"source\":\"alert-check\",\"event\":\"threshold_exceeded\",\"data\":{\"severity\":\"$SEVERITY\",\"primary_metric\":\"$PRIMARY_METRIC\",\"value\":$PRIMARY_VALUE,\"threshold\":$PRIMARY_THRESHOLD,\"message\":\"$MSG\",\"all\":{\"cpu\":$CPU,\"mem\":$MEM,\"disk\":$DISK,\"temp\":$TEMP},\"timestamp\":\"$TIMESTAMP\"}}" > /dev/null 2>&1
 
     # Birincil: n8n self-healing webhook
@@ -83,7 +84,9 @@ if [ $ALERT -eq 1 ]; then
 EOF
 )
     N8N_HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 -X POST "$N8N_WEBHOOK" \
-        -H 'Content-Type: application/json' -d "$N8N_PAYLOAD")
+        -H 'Content-Type: application/json' \
+        -H "X-Webhook-Secret: ${WEBHOOK_SECRET:-MISSING}" \
+        -d "$N8N_PAYLOAD")
 
     # Yedek: n8n basarisizsa direkt Telegram (ses kesilmesin)
     if [ "$N8N_HTTP" != "200" ] && [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
