@@ -20,6 +20,21 @@ log() { echo "[$(date '+%H:%M:%S')] $*"; }
 
 # ── Git Sync ──────────────────────────────────────
 
+# Repo'nun gercek default branch'ini tespit et.
+# 2026-05-26: hardcoded "master" panola+koken-akademi'de (default=main) sessiz fail ediyordu.
+# Once local cache (`origin/HEAD` symbolic-ref), yoksa remote'dan al + cache'le.
+detect_default_branch() {
+  local repo="$1"
+  local b
+  b=$(cd "$repo" && git symbolic-ref refs/remotes/origin/HEAD --short 2>/dev/null | sed 's@^origin/@@')
+  if [ -z "$b" ]; then
+    # Local cache yok — remote'tan oku ve cache'le (idempotent)
+    (cd "$repo" && git remote set-head origin -a >/dev/null 2>&1) || true
+    b=$(cd "$repo" && git symbolic-ref refs/remotes/origin/HEAD --short 2>/dev/null | sed 's@^origin/@@')
+  fi
+  printf '%s' "$b"
+}
+
 sync_repos() {
   log "═══ Git Sync ═══"
   local repos=(
@@ -34,16 +49,22 @@ sync_repos() {
   for repo in "${repos[@]}"; do
     if [ -d "$repo/.git" ]; then
       local name=$(basename "$repo")
+      local default_branch
+      default_branch=$(detect_default_branch "$repo")
+      if [ -z "$default_branch" ]; then
+        log "  ⚠ $name — default branch tespit edilemedi, sync atlandi"
+        continue
+      fi
       local pull_out
       # 2026-05-26: --hard idi, klipper'in 8 mig 049 commit'ini sildi.
       # --ff-only ile local commit varsa fail eder, sessiz silmez.
-      pull_out=$(cd "$repo" && git fetch origin && git pull --ff-only origin master 2>&1) || true
+      pull_out=$(cd "$repo" && git fetch origin && git pull --ff-only origin "$default_branch" 2>&1) || true
       if echo "$pull_out" | grep -qE "Fast-forward|Updating"; then
-        log "  ↓ $name — güncellendi"
+        log "  ↓ $name [$default_branch] — güncellendi"
       elif echo "$pull_out" | grep -qE "Already up to date|up-to-date"; then
-        log "  · $name — güncel"
+        log "  · $name [$default_branch] — güncel"
       else
-        log "  ⚠ $name — sync skip (local commit/divergence): $(echo "$pull_out" | tail -1)"
+        log "  ⚠ $name [$default_branch] — sync skip (local commit/divergence): $(echo "$pull_out" | tail -1)"
       fi
     fi
   done
