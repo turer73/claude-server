@@ -80,7 +80,7 @@ GitHub: github.com/turer73/claude-server
 ## VPS (Contabo) — 20 konteyner (audit: 2026-05-26)
 Dokploy v0.29.2 + Traefik v3.1 (root reverse proxy 80/443). /api/v1/vps/exec (SSH) ile yonetim.
 
-**Klipper-first hedefi: 6 servis tasinmis** (n8n + grafana + prometheus + cadvisor + uptime-kuma + dashy haric monitoring).
+**Klipper-first hedefi: 5 servis tasinmis** (n8n + grafana + prometheus + cadvisor + uptime-kuma). Dashy VPS'te kaldi (asagi bkz).
 
 **VPS'te kalan production (public domain gerekligi):**
 - panola.app: caddy + gotrue + postgres + postgrest (4 container)
