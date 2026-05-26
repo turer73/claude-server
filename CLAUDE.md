@@ -77,8 +77,23 @@ Siparis/uretim/stok/CRM. React 19, Supabase. 898 test.
 Bu sunucu. FastAPI, kernel modulleri, 61 test dosyasi.
 GitHub: github.com/turer73/claude-server
 
-## VPS (Contabo)
-Dokploy v0.28.8 + Traefik v3.1 orchestrator, Caddy 2 reverse proxy. Servisler: Plausible, n8n, OpenClaw, Panola (Postgres+PostgREST+Auth), Grafana+Prometheus+cAdvisor, Dashy, Uptime Kuma. 21 konteyner aktif. /api/v1/vps/exec ile yonetim.
+## VPS (Contabo) — 20 konteyner (audit: 2026-05-26)
+Dokploy v0.29.2 + Traefik v3.1 (root reverse proxy 80/443). /api/v1/vps/exec (SSH) ile yonetim.
+
+**Klipper-first hedefi: 6 servis tasinmis** (n8n + grafana + prometheus + cadvisor + uptime-kuma + dashy haric monitoring).
+
+**VPS'te kalan production (public domain gerekligi):**
+- panola.app: caddy + gotrue + postgres + postgrest (4 container)
+- bilge-english: app(Next.js) + auth + postgres + postgrest + realtime (5 container)
+- bilge-arena: postgrest + realtime (2 container, data layer)
+- plausible analytics: app + postgres + clickhouse (3 container)
+- csp-collector (csp.3d-labx.com), social-media-server (media.3d-labx.com)
+- dokploy stack: dokploy + postgres + redis + traefik (4 container)
+- node-exporter (VPS-side host metrics)
+
+**Bilincli VPS-only bırakılan:** dashy (~858MB, internal dashboard, ROI sifir).
+
+**Detay/migration plani:** memory `architecture-vps-klipper-migration-2026-05-26`
 
 ## Cloudflare
 Hesap: REDACTED_EMAIL
