@@ -13,12 +13,22 @@ set -uo pipefail
 
 ROOT="/opt/linux-ai-server"
 DOMAINS_FILE="$ROOT/automation/self-pentest.domains"
-LOG_ROOT="/var/log/nuclei"
+# 2026-05-26: /var/log/nuclei -> logs/nuclei (self-pentest pattern, no sudo).
+LOG_ROOT="$ROOT/logs/nuclei"
+# Persistent cache: template index ve provider config'leri burada birikir,
+# her koşum baştan indirmez (~200MB template + giderek artar).
+NUCLEI_CACHE="$ROOT/data/nuclei-cache"
 TODAY="$(date +%Y-%m-%d)"
 RUN_DIR="$LOG_ROOT/$TODAY"
-sudo mkdir -p "$RUN_DIR" 2>/dev/null
-sudo chown klipperos:klipperos "$LOG_ROOT" 2>/dev/null
-sudo chown klipperos:klipperos "$RUN_DIR" 2>/dev/null
+mkdir -p "$RUN_DIR" "$NUCLEI_CACHE" || { echo "FATAL: cannot create dirs" >&2; exit 1; }
+
+# Docker image preflight: gercek kosumda sessiz fail demek 0 finding demek,
+# silent-fail bug donerdi (eski "bulgu yok" cikti binary yokken).
+NUCLEI_IMAGE="${NUCLEI_IMAGE:-projectdiscovery/nuclei:latest}"
+if ! docker image inspect "$NUCLEI_IMAGE" >/dev/null 2>&1; then
+  echo "FATAL: docker image $NUCLEI_IMAGE bulunamadi. docker pull $NUCLEI_IMAGE" >&2
+  exit 1
+fi
 
 [ -f "$ROOT/.env" ] && { set -a; . "$ROOT/.env"; set +a; }
 
@@ -44,9 +54,25 @@ post_discovery() {
 
 scan_domain() {
   local domain="$1"
-  local outfile="$RUN_DIR/${domain//[^a-z0-9.]/_}.jsonl"
+  local safe="${domain//[^a-z0-9.]/_}"
+  local outfile="$RUN_DIR/${safe}.jsonl"
+  local errfile="$RUN_DIR/${safe}.err"
   log "=== $domain ==="
-  nuclei     -target "https://${domain}"     -severity "$SEVERITY"     -rate-limit "$RATE_LIMIT"     -timeout "$TIMEOUT"     -header "$SCAN_HEADER"     -H "User-Agent: $USER_AGENT"     -jsonl -o "$outfile"     -silent -duc -nm 2>/dev/null || true
+  # Docker variant: --user host UID, HOME=/cache (writable) — nuclei .config
+  # ve template-cache buraya yazsin, kalici. -v RUN_DIR:/output cikti icin.
+  docker run --rm --user "$(id -u):$(id -g)" \
+    -e HOME=/cache \
+    -v "$NUCLEI_CACHE:/cache" \
+    -v "$RUN_DIR:/output" \
+    "$NUCLEI_IMAGE" \
+    -target "https://${domain}" \
+    -severity "$SEVERITY" \
+    -rate-limit "$RATE_LIMIT" \
+    -timeout "$TIMEOUT" \
+    -header "$SCAN_HEADER" \
+    -H "User-Agent: $USER_AGENT" \
+    -jsonl -o "/output/${safe}.jsonl" \
+    -silent -duc -nm 2>"$errfile" || log "$domain: docker exit nonzero (errfile: $errfile)"
 
   [ -s "$outfile" ] || { log "$domain: bulgu yok"; return 0; }
 
