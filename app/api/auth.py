@@ -10,6 +10,7 @@ from app.auth.jwt_handler import create_token, decode_token
 from app.core.config import Settings, get_settings
 from app.db.database import Database
 from app.exceptions import AuthenticationError
+from app.middleware.dependencies import rate_limit_auth
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -29,7 +30,7 @@ class UserInfo(BaseModel):
     permissions: str
 
 
-@router.post("/token", response_model=TokenResponse)
+@router.post("/token", response_model=TokenResponse, dependencies=[Depends(rate_limit_auth)])
 async def get_token(body: TokenRequest, request: Request, settings: Settings = Depends(get_settings)):
     db: Database = request.app.state.db
     key_hash = hash_api_key(body.api_key)

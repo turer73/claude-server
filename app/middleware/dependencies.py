@@ -63,6 +63,8 @@ _read_limiter = TokenBucketLimiter(rate=100, per_seconds=60)
 _write_limiter = TokenBucketLimiter(rate=10, per_seconds=60)
 _exec_limiter = TokenBucketLimiter(rate=5, per_seconds=60)
 _global_limiter = TokenBucketLimiter(rate=200, per_seconds=60)
+# Auth/login endpoint: brute force defense, IP-based (API key not yet validated)
+_auth_limiter = TokenBucketLimiter(rate=5, per_seconds=60)
 
 
 def _get_client_key(request: Request) -> str:
@@ -95,6 +97,17 @@ async def rate_limit_exec(request: Request) -> None:
     key = _get_client_key(request)
     if not _exec_limiter.allow(key):
         raise RateLimitError("Exec rate limit exceeded (5/min)")
+
+
+async def rate_limit_auth(request: Request) -> None:
+    """Rate limit for /auth/token (5/min, IP-based brute force defense).
+
+    Note: _get_client_key falls back to IP when X-API-Key header absent,
+    which is the case for /token (api_key is in POST body, not header).
+    """
+    key = _get_client_key(request)
+    if not _auth_limiter.allow(key):
+        raise RateLimitError("Auth rate limit exceeded (5/min) — too many login attempts")
 
 
 async def rate_limit_global(request: Request) -> None:
