@@ -62,19 +62,19 @@ log "🧪 E2E testleri başlıyor..."
 if npx playwright test --reporter=json >> "$LOG_FILE" 2>&1; then
   log "✅ Tüm E2E testleri geçti"
   TEST_STATUS="✅ PASSED"
-  PASSED=$(grep -c '"status": "passed"' e2e-results.json 2>/dev/null || echo "?")
-  FAILED="0"
+  PASSED=$(grep -c '"status": "passed"' e2e-results.json 2>/dev/null || echo 0)
+  FAILED=0
 else
   log "❌ Bazı E2E testleri başarısız"
   TEST_STATUS="❌ FAILED"
-  PASSED=$(grep -c '"status": "passed"' e2e-results.json 2>/dev/null || echo "?")
-  FAILED=$(grep -c '"status": "failed"' e2e-results.json 2>/dev/null || echo "?")
+  PASSED=$(grep -c '"status": "passed"' e2e-results.json 2>/dev/null || echo 0)
+  FAILED=$(grep -c '"status": "failed"' e2e-results.json 2>/dev/null || echo 0)
 fi
 
 # ─── 3. Rapor ───
 TOTAL=$((PASSED + FAILED))
 REPORT="<b>🧪 Panola ERP E2E Rapor</b>
-<code>$(date +%Y-%m-%d %H:%M)</code>
+<code>$(date '+%Y-%m-%d %H:%M')</code>
 
 Seed: $SEED_STATUS
 Test: $TEST_STATUS

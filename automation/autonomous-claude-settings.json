@@ -63,7 +63,6 @@
       "Bash(scp *)",
       "Bash(rsync *)",
       "Bash(git push *)",
-      "Bash(git reset --hard*)",
       "Bash(git rebase*)",
       "Bash(gh pr merge*)",
       "Bash(gh pr close*)",

@@ -35,11 +35,15 @@ sync_repos() {
     if [ -d "$repo/.git" ]; then
       local name=$(basename "$repo")
       local pull_out
-      pull_out=$(cd "$repo" && git fetch origin && git reset --hard origin/master 2>&1) || true
-      if echo "$pull_out" | grep -q "HEAD is now at"; then
+      # 2026-05-26: --hard idi, klipper'in 8 mig 049 commit'ini sildi.
+      # --ff-only ile local commit varsa fail eder, sessiz silmez.
+      pull_out=$(cd "$repo" && git fetch origin && git pull --ff-only origin master 2>&1) || true
+      if echo "$pull_out" | grep -qE "Fast-forward|Updating"; then
         log "  ↓ $name — güncellendi"
-      else
+      elif echo "$pull_out" | grep -qE "Already up to date|up-to-date"; then
         log "  · $name — güncel"
+      else
+        log "  ⚠ $name — sync skip (local commit/divergence): $(echo "$pull_out" | tail -1)"
       fi
     fi
   done
