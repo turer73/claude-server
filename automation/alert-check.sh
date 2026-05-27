@@ -25,8 +25,11 @@ DISK=$(echo $METRICS | python3 -c 'import sys,json; print(json.load(sys.stdin).g
 TEMP=$(echo $METRICS | python3 -c 'import sys,json; print(json.load(sys.stdin).get("temperature",0))')
 
 # Esikler
-T_CPU=85
-T_MEM=85
+# 2026-05-27: Ryzen 7 8C/16T gece cron'lari (otonom hook + test-runner + demo-reset)
+# 85 esigi sik tetikliyordu (24h: 11 warning alarm, hepsi 85-95% arasi spike).
+# Sustained-N pattern (ileri is) eklenene kadar threshold 90'a cikarildi.
+T_CPU=90
+T_MEM=88
 T_DISK=90
 T_TEMP=80
 # Critical band: esik + bu kadar uzeri -> severity=critical (self-heal devreye girer)
