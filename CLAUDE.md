@@ -123,3 +123,6 @@ sudo systemctl restart linux-ai-server
 journalctl -u linux-ai-server -f
 docker ps -a
 cd /opt/linux-ai-server/kernel && make && sudo insmod proc_linux_ai.ko
+
+## License
+Apache-2.0 — see `LICENSE` at repo root.
