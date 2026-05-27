@@ -163,8 +163,12 @@ class TestUnauthenticatedAccess:
         assert resp.status_code == 401
 
     @pytest.mark.anyio
-    async def test_webhooks_receive_no_auth(self, client):
-        """Webhook receive endpoint is public (no auth required)."""
+    async def test_webhooks_receive_requires_auth(self, client):
+        """Webhook receive endpoint now requires admin auth (2026-05-26 hardening).
+
+        Was previously public; switched to require_admin after audit found
+        anonymous POST + backup_create action exposure on /trigger/{action}.
+        """
         resp = await client.post(
             "/api/v1/monitor/webhooks/receive",
             json={
@@ -172,7 +176,7 @@ class TestUnauthenticatedAccess:
                 "event": "ping",
             },
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 401
 
     @pytest.mark.anyio
     async def test_health_does_not_require_auth(self, client):

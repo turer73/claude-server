@@ -26,6 +26,22 @@ def _clear_settings_cache():
     get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiters():
+    """Reset module-level rate limiter buckets between tests.
+
+    Limiters in app.middleware.dependencies are module-level singletons;
+    without reset, /token tests sharing IP exhaust 5/min and 6th hits 429.
+    """
+    from app.middleware import dependencies as deps
+
+    for name in ("_read_limiter", "_write_limiter", "_exec_limiter", "_global_limiter", "_auth_limiter"):
+        limiter = getattr(deps, name, None)
+        if limiter is not None:
+            limiter._buckets.clear()
+    yield
+
+
 @pytest.fixture
 def app(tmp_path, monkeypatch):
     monkeypatch.setenv("DB_PATH", str(tmp_path / "test.db"))
