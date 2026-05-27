@@ -23,7 +23,7 @@ from pathlib import Path
 
 DB_PATH = "/opt/linux-ai-server/data/claude_memory.db"
 ENV_PATH = "/opt/linux-ai-server/.env"
-PENTEST_LOG_ROOT = Path("/var/log/self-pentest")
+PENTEST_LOG_ROOT = Path("/opt/linux-ai-server/logs/self-pentest")
 
 REPOS: dict[str, str] = {
     "linux-ai-server": "turer73/claude-server",
