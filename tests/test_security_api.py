@@ -154,3 +154,98 @@ async def test_run_records_failure_exit_code(client, pentest_env):
     assert final["status"] == "failed"
     assert final["exit_code"] == 7
     assert any("boom" in line for line in final["log_tail"])
+
+
+# ---------- auth alias: X-Pentest-Key accepted alongside X-Memory-Key ----------
+
+
+async def test_x_pentest_key_header_accepted(client, pentest_env):
+    """Generic OSS package sends X-Pentest-Key; backend must accept it."""
+    resp = await client.get(
+        "/api/v1/security/pentest/targets",
+        headers={"X-Pentest-Key": "test-security-key"},
+    )
+    assert resp.status_code == 200
+
+
+async def test_x_pentest_key_wrong_value_rejected(client, pentest_env):
+    resp = await client.get(
+        "/api/v1/security/pentest/targets",
+        headers={"X-Pentest-Key": "nope"},
+    )
+    assert resp.status_code == 401
+
+
+# ---------- findings adapter ----------
+
+
+@pytest.fixture
+def findings_db(tmp_path, monkeypatch, pentest_env):
+    """Per-test memory DB so the findings adapter has a discoveries table."""
+    import sqlite3
+
+    from tests.test_memory_api import MEMORY_SCHEMA
+
+    db_path = tmp_path / "memory.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(MEMORY_SCHEMA)
+    # Three rows: one bug active, one bug completed, one different type
+    conn.execute(
+        "INSERT INTO discoveries (project, type, title, details, status) "
+        "VALUES ('panola.app', 'bug', 'open CSP gap', 'detail A', 'active')"
+    )
+    conn.execute(
+        "INSERT INTO discoveries (project, type, title, details, status) "
+        "VALUES ('panola.app', 'bug', 'old fixed thing', 'detail B', 'completed')"
+    )
+    conn.execute(
+        "INSERT INTO discoveries (project, type, title, details, status) "
+        "VALUES ('panola.app', 'fix', 'not a bug', 'detail C', 'active')"
+    )
+    conn.commit()
+    conn.close()
+
+    from app.api import memory as memory_mod
+
+    monkeypatch.setattr(memory_mod, "DB_PATH", str(db_path))
+    return db_path
+
+
+async def test_findings_pins_type_bug(client, findings_db):
+    resp = await client.get("/api/v1/security/pentest/findings", headers=HEADERS)
+    assert resp.status_code == 200
+    rows = resp.json()
+    # Only the active bug — completed bug filtered (status='active' default),
+    # 'fix' row excluded (type pinned to 'bug').
+    assert len(rows) == 1
+    assert rows[0]["title"] == "open CSP gap"
+    assert rows[0]["type"] == "bug"
+
+
+async def test_findings_status_filter_passthrough(client, findings_db):
+    resp = await client.get(
+        "/api/v1/security/pentest/findings?status=completed", headers=HEADERS
+    )
+    rows = resp.json()
+    assert len(rows) == 1
+    assert rows[0]["title"] == "old fixed thing"
+
+
+async def test_finding_get_by_id_returns_full_record(client, findings_db):
+    resp = await client.get("/api/v1/security/pentest/findings/1", headers=HEADERS)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == 1
+    assert body["details"] == "detail A"
+
+
+async def test_finding_resolve_marks_completed(client, findings_db):
+    resp = await client.put(
+        "/api/v1/security/pentest/findings/1/resolve", headers=HEADERS
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "resolved"
+    # Verify via the list endpoint — row 1 should no longer be in active
+    resp2 = await client.get("/api/v1/security/pentest/findings", headers=HEADERS)
+    titles = [r["title"] for r in resp2.json()]
+    assert "open CSP gap" not in titles

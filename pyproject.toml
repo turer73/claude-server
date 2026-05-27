@@ -35,11 +35,6 @@ dev = [
     "mypy>=1.11.0",
     "bandit>=1.7.0",
 ]
-# Goose self-pentest MCP server (app/mcp/goose_pentest_server.py).
-# Install with `pip install -e .[goose]` only on machines running the Goose CLI.
-goose = [
-    "mcp>=1.0",
-]
 
 [project.scripts]
 linux-ai-server = "app.main:main"

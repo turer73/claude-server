@@ -24,10 +24,10 @@ import uuid
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, field_validator
 
-from app.api.memory import verify_key
+from app.api import memory as _memory
 from app.middleware.dependencies import rate_limit_exec, rate_limit_read
 
 ROOT = Path("/opt/linux-ai-server")
@@ -38,10 +38,28 @@ RUNS_DIR = ROOT / "logs" / "self-pentest" / "runs"
 # Domain must look like a hostname: labels of a-z, 0-9, hyphen; dots between.
 _DOMAIN_RE = re.compile(r"^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$")
 
+def verify_pentest_key(
+    x_pentest_key: str | None = Header(None, alias="X-Pentest-Key"),
+    x_memory_key: str | None = Header(None, alias="X-Memory-Key"),
+) -> None:
+    """Accept either X-Pentest-Key (public contract) or X-Memory-Key (legacy).
+
+    Same secret value; the dual name lets the generic OSS package
+    (`extensions/goose-pentest-mcp/`) speak its public contract while
+    older callers using X-Memory-Key keep working.
+    """
+    expected = _memory.MEMORY_API_KEY
+    if not expected:
+        return
+    provided = x_pentest_key or x_memory_key
+    if provided != expected:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+
 router = APIRouter(
     prefix="/api/v1/security",
     tags=["security"],
-    dependencies=[Depends(verify_key)],
+    dependencies=[Depends(verify_pentest_key)],
 )
 
 # In-process job registry. Lost on uvicorn restart — acceptable for v1.
@@ -173,3 +191,29 @@ def get_run(job_id: str, tail: int = 200) -> dict:
         "pid": record["pid"],
         "log_tail": log_lines,
     }
+
+
+# ---------------- Findings adapter ----------------
+# Thin wrappers over memory.discoveries so the generic OSS package
+# (extensions/goose-pentest-mcp/) talks to Klipper out-of-box. The
+# public contract calls them "findings" with type pinned to "bug";
+# internally they're discovery rows.
+
+
+@router.get("/pentest/findings", dependencies=[Depends(rate_limit_read)])
+async def list_findings(
+    project: str | None = None,
+    status: str | None = "active",
+    limit: int = 30,
+):
+    return await _memory.list_discoveries(project=project, type="bug", status=status, limit=limit)
+
+
+@router.get("/pentest/findings/{finding_id}", dependencies=[Depends(rate_limit_read)])
+async def get_finding(finding_id: int):
+    return await _memory.get_discovery(finding_id)
+
+
+@router.put("/pentest/findings/{finding_id}/resolve", dependencies=[Depends(rate_limit_read)])
+async def resolve_finding(finding_id: int):
+    return await _memory.resolve_discovery(finding_id)
