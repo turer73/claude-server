@@ -320,6 +320,10 @@ run_project "linux-ai-server-hooks" \
   "/opt/linux-ai-server" \
   "bash scripts/hooks/tests/test_classify_cmd.sh 2>&1"
 
+run_project "linux-ai-server-hooks-integration" \
+  "/opt/linux-ai-server" \
+  "bash scripts/hooks/tests/test_post_bash_capture_integration.sh 2>&1"
+
 run_project "panola" \
   "/data/projects/panola" \
   "npx vitest run 2>&1"

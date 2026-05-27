@@ -127,7 +127,12 @@ print(json.dumps({
   # komut nedeniyle title'da class keyword'ü bulunmasa bile etiket korunur.
   # Risk: tek dosya geçerse genel class bug'ı da yanlış kapanır; ama gerçek
   # regression bir sonraki çalıştırmada yeniden açılır (POST dedupe-on-active).
-  if [ "${RC:-1}" = "0" ] && [ "$SKIP_BUG" = "0" ] && [ -n "$CLASS" ]; then
+  #
+  # SKIP_BUG kontrol ETMIYORUZ — sebep: SKIP_BUG composite line'da rc!=0 olsa
+  # bile "Test pass" output gibi sinyallere bakip yanlis bug acmayi engeller.
+  # Auto-resolve'da rc=0 zaten gercek pass kaniti; "X passed" sinyali olsa bile
+  # eski active bug'i kapatmamak yanlis olur (entegrasyon testi T4 bulgu).
+  if [ "${RC:-1}" = "0" ] && [ -n "$CLASS" ]; then
     PROJECT_NAME="$(basename "$PWD" | sed "s/'/''/g")"
     CLASS_TAG="[$CLASS]"
     CLASS_ESC="$(printf '%s' "$CLASS_TAG" | sed "s/'/''/g")"
