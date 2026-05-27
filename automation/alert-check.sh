@@ -42,28 +42,69 @@ PRIMARY_METRIC=""
 PRIMARY_VALUE=0
 PRIMARY_THRESHOLD=0
 
+# Sustained-N pattern (2026-05-27): state file ile son N olcumu tutariz.
+# Cron 5dk freq + N=3 → 15dk sustained yakalar. Anlik spike yutulur (cron-heavy gece).
+STATE_DIR="/var/lib/linux-ai-server/alert-state"
+SUSTAINED_N=3
+mkdir -p "$STATE_DIR" 2>/dev/null
+
+# Append value, keep last N (atomic write via tmp+mv)
+record_metric() {
+    local metric="$1" value="$2"
+    local file="$STATE_DIR/${metric}.history"
+    {
+        [ -f "$file" ] && cat "$file"
+        echo "$value"
+    } | tail -n "$SUSTAINED_N" > "$file.tmp" 2>/dev/null && mv "$file.tmp" "$file" 2>/dev/null
+}
+
+# Return 0 if ALL last-N values are above threshold (sustained breach)
+is_sustained_breach() {
+    local metric="$1" threshold="$2"
+    local file="$STATE_DIR/${metric}.history"
+    [ ! -f "$file" ] && return 1
+    local total breached
+    total=$(wc -l < "$file" 2>/dev/null)
+    breached=$(awk -v t="$threshold" '$1 > t' "$file" 2>/dev/null | wc -l)
+    [ "$total" -eq "$SUSTAINED_N" ] && [ "$breached" -eq "$SUSTAINED_N" ]
+}
+
 check_metric() {
     local name="$1" value="$2" threshold="$3" suffix="$4"
+
+    # Record value into rolling history (sustained-N evaluation)
+    record_metric "$name" "$value"
+
+    # Anlik breach kontrol (debug log icin)
     local breached
     breached=$(python3 -c "print(1 if $value > $threshold else 0)" 2>/dev/null)
-    if [ "$breached" = "1" ]; then
-        MSG="$MSG ${name}:${value}${suffix}"
-        ALERT=1
-        # En yuksek breach magnitude'unu primary olarak isaretle
-        local diff highest
-        diff=$(python3 -c "print($value - $threshold)" 2>/dev/null)
-        highest=$(python3 -c "print(1 if $value > $PRIMARY_VALUE else 0)" 2>/dev/null)
-        if [ "$highest" = "1" ]; then
-            PRIMARY_METRIC="$name"
-            PRIMARY_VALUE="$value"
-            PRIMARY_THRESHOLD="$threshold"
-        fi
-        # Critical mi
-        local critical
-        critical=$(python3 -c "print(1 if $value > ($threshold + $CRITICAL_BAND) else 0)" 2>/dev/null)
-        if [ "$critical" = "1" ]; then
-            SEVERITY="critical"
-        fi
+    if [ "$breached" != "1" ]; then
+        return
+    fi
+
+    # Anlik esik asti ama 3 ardisikta esiklemediyse yutuyoruz (spike)
+    # Sustained sart: son N olcum tumu esik ustunde.
+    if ! is_sustained_breach "$name" "$threshold"; then
+        # Spike yutuldu — sadece log'a not (debug), Telegram'a gitmez
+        echo "[$TIMESTAMP] SPIKE_SUPPRESSED ${name}=${value}${suffix} (>${threshold}, sustained-${SUSTAINED_N} hentuz dolmadi)" >> /var/log/linux-ai-server/alerts.log
+        return
+    fi
+
+    # 3+ ardisik esik asti → gercek alarm
+    MSG="$MSG ${name}:${value}${suffix}"
+    ALERT=1
+    local highest
+    highest=$(python3 -c "print(1 if $value > $PRIMARY_VALUE else 0)" 2>/dev/null)
+    if [ "$highest" = "1" ]; then
+        PRIMARY_METRIC="$name"
+        PRIMARY_VALUE="$value"
+        PRIMARY_THRESHOLD="$threshold"
+    fi
+    # Critical mi (esik + 10pp ustu sustained → kritik)
+    local critical
+    critical=$(python3 -c "print(1 if $value > ($threshold + $CRITICAL_BAND) else 0)" 2>/dev/null)
+    if [ "$critical" = "1" ]; then
+        SEVERITY="critical"
     fi
 }
 
