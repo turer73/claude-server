@@ -55,31 +55,11 @@ if printf '%s' "$CMD" | grep -qiE '(pytest|npm[[:space:]]+(test|run[[:space:]]+t
     fi
   fi
 
-  # Test class detection — composite cmd'lerde regex eşleşen alt-komutu sınıfla.
-  # Trigger regex bug açarken VE rc=0 sonrası resolve ederken aynı sınıfı
-  # vermeli — title'a [class] etiketi koyup ona göre eşleşelim. Etiketsiz
-  # bug açma (class boş ise) — keyword'ün rastgele bir sub-string olarak
-  # geçtiği composite komutta yanlış pozitif üretir, atlıyoruz.
-  CLASS=""
-  case "$CMD" in
-    *pytest*)                                                                                  CLASS="pytest" ;;
-    *"npm test"*|*"npm run test"*|*"npm run build"*|*"npm run lint"*|*"npm run typecheck"*)    CLASS="npm" ;;
-    *"yarn test"*|*"yarn build"*|*"yarn lint"*)                                                CLASS="yarn" ;;
-    *"pnpm test"*|*"pnpm build"*|*"pnpm lint"*|*"pnpm exec tsc"*|*"pnpm typecheck"*)           CLASS="pnpm" ;;
-    *" tsc "*|*" tsc"|"tsc "*|"tsc")                                                           CLASS="tsc" ;;
-    *" ruff "*|*" ruff"|"ruff "*|"ruff")                                                       CLASS="ruff" ;;
-    *" mypy "*|*" mypy"|"mypy "*|"mypy")                                                       CLASS="mypy" ;;
-    # Executor+tool kombinasyonu — salt 'grep playwright', 'docker images | grep vitest'
-    # gibi sorgu komutlarini hatali sekilde test runner zannetmemek icin (bug #485, #499 vakasi).
-    *"npx vitest"*|*"pnpm vitest"*|*"pnpm exec vitest"*|*"yarn vitest"*|*"vitest run"*)        CLASS="vitest" ;;
-    *"npx jest"*|*"pnpm jest"*|*"pnpm exec jest"*|*"yarn jest"*|*"jest --"*|*"jest "*)         CLASS="jest" ;;
-    *"npx playwright"*|*"pnpm playwright"*|*"pnpm exec playwright"*|*"yarn playwright"*|*"playwright test"*|*"playwright install"*)  CLASS="playwright" ;;
-    *"npx eslint"*|*"pnpm eslint"*|*"pnpm exec eslint"*|*"yarn eslint"*|*"eslint --"*|*"eslint ."*|*"eslint src"*) CLASS="eslint" ;;
-    *"cargo test"*|*"cargo build"*|*"cargo check"*)                                            CLASS="cargo" ;;
-    *"go test"*|*"go build"*)                                                                  CLASS="go" ;;
-    *"make test"*|*"make check"*|*"make build"*)                                               CLASS="make" ;;
-    *" black "*|"black "*)                                                                     CLASS="black" ;;
-  esac
+  # Test class detection — lib/classify-cmd.sh tek kaynak (test edilebilir).
+  # FP koruma: executor+tool kombinasyonu zorunlu (bug #485, #499 ref).
+  # Class bos ise (regex'in rastgele match ettiği composite komut) bug acmaz.
+  . "$(dirname "$0")/lib/classify-cmd.sh"
+  CLASS=$(classify_cmd "$CMD")
 
   # Test FAIL (rc != 0) ise discoveries'e bug olarak kaydet —
   # ama systemctl restart/status komutlarinda atla. Servis restart olunca
