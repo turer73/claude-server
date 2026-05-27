@@ -35,7 +35,7 @@ ts() { date '+%Y-%m-%d %H:%M:%S'; }
 log() { printf '[%s] telegram-alert: %s\n' "$(ts)" "$*" >> "$LOG_FILE"; }
 
 # ---------- Args ----------
-KIND=""; NOTE_ID=""; FROM=""; TITLE=""; PREVIEW=""; CONFIDENCE=""; TEXT=""
+KIND=""; NOTE_ID=""; FROM=""; TITLE=""; PREVIEW=""; CONFIDENCE=""; TEXT=""; PLAN=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --kind)        KIND="$2"; shift 2 ;;
@@ -47,6 +47,7 @@ while [ $# -gt 0 ]; do
         --text)        TEXT="$2"; shift 2 ;;
         --spawn-log)   SPAWN_LOG="$2"; shift 2 ;;
         --attempt)     ATTEMPT="$2"; shift 2 ;;
+        --plan)        PLAN="$2"; shift 2 ;;
         *) log "bad arg: $1"; exit 3 ;;
     esac
 done
@@ -64,6 +65,13 @@ case "$KIND" in
         # OAuth refresh divergence detection — klipperos vs klipper-auto race.
         # Only NOTE_ID required; spawn_log + attempt opsiyonel ama context faydali.
         if [ -z "$NOTE_ID" ]; then log "oauth_race: --note-id bos"; exit 3; fi
+        ;;
+    plan_pending)
+        # Planning Mode (opt-in) — autonomous-claude.sh execute oncesi
+        # planner-Claude'un urettigi plani onaya gonderir.
+        if [ -z "$NOTE_ID" ] || [ -z "$PLAN" ]; then
+            log "plan_pending: --note-id ve --plan zorunlu"; exit 3
+        fi
         ;;
     *) log "unknown kind: $KIND"; exit 3 ;;
 esac
@@ -150,6 +158,27 @@ sudo -u klipper-auto HOME=/home/klipper-auto claude --version</pre>
 <code>${SPAWN_LOG_ESC}</code>
 
 <i>Tek sefer ise race kabul edilir; tekrarlanıyorsa: ANTHROPIC_API_KEY fallback düşün.</i>"
+elif [ "$KIND" = "plan_pending" ]; then
+    PLAN_TRUNC=$(printf '%s' "$PLAN" | python3 -c 'import sys; s=sys.stdin.read(); sys.stdout.write(s[:2500])')
+    PLAN_ESC=$(printf '%s' "$PLAN_TRUNC" | escape_html)
+    TITLE_ESC=$(printf '%s' "${TITLE:-?}" | escape_html)
+    FROM_ESC=$(printf '%s' "${FROM:-?}" | escape_html)
+
+    MSG="<b>📋 Plan onayi bekliyor — Note #${NOTE_ID}</b>
+
+<b>From:</b> ${FROM_ESC}
+<b>Title:</b> ${TITLE_ESC}
+
+<b>Plan:</b>
+<pre>${PLAN_ESC}</pre>
+
+<i>Onaylamak icin (klipper SSH):</i>
+<pre>bash /opt/linux-ai-server/automation/execute-approved-plan.sh ${NOTE_ID}</pre>
+
+<i>Reddetmek icin:</i>
+<pre>bash /opt/linux-ai-server/automation/execute-approved-plan.sh ${NOTE_ID} reject</pre>
+
+<i>Pending plan dosyasi:</i> <code>data/hook-state/pending-plans/${NOTE_ID}.json</code>"
 else
     MSG="$TEXT"
 fi

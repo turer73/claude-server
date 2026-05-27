@@ -30,8 +30,17 @@ CLASSIFIER="${AUTONOMOUS_CLASSIFIER:-/opt/linux-ai-server/automation/autonomous-
 DB="${HOOK_DB:-/opt/linux-ai-server/data/claude_memory.db}"
 API_BASE="${HOOK_API:-http://127.0.0.1:8420/api/v1/memory}"
 ENV_FILE="${HOOK_ENV_FILE:-/opt/linux-ai-server/.env}"
+# Planning Mode (opt-in, default OFF — eski davranis aynen korunur)
+#   PLANNING_MODE=1               : ACTIONABLE icin once plan ureteriz, execute kullanici onayina kalir
+#   PLANNING_DRY_RUN=1            : Planner Claude'u cagirma, sahte plan; sadece test icin
+#   AUTONOMOUS_BYPASS_CLASSIFY=1  : Classify atla, dogrudan ACTIONABLE (execute-approved-plan.sh kullanir)
+PLANNING_MODE="${PLANNING_MODE:-0}"
+PLANNING_DRY_RUN="${PLANNING_DRY_RUN:-0}"
+AUTONOMOUS_BYPASS_CLASSIFY="${AUTONOMOUS_BYPASS_CLASSIFY:-0}"
+PENDING_PLANS_DIR="${PENDING_PLANS_DIR:-/opt/linux-ai-server/data/hook-state/pending-plans}"
+PLANNER_MAX_TURNS="${PLANNER_MAX_TURNS:-3}"
 
-mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$THROTTLE_FILE")" 2>/dev/null || true
+mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$THROTTLE_FILE")" "$PENDING_PLANS_DIR" 2>/dev/null || true
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 log() { printf '[%s] %s\n' "$(ts)" "$*" >> "$LOG_FILE"; }
@@ -111,11 +120,19 @@ FULL_CONTENT=$(sqlite3 "$DB" "SELECT content FROM notes WHERE id=$NOTE_ID" 2>/de
 [ -z "$FULL_CONTENT" ] && FULL_CONTENT="$PREVIEW"
 
 # ---------- TIER 1: Ollama classifier (with confidence) ----------
-log "classifying note #$NOTE_ID ..."
-CLASSIFIER_OUT=$(bash "$CLASSIFIER" "$NOTE_ID" "$TITLE" "$FULL_CONTENT" 2>>"$LOG_FILE" || printf 'DISCUSSION\nLOW')
-CLASSIFICATION=$(printf '%s' "$CLASSIFIER_OUT" | sed -n 1p)
-CONFIDENCE=$(printf '%s' "$CLASSIFIER_OUT" | sed -n 2p)
-[ -z "$CONFIDENCE" ] && CONFIDENCE="LOW"
+# AUTONOMOUS_BYPASS_CLASSIFY=1: execute-approved-plan.sh resume path —
+# kullanici plani zaten onayladi, classify atla, dogrudan ACTIONABLE'a git.
+if [ "$AUTONOMOUS_BYPASS_CLASSIFY" = "1" ]; then
+    log "classify BYPASS (resume from approved plan) note=#$NOTE_ID -> ACTIONABLE/HIGH"
+    CLASSIFICATION="ACTIONABLE"
+    CONFIDENCE="HIGH"
+else
+    log "classifying note #$NOTE_ID ..."
+    CLASSIFIER_OUT=$(bash "$CLASSIFIER" "$NOTE_ID" "$TITLE" "$FULL_CONTENT" 2>>"$LOG_FILE" || printf 'DISCUSSION\nLOW')
+    CLASSIFICATION=$(printf '%s' "$CLASSIFIER_OUT" | sed -n 1p)
+    CONFIDENCE=$(printf '%s' "$CLASSIFIER_OUT" | sed -n 2p)
+    [ -z "$CONFIDENCE" ] && CONFIDENCE="LOW"
+fi
 log "note #$NOTE_ID classified as: $CLASSIFICATION (confidence=$CONFIDENCE)"
 
 # LOW confidence override: low-confidence ACTIONABLE/URGENT'lari defer'a cek.
@@ -198,7 +215,141 @@ except Exception as e:
 PY
 }
 
+planning_mode_handler() {
+    # Plan-then-execute (opt-in). Planner-Claude SADECE plan uretir (no edit/write/bash).
+    # Plan pending-plans dizinine JSON olarak yazilir; Telegram'a onay icin push.
+    # execute-approved-plan.sh manuel onaydan sonra bu fonk'u atlar (AUTONOMOUS_BYPASS_CLASSIFY=1).
+    log "PLANNING_MODE route #$NOTE_ID — planner spawn (no execute)"
+    date +%s > "$THROTTLE_FILE"
+
+    local planner_log pending_file plan_text rc
+    planner_log="${LOG_FILE%.log}-planner-${NOTE_ID}-$(date +%s).log"
+    pending_file="$PENDING_PLANS_DIR/${NOTE_ID}.json"
+
+    if [ "$PLANNING_DRY_RUN" = "1" ]; then
+        plan_text="[DRY-RUN PLAN] Note #${NOTE_ID} icin sahte plan. Gercek planlama icin PLANNING_DRY_RUN=0."
+        rc=0
+        log "planner DRY-RUN: note=#$NOTE_ID"
+    else
+        local planner_prompt
+        planner_prompt="Otonom modda PLANNER olarak spawn edildin. Bir not geldi:
+
+=== NOTE METADATA ===
+ID: #$NOTE_ID
+From: $FROM
+Title: $TITLE
+Classified as: ACTIONABLE
+
+=== NOTE CONTENT ===
+$FULL_CONTENT
+
+=== TALIMAT ===
+HICBIR EDIT/WRITE/BASH KOMUTU CALISTIRMA. Sadece okuyabilirsin (Read).
+Note icin somut bir EXECUTION PLAN uret. Format:
+
+Adim 1: <ne yapilacak>
+Adim 2: ...
+Tahmini commit sayisi: <N>
+Risk: <dusuk/orta/yuksek>
+Etkilenen dosyalar: <liste>
+
+Plan en fazla 15 satir. Kisa, somut, gerceklesir tut.
+Cevabin son satiri: PLAN_END
+"
+        set +e
+        claude -p "$planner_prompt" \
+            --settings "$SETTINGS_FILE" \
+            --output-format json \
+            --model "$MODEL" \
+            --max-turns "$PLANNER_MAX_TURNS" \
+            < /dev/null \
+            > "$planner_log" 2>&1
+        rc=$?
+        set -e
+
+        if [ "$rc" -ne 0 ]; then
+            log "planner FAILED rc=$rc note=#$NOTE_ID log=$planner_log"
+            return 1
+        fi
+
+        plan_text=$(PLAN_LOG="$planner_log" python3 -c "
+import json, os, sys
+try:
+    data = json.load(open(os.environ['PLAN_LOG']))
+    text = data.get('result') or data.get('content') or ''
+    if isinstance(text, list):
+        text = ' '.join(p.get('text','') for p in text if isinstance(p, dict))
+    print(str(text).strip())
+except Exception as e:
+    print(f'[parse-error: {e}]', file=sys.stderr)
+" 2>>"$LOG_FILE")
+        [ -z "$plan_text" ] && plan_text="[empty plan — planner returned no text, see $planner_log]"
+    fi
+
+    NOTE_ID_J="$NOTE_ID" FROM_J="$FROM" TITLE_J="$TITLE" PREVIEW_J="$PREVIEW" \
+        PLAN_J="$plan_text" PENDING_J="$pending_file" \
+    python3 <<'PY' 2>>"$LOG_FILE"
+import json, os, time
+data = {
+    'note_id': int(os.environ['NOTE_ID_J']),
+    'from': os.environ['FROM_J'],
+    'title': os.environ['TITLE_J'],
+    'preview': os.environ['PREVIEW_J'],
+    'plan': os.environ['PLAN_J'],
+    'created_at': int(time.time()),
+    'status': 'pending'
+}
+with open(os.environ['PENDING_J'], 'w') as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+PY
+    log "pending plan written: $pending_file"
+
+    set +e
+    bash /opt/linux-ai-server/automation/telegram-alert.sh \
+        --kind plan_pending \
+        --note-id "$NOTE_ID" \
+        --from "$FROM" \
+        --title "$TITLE" \
+        --plan "$plan_text" \
+        >> "$LOG_FILE" 2>&1
+    local push_rc=$?
+    set -e
+    local push_status="sent"
+    [ "$push_rc" -ne 0 ] && push_status="FAILED (rc=$push_rc)"
+    log "plan_pending telegram push: $push_status"
+
+    NOTE_ID_M="$NOTE_ID" FROM_M="$FROM" TITLE_M="$TITLE" PLAN_M="$plan_text" \
+        PUSH_M="$push_status" PENDING_M="$pending_file" \
+    python3 <<'PY' 2>>"$LOG_FILE"
+import json, os, urllib.request
+key = open(os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')).read()
+key = [l.split('=',1)[1].strip() for l in key.splitlines() if l.startswith('MEMORY_API_KEY=')][0]
+body = json.dumps({
+    'type': 'project',
+    'name': f"plan-pending-{os.environ['NOTE_ID_M']}",
+    'description': f"Plan onayi bekliyor — note #{os.environ['NOTE_ID_M']} ({os.environ['FROM_M']}: {os.environ['TITLE_M'][:80]})",
+    'content': f"PLANNING_MODE — note #{os.environ['NOTE_ID_M']} icin plan uretildi, execute kullanici onayina kaldi.\n\nTelegram push: {os.environ['PUSH_M']}\n\nPlan:\n{os.environ['PLAN_M']}\n\nOnay: bash /opt/linux-ai-server/automation/execute-approved-plan.sh {os.environ['NOTE_ID_M']}\nRed: bash /opt/linux-ai-server/automation/execute-approved-plan.sh {os.environ['NOTE_ID_M']} reject\n\nPending file: {os.environ['PENDING_M']}",
+    'source_device': 'klipper-autonomous',
+    'rationale': 'PLANNING_MODE — plan uretildi, execute kullanici onayina bagli'
+}, ensure_ascii=False).encode('utf-8')
+req = urllib.request.Request('http://127.0.0.1:8420/api/v1/memory/memories',
+    data=body, method='POST',
+    headers={'Content-Type':'application/json; charset=utf-8','X-Memory-Key':key})
+try:
+    urllib.request.urlopen(req, timeout=5).read()
+except Exception as e:
+    print(f'memory write error: {e}')
+PY
+
+    return 0
+}
+
 handle_actionable() {
+    # Planning Mode (opt-in): execute oncesi plan onayi. Bypass set ise resume yolu.
+    if [ "$PLANNING_MODE" = "1" ] && [ "$AUTONOMOUS_BYPASS_CLASSIFY" != "1" ]; then
+        planning_mode_handler
+        return
+    fi
     log "ACTIONABLE route #$NOTE_ID — spawn Claude (Max plan, $MODEL, allowlist)"
     date +%s > "$THROTTLE_FILE"
 
