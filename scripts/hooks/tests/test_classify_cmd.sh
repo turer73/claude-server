@@ -60,6 +60,9 @@ assert_class "FP5  cat grep playwright"            "cat package.json | grep play
 
 printf '\n=== %d pass / %d fail (14 toplam) ===\n' "$PASS" "$FAIL"
 
+# Pytest-uyumlu satir — run-all-tests.sh parser'i icin (regex: [0-9]+ passed, [0-9]+ failed)
+printf '%d passed, %d failed\n' "$PASS" "$FAIL"
+
 if [ "$FAIL" -gt 0 ]; then
     printf '\nFailures:\n'
     for f in "${FAILURES[@]}"; do printf '  - %s\n' "$f"; done

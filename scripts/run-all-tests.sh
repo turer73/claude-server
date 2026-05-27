@@ -316,6 +316,10 @@ run_project "linux-ai-server" \
   "/opt/linux-ai-server" \
   "source /opt/linux-ai-server/venv/bin/activate && python -m pytest tests/ -x -q --tb=line 2>&1"
 
+run_project "linux-ai-server-hooks" \
+  "/opt/linux-ai-server" \
+  "bash scripts/hooks/tests/test_classify_cmd.sh 2>&1"
+
 run_project "panola" \
   "/data/projects/panola" \
   "npx vitest run 2>&1"
