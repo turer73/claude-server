@@ -23,14 +23,28 @@ class MonitorAgent:
         except (OSError, AttributeError):
             load = [0.0, 0.0, 0.0]
 
+        # Temperature: gercek CPU sensor sec. Onceki versiyon ilk chip'i (acpitz =
+        # motherboard ACPI, idle 20°C sabit) okuyordu, 5+ aydir tum CPU temp
+        # alarm'lari yutuyordu. Klipper Ryzen 7 → k10temp (Tctl) gercek CPU.
+        # 2026-05-27 fix: chip oncelik listesi.
         temp = None
+        _CPU_TEMP_CHIPS = ("k10temp", "coretemp", "cpu_thermal", "zenpower")
         try:
             temps = psutil.sensors_temperatures()
             if temps:
-                for name, entries in temps.items():
-                    if entries:
-                        temp = entries[0].current
+                # 1) Gercek CPU sensor (vendor-spesifik)
+                for chip in _CPU_TEMP_CHIPS:
+                    if chip in temps and temps[chip]:
+                        temp = temps[chip][0].current
                         break
+                # 2) Fallback: acpitz haric ilk anlamli sensor
+                if temp is None:
+                    for name, entries in temps.items():
+                        if name == "acpitz":
+                            continue
+                        if entries and entries[0].current and entries[0].current > 25:
+                            temp = entries[0].current
+                            break
         except (AttributeError, RuntimeError):
             pass
 
