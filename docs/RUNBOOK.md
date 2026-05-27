@@ -54,8 +54,16 @@ sed -i 's/^T_CPU=.*/T_CPU=95/' /opt/linux-ai-server/automation/alert-check.sh
 ```
 
 **Senaryo: TEMP yüksek (CPU k10temp 80°C+)**
+
+⚠️ **ÖNCE YAZILIM denetle, DONANIM ŞÜPHESİ EN SON.** Klipper idle temp 35-45°C (k10temp), 80°C+ sustained = process saturate, donanım çok nadiren. 2026-05-27 incident'i: 11h zombie ugrep `/` scan 84°C'ye çıkardı.
+
 ```bash
-# Gerçek tüm sensorler
+# 1) ZOMBI PROCESS KONTROL (en sik sebep)
+ps -eo pid,user,%cpu,etime,cmd --sort=-%cpu | head -10
+# %100+ CPU + uzun etime = zombi. Kill -9 ile öldür.
+# Özellikle dikkat: grep -r / find / sort / xz multi-thread paralelize ederse
+
+# 2) Tüm sensorler (yazılım sebep değilse)
 for h in /sys/class/hwmon/hwmon*; do
     name=$(cat "$h/name" 2>/dev/null)
     for t in "$h"/temp*_input; do
@@ -64,11 +72,14 @@ for h in /sys/class/hwmon/hwmon*; do
     done
 done | grep -v ': 0°C'
 
-# Throttling olmuş mu?
+# 3) Throttling olmuş mu?
 dmesg --since '1 hour ago' | grep -i 'thermal\|throttle'
+sudo turbostat --quiet --num_iterations 1 --interval 1 | head -3
 
-# Çözüm: cooling (fiziksel) — toz temizlik, termal pasta, fan profile
-# Acil: yüksek CPU işleri durdur (test-runner, otonom spawn)
+# 4) Donanım şüphesi (yukarıdaki 3 adım temizse):
+#    - Idle %5 CPU ama temp 70°C+ = cooling problemi (toz/pasta/fan)
+#    - Throttle event var = thermal sınır + cooling yetersiz
+#    - Beelink SER8 fan BIOS-only kontrol, host'tan PWM ayarlayamazsın
 ```
 
 **Senaryo: DISK doldu (>90%)**
