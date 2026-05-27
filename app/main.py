@@ -39,6 +39,7 @@ from app.api.projects import router as projects_router
 from app.api.prometheus import router as prometheus_router
 from app.api.rag import router as rag_router
 from app.api.research import router as research_router
+from app.api.security import router as security_router
 from app.api.shell import router as shell_router
 from app.api.social import router as social_router
 from app.api.ssh import router as ssh_router
@@ -226,6 +227,7 @@ def create_app() -> FastAPI:
     app.include_router(csp_router)
     app.include_router(ci_router)
     app.include_router(digest_router)
+    app.include_router(security_router)
 
     @app.get("/ready")
     async def ready() -> dict:
