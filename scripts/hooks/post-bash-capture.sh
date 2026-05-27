@@ -69,10 +69,12 @@ if printf '%s' "$CMD" | grep -qiE '(pytest|npm[[:space:]]+(test|run[[:space:]]+t
     *" tsc "*|*" tsc"|"tsc "*|"tsc")                                                           CLASS="tsc" ;;
     *" ruff "*|*" ruff"|"ruff "*|"ruff")                                                       CLASS="ruff" ;;
     *" mypy "*|*" mypy"|"mypy "*|"mypy")                                                       CLASS="mypy" ;;
-    *vitest*)                                                                                  CLASS="vitest" ;;
-    *jest*)                                                                                    CLASS="jest" ;;
-    *playwright*)                                                                              CLASS="playwright" ;;
-    *eslint*)                                                                                  CLASS="eslint" ;;
+    # Executor+tool kombinasyonu — salt 'grep playwright', 'docker images | grep vitest'
+    # gibi sorgu komutlarini hatali sekilde test runner zannetmemek icin (bug #485, #499 vakasi).
+    *"npx vitest"*|*"pnpm vitest"*|*"pnpm exec vitest"*|*"yarn vitest"*|*"vitest run"*)        CLASS="vitest" ;;
+    *"npx jest"*|*"pnpm jest"*|*"pnpm exec jest"*|*"yarn jest"*|*"jest --"*|*"jest "*)         CLASS="jest" ;;
+    *"npx playwright"*|*"pnpm playwright"*|*"pnpm exec playwright"*|*"yarn playwright"*|*"playwright test"*|*"playwright install"*)  CLASS="playwright" ;;
+    *"npx eslint"*|*"pnpm eslint"*|*"pnpm exec eslint"*|*"yarn eslint"*|*"eslint --"*|*"eslint ."*|*"eslint src"*) CLASS="eslint" ;;
     *"cargo test"*|*"cargo build"*|*"cargo check"*)                                            CLASS="cargo" ;;
     *"go test"*|*"go build"*)                                                                  CLASS="go" ;;
     *"make test"*|*"make check"*|*"make build"*)                                               CLASS="make" ;;
