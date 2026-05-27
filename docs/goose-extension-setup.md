@@ -1,8 +1,16 @@
-# Goose Self-Pentest Extension — Setup
+# Goose Self-Pentest Extension — Setup (Klipper deployment)
 
 This extension lets Goose drive the Klipper self-pentest workflow over MCP.
-The MCP server lives at `app/mcp/goose_pentest_server.py`; it speaks
-`stdio` and proxies six tools to Klipper's FastAPI.
+The MCP server at `app/mcp/goose_pentest_server.py` is the **Klipper-
+specific** flavour: it talks directly to `/api/v1/security/pentest/*` and
+`/api/v1/memory/discoveries`, and uses `MEMORY_API_KEY` (the same secret
+that already protects the memory router).
+
+> **For non-Klipper deployments,** use the generic, OSS-ready package at
+> [`extensions/goose-pentest-mcp/`](../extensions/goose-pentest-mcp/) — same
+> six tools, but against a documented public contract
+> (`BACKEND_CONTRACT.md`) with neutral env-var names
+> (`PENTEST_API_BASE`, `PENTEST_API_KEY`).
 
 > See [`goose-self-pentest-extension-plan.md`](goose-self-pentest-extension-plan.md)
 > for the design plan, and the Phase-1 correction memo for the risks this
