@@ -97,3 +97,32 @@ class SessionRead(BaseModel):
     summary: str
     metadata: dict[str, Any] | None
     created_at: str
+
+
+# ----- search -----
+
+class SearchMemoryHit(BaseModel):
+    id: int
+    type: MemoryType
+    name: str
+    description: str
+    snippet: str
+
+
+class SearchSessionHit(BaseModel):
+    id: int
+    date: str
+    device_name: str | None
+    project: str | None
+    snippet: str
+
+
+class SearchResults(BaseModel):
+    memories: list[SearchMemoryHit]
+    sessions: list[SearchSessionHit]
+
+
+class SearchResponse(BaseModel):
+    query: str
+    total: int
+    results: SearchResults

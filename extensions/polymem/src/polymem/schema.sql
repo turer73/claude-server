@@ -1,5 +1,5 @@
 -- polymem schema (V1) — SQLite
--- Four tables, no FTS index here (created lazily on first /search call).
+-- Four tables + FTS5 virtual tables with triggers (bootstrap also runs rebuild for safety).
 
 CREATE TABLE IF NOT EXISTS memories (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,3 +57,51 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_device ON sessions(device_name);
 CREATE INDEX IF NOT EXISTS idx_sessions_date   ON sessions(date);
+
+-- ----- FTS5 (contentless, external-content style) -----
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    name, description, content,
+    content='memories', content_rowid='id',
+    tokenize='unicode61 remove_diacritics 2'
+);
+
+CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+    INSERT INTO memories_fts(rowid, name, description, content)
+    VALUES (new.id, new.name, new.description, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, name, description, content)
+    VALUES('delete', old.id, old.name, old.description, old.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, name, description, content)
+    VALUES('delete', old.id, old.name, old.description, old.content);
+    INSERT INTO memories_fts(rowid, name, description, content)
+    VALUES (new.id, new.name, new.description, new.content);
+END;
+
+CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
+    summary, project,
+    content='sessions', content_rowid='id',
+    tokenize='unicode61 remove_diacritics 2'
+);
+
+CREATE TRIGGER IF NOT EXISTS sessions_ai AFTER INSERT ON sessions BEGIN
+    INSERT INTO sessions_fts(rowid, summary, project)
+    VALUES (new.id, new.summary, COALESCE(new.project, ''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS sessions_ad AFTER DELETE ON sessions BEGIN
+    INSERT INTO sessions_fts(sessions_fts, rowid, summary, project)
+    VALUES('delete', old.id, old.summary, COALESCE(old.project, ''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE ON sessions BEGIN
+    INSERT INTO sessions_fts(sessions_fts, rowid, summary, project)
+    VALUES('delete', old.id, old.summary, COALESCE(old.project, ''));
+    INSERT INTO sessions_fts(rowid, summary, project)
+    VALUES (new.id, new.summary, COALESCE(new.project, ''));
+END;
