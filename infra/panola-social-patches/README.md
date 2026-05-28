@@ -10,7 +10,7 @@ PSOC-20260528-MASTER (2026-05-28) → V2 düzeltme (Note #99557, 2026-05-28).
 | # | Görev | Durum | Konum |
 |---|-------|-------|-------|
 | v2-01 | quality_rules SQL — VPS şema düzeltmesi | ✅ **DEPLOYED 2026-05-28 16:04** | `sql/quality_rules_v2.sql` (orijinal); deploy edilen düzeltilmiş sürüm `/tmp/quality_rules_v2_safe.sql` |
-| v2-02 | product_knowledge kuafor enjeksiyonu | ✅ Hazır (deploy edilebilir) — 26 kayıt, 4 kategori (tone/content_rules/limitations/topics) | `sql/product_knowledge_kuafor_v2.sql` |
+| v2-02 | product_knowledge kuafor enjeksiyonu | ✅ **DEPLOYED 2026-05-28 17:04** — 37→63 satır, +26 yeni (tone+5, content_rules+6, limitations+5, topics+10) | `sql/product_knowledge_kuafor_v2.sql` |
 | v2-03 | retry_backoff.py entegrasyon noktası | ⏳ VPS keşfi sonrası (v2-04 bağımlı) | `patches/retry_backoff.py` |
 | v2-04 | VPS keşif retry (5 eksik komut) | 🚫 Defer — otonom mod vps-run.sh yasak | — |
 | v2-05 | /api/health endpoint | ⏳ v2-04 sonrası (webhook path pending) | `patches/health_endpoint.py` |
@@ -43,6 +43,16 @@ V2-01 deploy yapıldı (2026-05-28 16:04, klipper interactive):
 - Backup: `/opt/panola-social/data/social.db.bak-pre-v201-20260528-160411`
 - Apply: rc=0, 39 toplam satır (25 content + 14 yeni format kuralları).
 - Surer'a görev sonucu: #99562 (içerikte backtick eval kayıpları var, düzeltme not gerekebilir).
+
+V2-02 deploy yapıldı (2026-05-28 17:04, klipper interactive):
+- Sanity check: dosya surer'in #99560 inline içeriğiyle birebir eşleşti
+  (trailing newline farkı dışında). Klipper-auto kopyala-yapıştır doğru.
+- Backup: `/opt/panola-social/data/social.db.bak-pre-v202-20260528-170403`
+- Apply: rc=0. SQL kendi `BEFORE/AFTER` raporu bastı.
+- Sonuç: kuafor product_knowledge 37→63 satır. +26 yeni (tone+5,
+  content_rules+6, limitations+5, topics+10). Mevcut tone 3 key (genel,
+  ornek_hooklar, yasak_ton) UNIQUE constraint'te çakışmadı, korundu.
+- Surer'a görev sonucu: #99565.
 
 **Klipper automation/ yazma izni yok** — cron scriptler burada.
 Deploy adımları aşağıda.
