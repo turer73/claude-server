@@ -9,6 +9,7 @@ from polymem.auth import make_auth_dependency
 from polymem.db import bootstrap_schema
 from polymem.routes.devices import build_router as build_devices_router
 from polymem.routes.memories import build_router as build_memories_router
+from polymem.routes.sessions import build_router as build_sessions_router
 
 
 def create_router(
@@ -33,7 +34,7 @@ def create_router(
     parent = APIRouter()
     parent.include_router(build_memories_router(db_path, auth_dep))
     parent.include_router(build_devices_router(db_path, auth_dep))
-    # Slice 2 remaining: sessions
+    parent.include_router(build_sessions_router(db_path, auth_dep))
     # Slice 3: search, alembic-driven migrations
     return parent
 

@@ -1,7 +1,7 @@
 """Pydantic v2 models."""
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -77,3 +77,23 @@ class DeviceProjectRead(BaseModel):
     project: str
     local_path: str | None
     last_activity: str
+
+
+# ----- sessions -----
+
+class SessionCreate(BaseModel):
+    summary: str = Field(min_length=1)
+    device_name: str | None = None
+    project: str | None = None
+    date: str | None = None  # ISO YYYY-MM-DD; defaults to today at DB level
+    metadata: dict[str, Any] | None = None
+
+
+class SessionRead(BaseModel):
+    id: int
+    device_name: str | None
+    project: str | None
+    date: str
+    summary: str
+    metadata: dict[str, Any] | None
+    created_at: str
