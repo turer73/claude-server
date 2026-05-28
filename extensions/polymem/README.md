@@ -7,10 +7,10 @@ typed memories (`user` / `feedback` / `project` / `reference`), the device
 they came from, and the projects each device works on. SQLite by default;
 no infrastructure to stand up.
 
-> **Status: v0.1.0 — Slice 1 (memories CRUD).**
-> Slices 2 (devices + sessions) and 3 (FTS5 search + alembic migrations) land
-> ahead of v0.2.0. The public surface for the memories endpoints is stable
-> as documented below.
+> **Status: v0.1.0.**
+> Memories CRUD, devices + device_projects, sessions (append-only log),
+> and FTS5 search across memories + sessions are all in. 63 tests.
+> Alembic migrations and an MCP client variant are on the v0.2+ shortlist.
 
 ## Why another memory library?
 
@@ -90,11 +90,56 @@ All requests carry `X-Memory-Key: <api_key>` unless auth is disabled.
 
 `MemoryUpdate` is `description`, `content`, `rationale`, `active` — all optional, any subset.
 
+### Devices + projects (`/devices`)
+
+| Verb | Path | Notes |
+| --- | --- | --- |
+| GET | `/devices` | most recently seen first |
+| GET | `/devices/{name}` | 404 if missing |
+| POST | `/devices` | upsert by `name`; refreshes `last_seen` on conflict |
+| POST | `/devices/{name}/ping` | bumps `last_seen` only |
+| DELETE | `/devices/{name}` | hard delete |
+| GET | `/devices/{name}/projects` | list projects a device is working on |
+| POST | `/devices/{name}/projects` | upsert by `(device, project)` |
+| DELETE | `/devices/{name}/projects/{project}` | hard delete |
+
+`DeviceRegister` requires `name` + `platform`; optional `hostname`, `ip`,
+`mesh_ip` (Tailscale / Nebula / Headscale / …), `os_version`,
+`client_version`, `notes`. `mesh_ip` is deliberately generic — pick your
+own overlay network.
+
+### Sessions (`/sessions`)
+
+| Verb | Path | Notes |
+| --- | --- | --- |
+| GET | `/sessions?device=&project=&date_from=&date_to=&limit=` | date-desc |
+| GET | `/sessions/{id}` | 404 if missing |
+| POST | `/sessions` | append-only log entry |
+| DELETE | `/sessions/{id}` | hard delete (no soft state for logs) |
+
+`SessionCreate` requires `summary`; everything else is optional. `metadata`
+is a free-form `dict` — serialised as JSON in the DB, returned parsed.
+`date` defaults to today (ISO `YYYY-MM-DD`).
+
+### Search (`/search`)
+
+| Verb | Path | Notes |
+| --- | --- | --- |
+| GET | `/search?q=&limit=` | FTS5, BM25 ranked, snippet highlighted with `<b>…</b>` |
+
+Each input token becomes a prefix match (`tok*`) and is quoted, so
+punctuation in the query is safe to pass through. Returns
+`{"query", "total", "results": {"memories": [...], "sessions": [...]}}`.
+Soft-deleted memories are excluded; sessions reflect deletes/updates via
+SQLite triggers on the underlying tables.
+
 ### Schema
 
 See [`src/polymem/schema.sql`](src/polymem/schema.sql) for the four tables
-(`memories`, `devices`, `device_projects`, `sessions`). `bootstrap_schema()`
-runs idempotently at startup; alembic migrations land in v0.2.0.
+(`memories`, `devices`, `device_projects`, `sessions`) plus the two
+FTS5 virtual tables. `bootstrap_schema()` runs idempotently at startup —
+also rebuilds the FTS indexes so a DB that pre-dates FTS becomes
+searchable on first boot. Alembic-driven migrations are planned for v0.2+.
 
 ## Blast radius
 
@@ -111,9 +156,9 @@ applies to that combined surface. Choose deliberately.
 | Slice | Scope | Status |
 | --- | --- | --- |
 | 1 | memories CRUD, auth, SQLite bootstrap | ✅ v0.1.0 |
-| 2 | devices, device_projects, sessions | ⏳ v0.2.0 |
-| 3 | FTS5 search, alembic migrations | ⏳ v0.2.0 |
-| later | MCP client (Goose / Claude Code), Postgres backend, Letta adapter | unscheduled |
+| 2 | devices, device_projects, sessions | ✅ v0.1.0 |
+| 3 | FTS5 search | ✅ v0.1.0 |
+| later | alembic migrations, MCP client (Goose / Claude Code), Postgres backend, Letta adapter | unscheduled |
 
 ## License
 
