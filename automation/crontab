@@ -35,3 +35,5 @@
 0 */4 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh autonomous-health /opt/linux-ai-server/automation/autonomous-health-check.sh
 # Otonom mod DLQ retry (her 15 dakika) — spawn_failures pending_retry'lari yeniden dene; 3x fail -> poison + Telegram
 */15 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh autonomous-retry /opt/linux-ai-server/automation/autonomous-spawn-retry.sh
+# Renderhane bakiye uyarisi (panola-social VPS /api/health proxy, saatlik) — v2-06 PSOC-20260528
+0 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh renderhane-balance /opt/linux-ai-server/automation/social-renderhane-balance-alert.sh

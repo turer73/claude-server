@@ -14,8 +14,8 @@ PSOC-20260528-MASTER (2026-05-28) → V2 düzeltme (Note #99557, 2026-05-28).
 | v2-03 | retry_backoff.py entegrasyon noktası | ⏳ VPS keşfi sonrası (v2-04 bağımlı) | `patches/retry_backoff.py` |
 | v2-04 | VPS keşif retry (5 eksik komut) | 🚫 Defer — otonom mod vps-run.sh yasak | — |
 | v2-05 | /api/health endpoint | ⏳ v2-04 sonrası (webhook path pending) | `patches/health_endpoint.py` |
-| v2-06 | Renderhane kredi alert cron | ✅ Hazır (klipper local) | `cron/social-renderhane-credit-alert.sh` |
-| v2-07 | IG token script çakışma çözümü | 🚫 Defer — VPS token-refresh.sh içeriği görülmeli | `cron/social-ig-token-refresh.sh` |
+| v2-06 | Renderhane bakiye alert cron | ✅ **DEPLOYED 2026-05-28** (klipper local) — script `automation/social-renderhane-balance-alert.sh` (yeni isim; klipper-auto'nun yanlış-scope `cron/social-renderhane-credit-alert.sh` Anthropic monitor stale) | repo: `automation/social-renderhane-balance-alert.sh` |
+| v2-07 | IG token webhook | ✅ **DEPLOYED 2026-05-28** — VPS `token-refresh.sh` modified + klipper notes webhook + key rotate (incident closed) | VPS path; v1 backup `.bak-pre-v207-...` |
 
 ### V1 STALE Geçmişi
 

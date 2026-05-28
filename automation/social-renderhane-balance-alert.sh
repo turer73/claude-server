@@ -1,0 +1,73 @@
+#!/bin/bash
+# Renderhane bakiye uyarisi (panola-social VPS /api/health proxy).
+# v2-06 PSOC-20260528 (surer #99575). Cron: 0 * * * * (saatlik).
+# Bakiye threshold altina duserse Telegram alert; cooldown spam'i onler.
+#
+# .env gereksinimi:
+#   RENDERHANE_BALANCE_THRESHOLD=200    (default 200 olur)
+#   RENDERHANE_BALANCE_COOLDOWN=6       (saat, default 6)
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (zaten mevcut)
+#
+# Cron entry (automation/crontab):
+#   0 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh renderhane-balance \
+#     /opt/linux-ai-server/automation/social-renderhane-balance-alert.sh
+
+source /opt/linux-ai-server/.env 2>/dev/null
+
+LOG=/var/log/linux-ai-server/social-renderhane-balance.log
+TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+URL="http://100.126.113.23:9800/api/health"   # VPS panola-social Tailscale node
+THRESHOLD=${RENDERHANE_BALANCE_THRESHOLD:-200}
+COOLDOWN_HOURS=${RENDERHANE_BALANCE_COOLDOWN:-6}
+STATE_DIR=/opt/linux-ai-server/data/hook-state
+STATE_FILE="$STATE_DIR/renderhane-balance-last-alert"
+
+mkdir -p "$STATE_DIR" "$(dirname "$LOG")"
+
+send_telegram() {
+    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        -d chat_id="${TELEGRAM_CHAT_ID}" \
+        -d parse_mode="Markdown" \
+        -d text="$1" >/dev/null 2>&1
+}
+
+RESPONSE=$(curl -s --max-time 10 "$URL" 2>/dev/null)
+if [ -z "$RESPONSE" ]; then
+    echo "[$TS] ERROR: VPS /api/health timeout/empty" >> "$LOG"
+    exit 1
+fi
+
+BALANCE=$(echo "$RESPONSE" | python3 -c '
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    print(d.get("renderhane_balance", -1))
+except Exception:
+    print(-1)
+' 2>/dev/null)
+
+if [ -z "$BALANCE" ] || [ "$BALANCE" = "-1" ]; then
+    echo "[$TS] PARSE ERROR: renderhane_balance missing in: $RESPONSE" >> "$LOG"
+    exit 1
+fi
+
+echo "[$TS] balance=$BALANCE threshold=$THRESHOLD" >> "$LOG"
+
+if [ "$BALANCE" -lt "$THRESHOLD" ]; then
+    NOW=$(date +%s)
+    LAST=0
+    [ -f "$STATE_FILE" ] && LAST=$(cat "$STATE_FILE")
+    COOLDOWN=$((COOLDOWN_HOURS * 3600))
+    if [ $((NOW - LAST)) -ge $COOLDOWN ]; then
+        send_telegram "💸 *Renderhane Bakiye Düşük*
+Panola-social Renderhane bakiyesi: \`$BALANCE\` kredi
+Eşik: \`$THRESHOLD\`
+Önlem: Renderhane hesabına kredi ekleyin
+\`$TS\`"
+        echo "$NOW" > "$STATE_FILE"
+        echo "[$TS] ALERT SENT (balance $BALANCE < $THRESHOLD)" >> "$LOG"
+    else
+        REMAIN=$(( (COOLDOWN - (NOW - LAST)) / 60 ))
+        echo "[$TS] SKIP: cooldown active (${REMAIN}m kaldi)" >> "$LOG"
+    fi
+fi
