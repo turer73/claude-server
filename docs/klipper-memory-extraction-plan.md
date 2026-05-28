@@ -1,10 +1,17 @@
-# Klipper-Memory Extraction — Phase 1 Plan
+# polymem — Phase 1 Plan
 
 **Tarih:** 2026-05-28
-**Durum:** Phase 1 (arastirma + plan) yaziliyor; Phase 2 (extraction) sonra.
+**Durum:** Phase 1 (arastirma + plan + naming) **DONE**; Phase 2 Slice 1 baslamak uzere.
 **Sahibi:** klipper
 **Bag:** [`app/api/memory.py`](../app/api/memory.py) (1343 satir, 20+ endpoint, 7 tablo)
         + [`docs/letta-multi-device-rfc.md`](letta-multi-device-rfc.md) referans tasarim.
+
+**Kararlar (Phase 1 sonu):**
+- Paket adi: **`polymem`** — PyPI/GitHub'da bos, Redis'in `agent-memory-server`
+  (resmi Redis paketi, 0.15.2) ile karismayan distinctive isim.
+- Maintainer handle: `KlipperOS` (Goose paketiyle tutarli, [[goose-publish-done-2026-05-28]]).
+- MVP scope: 4 tablo (memories, devices, device_projects, sessions), 6 endpoint set.
+- Schema migration: **alembic** V1'de (veri kaybi onlenir, FastAPI dunyasinda standard).
 
 ---
 
@@ -131,16 +138,16 @@ sessions). Bu kabul edilebilir bir V1.
 
 ---
 
-## 4. Acik kararlar (Phase 2 oncesi user gerek)
+## 4. Phase 1 sonu karar kayitlari
 
-1. **Paket adi.** Aday'lar: `agent-memory-server`, `multi-device-memory`,
-   `klipper-memory`, `polymem`. PyPI availability ayri kontrol gerekli.
-2. **Repo adi.** Tek-isim politika (PyPI name = repo name) Goose'da uygulandi.
-3. **Maintainer handle.** Goose'da `KlipperOS` kullandik. Devam mi?
-4. **PostgreSQL backend.** V1 SQLite-only; PG'yi V2'ye ertelersek
-   bu README'de net belirtilmeli.
-5. **Search backend.** FTS5 (SQLite built-in) kullanacagiz. Embedding-based
-   search (Letta'nin sundugu) **V1 disi**.
+1. **Paket adi: `polymem`.** Ilk aday `agent-memory-server` PyPI'de Redis
+   tarafindan alinmis (kontrol: `curl -sI pypi.org/pypi/agent-memory-server`
+   → HTTP 200). Naming overlap competitor sinyali yaratir; net farklilastirma
+   icin `polymem` (kisa, marka, multi+tier okumasi var) secildi.
+2. **Repo adi: `turer73/polymem`.** Tek-isim politikasi.
+3. **Maintainer handle: `KlipperOS`.** Devam.
+4. **PostgreSQL backend:** V2'ye erteli. V1 SQLite-only, README'de net.
+5. **Search backend:** FTS5. Embedding-based search V1 disi.
 
 ---
 
