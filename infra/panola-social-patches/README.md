@@ -9,8 +9,8 @@ PSOC-20260528-MASTER (2026-05-28) → V2 düzeltme (Note #99557, 2026-05-28).
 
 | # | Görev | Durum | Konum |
 |---|-------|-------|-------|
-| v2-01 | quality_rules SQL — VPS şema düzeltmesi | ✅ Hazır (deploy edilebilir) | `sql/quality_rules_v2.sql` |
-| v2-02 | product_knowledge kuafor enjeksiyonu | ⚠️ STALE (V3 bekliyor) — `category` NOT NULL eksik | `sql/product_knowledge_kuafor_v2.sql` |
+| v2-01 | quality_rules SQL — VPS şema düzeltmesi | ✅ **DEPLOYED 2026-05-28 16:04** | `sql/quality_rules_v2.sql` (orijinal); deploy edilen düzeltilmiş sürüm `/tmp/quality_rules_v2_safe.sql` |
+| v2-02 | product_knowledge kuafor enjeksiyonu | ✅ Hazır (deploy edilebilir) — 26 kayıt, 4 kategori (tone/content_rules/limitations/topics) | `sql/product_knowledge_kuafor_v2.sql` |
 | v2-03 | retry_backoff.py entegrasyon noktası | ⏳ VPS keşfi sonrası (v2-04 bağımlı) | `patches/retry_backoff.py` |
 | v2-04 | VPS keşif retry (5 eksik komut) | 🚫 Defer — otonom mod vps-run.sh yasak | — |
 | v2-05 | /api/health endpoint | ⏳ v2-04 sonrası (webhook path pending) | `patches/health_endpoint.py` |
@@ -29,11 +29,20 @@ V2 düzeltmeleri (Note #99557, surer keşif raporu #99555 sonrası):
 - Kuafor template yerine: product_knowledge tablosuna tone+content_rules+topics enjeksiyonu
 - retry_backoff deploy: src/utils/ yeni alt-dizin — entegrasyon noktası (hangi modül?) v2-04 sonrası netleşecek
 
-V2-02 hâlâ stale (klipper interactive ikinci sanity-check, Note #99559):
-- VPS gerçek `product_knowledge` schema'da `category TEXT NOT NULL` var ve
-  UNIQUE(product, category, key) tanımlı; klipper-auto V2 INSERT'lerinde
-  `category` field koyulmamış → çalıştırılırsa NOT NULL constraint hatası.
-- Surer'dan V3 (kuafor için category değerleri eklenmiş INSERT'ler) bekleniyor.
+V2-02 düzeltildi (Note #99560, surer tam içerik gönderdi):
+- Klipper-auto'nun yazdığı sürüm `category` field'ini atlamıştı (SCP fail → tahminle yazılmıştı).
+- Surer'ın gerçek dosyası: UNIQUE(product, category, key) schema + 26 INSERT, 4 kategori.
+- `sql/product_knowledge_kuafor_v2.sql` artık doğru ve deploy edilebilir.
+
+V2-01 deploy yapıldı (2026-05-28 16:04, klipper interactive):
+- Risk tespit: orijinal `quality_rules_v2.sql` `INSERT OR REPLACE` + explicit id 1-31
+  ile mevcut 25 production satırın 13'ünü silerdi (id 1-6 + 11-15 + 21-22 çakışma).
+- Düzeltme: SQL düzenlendi → `INSERT` (auto-inc), explicit id'ler kaldırıldı.
+  Düzeltilmiş sürüm `/tmp/quality_rules_v2_safe.sql`, orijinal repo'da kanıt
+  olarak duruyor.
+- Backup: `/opt/panola-social/data/social.db.bak-pre-v201-20260528-160411`
+- Apply: rc=0, 39 toplam satır (25 content + 14 yeni format kuralları).
+- Surer'a görev sonucu: #99562 (içerikte backtick eval kayıpları var, düzeltme not gerekebilir).
 
 **Klipper automation/ yazma izni yok** — cron scriptler burada.
 Deploy adımları aşağıda.
