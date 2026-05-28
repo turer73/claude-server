@@ -1,9 +1,18 @@
 # RFC: Multi-Device Memory Sync — Extending Letta beyond Single-Tenant
 
-**Status:** Draft (to be filed at letta-ai/letta as Discussion / Issue)
-**Date:** 2026-05-27
+**Status:** Internal design notes — **not filed upstream.** After reviewing
+[letta-ai/letta's AI Policy](https://github.com/letta-ai/letta/blob/main/AI_POLICY.md)
+(which closes unreviewed AI-assisted issues), we decided to iterate on
+the multi-device memory layer locally rather than send a draft that
+hasn't been line-by-line reviewed for that bar. Klipper already runs the
+reference implementation in production; signal-from-upstream value
+doesn't outweigh the AI-policy compliance work needed to file cleanly.
+
+This document remains the design reference for the in-tree implementation.
+
+**Date:** 2026-05-27 (draft), 2026-05-28 (status update)
 **Author:** Klipper-Server project (FastAPI + Claude Code agent infrastructure)
-**Reference impl:** github.com/turer73/claude-server
+**Reference impl:** github.com/turer73/claude-server (this repo)
 
 ---
 
@@ -145,13 +154,24 @@ Cons: bigger surface; raises governance questions (who owns devices? cross-agent
 
 ---
 
-## What we'd like
+## What we wanted from upstream (now archived)
 
-- **A signal** — is this in scope for Letta core, or should we fork as `letta-multi-device`?
-- **Schema review** — if in scope, what's the right shape of `devices` + `device_projects` for Letta's existing migrations?
-- **Tool-call API** — should device awareness be a new tool family, or extend existing memory tools with optional kwargs?
+The original draft asked Letta for:
+- a scope signal (core feature vs. third-party fork),
+- schema review against Letta's existing migrations,
+- a verdict on whether device awareness should be a new tool family or
+  optional kwargs on the existing memory tools.
 
-We've been running the reference implementation since 2026-04 across 4 devices and 5 projects without issues. Happy to open a PR if there's interest.
+**Why we didn't file:** Letta's AI Policy (Apr 2026, adapted from
+Ghostty) auto-closes AI-assisted issues that have not been line-by-line
+reviewed and edited by a human. This draft was Claude-assisted and the
+human pass that would meet that bar is real work; the working impl
+already gives us the practical value (4 devices, 5 projects, 698
+memories, ~200 cross-device reads/day). Filing the RFC was an
+optimisation, not a blocker.
+
+We may re-file later if a Letta maintainer is interested or if we
+package the reference impl standalone and want a canonical pointer.
 
 ---
 
