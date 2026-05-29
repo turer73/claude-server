@@ -1,0 +1,26 @@
+[Unit]
+Description=Blender Render Farm Daemon (panola-social görsel üretim)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=klipperos
+Group=klipperos
+WorkingDirectory=/opt/blender-render-farm
+EnvironmentFile=-/etc/default/blender-render-daemon
+ExecStart=/opt/blender-render-farm/venv/bin/uvicorn render_daemon:app --host 0.0.0.0 --port 9810 --workers 1
+Restart=on-failure
+RestartSec=10
+KillMode=mixed
+TimeoutStopSec=15
+StandardOutput=append:/var/log/blender-render-daemon.log
+StandardError=append:/var/log/blender-render-daemon.log
+
+# Render iş yükü için CPU/IO öncelik
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=5
+
+[Install]
+WantedBy=multi-user.target

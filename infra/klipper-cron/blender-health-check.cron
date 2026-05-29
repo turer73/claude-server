@@ -1,0 +1,6 @@
+# KLIPPER-20260529-02: Blender render daemon health check cron
+# Deploy: sudo cp infra/klipper-cron/blender-health-check.cron /etc/cron.d/blender-health-check
+# Endpoint test (2026-05-29): curl localhost:9810/health -> {"status":"ok","blender_exists":true,...} HTTP 200 OK
+
+# Her 5 dakikada blender daemon health kontrolu
+*/5 * * * * klipperos curl -fsS http://localhost:9810/health > /dev/null || logger -t blender-health 'DAEMON DOWN'
