@@ -105,14 +105,36 @@ scripts/vps-run.sh "grep -c 'timeout=300\|timeout=600' /opt/panola-social/webhoo
 
 | # | Görev | Durum | Konum |
 |---|-------|-------|-------|
-| 04-adapter | `adapter/` paketi (base + telegram FULL + whatsapp SKELETON) | ⏸️ **STAGED — deploy bekliyor** | `adapter/` |
-| 04-migration | `channel_configs` + `channel_publishes` tabloları | ⏸️ STAGED | `sql/001_channel_configs.sql` |
-| 04-tests | `test_telegram.py` (smoke + mocked) | ⏸️ STAGED | `tests/test_telegram.py` |
-| 04-health-wire | `health_endpoint.py` channels block | ⏸️ STAGED (engine.py wire surer dokümanında) | `patches/health_endpoint.py` |
+| 04-adapter | `adapter/` paketi (base + telegram FULL + whatsapp SKELETON) | ✅ **Phase A DEPLOYED 2026-05-29 ~13:30** | VPS `/opt/panola-social/adapter/` |
+| 04-migration | `channel_configs` + `channel_publishes` tabloları | ✅ **Phase A DEPLOYED 2026-05-29** — 3 tablo (channel_configs/channel_publishes/whatsapp_contacts) + 5 seed enabled=0 | `sql/001_channel_configs.sql` |
+| 04-tests | `test_telegram.py` (smoke + mocked) | ✅ **Phase A DEPLOYED 2026-05-29** — SCP edildi | VPS `/opt/panola-social/tests/test_telegram.py` |
+| 04-publisher-wire | `publisher.py` fan-out + `_record_channel_publish` helper | ✅ **Phase B DEPLOYED 2026-05-29 17:56** — 163→209 satır, dormant safe, backup `.bak-pre-psoc04b-20260529-175643` | VPS `/opt/panola-social/src/publisher.py` |
+| 04-health-wire | `webhook_server.py` `/api/health` channels block additive | ✅ **Phase B DEPLOYED 2026-05-29 17:56** — 552→569 satır, mevcut keys aynen, backup `.bak-pre-psoc04b-20260529-175643` | VPS `/opt/panola-social/webhook_server.py` |
+| 04-fanout-test | `test_publish_fanout.py` (fan-out skip + health channels block) | ✅ **Phase B DEPLOYED 2026-05-29 17:56** — manuel smoke 2/2 PASS (venv pytest yok) | VPS `/opt/panola-social/tests/test_publish_fanout.py` |
 
-> **Risk notu:** PSOC-04 multi-channel publish path açar. `engine.py` wiring değişikliği gerekir (`docs/INTEGRATION.md` adım-adım). WhatsApp adapter dormant (skeleton), Telegram FULL.
-> Deploy önkoşulu: `TELEGRAM_BOT_TOKEN` env + `@BotFather` üzerinden bot + channel admin yetkisi.
-> Detay: `docs/INTEGRATION.md`.
+Phase B smoke kanıtı:
+```bash
+# /api/health channels block dormant:
+curl -s http://localhost:9800/api/health | python3 -m json.tool
+# -> "channels":{"telegram":{"status":"fail","reason":"no_token"},
+#                "whatsapp":{"status":"skeleton","implemented":false,...}}
+
+# DB state dormant:
+sqlite3 /opt/panola-social/data/social.db \
+  'SELECT COUNT(*) FROM channel_publishes; SELECT enabled, COUNT(*) FROM channel_configs GROUP BY enabled;'
+# -> 0
+# -> 0|5
+```
+
+Activation (kullanıcı eylemi, Faz 2 dışı):
+1. `@BotFather` /newbot → `TELEGRAM_BOT_TOKEN`
+2. `.env` ekle veya systemd `Environment=`
+3. `UPDATE channel_configs SET enabled=1, config_json='{"chat_id":"@kuafor_panola"}' WHERE product='kuafor' AND channel='telegram'`
+4. `systemctl restart panola-social-webhook`
+5. `/api/health` → `channels.telegram.status=ok`
+
+> **Risk notu:** Kod-side fan-out dormant. WhatsApp adapter skeleton (Meta Developer + template approval gerek).
+> Deploy önkoşulu (activation): `TELEGRAM_BOT_TOKEN` env + `@BotFather` üzerinden bot + channel admin yetkisi.
 
 ## PSOC-20260529-03: Blender Render Farm Wire (Renderhane fallback)
 
