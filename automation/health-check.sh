@@ -9,7 +9,7 @@ if [ -f /opt/linux-ai-server/.env ]; then
   set -a; source /opt/linux-ai-server/.env; set +a
 fi
 
-RESULT=$(curl -s --max-time 10 -X POST $API/api/v1/monitor/webhooks/trigger/health_check -H 'Content-Type: application/json')
+RESULT=$(curl -s --max-time 10 -X POST $API/api/v1/monitor/webhooks/trigger/health_check -H 'Content-Type: application/json' -H "X-API-Key: ${INTERNAL_API_KEY:-MISSING}")
 HEALTHY=$(echo $RESULT | python3 -c 'import sys,json; print(json.load(sys.stdin).get("healthy",False))' 2>/dev/null)
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -42,5 +42,6 @@ Servis yanıt vermiyor veya sağlıksız!
     # Webhook event
     curl -s -X POST $API/api/v1/monitor/webhooks/receive \
       -H 'Content-Type: application/json' \
+      -H "X-API-Key: ${INTERNAL_API_KEY:-MISSING}" \
       -d "{\"source\": \"health-check\", \"event\": \"alert\", \"data\": {\"healthy\": false, \"timestamp\": \"$TIMESTAMP\"}}" > /dev/null 2>&1
 fi
