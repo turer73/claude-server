@@ -39,6 +39,14 @@ def _check_db() -> dict:
         return {"ok": False, "error": str(exc)[:100]}
 
 
+def _check_channels() -> dict:
+    try:
+        from adapter import ADAPTER_REGISTRY
+        return {name: ad.health_check() for name, ad in ADAPTER_REGISTRY.items()}
+    except Exception as e:
+        return {"error": str(e)[:200]}
+
+
 def _build_response() -> tuple[int, dict]:
     db = _check_db()
     uptime = int(time.time() - _start_time)
@@ -47,6 +55,7 @@ def _build_response() -> tuple[int, dict]:
         "db": db,
         "uptime_seconds": uptime,
         "service": "panola-social",
+        "channels": _check_channels(),
     }
     status_code = 200 if db["ok"] else 503
     return status_code, payload
