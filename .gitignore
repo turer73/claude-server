@@ -21,9 +21,8 @@ build/
 *.pre-normalize-*
 *.pre-switchover.*
 *.log
-logs/e2e/
-logs/self-pentest/
-logs/nuclei/
+*.log.[0-9]*
+logs/
 *.bak.*
 *.archive-*
 .claude/
