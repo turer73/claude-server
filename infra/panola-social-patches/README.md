@@ -114,6 +114,38 @@ scripts/vps-run.sh "grep -c 'timeout=300\|timeout=600' /opt/panola-social/webhoo
 > Deploy önkoşulu: `TELEGRAM_BOT_TOKEN` env + `@BotFather` üzerinden bot + channel admin yetkisi.
 > Detay: `docs/INTEGRATION.md`.
 
+## PSOC-20260529-03: Blender Render Farm Wire (Renderhane fallback)
+
+| # | Görev | Durum | Konum |
+|---|-------|-------|-------|
+| 03-render-blob | Klipper SER8 `/render-blob` endpoint (binary webp stream) | ✅ **DEPLOYED 2026-05-29 16:57** — smoke 200/5314 byte/14.9s | `/opt/blender-render-farm/render_daemon.py` (klipper-local) |
+| 03-hybrid-fallback | VPS `hybrid_gen.py` `_blender_fallback_bg` helper + balance/exception branch replace | ✅ **DEPLOYED 2026-05-29 17:10** — 366 satır, md5 `4725e74654377901aa78f51e41347d9e`, backup `.bak-pre-psoc03-20260529-171004` | VPS `/opt/panola-social/src/hybrid_gen.py` |
+
+Cross-host akış (DOĞRULANDI):
+```
+VPS hybrid_gen._blender_fallback_bg(product_key)
+  -> Tailscale http://100.84.251.49:9810/render-blob
+  -> Klipper SER8 blender-render-daemon -> kuafor_salon.blend -> webp stream
+  -> VPS local /opt/panola-social/assets/hybrid/blender_bg_<product>.webp
+```
+
+Helper smoke (VPS-side, helper-only):
+```bash
+ssh root@100.126.113.23 "cd /opt/panola-social && venv/bin/python -c '
+import sys; sys.path.insert(0,\"/opt/panola-social\")
+from src.hybrid_gen import _blender_fallback_bg
+print(_blender_fallback_bg(\"kuafor\"))'"
+# -> Blender bg hazir: 5314 byte (14713ms)
+```
+
+Rollback:
+- Klipper: `/render-blob` endpoint sil + `systemctl restart blender-render-daemon` (mevcut `/render` etkilenmez)
+- VPS: `cp /opt/panola-social/src/hybrid_gen.py.bak-pre-psoc03-20260529-171004 /opt/panola-social/src/hybrid_gen.py && systemctl restart panola-social-webhook`
+
+> **4. sapma kayıt:** Surer #99633 spec'inde "Import L1-20: requests zaten var" hatalıydı — orijinal hybrid_gen.py L11-14'te yalnız `os/pathlib/datetime/PIL`. Patch öncesi discovery `import requests` eksikliğini yakaladı, eklendi.
+>
+> **Production tetik:** Helper smoke OK; canlı `generate_hybrid` akışı henüz Renderhane balance >= 4 path'inde (regresyon yok). Balance < 4 senaryosu doğal akışla tetiklendiğinde Blender devreye girer. Manuel izleme önerilir.
+
 ---
 
 ## Deploy: VPS Dosyaları
