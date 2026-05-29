@@ -57,6 +57,65 @@ V2-02 deploy yapıldı (2026-05-28 17:04, klipper interactive):
 **Klipper automation/ yazma izni yok** — cron scriptler burada.
 Deploy adımları aşağıda.
 
+## PSOC-20260529-02: reel_script V3 Template + Quality Rules
+
+| # | Görev | Durum | Konum |
+|---|-------|-------|-------|
+| v3-template | reel_script V3 prompt template + Y2 patch (MIN 700 byte) | ✅ **DEPLOYED 2026-05-29 07:52** — VPS reel_script.md 47→65 satır; backup `.v3.bak.20260529_y2` | `templates/kuafor/reel_script_v3.txt` |
+| v3-quality-rules | 5 yeni reel_script quality_rules | ✅ **DEPLOYED 2026-05-29 07:29** — 39→44 satır, id 40-44 (2 hard + 3 soft) | `sql/quality_rules_v3_reel_script.sql` |
+
+> **Schema notu:** Not #99597'deki SQL `(content_type, rule_key, penalty, active)` şemasını kullandı; VPS gerçek şema `(product, rule_type, rule, severity)`. Adapte edildi: `content_type='reel_script'` → rule JSON'unda marker, `penalty=999` → severity='hard', diğerleri 'soft'.
+>
+> **Önemli bulgu (note #99615):** quality_rules yalnızca post-generation scoring'de uygulanıyor (quality_gate.py L35), generation-time inject yok. Y2 patch (`MIN 700 byte ZORUNLU` template'in HARD bölümüne) bunu telafi etti; Y1 (`engine.py`/`hybrid_gen.py` generation-time inject) Faz 3'e ertelendi.
+>
+> **Smoke sonucu (note #99619):** kuafor 3/3 PASS (sektor_trendi 1247B, musteri_basari 882B, salon_yonetimi 896B). Rollback: `DELETE FROM quality_rules WHERE id IN (40,41,42,43,44);`
+
+Deploy (kullanıcı onayı gerekli — VPS):
+```bash
+# Template deploy (VPS dosyası: reel_script.md — Y2 patch dahil)
+scripts/vps-run.sh "cp /opt/panola-social/config/templates/prompts/reel_script.md /opt/panola-social/config/templates/prompts/reel_script.v3.bak.20260529_y2"
+cat infra/panola-social-patches/templates/kuafor/reel_script_v3.txt | \
+  scripts/vps-run.sh "cat > /opt/panola-social/config/templates/prompts/reel_script.md"
+
+# Quality rules SQL
+scripts/vps-run.sh "sqlite3 /opt/panola-social/data/social.db" \
+  < infra/panola-social-patches/sql/quality_rules_v3_reel_script.sql
+
+# Servis reload (cache temizle)
+scripts/vps-run.sh "systemctl restart panola-social"
+
+# Y2 Smoke test: kuafor pillar='salon_yonetimi' x3, hedef 3/3 byte >= 700
+# scripts/vps-run.sh "curl -s 'http://localhost:8080/api/generate' -d '{\"product\":\"kuafor\",\"pillar\":\"salon_yonetimi\",\"content_type\":\"reel_script\"}'" x3
+# DB kontrol: sqlite3 /opt/panola-social/data/social.db "SELECT id, byte_sayisi FROM contents WHERE content_type='reel_script' ORDER BY id DESC LIMIT 10"
+```
+
+## PSOC-20260529-01: webhook_server.py Timeout
+
+| # | Görev | Durum | Konum |
+|---|-------|-------|-------|
+| 20260529-01 | webhook_server.py subprocess timeout 300→600 | ✅ **DEPLOYED 2026-05-29 sabah** — 5 satır değiştirildi (97/122/237/256/315); backup `webhook_server.py.bak.20260529`; `panola-social-webhook.service` restart aktif | `scripts/psoc-20260529-01-webhook-timeout.sh` |
+
+Deploy (uygulanmıştır; kanıt için):
+```bash
+# Doğrulama: grep timeout=300 sıfır sonuç vermeli
+scripts/vps-run.sh "grep -c 'timeout=300\|timeout=600' /opt/panola-social/webhook_server.py"
+```
+
+## PSOC-20260529-04: Multi-Channel Adapter (Telegram + WhatsApp)
+
+| # | Görev | Durum | Konum |
+|---|-------|-------|-------|
+| 04-adapter | `adapter/` paketi (base + telegram FULL + whatsapp SKELETON) | ⏸️ **STAGED — deploy bekliyor** | `adapter/` |
+| 04-migration | `channel_configs` + `channel_publishes` tabloları | ⏸️ STAGED | `sql/001_channel_configs.sql` |
+| 04-tests | `test_telegram.py` (smoke + mocked) | ⏸️ STAGED | `tests/test_telegram.py` |
+| 04-health-wire | `health_endpoint.py` channels block | ⏸️ STAGED (engine.py wire surer dokümanında) | `patches/health_endpoint.py` |
+
+> **Risk notu:** PSOC-04 multi-channel publish path açar. `engine.py` wiring değişikliği gerekir (`docs/INTEGRATION.md` adım-adım). WhatsApp adapter dormant (skeleton), Telegram FULL.
+> Deploy önkoşulu: `TELEGRAM_BOT_TOKEN` env + `@BotFather` üzerinden bot + channel admin yetkisi.
+> Detay: `docs/INTEGRATION.md`.
+
+---
+
 ## Deploy: VPS Dosyaları
 
 ```bash
