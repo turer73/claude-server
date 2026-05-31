@@ -1,4 +1,10 @@
-"""Tests for kernel bridge core service and REST API."""
+"""Tests for the kernel bridge core service and REST API.
+
+The bridge talks to the loaded proc_linux_ai module (/proc/linux_ai read-only
+metrics). There is no governor/cpufreq control on this server, so set_governor
+fails honestly. These tests assert that honest behaviour against the real
+/proc/linux_ai format ("linux_ai_<key> <value>" per line).
+"""
 
 from unittest.mock import mock_open, patch
 
@@ -12,46 +18,6 @@ def bridge():
     return KernelBridge()
 
 
-def test_governor_name_mapping(bridge):
-    assert bridge.governor_name(0) == "performance"
-    assert bridge.governor_name(1) == "powersave"
-    assert bridge.governor_name(4) == "ai_adaptive"
-    assert bridge.governor_name(99) == "unknown"
-
-
-def test_governor_id_mapping(bridge):
-    assert bridge.governor_id("performance") == 0
-    assert bridge.governor_id("powersave") == 1
-    assert bridge.governor_id("nonexistent") == -1
-
-
-def test_read_sysfs_success(bridge):
-    with patch("builtins.open", mock_open(read_data="0.3.3\n")):
-        result = bridge.read_sysfs("version")
-        assert result == "0.3.3"
-
-
-def test_read_sysfs_not_found(bridge):
-    with patch("builtins.open", side_effect=FileNotFoundError):
-        result = bridge.read_sysfs("nonexistent")
-        assert result is None
-
-
-def test_read_proc_status(bridge):
-    mock_content = "state: running\ngovernor: performance\ncpu_count: 4\nservices: 2\n"
-    with patch("builtins.open", mock_open(read_data=mock_content)):
-        result = bridge.read_proc_status()
-        assert result["state"] == "running"
-        assert result["governor"] == "performance"
-        assert result["cpu_count"] == "4"
-
-
-def test_read_proc_status_file_missing(bridge):
-    with patch("builtins.open", side_effect=FileNotFoundError):
-        result = bridge.read_proc_status()
-        assert result == {}
-
-
 def test_is_available_false(bridge):
     with patch("os.path.exists", return_value=False):
         assert bridge.is_available() is False
@@ -62,34 +28,58 @@ def test_is_available_true(bridge):
         assert bridge.is_available() is True
 
 
+def test_read_proc_status_parses_real_format(bridge):
+    # /proc/linux_ai uses space-separated "linux_ai_<key> <value>"; the prefix
+    # is stripped by the bridge.
+    mock_content = (
+        "linux_ai_version 1\n"
+        "linux_ai_cpu_count 16\n"
+        "linux_ai_load_1m 0.16\n"
+        "linux_ai_threshold_cpu 85\n"
+    )
+    with patch("builtins.open", mock_open(read_data=mock_content)):
+        result = bridge.read_proc_status()
+        assert result["version"] == "1"
+        assert result["cpu_count"] == "16"
+        assert result["load_1m"] == "0.16"
+        assert result["threshold_cpu"] == "85"
+
+
+def test_read_proc_status_file_missing(bridge):
+    with patch("builtins.open", side_effect=FileNotFoundError):
+        assert bridge.read_proc_status() == {}
+
+
 def test_get_status_without_module(bridge):
     with patch("os.path.exists", return_value=False):
         status = bridge.get_status()
         assert status["state"] == "unavailable"
         assert status["kernel_module"] is False
+        assert status["governor"] == "not_supported"
         assert "cpu_count" in status
 
 
 def test_get_status_with_module(bridge):
-    mock_content = "state: running\ngovernor: performance\ncpu_count: 4\nservices: 2\n"
+    mock_content = "linux_ai_version 1\nlinux_ai_cpu_count 16\n"
     with patch("os.path.exists", return_value=True), patch("builtins.open", mock_open(read_data=mock_content)):
         status = bridge.get_status()
         assert status["state"] == "running"
         assert status["kernel_module"] is True
+        assert status["cpu_count"] == 16
+        assert status["version"] == "1"
+        # No governor concept in the loaded module — must be reported honestly.
+        assert status["governor"] == "not_supported"
 
 
-def test_set_governor_without_module(bridge):
+def test_set_governor_always_not_supported(bridge):
+    """No loaded module provides governor control; set_governor must fail
+    honestly (never a fake success), whether or not a module is present."""
     from app.exceptions import KernelError
 
-    with patch("os.path.exists", return_value=False), pytest.raises(KernelError):
-        bridge.set_governor("performance")
-
-
-def test_set_governor_invalid_mode(bridge):
-    from app.exceptions import KernelError
-
-    with patch("os.path.exists", return_value=True), pytest.raises(KernelError, match="Unknown governor"):
-        bridge.set_governor("turbo")
+    for present in (True, False):
+        with patch("os.path.exists", return_value=present):
+            with pytest.raises(KernelError, match="not supported"):
+                bridge.set_governor("performance")
 
 
 # --- API Integration Tests ---
