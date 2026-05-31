@@ -28,13 +28,14 @@ class KernelStatusResponse(BaseModel):
 
 
 class GovernorRequest(BaseModel):
-    mode: Literal["performance", "powersave", "ondemand", "conservative", "ai_adaptive"]
-    cpu_mask: int | None = None
+    # Standard Linux cpufreq governors. Availability is hardware/driver-dependent
+    # and validated at runtime against scaling_available_governors. ("ai_adaptive"
+    # was a Linux-AI-OS invention with no kernel backing — removed.)
+    mode: Literal["performance", "powersave", "ondemand", "conservative", "schedutil"]
 
 
 class GovernorResponse(BaseModel):
     governor: str
-    cpu_mask: int | None = None
 
 
 class CpuMetricsResponse(BaseModel):
