@@ -20,13 +20,13 @@ def get_tool_definitions() -> list[dict]:
         },
         {
             "name": "kernel_set_governor",
-            "description": "Set CPU governor mode (performance, powersave, ondemand, conservative, ai_adaptive)",
+            "description": "Set the CPU cpufreq governor (availability is hardware-dependent; validated at runtime). Common: performance, powersave, ondemand, conservative, schedutil",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "mode": {
                         "type": "string",
-                        "enum": ["performance", "powersave", "ondemand", "conservative", "ai_adaptive"],
+                        "enum": ["performance", "powersave", "ondemand", "conservative", "schedutil"],
                     }
                 },
                 "required": ["mode"],
