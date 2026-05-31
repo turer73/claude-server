@@ -259,7 +259,11 @@ async def generate_week(req: WeekGenerateRequest, _: None = Depends(require_admi
     cmd = f"{CLI} generate-week --product {_sanitize(req.product)}"
     if req.week_start:
         cmd += f" --week-start {_sanitize(req.week_start)}"
-    return await _vps_run(cmd, timeout=300)
+    # Full-week generation (plan + 7 days of posts, LLM + images) routinely
+    # exceeds 300s. n8n rotation node timed out at exactly 300s every weekly run
+    # (ECONNABORTED). Raised to 600s to match the n8n node timeout (PSOC-01 set
+    # the webhook path to 600 but this generate-week path was not covered).
+    return await _vps_run(cmd, timeout=600)
 
 
 # --- Image Generation ---
