@@ -1,3 +1,5 @@
+from unittest.mock import mock_open, patch
+
 import pytest
 
 from app.core.prometheus_exporter import PrometheusExporter
@@ -6,6 +8,33 @@ from app.core.prometheus_exporter import PrometheusExporter
 @pytest.fixture
 def exporter():
     return PrometheusExporter()
+
+
+def test_read_int_valid(exporter):
+    with patch("builtins.open", mock_open(read_data="42\n")):
+        assert exporter._read_int("/x") == 42
+
+
+def test_read_int_missing(exporter):
+    with patch("builtins.open", side_effect=FileNotFoundError):
+        assert exporter._read_int("/x") is None
+
+
+def test_gpu_metrics_format(exporter):
+    # Machine-independent: fake one amdgpu card via mocked sysfs.
+    def fake_glob(pattern):
+        return ["/sys/class/drm/card1/device/gpu_busy_percent"] if "gpu_busy" in pattern else []
+
+    with patch("glob.glob", side_effect=fake_glob), \
+         patch.object(PrometheusExporter, "_read_int", return_value=7):
+        lines = exporter._gpu_metrics()
+        assert "# TYPE linux_ai_gpu_busy_percent gauge" in lines
+        assert any('linux_ai_gpu_busy_percent{card="card1"} 7' in line for line in lines)
+
+
+def test_gpu_metrics_absent(exporter):
+    with patch("glob.glob", return_value=[]):
+        assert exporter._gpu_metrics() == []
 
 
 def test_export_format(exporter):

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import glob
+import os
 import time
 
 import psutil
@@ -9,6 +11,53 @@ import psutil
 
 class PrometheusExporter:
     """Export system metrics in Prometheus text exposition format."""
+
+    @staticmethod
+    def _read_int(path: str) -> int | None:
+        try:
+            with open(path) as f:
+                return int(f.read().strip())
+        except (OSError, ValueError):
+            return None
+
+    def _gpu_metrics(self) -> list[str]:
+        """amdgpu utilization/VRAM/temp from sysfs (read-only; no kernel module —
+        replaces the Linux-AI-OS proc-GPUIO C++ idea). Empty when no GPU sysfs."""
+        busy, vram_used, vram_total, temp = [], [], [], []
+        for gpu_path in sorted(glob.glob("/sys/class/drm/card*/device/gpu_busy_percent")):
+            card = gpu_path.split("/")[4]
+            dev = os.path.dirname(gpu_path)
+            b = self._read_int(gpu_path)
+            if b is None:
+                continue
+            busy.append((card, b))
+            vu = self._read_int(f"{dev}/mem_info_vram_used")
+            if vu is not None:
+                vram_used.append((card, vu))
+            vt = self._read_int(f"{dev}/mem_info_vram_total")
+            if vt is not None:
+                vram_total.append((card, vt))
+            for tp in sorted(glob.glob(f"{dev}/hwmon/hwmon*/temp1_input")):
+                t = self._read_int(tp)
+                if t is not None:
+                    temp.append((card, t / 1000.0))
+                break
+
+        lines: list[str] = []
+        families = [
+            ("linux_ai_gpu_busy_percent", "GPU utilization percentage (amdgpu)", busy),
+            ("linux_ai_gpu_vram_used_bytes", "GPU VRAM used in bytes", vram_used),
+            ("linux_ai_gpu_vram_total_bytes", "GPU VRAM total in bytes", vram_total),
+            ("linux_ai_gpu_temp_celsius", "GPU temperature in Celsius", temp),
+        ]
+        for name, help_text, values in families:
+            if not values:
+                continue
+            lines.append(f"# HELP {name} {help_text}")
+            lines.append(f"# TYPE {name} gauge")
+            for card, val in values:
+                lines.append(f'{name}{{card="{card}"}} {val}')
+        return lines
 
     def export(self) -> str:
         lines: list[str] = []
@@ -79,5 +128,8 @@ class PrometheusExporter:
             lines.append(f'linux_ai_load_avg{{period="15m"}} {load[2]}')
         except (OSError, AttributeError):
             pass
+
+        # GPU (amdgpu sysfs; emitted only when a GPU exposes the nodes)
+        lines.extend(self._gpu_metrics())
 
         return "\n".join(lines) + "\n"
