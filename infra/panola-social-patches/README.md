@@ -1,5 +1,16 @@
 # panola-social Faz 1 Stabilite Yamaları
 
+## PSOC-20260531-02 — async job+poll + gerçek rotasyon ✅ DEPLOYED 2026-05-31
+
+panola_weekly_gen haftalık ECONNABORTED timeout + duplicate-plan idempotency bug
+kapatıldı. Async `:9800` endpoint (detached) + 4-ürün deterministik rotasyon +
+n8n poll workflow. Discovery-first 3 validate turu, kullanıcı onaylı deploy.
+**Deployed VPS dosyalarının otoritatif kopyaları** (panola-social git repo'su yok):
+`patches/PSOC-20260531-02-async-rotation/` (db/planner/main/webhook .py + MANIFEST) +
+`sql/002_generation_jobs_and_dedup.sql`. Rollback + detay → MANIFEST.md.
+
+---
+
 PSOC-20260528-MASTER (2026-05-28) → V2 düzeltme (Note #99557, 2026-05-28).
 
 > **V1 (sql/quality_rules.sql + templates/kuafor/*.md) STALE — deploy etmeyin.**
