@@ -45,6 +45,7 @@ data/hook-state/
 data/wordlists/
 data/nuclei-cache/
 data/n8n-backups/
+n8n-backups/
 data/*.tsv
 data/bilge-english-state.json
 e2e-live/test-results/
