@@ -47,5 +47,5 @@ async def get_governor(bridge: KernelBridge = Depends(get_kernel_bridge)):
     dependencies=[Depends(rate_limit_write), Depends(require_write)],
 )
 async def set_governor(body: GovernorRequest, bridge: KernelBridge = Depends(get_kernel_bridge)):
-    bridge.set_governor(body.mode)
-    return GovernorResponse(governor=body.mode, cpu_mask=body.cpu_mask)
+    bridge.set_governor(body.mode)  # raises KernelError unless verified-applied
+    return GovernorResponse(governor=bridge.current_governor() or body.mode)
