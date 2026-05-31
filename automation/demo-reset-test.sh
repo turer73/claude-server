@@ -14,6 +14,10 @@ set -euo pipefail
 # Konfigürasyon
 PANOLA_DIR="/data/projects/panola"
 RESULTS_DIR="/opt/linux-ai-server/logs/e2e"
+# Playwright Ubuntu 26.04 (klipper host) destegi yok; resmi noble imaji kullanilir
+# (e2e-live-test.sh ile ayni pattern). Imaj surumu panola'nin @playwright/test
+# surumuyle birebir eslesmeli (browser revizyonu): 1.58.2 -> chromium 1208.
+PLAYWRIGHT_IMAGE="mcr.microsoft.com/playwright:v1.58.2-noble"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 LOG_FILE="$RESULTS_DIR/e2e-$TIMESTAMP.log"
 
@@ -64,7 +68,22 @@ log "🧪 E2E testleri başlıyor..."
 # e2e-results.json hic olusmuyordu → grep dosya yok → 0/0 sahte rapor.)
 PLAYWRIGHT_RESULTS="$RESULTS_DIR/playwright-results-$TIMESTAMP.json"
 PLAYWRIGHT_RC=0
-npx playwright test --reporter=json > "$PLAYWRIGHT_RESULTS" 2>>"$LOG_FILE" || PLAYWRIGHT_RC=$?
+# Resmi Playwright imaji icinde kos: browser'lar /ms-playwright'ta gomulu, host'a
+# kurulum gerekmez (Ubuntu 26.04 destegi yok). JSON stdout -> host dosyasi,
+# stderr -> LOG_FILE. --user + HOME=/tmp ile rapor host kullanicisi olarak yazilir.
+docker run --rm \
+  -v "$PANOLA_DIR:/work" \
+  -w /work \
+  --user "$(id -u):$(id -g)" \
+  -e HOME=/tmp \
+  -e CI=true \
+  -e E2E_EMAIL="$E2E_EMAIL" \
+  -e E2E_PASSWORD="$E2E_PASSWORD" \
+  -e E2E_BASE_URL="$E2E_BASE_URL" \
+  -e E2E_SUPABASE_URL="$E2E_SUPABASE_URL" \
+  -e E2E_SUPABASE_KEY="$E2E_SUPABASE_KEY" \
+  "$PLAYWRIGHT_IMAGE" \
+  npx playwright test --reporter=json > "$PLAYWRIGHT_RESULTS" 2>>"$LOG_FILE" || PLAYWRIGHT_RC=$?
 
 if [ "$PLAYWRIGHT_RC" -eq 0 ]; then
   log "✅ Tüm E2E testleri geçti"
