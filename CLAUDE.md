@@ -77,7 +77,7 @@ Siparis/uretim/stok/CRM. React 19, Supabase. 898 test.
 Bu sunucu. FastAPI, kernel modulleri, 61 test dosyasi.
 GitHub: github.com/turer73/claude-server
 
-## VPS (Contabo) — 20 konteyner (audit: 2026-05-26)
+## VPS (Contabo) — 20 konteyner (audit: 2026-06-01, surer doğrulanmış)
 Dokploy v0.29.2 + Traefik v3.1 (root reverse proxy 80/443). /api/v1/vps/exec (SSH) ile yonetim.
 
 **Klipper-first hedefi: 5 servis tasinmis** (n8n + grafana + prometheus + cadvisor + uptime-kuma). Dashy VPS'te kaldi (asagi bkz).
