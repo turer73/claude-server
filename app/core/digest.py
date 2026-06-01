@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -177,6 +178,42 @@ def system_health() -> dict:
     }
 
 
+def _server_db_path() -> str:
+    # server.db lives alongside the memory DB in the data dir; the service sets
+    # DB_PATH to exactly this. Honor DB_PATH when present (service/cron env),
+    # else fall back to the data-dir sibling — never the empty /var/lib default.
+    return os.environ.get("DB_PATH") or str(Path(DB_PATH).with_name("server.db"))
+
+
+def vps_health() -> dict:
+    """Latest VPS sample from server.db.vps_metrics_history (written by DevOpsAgent).
+
+    Returns {} when no data exists yet — digest sections degrade gracefully.
+    """
+    try:
+        db = sqlite3.connect(_server_db_path())
+        db.row_factory = sqlite3.Row
+        try:
+            row = db.execute(
+                "SELECT * FROM vps_metrics_history ORDER BY timestamp DESC LIMIT 1"
+            ).fetchone()
+        finally:
+            db.close()
+    except Exception:
+        return {}
+    if not row:
+        return {}
+    return {
+        "timestamp": row["timestamp"],
+        "online": bool(row["online"]),
+        "cpu": row["cpu_usage"],
+        "mem": row["memory_usage"],
+        "disk": row["disk_usage"],
+        "containers_total": row["containers_total"],
+        "containers_up": row["containers_up"],
+    }
+
+
 def has_signal(d: dict) -> bool:
     """Decide whether to emit at all — 'NOTHING_NEW' if nothing actionable."""
     m = d["memory"]
@@ -187,7 +224,17 @@ def has_signal(d: dict) -> bool:
     sp = d["cron"].get("self_pentest")
     if sp and sp["findings"]:
         return True
-    return d["system"]["service"] != "active"
+    if d["system"]["service"] != "active":
+        return True
+    v = d.get("vps") or {}
+    if v and (
+        not v.get("online")
+        or (v.get("cpu") or 0) >= 90
+        or (v.get("mem") or 0) >= 90
+        or (v.get("disk") or 0) >= 90
+    ):
+        return True
+    return False
 
 
 def render_text(d: dict) -> str:
@@ -235,6 +282,15 @@ def render_text(d: dict) -> str:
         f"disk {s['disk_used_pct']} (free {s['disk_avail']})  |  "
         f"ram {s['mem_used_mb']}/{s['mem_total_mb']} MB"
     )
+    v = d.get("vps") or {}
+    if v:
+        if v.get("online"):
+            L.append(
+                f"VPS: ✓ cpu {v['cpu']:.0f}%  |  ram {v['mem']:.0f}%  |  "
+                f"disk {v['disk']:.0f}%  |  {v['containers_up']}/{v['containers_total']} container"
+            )
+        else:
+            L.append("VPS: ✗ erişilemiyor")
     return "\n".join(L)
 
 
@@ -273,6 +329,15 @@ def render_html(d: dict) -> str:
             parts.append(f"  ⚠ <code>{f['domain']}</code> {sub}")
     s = d["system"]
     parts.append(f"<b>Sistem:</b> {s['service']} | disk {s['disk_used_pct']} | ram {s['mem_used_mb']}/{s['mem_total_mb']}MB")
+    v = d.get("vps") or {}
+    if v:
+        if v.get("online"):
+            parts.append(
+                f"<b>VPS:</b> cpu {v['cpu']:.0f}% | ram {v['mem']:.0f}% | "
+                f"disk {v['disk']:.0f}% | {v['containers_up']}/{v['containers_total']} container"
+            )
+        else:
+            parts.append("<b>VPS:</b> ✗ erişilemiyor")
     return "\n".join(parts)
 
 
@@ -300,4 +365,5 @@ def gather(token: str | None = None) -> dict:
         "commits": all_commits(WINDOW_HOURS, token),
         "cron": cron_health(),
         "system": system_health(),
+        "vps": vps_health(),
     }

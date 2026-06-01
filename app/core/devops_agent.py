@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import time
@@ -72,6 +73,53 @@ PLAYBOOKS: dict[str, list[dict]] = {
 VPS_HOST = os.environ.get("VPS_HOST", "")
 VPS_SSH = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 {VPS_HOST}"
 
+# Fixed, internal probe run on the VPS to collect host metrics + container state.
+# Single sample of /proc/stat deltas (no tool dependency beyond awk/free/df/docker).
+VPS_PROBE_SCRIPT = """\
+read -r _ a1 b1 c1 d1 _ < /proc/stat
+sleep 1
+read -r _ a2 b2 c2 d2 _ < /proc/stat
+awk -v db=$(( (a2+b2+c2)-(a1+b1+c1) )) -v dt=$(( (a2+b2+c2+d2)-(a1+b1+c1+d1) )) 'BEGIN{printf "CPU=%.1f\\n",(dt>0)?db*100/dt:0}'
+free | awk '/^Mem:/{printf "MEM=%.1f\\n",$3/$2*100}'
+df / | awk 'NR==2{gsub(/%/,"",$5);print "DISK="$5}'
+echo "CTOTAL=$(docker ps -aq 2>/dev/null | wc -l)"
+echo "CUP=$(docker ps -q 2>/dev/null | wc -l)"
+echo "NAMES=$(docker ps --format '{{.Names}}' 2>/dev/null | tr '\\n' ',')"
+"""
+# base64 so it travels as a single quote-safe token through `ssh host '...'`
+VPS_PROBE_B64 = base64.b64encode(VPS_PROBE_SCRIPT.encode()).decode()
+
+
+def parse_vps_probe(stdout: str) -> dict:
+    """Parse KEY=VALUE lines emitted by VPS_PROBE_SCRIPT into a typed dict."""
+    kv: dict[str, str] = {}
+    for line in stdout.splitlines():
+        line = line.strip()
+        if "=" in line:
+            k, v = line.split("=", 1)
+            kv[k.strip()] = v.strip()
+
+    def _f(key: str) -> float | None:
+        try:
+            return float(kv[key])
+        except (KeyError, ValueError):
+            return None
+
+    def _i(key: str) -> int | None:
+        try:
+            return int(kv[key])
+        except (KeyError, ValueError):
+            return None
+
+    return {
+        "cpu": _f("CPU"),
+        "mem": _f("MEM"),
+        "disk": _f("DISK"),
+        "containers_total": _i("CTOTAL"),
+        "containers_up": _i("CUP"),
+        "names": [n for n in kv.get("NAMES", "").split(",") if n],
+    }
+
 
 class DevOpsAgent:
     """Background agent that collects metrics, detects anomalies, and auto-remediates."""
@@ -100,6 +148,10 @@ class DevOpsAgent:
         self._critical_services = list(settings.monitor_critical_services)
         self._critical_containers = list(settings.monitor_critical_containers)
         self._vps_containers = list(settings.monitor_vps_containers)
+        self._vps_host = settings.vps_host
+
+        # Latest VPS sample (for status/dashboard without a DB round-trip)
+        self._latest_vps: dict = {}
 
         # Rolling metrics for baseline (last 120 samples = 1 hour at 30s interval)
         self._history: deque[dict] = deque(maxlen=120)
@@ -414,54 +466,104 @@ class DevOpsAgent:
             except Exception:
                 pass
 
-    async def _check_vps(self) -> None:
-        """Check production VPS containers via SSH bridge."""
-        now = datetime.now(UTC).isoformat()
+    async def _vps_ssh_probe(self) -> dict | None:
+        """Run the fixed VPS metric probe over SSH via an isolated subprocess.
+
+        Bypasses the user-facing ShellExecutor on purpose: this is a fixed,
+        internal command with no user input, and `ssh` is deliberately absent
+        from shell_whitelist (routing it through the executor raises
+        AuthorizationError). Returns the parsed sample, or None if the VPS is
+        unreachable / the output is unusable.
+        """
+        if not self._vps_host:
+            return None
         try:
-            result = await self._executor.execute(f"{VPS_SSH} 'docker ps --format \"{{{{.Names}}}}:{{{{.Status}}}}\"'", timeout=10)
-            if result.get("exit_code", 1) != 0:
-                source = "vps:offline"
+            proc = await asyncio.create_subprocess_exec(
+                "ssh",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "ConnectTimeout=10",
+                "-o", "BatchMode=yes",
+                self._vps_host,
+                f"echo {VPS_PROBE_B64} | base64 -d | bash",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
+        except (TimeoutError, OSError):
+            return None
+        if proc.returncode != 0:
+            return None
+        parsed = parse_vps_probe(out.decode(errors="replace"))
+        if parsed["cpu"] is None:  # partial/unparseable output → treat as failure
+            return None
+        return parsed
+
+    async def _store_vps_metrics(self, sample: dict, online: bool) -> None:
+        if not self._db:
+            return
+        try:
+            await self._db.execute(
+                """INSERT INTO vps_metrics_history
+                   (timestamp, online, cpu_usage, memory_usage, disk_usage, containers_total, containers_up)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    datetime.now(UTC).isoformat(),
+                    1 if online else 0,
+                    sample.get("cpu"),
+                    sample.get("mem"),
+                    sample.get("disk"),
+                    sample.get("containers_total"),
+                    sample.get("containers_up"),
+                ),
+            )
+        except Exception:
+            pass
+
+    async def _check_vps(self) -> None:
+        """Collect VPS host metrics + container state via the SSH probe, persist, alert."""
+        now = datetime.now(UTC).isoformat()
+        probe = await self._vps_ssh_probe()
+
+        if probe is None:
+            await self._store_vps_metrics({}, online=False)
+            self._latest_vps = {"online": False, "timestamp": now}
+            source = "vps:offline"
+            if source not in self._active_alerts:
+                self._active_alerts[source] = Alert(
+                    id=f"{source}-{self._check_count}",
+                    severity="critical",
+                    source=source,
+                    message="VPS is unreachable",
+                    value=0,
+                    threshold=1,
+                    timestamp=now,
+                )
+            return
+
+        await self._store_vps_metrics(probe, online=True)
+        self._latest_vps = {**probe, "online": True, "timestamp": now}
+
+        # Auto-resolve VPS offline alert
+        if "vps:offline" in self._active_alerts:
+            del self._active_alerts["vps:offline"]
+
+        # Per-container down/up alerts (exact name match against running set)
+        running = set(probe.get("names", []))
+        for container in self._vps_containers:
+            source = f"vps:{container}"
+            if container not in running:
                 if source not in self._active_alerts:
                     self._active_alerts[source] = Alert(
                         id=f"{source}-{self._check_count}",
-                        severity="critical",
+                        severity="warning",
                         source=source,
-                        message="VPS is unreachable",
+                        message=f"VPS container {container} not running",
                         value=0,
                         threshold=1,
                         timestamp=now,
                     )
-                return
-
-            # Auto-resolve VPS offline alert
-            if "vps:offline" in self._active_alerts:
-                self._active_alerts["vps:offline"].resolved = True
-                del self._active_alerts["vps:offline"]
-
-            # Check each critical container
-            running = result.get("stdout", "")
-            for container in self._vps_containers:
-                source = f"vps:{container}"
-                if container not in running or "Up" not in running.split(container)[1].split("\n")[0] if container in running else True:
-                    # Container might be down — simple check
-                    if f"{container}:" not in running:
-                        if source not in self._active_alerts:
-                            self._active_alerts[source] = Alert(
-                                id=f"{source}-{self._check_count}",
-                                severity="warning",
-                                source=source,
-                                message=f"VPS container {container} not running",
-                                value=0,
-                                threshold=1,
-                                timestamp=now,
-                            )
-                else:
-                    # Running — auto-resolve if was alerting
-                    if source in self._active_alerts:
-                        self._active_alerts[source].resolved = True
-                        del self._active_alerts[source]
-        except Exception:
-            pass
+            elif source in self._active_alerts:
+                del self._active_alerts[source]
 
     async def _remediate_service(self, service: str, alert: Alert) -> None:
         now = time.monotonic()
@@ -565,6 +667,10 @@ class DevOpsAgent:
     def metrics_buffer(self) -> list[dict]:
         return list(self._history)
 
+    @property
+    def latest_vps(self) -> dict:
+        return self._latest_vps
+
     async def get_alerts_history(self, limit: int = 50, severity: str | None = None) -> list[dict]:
         if not self._db:
             return []
@@ -581,6 +687,17 @@ class DevOpsAgent:
             return list(self._history)
         rows = await self._db.fetch_all(
             """SELECT * FROM metrics_history
+               WHERE timestamp > datetime('now', ?)
+               ORDER BY timestamp DESC LIMIT 500""",
+            (f"-{minutes} minutes",),
+        )
+        return [dict(r) for r in rows]
+
+    async def get_vps_metrics_history(self, minutes: int = 60) -> list[dict]:
+        if not self._db:
+            return []
+        rows = await self._db.fetch_all(
+            """SELECT * FROM vps_metrics_history
                WHERE timestamp > datetime('now', ?)
                ORDER BY timestamp DESC LIMIT 500""",
             (f"-{minutes} minutes",),

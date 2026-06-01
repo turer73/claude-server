@@ -48,9 +48,21 @@ CREATE TABLE IF NOT EXISTS alerts (
     resolved_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS vps_metrics_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    online INTEGER NOT NULL DEFAULT 1,
+    cpu_usage REAL,
+    memory_usage REAL,
+    disk_usage REAL,
+    containers_total INTEGER,
+    containers_up INTEGER
+);
+
 CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user);
 CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics_history(timestamp);
+CREATE INDEX IF NOT EXISTS idx_vps_metrics_timestamp ON vps_metrics_history(timestamp);
 CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);
 
 CREATE TABLE IF NOT EXISTS ci_lesson_learned (

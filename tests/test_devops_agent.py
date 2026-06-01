@@ -428,3 +428,139 @@ def test_remediation_record():
 
     r = RemediationRecord(timestamp="now", alert_source="cpu", action="log", command="ps aux", result="ok", success=True)
     assert r.success is True
+
+
+# ── VPS Metrics Tests ──────────────────────────
+
+
+def test_parse_vps_probe():
+    from app.core.devops_agent import parse_vps_probe
+
+    out = "CPU=32.5\nMEM=35.6\nDISK=20\nCTOTAL=20\nCUP=18\nNAMES=traefik,postgres,n8n,\n"
+    p = parse_vps_probe(out)
+    assert p["cpu"] == 32.5
+    assert p["mem"] == 35.6
+    assert p["disk"] == 20.0
+    assert p["containers_total"] == 20
+    assert p["containers_up"] == 18
+    assert p["names"] == ["traefik", "postgres", "n8n"]
+
+
+def test_parse_vps_probe_partial():
+    from app.core.devops_agent import parse_vps_probe
+
+    # Garbage / partial output → None fields, empty names (caller treats cpu=None as failure)
+    p = parse_vps_probe("error: connection refused\n")
+    assert p["cpu"] is None
+    assert p["names"] == []
+
+
+async def test_store_vps_metrics(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.core.config.load_yaml_config", lambda path: {})
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    from app.core.devops_agent import DevOpsAgent
+    from app.db.database import Database
+
+    db = Database(str(tmp_path / "vps.db"))
+    await db.initialize()
+    agent = DevOpsAgent(db=db, interval=60)
+    await agent._store_vps_metrics(
+        {"cpu": 30.0, "mem": 40.0, "disk": 20.0, "containers_total": 20, "containers_up": 20},
+        online=True,
+    )
+    rows = await db.fetch_all("SELECT * FROM vps_metrics_history")
+    assert len(rows) == 1
+    assert rows[0]["cpu_usage"] == 30.0
+    assert rows[0]["online"] == 1
+    assert rows[0]["containers_up"] == 20
+    await db.close()
+    get_settings.cache_clear()
+
+
+async def test_store_vps_metrics_no_db():
+    from app.core.devops_agent import DevOpsAgent
+
+    agent = DevOpsAgent(db=None, interval=60)
+    await agent._store_vps_metrics({"cpu": 1.0}, online=True)  # Should not raise
+
+
+async def test_check_vps_reachable(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock, patch
+
+    monkeypatch.setattr("app.core.config.load_yaml_config", lambda path: {})
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    from app.core.devops_agent import DevOpsAgent
+    from app.db.database import Database
+
+    db = Database(str(tmp_path / "vps2.db"))
+    await db.initialize()
+    agent = DevOpsAgent(db=db, interval=60)
+    agent._vps_containers = ["traefik", "missing-one"]
+
+    probe = {
+        "cpu": 25.0, "mem": 50.0, "disk": 20.0,
+        "containers_total": 20, "containers_up": 19,
+        "names": ["traefik", "postgres"],
+    }
+    with patch.object(agent, "_vps_ssh_probe", new_callable=AsyncMock, return_value=probe):
+        await agent._check_vps()
+
+    # Persisted + latest cached
+    rows = await db.fetch_all("SELECT * FROM vps_metrics_history")
+    assert len(rows) == 1 and rows[0]["online"] == 1
+    assert agent.latest_vps["online"] is True
+    # missing-one is not in running set → warning; traefik is fine
+    assert "vps:missing-one" in agent._active_alerts
+    assert "vps:traefik" not in agent._active_alerts
+    assert "vps:offline" not in agent._active_alerts
+    await db.close()
+    get_settings.cache_clear()
+
+
+async def test_check_vps_offline(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock, patch
+
+    monkeypatch.setattr("app.core.config.load_yaml_config", lambda path: {})
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    from app.core.devops_agent import DevOpsAgent
+    from app.db.database import Database
+
+    db = Database(str(tmp_path / "vps3.db"))
+    await db.initialize()
+    agent = DevOpsAgent(db=db, interval=60)
+
+    with patch.object(agent, "_vps_ssh_probe", new_callable=AsyncMock, return_value=None):
+        await agent._check_vps()
+
+    rows = await db.fetch_all("SELECT * FROM vps_metrics_history")
+    assert len(rows) == 1 and rows[0]["online"] == 0
+    assert "vps:offline" in agent._active_alerts
+    assert agent.latest_vps["online"] is False
+    await db.close()
+    get_settings.cache_clear()
+
+
+async def test_vps_ssh_probe_no_host():
+    from app.core.devops_agent import DevOpsAgent
+
+    agent = DevOpsAgent(db=None, interval=60)
+    agent._vps_host = ""
+    assert await agent._vps_ssh_probe() is None
+
+
+async def test_devops_vps_metrics_history_route(devops_client, auth_headers):
+    resp = await devops_client.get("/api/v1/devops/vps/metrics/history?minutes=60", headers=auth_headers)
+    assert resp.status_code == 200
+    assert "metrics" in resp.json()
+
+
+async def test_devops_vps_latest_route(devops_client, auth_headers):
+    resp = await devops_client.get("/api/v1/devops/vps/latest", headers=auth_headers)
+    assert resp.status_code == 200
+    assert "vps" in resp.json()
