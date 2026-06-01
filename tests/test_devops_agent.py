@@ -502,8 +502,11 @@ async def test_check_vps_reachable(tmp_path, monkeypatch):
     agent._vps_containers = ["traefik", "missing-one"]
 
     probe = {
-        "cpu": 25.0, "mem": 50.0, "disk": 20.0,
-        "containers_total": 20, "containers_up": 19,
+        "cpu": 25.0,
+        "mem": 50.0,
+        "disk": 20.0,
+        "containers_total": 20,
+        "containers_up": 19,
         "names": ["traefik", "postgres"],
     }
     with patch.object(agent, "_vps_ssh_probe", new_callable=AsyncMock, return_value=probe):

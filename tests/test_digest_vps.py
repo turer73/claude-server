@@ -87,8 +87,11 @@ def test_render_includes_vps_line():
         "commits": {},
         "cron": {"self_pentest": None},
         "system": {
-            "service": "active", "disk_used_pct": "10%", "disk_avail": "9G",
-            "mem_used_mb": "100", "mem_total_mb": "8000",
+            "service": "active",
+            "disk_used_pct": "10%",
+            "disk_avail": "9G",
+            "mem_used_mb": "100",
+            "mem_total_mb": "8000",
         },
         "vps": {"online": True, "cpu": 32.5, "mem": 35.6, "disk": 20.0, "containers_total": 20, "containers_up": 18},
     }
@@ -107,8 +110,11 @@ def test_render_handles_missing_vps():
         "commits": {},
         "cron": {"self_pentest": None},
         "system": {
-            "service": "active", "disk_used_pct": "10%", "disk_avail": "9G",
-            "mem_used_mb": "100", "mem_total_mb": "8000",
+            "service": "active",
+            "disk_used_pct": "10%",
+            "disk_avail": "9G",
+            "mem_used_mb": "100",
+            "mem_total_mb": "8000",
         },
     }
     assert "VPS" not in core_digest.render_text(d)

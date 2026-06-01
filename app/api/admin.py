@@ -31,16 +31,16 @@ def _get_db() -> sqlite3.Connection:
 # P1.1: memory.name prefix -> (event_type, label, severity)
 # Sira KRITIK: uzun-prefix-once (autonomous-spawn-poison- vs autonomous-spawn-)
 _PREFIX_MAP: list[tuple[str, str, str | None, str]] = [
-    ("autonomous-spawn-poison-",     "dlq",           None,         "error"),
-    ("autonomous-audit-suspicious-", "audit",         None,         "warn"),
-    ("autonomous-threat-detect-",    "threat",        None,         "critical"),
-    ("autonomous-health-fail-",      "health",        None,         "warn"),
-    ("autonomous-lock-cleanup-",     "lock_cleanup",  None,         "info"),
-    ("autonomous-daily-summary-",    "daily_summary", None,         "info"),
-    ("autonomous-ack-",              "classify",      "ACK",        "ok"),
-    ("autonomous-deferred-",         "classify",      "DISCUSSION", "info"),
-    ("autonomous-urgent-",           "urgent",        "URGENT",     "critical"),
-    ("autonomous-spawn-",            "spawn",         "ACTIONABLE", "ok"),
+    ("autonomous-spawn-poison-", "dlq", None, "error"),
+    ("autonomous-audit-suspicious-", "audit", None, "warn"),
+    ("autonomous-threat-detect-", "threat", None, "critical"),
+    ("autonomous-health-fail-", "health", None, "warn"),
+    ("autonomous-lock-cleanup-", "lock_cleanup", None, "info"),
+    ("autonomous-daily-summary-", "daily_summary", None, "info"),
+    ("autonomous-ack-", "classify", "ACK", "ok"),
+    ("autonomous-deferred-", "classify", "DISCUSSION", "info"),
+    ("autonomous-urgent-", "urgent", "URGENT", "critical"),
+    ("autonomous-spawn-", "spawn", "ACTIONABLE", "ok"),
 ]
 
 _NOTE_ID_RE = re.compile(r"-(\d+)(?:-|$)")
@@ -143,6 +143,7 @@ async def set_secret(data: SecretSet, _: None = Depends(require_auth)) -> dict:
 
 # ============ Autonomous flow visualization (P1.1) ============
 
+
 @router.get("/autonomous/timeline")
 async def autonomous_timeline(
     limit: int = Query(50, ge=1, le=200),
@@ -170,10 +171,7 @@ async def autonomous_timeline(
         ).fetchall()
 
         # 3. Notes — son N, in-memory'de unclassified ayikla
-        note_rows = db.execute(
-            "SELECT id, from_device, title, created_at, read "
-            "FROM notes ORDER BY id DESC LIMIT 100"
-        ).fetchall()
+        note_rows = db.execute("SELECT id, from_device, title, created_at, read FROM notes ORDER BY id DESC LIMIT 100").fetchall()
     finally:
         db.close()
 
@@ -186,44 +184,50 @@ async def autonomous_timeline(
         nid = _extract_note_id(r["name"], etype)
         if nid is not None:
             classified_note_ids.add(nid)
-        events.append({
-            "at": r["created_at"],
-            "type": etype,
-            "note_id": nid,
-            "label": label,
-            "title": (r["description"] or "")[:120],
-            "details": "",
-            "severity": severity,
-            "source": f"memory#{r['id']}",
-        })
+        events.append(
+            {
+                "at": r["created_at"],
+                "type": etype,
+                "note_id": nid,
+                "label": label,
+                "title": (r["description"] or "")[:120],
+                "details": "",
+                "severity": severity,
+                "source": f"memory#{r['id']}",
+            }
+        )
 
     # Spawn-failure events (DLQ)
     for r in sf_rows:
-        events.append({
-            "at": r["last_retry_at"] or r["first_failed_at"],
-            "type": "dlq",
-            "note_id": r["note_id"],
-            "label": r["status"],
-            "title": (r["title"] or "")[:120],
-            "details": f"attempt={r['attempt_num']} rc={r['exit_code']}",
-            "severity": "error" if r["status"] == "poison" else "warn",
-            "source": f"spawn_failures#{r['id']}",
-        })
+        events.append(
+            {
+                "at": r["last_retry_at"] or r["first_failed_at"],
+                "type": "dlq",
+                "note_id": r["note_id"],
+                "label": r["status"],
+                "title": (r["title"] or "")[:120],
+                "details": f"attempt={r['attempt_num']} rc={r['exit_code']}",
+                "severity": "error" if r["status"] == "poison" else "warn",
+                "source": f"spawn_failures#{r['id']}",
+            }
+        )
 
     # New-note events (autonomous-* entry'si olmayan)
     for r in note_rows:
         if r["id"] in classified_note_ids:
             continue
-        events.append({
-            "at": r["created_at"],
-            "type": "new_note",
-            "note_id": r["id"],
-            "label": None,
-            "title": (r["title"] or "")[:120],
-            "details": f"from={r['from_device']} (siniflandirma bekleniyor)" if not r["read"] else f"from={r['from_device']} (okundu)",
-            "severity": "info",
-            "source": f"notes#{r['id']}",
-        })
+        events.append(
+            {
+                "at": r["created_at"],
+                "type": "new_note",
+                "note_id": r["id"],
+                "label": None,
+                "title": (r["title"] or "")[:120],
+                "details": f"from={r['from_device']} (siniflandirma bekleniyor)" if not r["read"] else f"from={r['from_device']} (okundu)",
+                "severity": "info",
+                "source": f"notes#{r['id']}",
+            }
+        )
 
     # DESC sort + limit
     events.sort(key=lambda e: e["at"] or "", reverse=True)
@@ -262,8 +266,7 @@ async def autonomous_stats(
         # DLQ status counts
         dlq = {"pending_retry": 0, "poison": 0, "archived": 0, "orphaned": 0}
         for r in db.execute(
-            "SELECT status, COUNT(*) AS n FROM spawn_failures "
-            "WHERE first_failed_at >= datetime('now', ?) GROUP BY status",
+            "SELECT status, COUNT(*) AS n FROM spawn_failures WHERE first_failed_at >= datetime('now', ?) GROUP BY status",
             (modifier,),
         ):
             if r["status"] in dlq:

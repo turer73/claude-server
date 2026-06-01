@@ -200,9 +200,7 @@ def vps_health() -> dict:
         db = sqlite3.connect(_server_db_path())
         db.row_factory = sqlite3.Row
         try:
-            row = db.execute(
-                "SELECT * FROM vps_metrics_history ORDER BY timestamp DESC LIMIT 1"
-            ).fetchone()
+            row = db.execute("SELECT * FROM vps_metrics_history ORDER BY timestamp DESC LIMIT 1").fetchone()
         finally:
             db.close()
     except Exception:
@@ -301,9 +299,7 @@ def _project_trend(cur_row, prev_row) -> tuple[list[dict], list[dict]]:
         elif proj not in cur:
             changes.append({"project": proj, "kind": "dropped", "from": prev[proj]})
         elif cur[proj] != prev[proj]:
-            changes.append(
-                {"project": proj, "kind": "delta", "from": prev[proj], "to": cur[proj], "delta": cur[proj] - prev[proj]}
-            )
+            changes.append({"project": proj, "kind": "delta", "from": prev[proj], "to": cur[proj], "delta": cur[proj] - prev[proj]})
     regressions = [c for c in changes if c["kind"] == "dropped" or (c["kind"] == "delta" and c["delta"] < 0)]
     return changes, regressions
 
@@ -336,12 +332,7 @@ def has_signal(d: dict) -> bool:
     if d["system"]["service"] != "active":
         return True
     v = d.get("vps") or {}
-    if v and (
-        not v.get("online")
-        or (v.get("cpu") or 0) >= 90
-        or (v.get("mem") or 0) >= 90
-        or (v.get("disk") or 0) >= 90
-    ):
+    if v and (not v.get("online") or (v.get("cpu") or 0) >= 90 or (v.get("mem") or 0) >= 90 or (v.get("disk") or 0) >= 90):
         return True
     ci = d.get("ci") or {}
     return bool(ci and ((ci.get("failed") or 0) > 0 or ci.get("stale") or ci.get("regressions")))
@@ -405,10 +396,7 @@ def render_text(d: dict) -> str:
     if ci:
         age = "?" if ci["age_days"] is None else f"{ci['age_days']}g önce"
         stale = " ⚠ BAYAT" if ci.get("stale") else ""
-        L.append(
-            f"CI: son run {ci['started_at'][:10]} ({age}{stale})  |  "
-            f"{ci['passed']}/{ci['total']} geçti, {ci['failed']} fail"
-        )
+        L.append(f"CI: son run {ci['started_at'][:10]} ({age}{stale})  |  {ci['passed']}/{ci['total']} geçti, {ci['failed']} fail")
         for fp in ci.get("failing_projects", []):
             L.append(f"  ✗ {fp['project']}: {fp['passed']}/{fp['total']}")
         toks = _trend_tokens(ci.get("trend", []))
@@ -468,8 +456,7 @@ def render_html(d: dict) -> str:
         fp = ci.get("failing_projects", [])
         fp_note = (" — fail: " + ", ".join(p["project"] for p in fp)) if fp else ""
         parts.append(
-            f"<b>CI:</b> {ci['started_at'][:10]} ({age}{stale}) | "
-            f"{ci['passed']}/{ci['total']} geçti, {ci['failed']} fail{fp_note}"
+            f"<b>CI:</b> {ci['started_at'][:10]} ({age}{stale}) | {ci['passed']}/{ci['total']} geçti, {ci['failed']} fail{fp_note}"
         )
         toks = _trend_tokens(ci.get("trend", []))
         if toks:

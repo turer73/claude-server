@@ -480,9 +480,12 @@ class DevOpsAgent:
         try:
             proc = await asyncio.create_subprocess_exec(
                 "ssh",
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "ConnectTimeout=10",
-                "-o", "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "BatchMode=yes",
                 self._vps_host,
                 f"echo {VPS_PROBE_B64} | base64 -d | bash",
                 stdout=asyncio.subprocess.PIPE,
