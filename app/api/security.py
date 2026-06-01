@@ -38,6 +38,7 @@ RUNS_DIR = ROOT / "logs" / "self-pentest" / "runs"
 # Domain must look like a hostname: labels of a-z, 0-9, hyphen; dots between.
 _DOMAIN_RE = re.compile(r"^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$")
 
+
 def verify_pentest_key(
     x_pentest_key: str | None = Header(None, alias="X-Pentest-Key"),
     x_memory_key: str | None = Header(None, alias="X-Memory-Key"),

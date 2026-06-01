@@ -39,7 +39,7 @@ def _reset_rate_limiters():
         limiter = getattr(deps, name, None)
         if limiter is not None:
             limiter._buckets.clear()
-    yield
+    return
 
 
 @pytest.fixture

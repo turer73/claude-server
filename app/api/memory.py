@@ -4,7 +4,6 @@ Duplicate koruması, FTS arama, read tracking, lifecycle yönetimi.
 """
 
 import json
-import os
 import re
 import sqlite3
 from typing import Literal
@@ -1116,6 +1115,7 @@ async def archive_stale(days: int = 90):
 
 # ============ DLQ: Spawn Failures (P0.2) ============
 
+
 @router.get("/spawn-failures")
 async def list_spawn_failures(
     status: str | None = Query(None, regex="^(pending_retry|poison|archived|orphaned)$"),
@@ -1153,18 +1153,19 @@ async def retry_spawn_failure(failure_id: int):
             raise HTTPException(404, "spawn_failure not found")
         if row["status"] == "archived":
             return SpawnFailureRetryResponse(
-                id=row["id"], note_id=row["note_id"],
+                id=row["id"],
+                note_id=row["note_id"],
                 status="archived",
                 message="Already archived (success). No-op.",
             ).model_dump()
         db.execute(
-            "UPDATE spawn_failures SET status='pending_retry', "
-            "last_retry_at=NULL, attempt_num=0 WHERE id=?",
+            "UPDATE spawn_failures SET status='pending_retry', last_retry_at=NULL, attempt_num=0 WHERE id=?",
             (failure_id,),
         )
         db.commit()
         return SpawnFailureRetryResponse(
-            id=row["id"], note_id=row["note_id"],
+            id=row["id"],
+            note_id=row["note_id"],
             status="pending_retry",
             message="Reset for retry. Next cron tick (~15min) will pick up.",
         ).model_dump()

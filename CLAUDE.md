@@ -15,7 +15,7 @@
 ## Servis
 - **Port:** 8420
 - **Framework:** FastAPI + Uvicorn (2 worker)
-- **DB:** 5 SQLite — server.db (ana, alerts/audit_log/metrics), claude_memory.db (hafiza/sessions/tasks_log), ci_tests.db (CI sonuclari), coverage.db (test trend), rag_metrics.db (RAG)
+- **DB:** 4 SQLite — server.db (ana, alerts/audit_log/metrics + vps_metrics_history), claude_memory.db (hafiza/sessions/tasks_log), coverage.db (test trend + CI/test sonuclari, gunluk run-all-tests.sh), rag_metrics.db (RAG). (ci_tests.db 2026-06-01'de retire edildi — otomasyon hic yazmamisti, olu kod; arsiv data/ci_tests.db.gz)
 - **Auth:** JWT + API Key
 - **Systemd:** linux-ai-server.service
 - **Endpoint sayisi:** 149 (OpenAPI'den)
@@ -77,7 +77,7 @@ Siparis/uretim/stok/CRM. React 19, Supabase. 898 test.
 Bu sunucu. FastAPI, kernel modulleri, 61 test dosyasi.
 GitHub: github.com/turer73/claude-server
 
-## VPS (Contabo) — 20 konteyner (audit: 2026-05-26)
+## VPS (Contabo) — 20 konteyner (audit: 2026-06-01, surer doğrulanmış)
 Dokploy v0.29.2 + Traefik v3.1 (root reverse proxy 80/443). /api/v1/vps/exec (SSH) ile yonetim.
 
 **Klipper-first hedefi: 5 servis tasinmis** (n8n + grafana + prometheus + cadvisor + uptime-kuma). Dashy VPS'te kaldi (asagi bkz).

@@ -12,6 +12,7 @@ POST /api/v1/classify/note
 Ollama localhost'a bind, Tailscale'e değil. Bu proxy klipper-internal
 network'ten qwen'i remote agent'lara açar.
 """
+
 from __future__ import annotations
 
 import time
@@ -36,7 +37,7 @@ CLASSIFIER_PROMPT_TEMPLATE = (
     '"live", "tamam", "alindi", "tamamlandi", "calisiyor"\n'
     "ACTIONABLE  - Has explicit tasks: commit, fix, test, PR, implement, "
     'deploy, "gorev paketi", "adimlar", "basari kriteri", JSON task structure\n'
-    'DISCUSSION  - Needs human decision: strategy, tradeoff, review request, '
+    "DISCUSSION  - Needs human decision: strategy, tradeoff, review request, "
     '"karar", "oneri", "strateji", "ne dusunuyorsun"\n'
     'URGENT      - Security/legal/incident: breach, KVKK, CVE, "saldiri", '
     '"acil", "kritik", data leak, "madde 9"\n\n'

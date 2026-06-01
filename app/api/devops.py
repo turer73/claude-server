@@ -70,6 +70,29 @@ async def metrics_buffer(request: Request, _: None = Depends(require_auth)) -> d
     return {"metrics": agent.metrics_buffer, "count": len(agent.metrics_buffer)}
 
 
+@router.get("/vps/latest")
+async def vps_latest(request: Request, _: None = Depends(require_auth)) -> dict:
+    """Latest VPS sample collected by the agent (in-memory, no DB round-trip)."""
+    agent = _get_agent(request)
+    if not agent:
+        return {"vps": {}}
+    return {"vps": agent.latest_vps}
+
+
+@router.get("/vps/metrics/history")
+async def vps_metrics_history(
+    request: Request,
+    minutes: int = 60,
+    _: None = Depends(require_auth),
+) -> dict:
+    """Get persisted VPS metric history (last N minutes)."""
+    agent = _get_agent(request)
+    if not agent:
+        return {"metrics": []}
+    metrics = await agent.get_vps_metrics_history(minutes=minutes)
+    return {"metrics": metrics, "count": len(metrics)}
+
+
 @router.get("/remediation/log")
 async def remediation_log(request: Request, _: None = Depends(require_auth)) -> dict:
     """Get remediation action history."""

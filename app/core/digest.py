@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -22,8 +23,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 DB_PATH = "/opt/linux-ai-server/data/claude_memory.db"
+# Live test results: run-all-tests.sh writes coverage.db daily. (ci_tests.db is
+# orphaned — no automation ever wrote it; see LAISRV-20260601-01 investigation.)
+COVERAGE_DB_PATH = "/opt/linux-ai-server/data/coverage.db"
 ENV_PATH = "/opt/linux-ai-server/.env"
 PENTEST_LOG_ROOT = Path("/opt/linux-ai-server/logs/self-pentest")
+
+# test-runner is scheduled daily; a latest run older than this is "stale"
+CI_STALE_DAYS = 2
 
 REPOS: dict[str, str] = {
     "linux-ai-server": "turer73/claude-server",
@@ -177,6 +184,141 @@ def system_health() -> dict:
     }
 
 
+def _server_db_path() -> str:
+    # server.db lives alongside the memory DB in the data dir; the service sets
+    # DB_PATH to exactly this. Honor DB_PATH when present (service/cron env),
+    # else fall back to the data-dir sibling — never the empty /var/lib default.
+    return os.environ.get("DB_PATH") or str(Path(DB_PATH).with_name("server.db"))
+
+
+def vps_health() -> dict:
+    """Latest VPS sample from server.db.vps_metrics_history (written by DevOpsAgent).
+
+    Returns {} when no data exists yet — digest sections degrade gracefully.
+    """
+    try:
+        db = sqlite3.connect(_server_db_path())
+        db.row_factory = sqlite3.Row
+        try:
+            row = db.execute("SELECT * FROM vps_metrics_history ORDER BY timestamp DESC LIMIT 1").fetchone()
+        finally:
+            db.close()
+    except Exception:
+        return {}
+    if not row:
+        return {}
+    return {
+        "timestamp": row["timestamp"],
+        "online": bool(row["online"]),
+        "cpu": row["cpu_usage"],
+        "mem": row["memory_usage"],
+        "disk": row["disk_usage"],
+        "containers_total": row["containers_total"],
+        "containers_up": row["containers_up"],
+    }
+
+
+def ci_health() -> dict:
+    """Latest test run from coverage.db — totals, failing projects, staleness.
+
+    coverage.db.test_runs is written daily by run-all-tests.sh. Returns {} when
+    no data exists. `age_days` surfaces silent staleness (the runner is daily);
+    `stale` is True past CI_STALE_DAYS.
+    """
+    try:
+        db = sqlite3.connect(COVERAGE_DB_PATH)
+        db.row_factory = sqlite3.Row
+        try:
+            runs = db.execute("SELECT * FROM test_runs ORDER BY id DESC LIMIT 2").fetchall()
+        finally:
+            db.close()
+    except Exception:
+        return {}
+    if not runs:
+        return {}
+    run = runs[0]
+
+    age_days = None
+    try:
+        # timestamp like '2026-06-01T06:01:10+03:00'
+        started = dt.datetime.fromisoformat(run["timestamp"])
+        now = dt.datetime.now(started.tzinfo) if started.tzinfo else dt.datetime.now()
+        age_days = (now - started).days
+    except (ValueError, TypeError):
+        pass
+
+    failing = []
+    try:
+        for proj, info in json.loads(run["details"] or "{}").items():
+            if info.get("failed"):
+                passed = info.get("passed", 0)
+                failing.append({"project": proj, "passed": passed, "total": passed + info["failed"]})
+    except (ValueError, TypeError, AttributeError):
+        pass
+
+    trend, regressions = _project_trend(run, runs[1] if len(runs) > 1 else None)
+
+    return {
+        "started_at": run["timestamp"],
+        "age_days": age_days,
+        "stale": age_days is not None and age_days > CI_STALE_DAYS,
+        "total": run["total_tests"],
+        "passed": run["total_passed"],
+        "failed": run["total_failed"],
+        "failing_projects": failing,
+        "trend": trend,
+        "regressions": regressions,
+        "open_failures": [],
+    }
+
+
+def _ci_projects(row) -> dict:
+    """{project: passed_count} from a test_runs.details JSON column."""
+    if row is None:
+        return {}
+    try:
+        return {p: info.get("passed", 0) for p, info in json.loads(row["details"] or "{}").items()}
+    except (ValueError, TypeError, AttributeError):
+        return {}
+
+
+def _project_trend(cur_row, prev_row) -> tuple[list[dict], list[dict]]:
+    """Per-project passed-count delta of the latest run vs the previous one.
+
+    Returns (all_changes, regressions). Consecutive-run window keeps day-to-day
+    deltas small; a project that drops count or vanishes is a regression (e.g.
+    tests deleted or a project that stopped being tested), growth is info-only.
+    """
+    cur, prev = _ci_projects(cur_row), _ci_projects(prev_row)
+    if not prev:
+        return [], []
+    changes: list[dict] = []
+    for proj in sorted(set(cur) | set(prev)):
+        if proj not in prev:
+            changes.append({"project": proj, "kind": "new", "to": cur[proj]})
+        elif proj not in cur:
+            changes.append({"project": proj, "kind": "dropped", "from": prev[proj]})
+        elif cur[proj] != prev[proj]:
+            changes.append({"project": proj, "kind": "delta", "from": prev[proj], "to": cur[proj], "delta": cur[proj] - prev[proj]})
+    regressions = [c for c in changes if c["kind"] == "dropped" or (c["kind"] == "delta" and c["delta"] < 0)]
+    return changes, regressions
+
+
+def _trend_tokens(trend: list[dict]) -> list[str]:
+    """Compact per-project change tokens, e.g. '↑bilge-arena +6', '⊘old-proj'."""
+    toks: list[str] = []
+    for c in trend:
+        if c["kind"] == "dropped":
+            toks.append(f"⊘{c['project']}")
+        elif c["kind"] == "new":
+            toks.append(f"+{c['project']}(yeni)")
+        else:
+            arrow = "↑" if c["delta"] > 0 else "↓"
+            sign = f"+{c['delta']}" if c["delta"] > 0 else str(c["delta"])
+            toks.append(f"{arrow}{c['project']} {sign}")
+    return toks
+
+
 def has_signal(d: dict) -> bool:
     """Decide whether to emit at all — 'NOTHING_NEW' if nothing actionable."""
     m = d["memory"]
@@ -187,7 +329,13 @@ def has_signal(d: dict) -> bool:
     sp = d["cron"].get("self_pentest")
     if sp and sp["findings"]:
         return True
-    return d["system"]["service"] != "active"
+    if d["system"]["service"] != "active":
+        return True
+    v = d.get("vps") or {}
+    if v and (not v.get("online") or (v.get("cpu") or 0) >= 90 or (v.get("mem") or 0) >= 90 or (v.get("disk") or 0) >= 90):
+        return True
+    ci = d.get("ci") or {}
+    return bool(ci and ((ci.get("failed") or 0) > 0 or ci.get("stale") or ci.get("regressions")))
 
 
 def render_text(d: dict) -> str:
@@ -235,6 +383,25 @@ def render_text(d: dict) -> str:
         f"disk {s['disk_used_pct']} (free {s['disk_avail']})  |  "
         f"ram {s['mem_used_mb']}/{s['mem_total_mb']} MB"
     )
+    v = d.get("vps") or {}
+    if v:
+        if v.get("online"):
+            L.append(
+                f"VPS: ✓ cpu {v['cpu']:.0f}%  |  ram {v['mem']:.0f}%  |  "
+                f"disk {v['disk']:.0f}%  |  {v['containers_up']}/{v['containers_total']} container"
+            )
+        else:
+            L.append("VPS: ✗ erişilemiyor")
+    ci = d.get("ci") or {}
+    if ci:
+        age = "?" if ci["age_days"] is None else f"{ci['age_days']}g önce"
+        stale = " ⚠ BAYAT" if ci.get("stale") else ""
+        L.append(f"CI: son run {ci['started_at'][:10]} ({age}{stale})  |  {ci['passed']}/{ci['total']} geçti, {ci['failed']} fail")
+        for fp in ci.get("failing_projects", []):
+            L.append(f"  ✗ {fp['project']}: {fp['passed']}/{fp['total']}")
+        toks = _trend_tokens(ci.get("trend", []))
+        if toks:
+            L.append("  trend (vs önceki run): " + ", ".join(toks))
     return "\n".join(L)
 
 
@@ -273,6 +440,27 @@ def render_html(d: dict) -> str:
             parts.append(f"  ⚠ <code>{f['domain']}</code> {sub}")
     s = d["system"]
     parts.append(f"<b>Sistem:</b> {s['service']} | disk {s['disk_used_pct']} | ram {s['mem_used_mb']}/{s['mem_total_mb']}MB")
+    v = d.get("vps") or {}
+    if v:
+        if v.get("online"):
+            parts.append(
+                f"<b>VPS:</b> cpu {v['cpu']:.0f}% | ram {v['mem']:.0f}% | "
+                f"disk {v['disk']:.0f}% | {v['containers_up']}/{v['containers_total']} container"
+            )
+        else:
+            parts.append("<b>VPS:</b> ✗ erişilemiyor")
+    ci = d.get("ci") or {}
+    if ci:
+        age = "?" if ci["age_days"] is None else f"{ci['age_days']}g önce"
+        stale = " ⚠ BAYAT" if ci.get("stale") else ""
+        fp = ci.get("failing_projects", [])
+        fp_note = (" — fail: " + ", ".join(p["project"] for p in fp)) if fp else ""
+        parts.append(
+            f"<b>CI:</b> {ci['started_at'][:10]} ({age}{stale}) | {ci['passed']}/{ci['total']} geçti, {ci['failed']} fail{fp_note}"
+        )
+        toks = _trend_tokens(ci.get("trend", []))
+        if toks:
+            parts.append("  <i>trend:</i> " + ", ".join(toks))
     return "\n".join(parts)
 
 
@@ -300,4 +488,6 @@ def gather(token: str | None = None) -> dict:
         "commits": all_commits(WINDOW_HOURS, token),
         "cron": cron_health(),
         "system": system_health(),
+        "vps": vps_health(),
+        "ci": ci_health(),
     }
