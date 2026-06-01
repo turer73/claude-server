@@ -45,8 +45,7 @@ def test_read_proc_status_file_missing(bridge):
 
 
 def test_get_status_without_module(bridge):
-    with patch.object(bridge, "is_available", return_value=False), \
-         patch.object(bridge, "current_governor", return_value="powersave"):
+    with patch.object(bridge, "is_available", return_value=False), patch.object(bridge, "current_governor", return_value="powersave"):
         status = bridge.get_status()
         assert status["state"] == "unavailable"
         assert status["kernel_module"] is False
@@ -56,9 +55,11 @@ def test_get_status_without_module(bridge):
 
 
 def test_get_status_with_module(bridge):
-    with patch.object(bridge, "is_available", return_value=True), \
-         patch.object(bridge, "read_proc_status", return_value={"version": "1", "cpu_count": "16"}), \
-         patch.object(bridge, "current_governor", return_value="performance"):
+    with (
+        patch.object(bridge, "is_available", return_value=True),
+        patch.object(bridge, "read_proc_status", return_value={"version": "1", "cpu_count": "16"}),
+        patch.object(bridge, "current_governor", return_value="performance"),
+    ):
         status = bridge.get_status()
         assert status["state"] == "running"
         assert status["kernel_module"] is True
@@ -68,10 +69,12 @@ def test_get_status_with_module(bridge):
 
 
 def test_set_governor_success(bridge):
-    with patch.object(bridge, "available_governors", return_value=["performance", "powersave"]), \
-         patch("glob.glob", return_value=["/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"]), \
-         patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, "performance", "")), \
-         patch.object(bridge, "current_governor", return_value="performance"):
+    with (
+        patch.object(bridge, "available_governors", return_value=["performance", "powersave"]),
+        patch("glob.glob", return_value=["/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"]),
+        patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, "performance", "")),
+        patch.object(bridge, "current_governor", return_value="performance"),
+    ):
         assert bridge.set_governor("performance") is True
 
 
@@ -89,19 +92,23 @@ def test_set_governor_no_cpufreq(bridge):
 
 
 def test_set_governor_write_fails(bridge):
-    with patch.object(bridge, "available_governors", return_value=["performance", "powersave"]), \
-         patch("glob.glob", return_value=["/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"]), \
-         patch("subprocess.run", return_value=subprocess.CompletedProcess([], 1, "", "permission denied")):
+    with (
+        patch.object(bridge, "available_governors", return_value=["performance", "powersave"]),
+        patch("glob.glob", return_value=["/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"]),
+        patch("subprocess.run", return_value=subprocess.CompletedProcess([], 1, "", "permission denied")),
+    ):
         with pytest.raises(KernelError, match="Failed to set governor"):
             bridge.set_governor("performance")
 
 
 def test_set_governor_verify_fails(bridge):
     # sudo tee succeeds but the governor did not actually change -> honest raise.
-    with patch.object(bridge, "available_governors", return_value=["performance", "powersave"]), \
-         patch("glob.glob", return_value=["/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"]), \
-         patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, "", "")), \
-         patch.object(bridge, "current_governor", return_value="powersave"):
+    with (
+        patch.object(bridge, "available_governors", return_value=["performance", "powersave"]),
+        patch("glob.glob", return_value=["/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"]),
+        patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, "", "")),
+        patch.object(bridge, "current_governor", return_value="powersave"),
+    ):
         with pytest.raises(KernelError, match="did not take"):
             bridge.set_governor("performance")
 

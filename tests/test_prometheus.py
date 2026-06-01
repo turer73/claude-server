@@ -25,8 +25,7 @@ def test_gpu_metrics_format(exporter):
     def fake_glob(pattern):
         return ["/sys/class/drm/card1/device/gpu_busy_percent"] if "gpu_busy" in pattern else []
 
-    with patch("glob.glob", side_effect=fake_glob), \
-         patch.object(PrometheusExporter, "_read_int", return_value=7):
+    with patch("glob.glob", side_effect=fake_glob), patch.object(PrometheusExporter, "_read_int", return_value=7):
         lines = exporter._gpu_metrics()
         assert "# TYPE linux_ai_gpu_busy_percent gauge" in lines
         assert any('linux_ai_gpu_busy_percent{card="card1"} 7' in line for line in lines)

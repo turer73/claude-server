@@ -51,7 +51,7 @@ class KernelBridge:
                         continue
                     key, val = parts[0].strip(), parts[1].strip()
                     if key.startswith(PROC_PREFIX):
-                        key = key[len(PROC_PREFIX):]
+                        key = key[len(PROC_PREFIX) :]
                     result[key] = val
                 return result
         except (FileNotFoundError, PermissionError, OSError):
@@ -99,9 +99,7 @@ class KernelBridge:
         if not avail:
             raise KernelError("cpufreq governor control is not available on this host")
         if mode not in avail:
-            raise KernelError(
-                f"Governor '{mode}' not available; supported: {', '.join(avail)}"
-            )
+            raise KernelError(f"Governor '{mode}' not available; supported: {', '.join(avail)}")
         targets = glob.glob(CPUFREQ_GLOB)
         if not targets:
             raise KernelError("No cpufreq scaling_governor sysfs nodes found")
@@ -116,10 +114,7 @@ class KernelBridge:
         except (subprocess.SubprocessError, OSError) as e:
             raise KernelError(f"Failed to set governor: {e}")
         if proc.returncode != 0:
-            raise KernelError(
-                f"Failed to set governor (sudo tee rc={proc.returncode}): "
-                f"{proc.stderr.strip() or 'permission denied?'}"
-            )
+            raise KernelError(f"Failed to set governor (sudo tee rc={proc.returncode}): {proc.stderr.strip() or 'permission denied?'}")
         actual = self.current_governor()
         if actual != mode:
             raise KernelError(f"Governor write did not take (still '{actual}')")
