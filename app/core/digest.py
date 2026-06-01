@@ -23,8 +23,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 DB_PATH = "/opt/linux-ai-server/data/claude_memory.db"
+CI_DB_PATH = "/opt/linux-ai-server/data/ci_tests.db"
 ENV_PATH = "/opt/linux-ai-server/.env"
 PENTEST_LOG_ROOT = Path("/opt/linux-ai-server/logs/self-pentest")
+
+# test-runner is scheduled daily; a latest run older than this is "stale"
+CI_STALE_DAYS = 2
 
 REPOS: dict[str, str] = {
     "linux-ai-server": "turer73/claude-server",
@@ -214,6 +218,58 @@ def vps_health() -> dict:
     }
 
 
+def ci_health() -> dict:
+    """Latest completed CI run from ci_tests.db — totals, failing projects, staleness.
+
+    Returns {} when no data exists. `age_days` surfaces silent staleness (the
+    test-runner is meant to run daily); `stale` is True past CI_STALE_DAYS.
+    """
+    try:
+        db = sqlite3.connect(CI_DB_PATH)
+        db.row_factory = sqlite3.Row
+        try:
+            run = db.execute(
+                "SELECT * FROM ci_runs WHERE status='completed' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            if not run:
+                return {}
+            projects = db.execute(
+                "SELECT project, total, passed, failed FROM ci_project_results WHERE run_id=?",
+                (run["id"],),
+            ).fetchall()
+            failures = db.execute(
+                """SELECT project, test_name FROM ci_failures
+                   WHERE run_id=? AND (fix_success IS NULL OR fix_success=0) LIMIT 10""",
+                (run["id"],),
+            ).fetchall()
+        finally:
+            db.close()
+    except Exception:
+        return {}
+
+    age_days = None
+    try:
+        started = dt.datetime.strptime(run["started_at"][:19], "%Y-%m-%d %H:%M:%S")
+        age_days = (dt.datetime.now() - started).days
+    except (ValueError, TypeError):
+        pass
+
+    return {
+        "started_at": run["started_at"],
+        "age_days": age_days,
+        "stale": age_days is not None and age_days > CI_STALE_DAYS,
+        "total": run["total_tests"],
+        "passed": run["passed"],
+        "failed": run["failed"],
+        "failing_projects": [
+            {"project": p["project"], "passed": p["passed"], "total": p["total"]}
+            for p in projects
+            if p["failed"]
+        ],
+        "open_failures": [{"project": f["project"], "test": f["test_name"]} for f in failures],
+    }
+
+
 def has_signal(d: dict) -> bool:
     """Decide whether to emit at all — 'NOTHING_NEW' if nothing actionable."""
     m = d["memory"]
@@ -233,6 +289,9 @@ def has_signal(d: dict) -> bool:
         or (v.get("mem") or 0) >= 90
         or (v.get("disk") or 0) >= 90
     ):
+        return True
+    ci = d.get("ci") or {}
+    if ci and ((ci.get("failed") or 0) > 0 or ci.get("stale")):
         return True
     return False
 
@@ -291,6 +350,16 @@ def render_text(d: dict) -> str:
             )
         else:
             L.append("VPS: ✗ erişilemiyor")
+    ci = d.get("ci") or {}
+    if ci:
+        age = "?" if ci["age_days"] is None else f"{ci['age_days']}g önce"
+        stale = " ⚠ BAYAT" if ci.get("stale") else ""
+        L.append(
+            f"CI: son run {ci['started_at'][:10]} ({age}{stale})  |  "
+            f"{ci['passed']}/{ci['total']} geçti, {ci['failed']} fail"
+        )
+        for fp in ci.get("failing_projects", []):
+            L.append(f"  ✗ {fp['project']}: {fp['passed']}/{fp['total']}")
     return "\n".join(L)
 
 
@@ -338,6 +407,16 @@ def render_html(d: dict) -> str:
             )
         else:
             parts.append("<b>VPS:</b> ✗ erişilemiyor")
+    ci = d.get("ci") or {}
+    if ci:
+        age = "?" if ci["age_days"] is None else f"{ci['age_days']}g önce"
+        stale = " ⚠ BAYAT" if ci.get("stale") else ""
+        fp = ci.get("failing_projects", [])
+        fp_note = (" — fail: " + ", ".join(p["project"] for p in fp)) if fp else ""
+        parts.append(
+            f"<b>CI:</b> {ci['started_at'][:10]} ({age}{stale}) | "
+            f"{ci['passed']}/{ci['total']} geçti, {ci['failed']} fail{fp_note}"
+        )
     return "\n".join(parts)
 
 
@@ -366,4 +445,5 @@ def gather(token: str | None = None) -> dict:
         "cron": cron_health(),
         "system": system_health(),
         "vps": vps_health(),
+        "ci": ci_health(),
     }
