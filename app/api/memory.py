@@ -4,7 +4,6 @@ Duplicate koruması, FTS arama, read tracking, lifecycle yönetimi.
 """
 
 import json
-import os
 import re
 import sqlite3
 from typing import Literal

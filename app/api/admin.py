@@ -245,7 +245,8 @@ async def autonomous_stats(
         c = db.execute(
             "SELECT "
             "  SUM(CASE WHEN name LIKE 'autonomous-ack-%' THEN 1 ELSE 0 END) AS ack, "
-            "  SUM(CASE WHEN name LIKE 'autonomous-spawn-%' AND name NOT LIKE 'autonomous-spawn-poison-%' THEN 1 ELSE 0 END) AS actionable, "
+            "  SUM(CASE WHEN name LIKE 'autonomous-spawn-%' "
+            "AND name NOT LIKE 'autonomous-spawn-poison-%' THEN 1 ELSE 0 END) AS actionable, "
             "  SUM(CASE WHEN name LIKE 'autonomous-deferred-%' THEN 1 ELSE 0 END) AS discussion, "
             "  SUM(CASE WHEN name LIKE 'autonomous-urgent-%' THEN 1 ELSE 0 END) AS urgent "
             "FROM memories WHERE active=1 AND created_at >= datetime('now', ?)",

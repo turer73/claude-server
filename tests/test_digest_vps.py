@@ -19,7 +19,8 @@ def _make_vps_db(tmp_path, rows):
         )"""
     )
     db.executemany(
-        "INSERT INTO vps_metrics_history (timestamp, online, cpu_usage, memory_usage, disk_usage, containers_total, containers_up) VALUES (?,?,?,?,?,?,?)",
+        "INSERT INTO vps_metrics_history (timestamp, online, cpu_usage, memory_usage, "
+        "disk_usage, containers_total, containers_up) VALUES (?,?,?,?,?,?,?)",
         rows,
     )
     db.commit()
@@ -93,8 +94,10 @@ def test_render_includes_vps_line():
     }
     text = core_digest.render_text(d)
     html = core_digest.render_html(d)
-    assert "VPS:" in text and "18/20 container" in text
-    assert "VPS:" in html and "18/20 container" in html
+    assert "VPS:" in text
+    assert "18/20 container" in text
+    assert "VPS:" in html
+    assert "18/20 container" in html
 
 
 def test_render_handles_missing_vps():

@@ -511,7 +511,8 @@ async def test_check_vps_reachable(tmp_path, monkeypatch):
 
     # Persisted + latest cached
     rows = await db.fetch_all("SELECT * FROM vps_metrics_history")
-    assert len(rows) == 1 and rows[0]["online"] == 1
+    assert len(rows) == 1
+    assert rows[0]["online"] == 1
     assert agent.latest_vps["online"] is True
     # missing-one is not in running set → warning; traefik is fine
     assert "vps:missing-one" in agent._active_alerts
@@ -539,7 +540,8 @@ async def test_check_vps_offline(tmp_path, monkeypatch):
         await agent._check_vps()
 
     rows = await db.fetch_all("SELECT * FROM vps_metrics_history")
-    assert len(rows) == 1 and rows[0]["online"] == 0
+    assert len(rows) == 1
+    assert rows[0]["online"] == 0
     assert "vps:offline" in agent._active_alerts
     assert agent.latest_vps["online"] is False
     await db.close()
