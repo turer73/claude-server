@@ -15,7 +15,7 @@
 ## Servis
 - **Port:** 8420
 - **Framework:** FastAPI + Uvicorn (2 worker)
-- **DB:** 5 SQLite — server.db (ana, alerts/audit_log/metrics), claude_memory.db (hafiza/sessions/tasks_log), ci_tests.db (CI sonuclari), coverage.db (test trend), rag_metrics.db (RAG)
+- **DB:** 4 SQLite — server.db (ana, alerts/audit_log/metrics + vps_metrics_history), claude_memory.db (hafiza/sessions/tasks_log), coverage.db (test trend + CI/test sonuclari, gunluk run-all-tests.sh), rag_metrics.db (RAG). (ci_tests.db 2026-06-01'de retire edildi — otomasyon hic yazmamisti, olu kod; arsiv data/ci_tests.db.gz)
 - **Auth:** JWT + API Key
 - **Systemd:** linux-ai-server.service
 - **Endpoint sayisi:** 149 (OpenAPI'den)
