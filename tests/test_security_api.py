@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import shutil
 import stat
-import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -18,28 +15,6 @@ def _make_executable(path: Path) -> None:
     path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def _exec_capable_dir(preferred: Path) -> Path:
-    """Return a dir whose files can actually be exec'd.
-
-    CI runners (e.g. GitHub-hosted) often mount the pytest tmp on a *noexec*
-    filesystem. os.access(X_OK) ignores mount flags so it still reports True,
-    but the endpoint's subprocess.Popen([script, ...]) then fails with EACCES
-    -> HTTP 500. Probe `preferred`; if exec is blocked, fall back to a tmpdir
-    under the repo checkout (cwd), which is exec-mounted on the runners.
-    Returns `preferred` when it works, else the fallback dir.
-    """
-    probe = preferred / ".exec-probe.sh"
-    probe.write_text("#!/bin/sh\nexit 0\n")
-    _make_executable(probe)
-    try:
-        subprocess.run([str(probe)], capture_output=True, check=True)
-        return preferred
-    except (OSError, subprocess.CalledProcessError):
-        return Path(tempfile.mkdtemp(dir=Path.cwd(), prefix=".pentest-exec-"))
-    finally:
-        probe.unlink(missing_ok=True)
-
-
 @pytest.fixture
 def pentest_env(tmp_path, monkeypatch):
     """Isolate security.py module state to tmp_path. Returns the tmp dir."""
@@ -48,9 +23,7 @@ def pentest_env(tmp_path, monkeypatch):
         "# comment\npanola.app\npetvet.panola.app\n\n  KUAFOR.panola.app  \n"  # mixed case + whitespace — _load_targets normalizes
     )
 
-    # The script must live on an exec-capable fs (noexec tmp -> spawn EACCES).
-    script_dir = _exec_capable_dir(tmp_path)
-    fake_script = script_dir / "self-pentest.sh"
+    fake_script = tmp_path / "self-pentest.sh"
     fake_script.write_text('#!/usr/bin/env bash\necho "scanning $1"\necho "done"\nexit 0\n')
     _make_executable(fake_script)
 
@@ -59,6 +32,10 @@ def pentest_env(tmp_path, monkeypatch):
     from app.api import memory as memory_mod
     from app.api import security as mod
 
+    # ROOT is the hardcoded prod install path (/opt/linux-ai-server) used as the
+    # spawn cwd; it does not exist on CI runners, so the Popen would fail with
+    # ENOENT -> HTTP 500. Point it at tmp_path for the test.
+    monkeypatch.setattr(mod, "ROOT", tmp_path)
     monkeypatch.setattr(mod, "DOMAINS_FILE", domains_file)
     monkeypatch.setattr(mod, "PENTEST_SCRIPT", fake_script)
     monkeypatch.setattr(mod, "RUNS_DIR", runs_dir)
@@ -66,9 +43,6 @@ def pentest_env(tmp_path, monkeypatch):
     mod._JOBS.clear()
     yield tmp_path
     mod._JOBS.clear()
-    # Clean up the cwd fallback dir (no-op when the script stayed under tmp_path).
-    if script_dir != tmp_path:
-        shutil.rmtree(script_dir, ignore_errors=True)
 
 
 async def _wait_for_completion(client, job_id, timeout_s=5.0):
