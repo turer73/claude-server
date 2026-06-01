@@ -23,7 +23,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 DB_PATH = "/opt/linux-ai-server/data/claude_memory.db"
-CI_DB_PATH = "/opt/linux-ai-server/data/ci_tests.db"
+# Live test results: run-all-tests.sh writes coverage.db daily. (ci_tests.db is
+# orphaned — no automation ever wrote it; see LAISRV-20260601-01 investigation.)
+COVERAGE_DB_PATH = "/opt/linux-ai-server/data/coverage.db"
 ENV_PATH = "/opt/linux-ai-server/.env"
 PENTEST_LOG_ROOT = Path("/opt/linux-ai-server/logs/self-pentest")
 
@@ -219,54 +221,51 @@ def vps_health() -> dict:
 
 
 def ci_health() -> dict:
-    """Latest completed CI run from ci_tests.db — totals, failing projects, staleness.
+    """Latest test run from coverage.db — totals, failing projects, staleness.
 
-    Returns {} when no data exists. `age_days` surfaces silent staleness (the
-    test-runner is meant to run daily); `stale` is True past CI_STALE_DAYS.
+    coverage.db.test_runs is written daily by run-all-tests.sh. Returns {} when
+    no data exists. `age_days` surfaces silent staleness (the runner is daily);
+    `stale` is True past CI_STALE_DAYS.
     """
     try:
-        db = sqlite3.connect(CI_DB_PATH)
+        db = sqlite3.connect(COVERAGE_DB_PATH)
         db.row_factory = sqlite3.Row
         try:
-            run = db.execute(
-                "SELECT * FROM ci_runs WHERE status='completed' ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-            if not run:
-                return {}
-            projects = db.execute(
-                "SELECT project, total, passed, failed FROM ci_project_results WHERE run_id=?",
-                (run["id"],),
-            ).fetchall()
-            failures = db.execute(
-                """SELECT project, test_name FROM ci_failures
-                   WHERE run_id=? AND (fix_success IS NULL OR fix_success=0) LIMIT 10""",
-                (run["id"],),
-            ).fetchall()
+            run = db.execute("SELECT * FROM test_runs ORDER BY id DESC LIMIT 1").fetchone()
         finally:
             db.close()
     except Exception:
         return {}
+    if not run:
+        return {}
 
     age_days = None
     try:
-        started = dt.datetime.strptime(run["started_at"][:19], "%Y-%m-%d %H:%M:%S")
-        age_days = (dt.datetime.now() - started).days
+        # timestamp like '2026-06-01T06:01:10+03:00'
+        started = dt.datetime.fromisoformat(run["timestamp"])
+        now = dt.datetime.now(started.tzinfo) if started.tzinfo else dt.datetime.now()
+        age_days = (now - started).days
     except (ValueError, TypeError):
         pass
 
+    failing = []
+    try:
+        for proj, info in json.loads(run["details"] or "{}").items():
+            if info.get("failed"):
+                passed = info.get("passed", 0)
+                failing.append({"project": proj, "passed": passed, "total": passed + info["failed"]})
+    except (ValueError, TypeError, AttributeError):
+        pass
+
     return {
-        "started_at": run["started_at"],
+        "started_at": run["timestamp"],
         "age_days": age_days,
         "stale": age_days is not None and age_days > CI_STALE_DAYS,
         "total": run["total_tests"],
-        "passed": run["passed"],
-        "failed": run["failed"],
-        "failing_projects": [
-            {"project": p["project"], "passed": p["passed"], "total": p["total"]}
-            for p in projects
-            if p["failed"]
-        ],
-        "open_failures": [{"project": f["project"], "test": f["test_name"]} for f in failures],
+        "passed": run["total_passed"],
+        "failed": run["total_failed"],
+        "failing_projects": failing,
+        "open_failures": [],
     }
 
 

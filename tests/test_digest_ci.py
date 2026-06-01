@@ -8,30 +8,19 @@ import sqlite3
 from app.core import digest as core_digest
 
 
-def _make_ci_db(tmp_path, run, projects, failures=()):
-    path = tmp_path / "ci_tests.db"
+def _make_coverage_db(tmp_path, run_id, timestamp, total, passed, failed, details):
+    """Build a coverage.db-shaped sqlite file with one test_runs row."""
+    import json
+
+    path = tmp_path / "coverage.db"
     db = sqlite3.connect(path)
-    db.executescript(
-        """
-        CREATE TABLE ci_runs (id INTEGER PRIMARY KEY, started_at TEXT, completed_at TEXT,
-            total_tests INTEGER, passed INTEGER, failed INTEGER, duration_s REAL, trigger TEXT, status TEXT);
-        CREATE TABLE ci_project_results (id INTEGER PRIMARY KEY, run_id INTEGER, project TEXT,
-            total INTEGER, passed INTEGER, failed INTEGER, duration_s REAL, error TEXT);
-        CREATE TABLE ci_failures (id INTEGER PRIMARY KEY, run_id INTEGER, project TEXT,
-            test_file TEXT, test_name TEXT, error TEXT, fix_attempted INTEGER, fix_success INTEGER);
-        """
+    db.execute(
+        """CREATE TABLE test_runs (id INTEGER PRIMARY KEY, timestamp TEXT,
+            total_tests INTEGER, total_passed INTEGER, total_failed INTEGER, status TEXT, details TEXT)"""
     )
     db.execute(
-        "INSERT INTO ci_runs (id, started_at, total_tests, passed, failed, status) VALUES (?,?,?,?,?,?)",
-        run,
-    )
-    db.executemany(
-        "INSERT INTO ci_project_results (run_id, project, total, passed, failed) VALUES (?,?,?,?,?)",
-        projects,
-    )
-    db.executemany(
-        "INSERT INTO ci_failures (run_id, project, test_name, fix_success) VALUES (?,?,?,?)",
-        failures,
+        "INSERT INTO test_runs (id, timestamp, total_tests, total_passed, total_failed, status, details) VALUES (?,?,?,?,?,?,?)",
+        (run_id, timestamp, total, passed, failed, "pass" if failed == 0 else "fail", json.dumps(details)),
     )
     db.commit()
     db.close()
@@ -39,18 +28,18 @@ def _make_ci_db(tmp_path, run, projects, failures=()):
 
 
 def test_ci_health_empty_when_no_db(monkeypatch, tmp_path):
-    monkeypatch.setattr(core_digest, "CI_DB_PATH", str(tmp_path / "missing.db"))
+    monkeypatch.setattr(core_digest, "COVERAGE_DB_PATH", str(tmp_path / "missing.db"))
     assert core_digest.ci_health() == {}
 
 
 def test_ci_health_fresh_clean_run(monkeypatch, tmp_path):
-    today = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    path = _make_ci_db(
-        tmp_path,
-        run=(17, today, 2396, 2396, 0, "completed"),
-        projects=[(17, "panola", 843, 843, 0), (17, "klipper", 777, 777, 0)],
+    today = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    path = _make_coverage_db(
+        tmp_path, 62, today, 2396, 2396, 0,
+        {"panola": {"status": "pass", "passed": 843, "failed": 0},
+         "klipper": {"status": "pass", "passed": 777, "failed": 0}},
     )
-    monkeypatch.setattr(core_digest, "CI_DB_PATH", path)
+    monkeypatch.setattr(core_digest, "COVERAGE_DB_PATH", path)
     ci = core_digest.ci_health()
     assert ci["total"] == 2396 and ci["failed"] == 0
     assert ci["stale"] is False
@@ -58,20 +47,19 @@ def test_ci_health_fresh_clean_run(monkeypatch, tmp_path):
 
 
 def test_ci_health_stale_and_failing(monkeypatch, tmp_path):
-    old = (dt.datetime.now() - dt.timedelta(days=39)).strftime("%Y-%m-%d %H:%M:%S")
-    path = _make_ci_db(
-        tmp_path,
-        run=(20, old, 100, 95, 5, "completed"),
-        projects=[(20, "panola", 50, 50, 0), (20, "kuafor", 50, 45, 5)],
-        failures=[(20, "kuafor", "test_login", None), (20, "kuafor", "test_book", 0)],
+    old = (dt.datetime.now().astimezone() - dt.timedelta(days=39)).isoformat(timespec="seconds")
+    path = _make_coverage_db(
+        tmp_path, 20, old, 100, 95, 5,
+        {"panola": {"status": "pass", "passed": 50, "failed": 0},
+         "kuafor": {"status": "fail", "passed": 45, "failed": 5}},
     )
-    monkeypatch.setattr(core_digest, "CI_DB_PATH", path)
+    monkeypatch.setattr(core_digest, "COVERAGE_DB_PATH", path)
     ci = core_digest.ci_health()
     assert ci["age_days"] >= 38
     assert ci["stale"] is True
     assert ci["failed"] == 5
     assert [p["project"] for p in ci["failing_projects"]] == ["kuafor"]
-    assert len(ci["open_failures"]) == 2
+    assert ci["failing_projects"][0]["total"] == 50
 
 
 def test_has_signal_ci_stale():
