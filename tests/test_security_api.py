@@ -3,11 +3,41 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import stat
+import subprocess
+import tempfile
+from pathlib import Path
 
 import pytest
 
 HEADERS = {"X-Memory-Key": "test-security-key"}
+
+
+def _make_executable(path: Path) -> None:
+    path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def _exec_capable_dir(preferred: Path) -> Path:
+    """Return a dir whose files can actually be exec'd.
+
+    CI runners (e.g. GitHub-hosted) often mount the pytest tmp on a *noexec*
+    filesystem. os.access(X_OK) ignores mount flags so it still reports True,
+    but the endpoint's subprocess.Popen([script, ...]) then fails with EACCES
+    -> HTTP 500. Probe `preferred`; if exec is blocked, fall back to a tmpdir
+    under the repo checkout (cwd), which is exec-mounted on the runners.
+    Returns `preferred` when it works, else the fallback dir.
+    """
+    probe = preferred / ".exec-probe.sh"
+    probe.write_text("#!/bin/sh\nexit 0\n")
+    _make_executable(probe)
+    try:
+        subprocess.run([str(probe)], capture_output=True, check=True)
+        return preferred
+    except (OSError, subprocess.CalledProcessError):
+        return Path(tempfile.mkdtemp(dir=Path.cwd(), prefix=".pentest-exec-"))
+    finally:
+        probe.unlink(missing_ok=True)
 
 
 @pytest.fixture
@@ -18,9 +48,11 @@ def pentest_env(tmp_path, monkeypatch):
         "# comment\npanola.app\npetvet.panola.app\n\n  KUAFOR.panola.app  \n"  # mixed case + whitespace — _load_targets normalizes
     )
 
-    fake_script = tmp_path / "self-pentest.sh"
+    # The script must live on an exec-capable fs (noexec tmp -> spawn EACCES).
+    script_dir = _exec_capable_dir(tmp_path)
+    fake_script = script_dir / "self-pentest.sh"
     fake_script.write_text('#!/usr/bin/env bash\necho "scanning $1"\necho "done"\nexit 0\n')
-    fake_script.chmod(fake_script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    _make_executable(fake_script)
 
     runs_dir = tmp_path / "runs"
 
@@ -34,6 +66,9 @@ def pentest_env(tmp_path, monkeypatch):
     mod._JOBS.clear()
     yield tmp_path
     mod._JOBS.clear()
+    # Clean up the cwd fallback dir (no-op when the script stayed under tmp_path).
+    if script_dir != tmp_path:
+        shutil.rmtree(script_dir, ignore_errors=True)
 
 
 async def _wait_for_completion(client, job_id, timeout_s=5.0):
@@ -88,7 +123,7 @@ async def test_run_spawns_and_completes(client, pentest_env):
         json={"domain": "panola.app"},
         headers=HEADERS,
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["domain"] == "panola.app"
     assert body["status"] == "running"
@@ -124,9 +159,11 @@ async def test_get_run_unknown_job_returns_404(client, pentest_env):
 
 
 async def test_run_records_failure_exit_code(client, pentest_env):
-    failing = pentest_env / "self-pentest.sh"
+    from app.api import security as mod
+
+    failing = mod.PENTEST_SCRIPT  # exec-capable path chosen by the fixture
     failing.write_text("#!/usr/bin/env bash\necho boom >&2\nexit 7\n")
-    failing.chmod(failing.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    _make_executable(failing)
 
     resp = await client.post(
         "/api/v1/security/pentest/run",
