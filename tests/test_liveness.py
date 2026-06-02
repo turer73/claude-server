@@ -178,6 +178,71 @@ def test_rag_canary_401_is_unknown_not_dead(monkeypatch):
     assert lv.rag_canary_liveness()["status"] == "unknown"
 
 
+# ── VPS-A gate-ek regresyon ──
+
+
+def test_vps_metrics_stale_probe_down(monkeypatch, tmp_path):
+    """VPS-A gate: stale metrics + Tailscale-SSH-OK → status=stale, sebep=probe-down.
+    "VPS ölü" dememe: collector durmuş, VPS canlı."""
+    p = tmp_path / "server.db"
+    db = sqlite3.connect(p)
+    db.execute("CREATE TABLE vps_metrics_history (id INTEGER PRIMARY KEY, timestamp TEXT)")
+    db.execute("INSERT INTO vps_metrics_history (timestamp) VALUES (datetime('now', '-15 minutes'))")
+    db.commit()
+    db.close()
+    monkeypatch.setattr(lv, "SERVER_DB", str(p))
+    monkeypatch.setattr(lv, "_localize_vps_failure", lambda: ("stale", "probe-down"))
+    r = lv.vps_metrics_liveness()
+    assert r["status"] == "stale", r
+    assert "probe-down" in r["detail"], r
+
+
+def test_vps_metrics_stale_tailscale_link_down(monkeypatch, tmp_path):
+    """VPS-A gate: stale + Tailscale-FAIL + public-OK → status=dead, sebep=tailscale-link-down."""
+    p = tmp_path / "server.db"
+    db = sqlite3.connect(p)
+    db.execute("CREATE TABLE vps_metrics_history (id INTEGER PRIMARY KEY, timestamp TEXT)")
+    db.execute("INSERT INTO vps_metrics_history (timestamp) VALUES (datetime('now', '-15 minutes'))")
+    db.commit()
+    db.close()
+    monkeypatch.setattr(lv, "SERVER_DB", str(p))
+    monkeypatch.setattr(lv, "_localize_vps_failure", lambda: ("dead", "tailscale-link-down"))
+    r = lv.vps_metrics_liveness()
+    assert r["status"] == "dead", r
+    assert "tailscale-link-down" in r["detail"], r
+
+
+def test_backup_push_gate_ek(monkeypatch, tmp_path):
+    """VPS-A gate: backup-push fail-row→dead, no-row→dead, pass-fresh→alive."""
+    # fail row → dead
+    p1 = tmp_path / "s1.db"
+    _cron_db(p1, [("vps-backup-push", "fail", "-1 hour")])
+    monkeypatch.setattr(lv, "SERVER_DB", str(p1))
+    r = lv.cron_job_liveness("vps-backup-push", 16 * 3600, absent_status="dead")
+    assert r["status"] == "dead", r
+
+    # no row → dead (absent_status="dead")
+    p2 = tmp_path / "s2.db"
+    db = sqlite3.connect(p2)
+    db.execute(
+        "CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "timestamp TEXT, job TEXT, result TEXT, rc INTEGER, source TEXT, "
+        "detail TEXT, attempt_no INTEGER DEFAULT 1)"
+    )
+    db.commit()
+    db.close()
+    monkeypatch.setattr(lv, "SERVER_DB", str(p2))
+    r = lv.cron_job_liveness("vps-backup-push", 16 * 3600, absent_status="dead")
+    assert r["status"] == "dead", r
+
+    # fresh pass → alive
+    p3 = tmp_path / "s3.db"
+    _cron_db(p3, [("vps-backup-push", "pass", "-1 hour")])
+    monkeypatch.setattr(lv, "SERVER_DB", str(p3))
+    r = lv.cron_job_liveness("vps-backup-push", 16 * 3600, absent_status="dead")
+    assert r["status"] == "alive", r
+
+
 def test_check_all_shape(monkeypatch, tmp_path):
     # Tüm kaynaklar okunamasa bile check_all patlamamalı, dead/stale derlemeli.
     monkeypatch.setattr(lv, "SERVER_DB", str(tmp_path / "none.db"))

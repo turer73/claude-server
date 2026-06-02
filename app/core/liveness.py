@@ -17,6 +17,7 @@ Pure observer: hiçbir şeye yazmaz. status ∈ {alive, stale, dead, unknown}.
 from __future__ import annotations
 
 import datetime as dt
+import socket
 import sqlite3
 import urllib.error
 import urllib.request
@@ -28,6 +29,9 @@ MEMORY_DB = "/opt/linux-ai-server/data/claude_memory.db"
 POLLER_STATE = "/opt/linux-ai-server/data/hook-state/poller-state.json"
 ALERTS_LOG = "/var/log/linux-ai-server/alerts.log"
 RAG_HEALTH_URL = "http://localhost:8420/api/v1/rag/health"
+
+VPS_TAILSCALE_IP = "100.126.113.23"
+VPS_PUBLIC_IP = "194.163.134.239"
 
 
 def _now() -> dt.datetime:
@@ -83,6 +87,36 @@ def _verdict(age: float | None, threshold_s: float) -> tuple[str, str]:
     return "dead", f"ölü ({int(age)}s ≫ {int(threshold_s)}s)"
 
 
+# ── VPS localization ─────────────────────────────────────────────────────
+
+
+def _localize_vps_failure(
+    tailscale_ip: str = VPS_TAILSCALE_IP,
+    public_ip: str = VPS_PUBLIC_IP,
+    timeout: float = 5.0,
+) -> tuple[str, str]:
+    """Stale VPS metrics → TCP probe to localize root cause. Read-only, bounded.
+
+    Returns (status, reason):
+      ("stale", "probe-down")         — VPS+link canlı, collector durdu
+      ("dead",  "tailscale-link-down") — VPS canlı ama Tailscale koptu
+      ("dead",  "vps-down")            — VPS erişilemiyor
+    """
+    try:
+        with socket.create_connection((tailscale_ip, 22), timeout=timeout):
+            pass
+        return "stale", "probe-down"
+    except OSError:
+        pass
+    try:
+        with socket.create_connection((public_ip, 22), timeout=timeout):
+            pass
+        return "dead", "tailscale-link-down"
+    except OSError:
+        pass
+    return "dead", "vps-down"
+
+
 # ── A-sınıfı: kadans-tabanlı staleness ──────────────────────────────────
 
 
@@ -93,11 +127,13 @@ def metrics_liveness() -> dict:
 
 
 def vps_metrics_liveness() -> dict:
-    # NOT: surer-VPS-A rafine edecek — staleness "VPS-ölü" demez; 3 sebep
-    # (VPS-down / Tailscale-link-down / probe-down) ayırt edilmeli. Burada ham
-    # staleness; link-test ayrı sinyal (VPS-A sahibi: surer).
     age = _age_s(_db_latest_ts(SERVER_DB, "SELECT MAX(timestamp) FROM vps_metrics_history"))
     st, d = _verdict(age, 600)  # ~150s kadans, >10dk geç
+    if st == "stale":
+        # VPS-A: stale → TCP probe ile kök-neden lokalize et (read-only, 5s).
+        probe_st, reason = _localize_vps_failure()
+        st = probe_st
+        d = f"{d} | sebep={reason}"
     return {"source": "vps_metrics_history", "klass": "A", "status": st, "detail": d}
 
 
@@ -107,8 +143,12 @@ def ci_liveness() -> dict:
     return {"source": "ci_test_runs", "klass": "A", "status": st, "detail": d}
 
 
-def cron_job_liveness(job: str, cadence_s: float) -> dict:
-    """A: wrapped cron'un cron_outcomes'taki son satır tazeliği + sonucu."""
+def cron_job_liveness(job: str, cadence_s: float, absent_status: str = "unknown") -> dict:
+    """A: wrapped cron'un cron_outcomes'taki son satır tazeliği + sonucu.
+
+    absent_status: satır yoksa döndürülecek status (default "unknown"; kritik
+    job'lar için "dead" kullan — hiç koşmamış = sorun).
+    """
     row = None
     try:
         con = sqlite3.connect(f"file:{SERVER_DB}?mode=ro", uri=True)
@@ -122,7 +162,7 @@ def cron_job_liveness(job: str, cadence_s: float) -> dict:
     except sqlite3.Error:
         pass
     if not row:
-        return {"source": f"cron:{job}", "klass": "A", "status": "unknown", "detail": "cron_outcomes satırı yok"}
+        return {"source": f"cron:{job}", "klass": "A", "status": absent_status, "detail": "cron_outcomes satırı yok"}
     age = _age_s(row[0])
     st, d = _verdict(age, cadence_s)
     if st == "alive" and row[1] != "pass":  # taze ama sonuç kötü
@@ -231,7 +271,7 @@ REGISTRY = [
     metrics_liveness,
     vps_metrics_liveness,
     ci_liveness,
-    lambda: cron_job_liveness("vps-backup-push", 28 * 3600),  # günlük relay, >28h
+    lambda: cron_job_liveness("vps-backup-push", 16 * 3600, absent_status="dead"),  # günlük; 16h→dead@48h (~2g)
     lambda: cron_job_liveness("demo-reset-test", 28 * 3600),
     notes_poller_liveness,
     alerts_evaluator_liveness,
