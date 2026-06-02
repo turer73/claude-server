@@ -370,7 +370,8 @@ def has_signal(d: dict) -> bool:
         return True
     if (d.get("cron_jobs") or {}).get("bad"):
         return True
-    if (d.get("liveness") or {}).get("dead"):
+    lv = d.get("liveness") or {}
+    if lv.get("dead") or lv.get("stale"):
         return True
     ci = d.get("ci") or {}
     return bool(ci and ((ci.get("failed") or 0) > 0 or ci.get("stale") or ci.get("regressions")))

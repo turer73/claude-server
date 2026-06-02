@@ -197,6 +197,40 @@ def test_render_includes_ci_line():
     assert "↓kuafor -5" in html
 
 
+def _base_signal_dict():
+    return {
+        "memory": {"new_bugs": [], "unread_notes": []},
+        "commits": {},
+        "cron": {"self_pentest": None},
+        "system": {"service": "active"},
+        "ci": {"failed": 0, "stale": False},
+    }
+
+
+def test_has_signal_liveness_stale_triggers():
+    base = _base_signal_dict()
+    base["liveness"] = {
+        "dead": [],
+        "stale": [{"source": "vps-backup", "status": "stale", "klass": "B", "detail": "72h no heartbeat"}],
+    }
+    assert core_digest.has_signal(base) is True
+
+
+def test_has_signal_liveness_dead_triggers():
+    base = _base_signal_dict()
+    base["liveness"] = {
+        "dead": [{"source": "cron-daily", "status": "dead", "klass": "A", "detail": "5d no heartbeat"}],
+        "stale": [],
+    }
+    assert core_digest.has_signal(base) is True
+
+
+def test_has_signal_liveness_all_clear_no_signal():
+    base = _base_signal_dict()
+    base["liveness"] = {"dead": [], "stale": []}
+    assert core_digest.has_signal(base) is False
+
+
 def test_render_handles_missing_ci():
     d = {
         "memory": {"open_bugs": [], "new_bugs": [], "unread_notes": []},
