@@ -85,6 +85,21 @@ CREATE TABLE IF NOT EXISTS ci_lesson_learned (
 CREATE INDEX IF NOT EXISTS idx_lesson_signature ON ci_lesson_learned(signature, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_lesson_project ON ci_lesson_learned(project, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_lesson_run_uuid ON ci_lesson_learned(run_uuid);
+
+-- LIVESYS Faz 1: cron job GERÇEK outcome'u (rc değil). klipper-cron-wrap.sh yazar.
+-- "koştu-ama-kötü" sinyali; Uptime-Kuma dead-man's-switch'i ("hiç koşmadı") REPLACE etmez, tamamlar.
+CREATE TABLE IF NOT EXISTS cron_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    job TEXT NOT NULL,
+    result TEXT NOT NULL,            -- pass | partial | fail
+    rc INTEGER,
+    source TEXT NOT NULL,            -- predicate | rc-fallback | outcome-rc-mismatch | undefined
+    detail TEXT,
+    attempt_no INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS idx_cron_outcomes_job ON cron_outcomes(job, timestamp DESC);
 """
 
 

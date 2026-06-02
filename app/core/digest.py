@@ -163,6 +163,29 @@ def cron_health() -> dict:
     return out
 
 
+def cron_outcomes_health() -> dict:
+    """Latest REAL outcome per cron job from server.db.cron_outcomes (written by
+    klipper-cron-wrap.sh, LIVESYS Faz 1). Surfaces jobs whose result — not just
+    rc — is fail/partial within the window. Complements Uptime-Kuma ('never
+    ran'); this catches 'ran but bad'. Returns {} on any error."""
+    try:
+        db = sqlite3.connect(_server_db_path())
+        db.row_factory = sqlite3.Row
+        try:
+            rows = db.execute(
+                "SELECT job, result, rc, source, detail, timestamp FROM cron_outcomes c "
+                "WHERE id = (SELECT MAX(id) FROM cron_outcomes WHERE job = c.job) "
+                "AND timestamp > datetime('now', ?) ORDER BY job",
+                (f"-{WINDOW_HOURS} hours",),
+            ).fetchall()
+        finally:
+            db.close()
+    except Exception:
+        return {}
+    jobs = [dict(r) for r in rows]
+    return {"jobs": jobs, "bad": [j for j in jobs if j.get("result") != "pass"]}
+
+
 def system_health() -> dict:
     def _run(cmd: list[str]) -> str:
         try:
@@ -334,6 +357,8 @@ def has_signal(d: dict) -> bool:
     v = d.get("vps") or {}
     if v and (not v.get("online") or (v.get("cpu") or 0) >= 90 or (v.get("mem") or 0) >= 90 or (v.get("disk") or 0) >= 90):
         return True
+    if (d.get("cron_jobs") or {}).get("bad"):
+        return True
     ci = d.get("ci") or {}
     return bool(ci and ((ci.get("failed") or 0) > 0 or ci.get("stale") or ci.get("regressions")))
 
@@ -376,6 +401,16 @@ def render_text(d: dict) -> str:
                     sub_parts.append(f"{k}={f[k]}")
             L.append(f"  ⚠ {f['domain']}: {' '.join(sub_parts)}")
     L.append("")
+    cj = d.get("cron_jobs") or {}
+    if cj.get("jobs"):
+        bad = cj.get("bad") or []
+        if bad:
+            L.append(f"Cron işleri ({len(bad)} sorunlu / {len(cj['jobs'])} izlenen):")
+            for j in bad:
+                L.append(f"  ⚠ {j['job']}: {j['result']} (rc={j['rc']}, {j['source']}) {(j.get('detail') or '')[:60]}")
+        else:
+            L.append(f"Cron işleri: ✓ {len(cj['jobs'])} iş izlendi, hepsi pass")
+        L.append("")
     s = d["system"]
     svc_glyph = "✓" if s["service"] == "active" else "✗"
     L.append(
@@ -438,6 +473,13 @@ def render_html(d: dict) -> str:
         for f in sp["findings"]:
             sub = ", ".join(f"{k}={f[k]}" for k in ("content", "headers", "tls", "cookies", "bundles") if f[k])
             parts.append(f"  ⚠ <code>{f['domain']}</code> {sub}")
+    cj = d.get("cron_jobs") or {}
+    if cj.get("bad"):
+        parts.append(f"<b>Cron ({len(cj['bad'])} sorunlu / {len(cj['jobs'])}):</b>")
+        for j in cj["bad"]:
+            parts.append(f"  ⚠ <code>{j['job']}</code> {j['result']} (rc={j['rc']}) {(j.get('detail') or '')[:50]}")
+    elif cj.get("jobs"):
+        parts.append(f"<b>Cron:</b> ✓ {len(cj['jobs'])} iş pass")
     s = d["system"]
     parts.append(f"<b>Sistem:</b> {s['service']} | disk {s['disk_used_pct']} | ram {s['mem_used_mb']}/{s['mem_total_mb']}MB")
     v = d.get("vps") or {}
@@ -487,6 +529,7 @@ def gather(token: str | None = None) -> dict:
         "memory": memory_delta(WINDOW_HOURS),
         "commits": all_commits(WINDOW_HOURS, token),
         "cron": cron_health(),
+        "cron_jobs": cron_outcomes_health(),
         "system": system_health(),
         "vps": vps_health(),
         "ci": ci_health(),
