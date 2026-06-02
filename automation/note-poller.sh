@@ -51,6 +51,12 @@ poll_once() {
     local last_seen
     last_seen=$(python3 -c "import json; print(json.load(open('$STATE_FILE')).get('last_seen_id', 0))" 2>/dev/null || echo 0)
 
+    # Per-poll heartbeat (LIVESYS Faz2): liveness = processor-canli, yeni-not'tan
+    # BAGIMSIZ. Idle poll'da bile last_poll_at tazelenir; yoksa liveness-monitor
+    # poller-state mtime'ini activity sanip idle'i "olu" raporlar (B-FP). last_seen
+    # korunur (yeni-not islenince asagida line ~173 spawned_max_id ile guncellenir).
+    printf '{"last_seen_id": %s, "last_poll_at": "%s"}\n' "$last_seen" "$(ts)" > "$STATE_FILE"
+
     # Klipper-targeted veya broadcast unread notlari
     local new_notes
     new_notes=$(sqlite3 -json "$HOOK_DB" "
