@@ -67,14 +67,21 @@ _relay_vps_backup() {
   set +e
   local db="${DB_PATH:-/opt/linux-ai-server/data/server.db}"
   [ -f "$db" ] || return 0
-  local rts guard line res det safe
+  local rts guard line res det safe today ts_m
   rts=$($SSH "stat -c %Y /opt/backup/logs/cron.log 2>/dev/null || echo 0" 2>/dev/null)
   guard=$(date -d 'today 02:55' +%s 2>/dev/null || echo 0)
+  today=$(date -u +%Y-%m-%d)
   if [ "${rts:-0}" -ge "${guard:-0}" ] 2>/dev/null; then
     line=$($SSH "grep -aE '^OUTCOME:[[:space:]]*(pass|partial|fail)' /opt/backup/logs/cron.log | tail -1" 2>/dev/null)
     if [ -n "$line" ]; then
       res=$(printf '%s' "$line" | sed -E 's/^OUTCOME:[[:space:]]*(pass|partial|fail).*/\1/')
       det=$(printf '%s' "$line" | sed -E 's/^OUTCOME:[[:space:]]*(pass|partial|fail)[[:space:]]*\|?[[:space:]]*//')
+      # SIGKILL guard: backup.sh tarafı OUTCOME'a ts:YYYY-MM-DD ekleyince
+      # burada today-eslesme dogrula; eski-format (ts yok) -> kontrol atla.
+      ts_m=$(printf '%s' "$line" | grep -oE 'ts:[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1 | sed 's/ts://')
+      if [ -n "$ts_m" ] && [ "$ts_m" != "$today" ]; then
+        res=fail; det="stale-relay: OUTCOME ts=$ts_m, bugun=$today (SIGKILL/stale-log?)"
+      fi
     else
       res=fail; det="cron.log taze ama OUTCOME yok (trap-oncesi/eksik run?)"
     fi
