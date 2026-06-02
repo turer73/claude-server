@@ -23,20 +23,58 @@ fi
 CMD_STR="$*"
 TS_START=$(date -Iseconds)
 echo "[$TS_START] === START ${NAME}: ${CMD_STR} ===" >> "$LOG"
-"$@" >> "$LOG" 2>&1
+
+# Bu-run cikti'sini taze temp'e yakala (current-run-only OUTCOME scan): append'li
+# $LOG'da onceki run'in marker'i yanlis-atfedilmesin. Sonra $LOG'a ekle.
+RUN_OUT="$(mktemp "/tmp/cron-${NAME}.XXXXXX" 2>/dev/null || mktemp)"
+"$@" > "$RUN_OUT" 2>&1
 RC=$?
+cat "$RUN_OUT" >> "$LOG"
 TS_END=$(date -Iseconds)
 echo "[$TS_END] === END ${NAME}: rc=${RC} ===" >> "$LOG"
 
-if [ "$RC" -eq 0 ]; then
+# ── Outcome-contract (LIVESYS Faz 1): gercek sonucu rc'den degil, isin bastigi
+# son `OUTCOME: <pass|partial|fail> | <detay>` marker'indan turet. ──
+OUTCOME_LINE="$(grep -aE '^OUTCOME:[[:space:]]*(pass|partial|fail)' "$RUN_OUT" | tail -1)"
+rm -f "$RUN_OUT"
+
+if [ -n "$OUTCOME_LINE" ]; then
+    RESULT="$(printf '%s' "$OUTCOME_LINE" | sed -E 's/^OUTCOME:[[:space:]]*(pass|partial|fail).*/\1/')"
+    DETAIL="$(printf '%s' "$OUTCOME_LINE" | sed -E 's/^OUTCOME:[[:space:]]*(pass|partial|fail)[[:space:]]*\|?[[:space:]]*//')"
+    SOURCE="predicate"
+    # Sertlestirme #1: pass beyan ama rc!=0 = CELISKI (pass-yaz-sonra-crash/timeout) -> fail.
+    if [ "$RESULT" = "pass" ] && [ "$RC" -ne 0 ]; then
+        RESULT="fail"; SOURCE="outcome-rc-mismatch"; DETAIL="declared pass but rc=${RC}; ${DETAIL}"
+    fi
+else
+    # Marker yok -> rc-fallback (eski davranisla birebir) + outcome-undefined (sessiz kapsam yok).
+    if [ "$RC" -eq 0 ]; then RESULT="pass"; else RESULT="fail"; fi
+    SOURCE="rc-fallback"; DETAIL="outcome-undefined (no OUTCOME marker)"
+fi
+
+# Merkezi kayit (server.db). Her run ayri satir (retry-pass fail'i EZMEZ). Kuma
+# dead-man's-switch'i ("hic kosmadi") REPLACE etmez — tamamlayici.
+DB_PATH="${DB_PATH:-/opt/linux-ai-server/data/server.db}"
+if [ -f "$DB_PATH" ]; then
+    SAFE_DETAIL="$(printf '%s' "$DETAIL" | tr -d '\\`"' | tr '\n\r\t' '   ' | head -c 300)"
+    SAFE_DETAIL="${SAFE_DETAIL//\'/\'\'}"  # SQL single-quote escape
+    sqlite3 "$DB_PATH" \
+        "INSERT INTO cron_outcomes (job,result,rc,source,detail) VALUES ('${NAME}','${RESULT}',${RC},'${SOURCE}','${SAFE_DETAIL}');" \
+        2>>"$LOG" || true
+fi
+
+# ── Alert: gercek RESULT'a gore (sadece rc!=0 degil) — partial de yuzeye cikar. ──
+if [ "$RESULT" = "pass" ]; then
     /opt/linux-ai-server/scripts/klipper-event.sh "cron-${NAME}" "OK"
 else
-    /opt/linux-ai-server/scripts/klipper-event.sh "cron-${NAME}" "FAIL rc=${RC}"
+    SEV="critical"; [ "$RESULT" = "partial" ] && SEV="warning"
+    /opt/linux-ai-server/scripts/klipper-event.sh "cron-${NAME}" "${RESULT} rc=${RC} (${DETAIL})"
 
     # n8n webhook payload — workflow template path'leri tam uyumlu:
     # $json.alert.{source,severity,message,value,threshold} (body wrapping yok, alert root'ta)
     SAFE_CMD=$(printf "%s" "$CMD_STR" | tr -d '\\"`' | tr '\n\r\t' '   ' | head -c 200)
-    BODY="{\"alert\":{\"source\":\"klipper-cron-${NAME}\",\"severity\":\"critical\",\"message\":\"cron ${NAME} FAIL rc=${RC} (${SAFE_CMD})\",\"value\":${RC},\"threshold\":0},\"meta\":{\"type\":\"cron_failure\",\"project\":\"klipper-cron\",\"device\":\"klipper\",\"command\":\"${SAFE_CMD}\",\"exit_code\":\"${RC}\",\"auto_fix_eligible\":true,\"hook_source\":\"klipper-cron-wrap\"}}"
+    SAFE_MSG=$(printf "%s" "$DETAIL" | tr -d '\\"`' | tr '\n\r\t' '   ' | head -c 160)
+    BODY="{\"alert\":{\"source\":\"klipper-cron-${NAME}\",\"severity\":\"${SEV}\",\"message\":\"cron ${NAME} ${RESULT} rc=${RC} (${SAFE_MSG})\",\"value\":${RC},\"threshold\":0},\"meta\":{\"type\":\"cron_failure\",\"project\":\"klipper-cron\",\"device\":\"klipper\",\"command\":\"${SAFE_CMD}\",\"exit_code\":\"${RC}\",\"result\":\"${RESULT}\",\"outcome_source\":\"${SOURCE}\",\"auto_fix_eligible\":true,\"hook_source\":\"klipper-cron-wrap\"}}"
     curl -s -X POST --max-time 3 \
         -H "Content-Type: application/json" \
         -H "X-Webhook-Secret: ${WEBHOOK_SECRET:-MISSING}" \

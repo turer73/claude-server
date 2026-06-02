@@ -11,6 +11,8 @@
 # Sosyal Medya Otomasyon
 # E2E Live Site Tests — günlük 07:00
 0 7 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh e2e-live-test /opt/linux-ai-server/automation/e2e-live-test.sh
+# Günlük operasyon dijesti -> Telegram (08:00, sabah işleri sonrası; NOTHING_NEW guard) [F-C1]
+0 8 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh digest /opt/linux-ai-server/automation/digest-send.sh
 # Klipper HDD backup — VPS Dokploy + volumes (7 gun retention)
 0 4 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh pull-vps-backup /opt/linux-ai-server/automation/pull-vps-backup.sh
 # One-shot: gozlem haftasi sonu hatirlatma (2026-05-21, self-cleaning)

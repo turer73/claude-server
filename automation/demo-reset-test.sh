@@ -28,12 +28,37 @@ export E2E_PASSWORD="${E2E_PASSWORD:?Set E2E_PASSWORD in .env}"
 export E2E_BASE_URL="${E2E_BASE_URL:-https://panola.app}"
 export E2E_SUPABASE_URL="${E2E_SUPABASE_URL:-${E2E_SUPABASE_URL:?Set E2E_SUPABASE_URL}}"
 export E2E_SUPABASE_KEY="${E2E_SUPABASE_KEY:-}"
+# New cloud seed (panola 4eb85d5) creates the demo user + RLS-bypass inserts via
+# the service-role client; .env is bare (not auto-exported), so this must be
+# exported explicitly or the seed gets an empty key and fail-louds.
+export E2E_SUPABASE_SERVICE_ROLE_KEY="${E2E_SUPABASE_SERVICE_ROLE_KEY:?Set E2E_SUPABASE_SERVICE_ROLE_KEY in .env}"
 export CI=true
 
 # Dizin oluştur
 mkdir -p "$RESULTS_DIR"
 
 log() { echo "[$(date +%H:%M:%S)] $1" | tee -a "$LOG_FILE"; }
+
+# ─── Outcome-contract (LIVESYS Faz 1) ───
+# set -euo pipefail altinda mid-failure abort, son "mutlu satir"a ULASMAZ;
+# bu yuzden OUTCOME'u EXIT-trap ile emit et (abort'ta bile gercek sonuc).
+# Rubrik: seed-fail/0-gecti=fail, fail>0 ama gecen var=partial, hepsi-gecti=pass.
+emit_outcome() {
+  set +e
+  local seed="${SEED_STATUS:-}" passed="${PASSED:-0}" failed="${FAILED:-0}" total="${TOTAL:-0}"
+  local result detail
+  if [ "$seed" != "✅" ]; then
+    result="fail"; detail="seed basarisiz/ulasilmadi (seed='${seed:-abort}')"
+  elif ! [ "$passed" -gt 0 ] 2>/dev/null; then
+    result="fail"; detail="0 test gecti (passed=$passed total=$total)"
+  elif [ "$failed" -gt 0 ] 2>/dev/null; then
+    result="partial"; detail="$passed/$total ($failed fail)"
+  else
+    result="pass"; detail="$passed/$total"
+  fi
+  echo "OUTCOME: $result | $detail"
+}
+trap emit_outcome EXIT
 
 # ─── Telegram Bildirim ───
 send_telegram() {
