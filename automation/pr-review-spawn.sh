@@ -53,4 +53,6 @@ if [ "$RC" -eq 0 ]; then
 else
   log "SPAWN FAIL rc=$RC: $REPO#$PR"
   echo "OUTCOME: fail | spawn rc=$RC $REPO#$PR"
+  exit 1  # poller'a FAIL bildir -> mark_reviewed/daily_inc YAPMASIN (basarisiz
+          # review'i 'reviewed' sayma; sonraki run tekrar dener). Codex-P1.
 fi
