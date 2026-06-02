@@ -89,3 +89,51 @@ def test_has_signal_cron_all_pass_no_signal():
         "ci": {},
     }
     assert core_digest.has_signal(base) is False
+
+
+_SYS = {"service": "active", "disk_used_pct": "10%", "disk_avail": "9G", "mem_used_mb": "100", "mem_total_mb": "8000"}
+
+
+def test_render_includes_bad_cron_jobs():
+    d = {
+        "memory": {"open_bugs": [], "new_bugs": [], "unread_notes": []},
+        "commits": {},
+        "cron": {"self_pentest": None},
+        "cron_jobs": {
+            "jobs": [
+                {"job": "test-runner", "result": "pass", "rc": 0, "source": "predicate", "detail": "passed=3634"},
+                {"job": "demo-reset", "result": "partial", "rc": 0, "source": "predicate", "detail": "119/123 (4 fail)"},
+            ],
+            "bad": [{"job": "demo-reset", "result": "partial", "rc": 0, "source": "predicate", "detail": "119/123 (4 fail)"}],
+        },
+        "system": _SYS,
+    }
+    text = core_digest.render_text(d)
+    html = core_digest.render_html(d)
+    assert "demo-reset" in text
+    assert "partial" in text
+    assert "demo-reset" in html
+    assert "partial" in html
+
+
+def test_render_all_pass_cron_summary():
+    d = {
+        "memory": {"open_bugs": [], "new_bugs": [], "unread_notes": []},
+        "commits": {},
+        "cron": {"self_pentest": None},
+        "cron_jobs": {"jobs": [{"job": "test-runner", "result": "pass", "rc": 0, "source": "predicate", "detail": "ok"}], "bad": []},
+        "system": _SYS,
+    }
+    assert "hepsi pass" in core_digest.render_text(d)
+    assert "1 iş pass" in core_digest.render_html(d)
+
+
+def test_render_handles_missing_cron_jobs():
+    d = {
+        "memory": {"open_bugs": [], "new_bugs": [], "unread_notes": []},
+        "commits": {},
+        "cron": {"self_pentest": None},
+        "system": _SYS,
+    }
+    # cron_jobs yoksa render patlamamali, cron satiri da basmamali
+    assert "Cron iş" not in core_digest.render_text(d)
