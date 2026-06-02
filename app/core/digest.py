@@ -11,8 +11,10 @@ Both the CLI in `automation/digest.py` and the API route in
 from __future__ import annotations
 
 import datetime as dt
+import html
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -184,6 +186,94 @@ def cron_outcomes_health() -> dict:
         return {}
     jobs = [dict(r) for r in rows]
     return {"jobs": jobs, "bad": [j for j in jobs if j.get("result") != "pass"]}
+
+
+REVIEW_REPOS = [
+    "turer73/claude-server",
+    "turer73/panola",
+    "turer73/kuafor",
+    "turer73/petvet",
+    "turer73/bilge-arena",
+    "turer73/renderhane",
+    "turer73/koken-akademi",
+]
+
+
+def _gh_json(args: list[str], timeout: float = 8.0):
+    """gh CLI → parsed JSON. Hata/timeout/non-zero → None (fetch-fail ayırt edilir,
+    sessiz-[] DEĞİL — kendi PR-poller'ımızda yakaladığımız Codex-P1 dersi)."""
+    try:
+        r = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=timeout)  # noqa: S603,S607
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        return json.loads(r.stdout or "null")
+    except ValueError:
+        return None
+
+
+def _pr_ci_state(rollup: list) -> str:
+    """statusCheckRollup → green | failing | pending | unknown. CheckRun(.status/
+    .conclusion) + legacy StatusContext(.state) ikisini de değerlendirir."""
+    if not rollup:
+        return "unknown"
+
+    def _m(item, pat):
+        v = f"{item.get('conclusion') or ''} {item.get('state') or ''} {item.get('status') or ''}"
+        return bool(re.search(pat, v, re.I))
+
+    if any(_m(i, r"FAIL|ERROR|CANCELLED|TIMED_OUT") for i in rollup):
+        return "failing"
+    if any(_m(i, r"IN_PROGRESS|QUEUED|PENDING|EXPECTED") for i in rollup):
+        return "pending"
+    if any(_m(i, r"SUCCESS|NEUTRAL|SKIPPED") for i in rollup):
+        return "green"
+    return "unknown"
+
+
+def pr_review_health() -> dict:
+    """LIVESYS PR-review FAZ1 (ÜCRETSİZ): 7 repo açık PR + Codex-inline + CI durumu
+    topla → digest review-triyaj sinyali. Pure observer (gh okuma; otonom Claude
+    YOK = token-maliyeti yok). fetch-fail ayırt edilir (sessiz-sıfır değil)."""
+    prs: list[dict] = []
+    fetch_fail = False
+    for repo in REVIEW_REPOS:
+        data = _gh_json(["pr", "list", "-R", repo, "--state", "open", "--json", "number,title,isDraft,statusCheckRollup"])
+        if data is None:
+            fetch_fail = True
+            continue
+        for pr in data:
+            if pr.get("isDraft"):
+                continue
+            num = pr["number"]
+            ci = _pr_ci_state(pr.get("statusCheckRollup") or [])
+            codex = _gh_json(
+                [
+                    "api",
+                    f"repos/{repo}/pulls/{num}/comments",
+                    "--jq",
+                    '[.[]|select(.user.login=="chatgpt-codex-connector[bot]")]|length',
+                ]
+            )
+            # Codex-fetch None (rate-limit/auth/timeout) = "0 yorum" DEĞİL "bilinmiyor":
+            # codex=None + fetch_fail (sessiz "Codex-temiz" raporlamayi onle — Codex-P2).
+            if codex is None:
+                fetch_fail = True
+                codex_val: int | None = None
+            else:
+                codex_val = codex if isinstance(codex, int) else 0
+            prs.append(
+                {
+                    "repo": repo.split("/")[-1],
+                    "num": num,
+                    "title": (pr.get("title") or "")[:60],
+                    "ci": ci,
+                    "codex": codex_val,
+                }
+            )
+    return {"prs": prs, "signaled": prs, "fetch_fail": fetch_fail}
 
 
 def _liveness_health() -> dict:
@@ -373,6 +463,9 @@ def has_signal(d: dict) -> bool:
     lv = d.get("liveness") or {}
     if lv.get("dead") or lv.get("stale"):
         return True
+    pr = d.get("pr_review") or {}
+    if pr.get("signaled") or pr.get("fetch_fail"):
+        return True
     ci = d.get("ci") or {}
     return bool(ci and ((ci.get("failed") or 0) > 0 or ci.get("stale") or ci.get("regressions")))
 
@@ -424,6 +517,16 @@ def render_text(d: dict) -> str:
                 L.append(f"  ⚠ {j['job']}: {j['result']} (rc={j['rc']}, {j['source']}) {(j.get('detail') or '')[:60]}")
         else:
             L.append(f"Cron işleri: ✓ {len(cj['jobs'])} iş izlendi, hepsi pass")
+        L.append("")
+    pr = d.get("pr_review") or {}
+    pr_list = pr.get("prs") or []
+    if pr_list or pr.get("fetch_fail"):
+        L.append(f"Açık PR'lar — review-triyaj ({len(pr_list)}):")
+        for p in pr_list:
+            cx = " codex:?" if p.get("codex") is None else (f" codex:{p['codex']}" if p["codex"] else "")
+            L.append(f"  • {p['repo']}#{p['num']} [CI:{p['ci']}{cx}] {p['title']}")
+        if pr.get("fetch_fail"):
+            L.append("  ⚠ fetch-fail: bir+ repo taranamadı (eksik olabilir)")
         L.append("")
     lv = d.get("liveness") or {}
     bad_lv = (lv.get("dead") or []) + (lv.get("stale") or [])
@@ -501,6 +604,16 @@ def render_html(d: dict) -> str:
             parts.append(f"  ⚠ <code>{j['job']}</code> {j['result']} (rc={j['rc']}) {(j.get('detail') or '')[:50]}")
     elif cj.get("jobs"):
         parts.append(f"<b>Cron:</b> ✓ {len(cj['jobs'])} iş pass")
+    pr = d.get("pr_review") or {}
+    pr_list = pr.get("prs") or []
+    if pr_list or pr.get("fetch_fail"):
+        parts.append(f"<b>Açık PR — review ({len(pr_list)}):</b>")
+        for p in pr_list:
+            cx = " codex:?" if p.get("codex") is None else (f" codex:{p['codex']}" if p["codex"] else "")
+            # PR title HTML-escape: <>& parse_mode=HTML dijesti bozabilir (Codex-P2).
+            parts.append(f"  • <code>{p['repo']}#{p['num']}</code> [CI:{p['ci']}{cx}] {html.escape(p['title'])}")
+        if pr.get("fetch_fail"):
+            parts.append("  ⚠ fetch-fail: bir+ repo taranamadı")
     lv = d.get("liveness") or {}
     bad_lv = (lv.get("dead") or []) + (lv.get("stale") or [])
     if bad_lv:
@@ -557,6 +670,7 @@ def gather(token: str | None = None) -> dict:
         "commits": all_commits(WINDOW_HOURS, token),
         "cron": cron_health(),
         "cron_jobs": cron_outcomes_health(),
+        "pr_review": pr_review_health(),
         "liveness": _liveness_health(),
         "system": system_health(),
         "vps": vps_health(),
