@@ -2,8 +2,7 @@
 
 > **Amaç:** 7 ilgili repo'da açılan PR'ları otomatik kod-review'dan geçir; bulguları
 > PR'a inline yaz. Codex'in güvenilmezliğini (atlama/latency) yapısal kapat:
-> klipper tetikler, atlamaz. **Durum:** Faz 1 (poller foundation) DONE/dry-run;
-> Faz 2 (spawn+post) validated-next-step.
+> klipper tetikler, atlamaz. **Durum:** Faz 1 (poller foundation + digest-aggregate) DONE; Faz 2 (koşullu auto-comment) validated-next-step.
 
 ## Karar (kullanıcı, 2026-06-02)
 - Tetikleme: **CI-yeşil sonrası**. Çıktı: **PR'a `--comment` (inline)**.
