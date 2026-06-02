@@ -55,6 +55,49 @@ $1"
   exit 1
 }
 
+# LIVESYS Faz1 outcome-contract: gercek sonuc EXIT-trap ile (set -e/abort durumunda bile emit)
+CH_EXPECTED=$(echo $CH_TABLES | wc -w)
+STAGE=start; VOL_OK=0; VOL_COUNT=0; VOL_SKIP=0; CH_OK=0
+# VPS backup.sh ciplak-cron'da kosar (klipper-cron-wrap YOK) -> OUTCOME'u yalniz
+# /opt/backup/logs/cron.log'a (backup-exclusive, cumulative) gider. Buradan cekip
+# merkezi cron_outcomes'a job='vps-backup-push' relay et (consumer-gap secenek a).
+# Tazelik-guard (cumulative-log oldugu icin SART, Codex-dersi/bu-run-bagli):
+# cron.log bugun 02:55'ten sonra yazilmali (bugunku 03:00 run), degilse stale->fail.
+_relay_vps_backup() {
+  set +e
+  local db="${DB_PATH:-/opt/linux-ai-server/data/server.db}"
+  [ -f "$db" ] || return 0
+  local rts guard line res det safe
+  rts=$($SSH "stat -c %Y /opt/backup/logs/cron.log 2>/dev/null || echo 0" 2>/dev/null)
+  guard=$(date -d 'today 02:55' +%s 2>/dev/null || echo 0)
+  if [ "${rts:-0}" -ge "${guard:-0}" ] 2>/dev/null; then
+    line=$($SSH "grep -aE '^OUTCOME:[[:space:]]*(pass|partial|fail)' /opt/backup/logs/cron.log | tail -1" 2>/dev/null)
+    if [ -n "$line" ]; then
+      res=$(printf '%s' "$line" | sed -E 's/^OUTCOME:[[:space:]]*(pass|partial|fail).*/\1/')
+      det=$(printf '%s' "$line" | sed -E 's/^OUTCOME:[[:space:]]*(pass|partial|fail)[[:space:]]*\|?[[:space:]]*//')
+    else
+      res=fail; det="cron.log taze ama OUTCOME yok (trap-oncesi/eksik run?)"
+    fi
+  else
+    res=fail; det="stale: cron.log mtime eski, bugun VPS backup kosmadi"
+  fi
+  safe="$(printf '%s' "$det" | tr -d '\\`"' | tr '\n\r\t' '   ' | head -c 300)"; safe="${safe//\'/\'\'}"
+  sqlite3 "$db" "INSERT INTO cron_outcomes (job,result,rc,source,detail) VALUES ('vps-backup-push','${res:-fail}',0,'relay','$safe');" 2>/dev/null || true
+}
+
+_emit_outcome() {
+  local rc=$?
+  set +e
+  local r detail
+  if [ "${STAGE:-start}" != "done" ]; then r=fail; detail="aborted rc=$rc stage=${STAGE:-start}"
+  elif [ "${VOL_SKIP:-1}" -gt 0 ] || [ "${CH_OK:-0}" -lt "${CH_EXPECTED:-5}" ]; then r=partial; detail="vol ${VOL_OK:-0}/${VOL_COUNT:-0} ch ${CH_OK:-0}/${CH_EXPECTED:-5}"
+  else r=pass; detail="vol ${VOL_OK}/${VOL_COUNT} ch ${CH_OK}/${CH_EXPECTED} size ${TOTAL:-?}"
+  fi
+  echo "OUTCOME: $r | $detail"
+  _relay_vps_backup  # VPS backup.sh outcome'unu da cron_outcomes'a relay et
+}
+trap _emit_outcome EXIT
+
 mkdir -p "$DEST" || fail "mkdir $DEST"
 log "=== START backup -> $DEST ==="
 
@@ -119,6 +162,7 @@ DELETED=$(find "$TARGET_ROOT" -maxdepth 1 -type d -mtime +$RETENTION_DAYS -print
 log "  silinen eski snapshot dizini: $DELETED"
 
 TOTAL=$(du -sh "$DEST" 2>/dev/null | cut -f1)
+STAGE=done
 log "=== DONE — volumes: $VOL_OK OK / $VOL_SKIP skip, snapshot toplam: $TOTAL ==="
 
 send_telegram "✅ *VPS Backup — $DATE*

@@ -56,6 +56,14 @@
 
 **Faz 1 gate:** pilot kanıtlı + yaygınlaştırma listesi tam (tanımsız kalan işler loglu).
 
+### Faz 1 ilerleme (2026-06-02 — surer ile birlikte, PR #10 MERGED)
+- ✅ klipper-cron-wrap.sh outcome-contract: fresh-temp current-run scan + son OUTCOME parse + rc/predicate mismatch-guard + cron_outcomes (server.db) + alert RESULT∈{fail,partial}. Geriye-uyumlu (marker yoksa rc-fallback + outcome-undefined).
+- ✅ Pilot emission: test-runner + demo-reset (EXIT-trap; partial-rubrik). **Codex P1 fix:** test-runner predicate RUN_START'a bağlandı (3h-pencere yetersizdi → 3h içinde re-run+abort önceki pass'i gizliyordu).
+- ✅ 6 surer-sertleştirme adopte + cross-verify (writer≠verifier): surer PR#10 onay (logic-test 7/7); klipper backup-predicate onay (in-process STAGE → stale-row sınıfına immün).
+- 🔶 backup-predicate (surer): dry 10/10 onaylı → wrap canlı (merge) sonrası surer prod'a uyguluyor; ilk gerçek emit birlikte doğrulanacak.
+- ⏳ Kuyruk: cron_outcomes retention prune (~90g, db-retention.sh — klipper, düşük öncelik) · e2e-live OUTCOME (wave 1.3) · yaygınlaştırma (kalan işlere predicate).
+- ⚠️ Bitişik güvenlik (FAZ1-dışı): backup.sh TELEGRAM_BOT_TOKEN plaintext → surer .env+rotate (kullanıcı onaylı).
+
 ---
 
 ## FAZ 2 — Doğrulanmış farkındalık: canlılık/tazelik meta-kontrolü (Yetenek 3'ün kalbi)

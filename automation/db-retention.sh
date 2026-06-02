@@ -20,6 +20,7 @@ METRICS_KEEP_DAYS=${METRICS_KEEP_DAYS:-30}
 ALERTS_KEEP_DAYS=${ALERTS_KEEP_DAYS:-30}
 AUDIT_KEEP_DAYS=${AUDIT_KEEP_DAYS:-90}
 CI_KEEP_DAYS=${CI_KEEP_DAYS:-90}
+CRON_OUTCOMES_KEEP_DAYS=${CRON_OUTCOMES_KEEP_DAYS:-90}  # LIVESYS Faz1 cron_outcomes
 
 DRY_RUN=${DRY_RUN:-0}
 
@@ -60,6 +61,10 @@ else
     # audit_log — older than AUDIT_KEEP_DAYS
     n=$(sqlite_exec "$SERVER_DB" "DELETE FROM audit_log WHERE timestamp < datetime('now', '-${AUDIT_KEEP_DAYS} days')")
     log "  audit_log pruned: $n rows (keep ${AUDIT_KEEP_DAYS}d)"
+
+    # cron_outcomes (LIVESYS Faz1) — older than CRON_OUTCOMES_KEEP_DAYS
+    n=$(sqlite_exec "$SERVER_DB" "DELETE FROM cron_outcomes WHERE timestamp < datetime('now', '-${CRON_OUTCOMES_KEEP_DAYS} days')")
+    log "  cron_outcomes pruned: $n rows (keep ${CRON_OUTCOMES_KEEP_DAYS}d)"
 fi
 
 if [ ! -f "$CI_DB" ]; then
