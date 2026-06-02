@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from app.core import digest as core_digest
 
-
 # ── _pr_ci_state (pure) ──
 
 
@@ -119,7 +118,37 @@ def test_render_includes_pr_review():
         "system": {"service": "active", "disk_used_pct": "10%", "disk_avail": "9G", "mem_used_mb": "100", "mem_total_mb": "8000"},
     }
     text = core_digest.render_text(d)
-    html = core_digest.render_html(d)
+    html_out = core_digest.render_html(d)
     assert "panola#7" in text
     assert "codex:1" in text
-    assert "panola#7" in html
+    assert "panola#7" in html_out
+
+
+def test_pr_review_codex_fetch_fail_is_unknown(monkeypatch):
+    """codex-comments fetch None → codex=None (bilinmiyor) + fetch_fail (sessiz
+    'codex:0/temiz' raporlama YOK — Codex-P2)."""
+    pr_map = {"turer73/claude-server": [{"number": 9, "title": "x", "isDraft": False, "statusCheckRollup": [{"conclusion": "SUCCESS"}]}]}
+    codex_map = {"repos/turer73/claude-server/pulls/9/comments": None}  # fetch-fail
+    monkeypatch.setattr(core_digest, "REVIEW_REPOS", ["turer73/claude-server"])
+    monkeypatch.setattr(core_digest, "_gh_json", _fake_gh(pr_map, codex_map))
+    out = core_digest.pr_review_health()
+    assert out["prs"][0]["codex"] is None  # 0 DEĞİL, bilinmiyor
+    assert out["fetch_fail"] is True
+
+
+def test_render_html_escapes_pr_title():
+    """HTML-metachar title parse_mode=HTML dijesti bozmamalı (Codex-P2)."""
+    d = {
+        "memory": {"open_bugs": [], "new_bugs": [], "unread_notes": []},
+        "commits": {},
+        "cron": {"self_pentest": None},
+        "pr_review": {
+            "prs": [{"repo": "x", "num": 1, "ci": "green", "codex": 0, "title": "fix <script> & foo"}],
+            "signaled": [{"num": 1}],
+            "fetch_fail": False,
+        },
+        "system": {"service": "active", "disk_used_pct": "10%", "disk_avail": "9G", "mem_used_mb": "100", "mem_total_mb": "8000"},
+    }
+    html_out = core_digest.render_html(d)
+    assert "&lt;script&gt;" in html_out
+    assert "<script>" not in html_out

@@ -11,8 +11,10 @@ Both the CLI in `automation/digest.py` and the API route in
 from __future__ import annotations
 
 import datetime as dt
+import html
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -219,8 +221,6 @@ def _pr_ci_state(rollup: list) -> str:
         return "unknown"
 
     def _m(item, pat):
-        import re
-
         v = f"{item.get('conclusion') or ''} {item.get('state') or ''} {item.get('status') or ''}"
         return bool(re.search(pat, v, re.I))
 
@@ -257,13 +257,20 @@ def pr_review_health() -> dict:
                     '[.[]|select(.user.login=="chatgpt-codex-connector[bot]")]|length',
                 ]
             )
+            # Codex-fetch None (rate-limit/auth/timeout) = "0 yorum" DEĞİL "bilinmiyor":
+            # codex=None + fetch_fail (sessiz "Codex-temiz" raporlamayi onle — Codex-P2).
+            if codex is None:
+                fetch_fail = True
+                codex_val: int | None = None
+            else:
+                codex_val = codex if isinstance(codex, int) else 0
             prs.append(
                 {
                     "repo": repo.split("/")[-1],
                     "num": num,
                     "title": (pr.get("title") or "")[:60],
                     "ci": ci,
-                    "codex": codex if isinstance(codex, int) else 0,
+                    "codex": codex_val,
                 }
             )
     return {"prs": prs, "signaled": prs, "fetch_fail": fetch_fail}
@@ -516,7 +523,7 @@ def render_text(d: dict) -> str:
     if pr_list or pr.get("fetch_fail"):
         L.append(f"Açık PR'lar — review-triyaj ({len(pr_list)}):")
         for p in pr_list:
-            cx = f" codex:{p['codex']}" if p.get("codex") else ""
+            cx = " codex:?" if p.get("codex") is None else (f" codex:{p['codex']}" if p["codex"] else "")
             L.append(f"  • {p['repo']}#{p['num']} [CI:{p['ci']}{cx}] {p['title']}")
         if pr.get("fetch_fail"):
             L.append("  ⚠ fetch-fail: bir+ repo taranamadı (eksik olabilir)")
@@ -602,8 +609,9 @@ def render_html(d: dict) -> str:
     if pr_list or pr.get("fetch_fail"):
         parts.append(f"<b>Açık PR — review ({len(pr_list)}):</b>")
         for p in pr_list:
-            cx = f" codex:{p['codex']}" if p.get("codex") else ""
-            parts.append(f"  • <code>{p['repo']}#{p['num']}</code> [CI:{p['ci']}{cx}] {p['title']}")
+            cx = " codex:?" if p.get("codex") is None else (f" codex:{p['codex']}" if p["codex"] else "")
+            # PR title HTML-escape: <>& parse_mode=HTML dijesti bozabilir (Codex-P2).
+            parts.append(f"  • <code>{p['repo']}#{p['num']}</code> [CI:{p['ci']}{cx}] {html.escape(p['title'])}")
         if pr.get("fetch_fail"):
             parts.append("  ⚠ fetch-fail: bir+ repo taranamadı")
     lv = d.get("liveness") or {}
