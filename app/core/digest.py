@@ -186,6 +186,17 @@ def cron_outcomes_health() -> dict:
     return {"jobs": jobs, "bad": [j for j in jobs if j.get("result") != "pass"]}
 
 
+def _liveness_health() -> dict:
+    """LIVESYS Faz 2 liveness monitor (app.core.liveness). dead/stale kaynakları
+    yüzeye çıkarır. Hata/yokluk halinde {} (dijest yine de üretilir)."""
+    try:
+        from app.core import liveness
+
+        return liveness.check_all()
+    except Exception:
+        return {}
+
+
 def system_health() -> dict:
     def _run(cmd: list[str]) -> str:
         try:
@@ -359,6 +370,8 @@ def has_signal(d: dict) -> bool:
         return True
     if (d.get("cron_jobs") or {}).get("bad"):
         return True
+    if (d.get("liveness") or {}).get("dead"):
+        return True
     ci = d.get("ci") or {}
     return bool(ci and ((ci.get("failed") or 0) > 0 or ci.get("stale") or ci.get("regressions")))
 
@@ -410,6 +423,13 @@ def render_text(d: dict) -> str:
                 L.append(f"  ⚠ {j['job']}: {j['result']} (rc={j['rc']}, {j['source']}) {(j.get('detail') or '')[:60]}")
         else:
             L.append(f"Cron işleri: ✓ {len(cj['jobs'])} iş izlendi, hepsi pass")
+        L.append("")
+    lv = d.get("liveness") or {}
+    bad_lv = (lv.get("dead") or []) + (lv.get("stale") or [])
+    if bad_lv:
+        L.append(f"Liveness ({len(lv.get('dead') or [])} ölü / {len(lv.get('stale') or [])} stale):")
+        for r in bad_lv:
+            L.append(f"  {'☠' if r['status'] == 'dead' else '⚠'} {r['source']} [{r['klass']}]: {r['detail'][:55]}")
         L.append("")
     s = d["system"]
     svc_glyph = "✓" if s["service"] == "active" else "✗"
@@ -480,6 +500,12 @@ def render_html(d: dict) -> str:
             parts.append(f"  ⚠ <code>{j['job']}</code> {j['result']} (rc={j['rc']}) {(j.get('detail') or '')[:50]}")
     elif cj.get("jobs"):
         parts.append(f"<b>Cron:</b> ✓ {len(cj['jobs'])} iş pass")
+    lv = d.get("liveness") or {}
+    bad_lv = (lv.get("dead") or []) + (lv.get("stale") or [])
+    if bad_lv:
+        parts.append(f"<b>Liveness ({len(lv.get('dead') or [])} ölü / {len(lv.get('stale') or [])} stale):</b>")
+        for r in bad_lv:
+            parts.append(f"  {'☠' if r['status'] == 'dead' else '⚠'} <code>{r['source']}</code> {r['detail'][:50]}")
     s = d["system"]
     parts.append(f"<b>Sistem:</b> {s['service']} | disk {s['disk_used_pct']} | ram {s['mem_used_mb']}/{s['mem_total_mb']}MB")
     v = d.get("vps") or {}
@@ -530,6 +556,7 @@ def gather(token: str | None = None) -> dict:
         "commits": all_commits(WINDOW_HOURS, token),
         "cron": cron_health(),
         "cron_jobs": cron_outcomes_health(),
+        "liveness": _liveness_health(),
         "system": system_health(),
         "vps": vps_health(),
         "ci": ci_health(),
