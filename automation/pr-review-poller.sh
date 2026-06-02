@@ -46,14 +46,21 @@ ci_green() {
   local rollup="$1"
   local bad; bad=$(printf '%s' "$rollup" | jq '[.[] | select((.conclusion // .state // "") | test("FAIL|ERROR|CANCELLED|TIMED_OUT"; "i"))] | length' 2>/dev/null || echo 1)
   local ok;  ok=$(printf '%s' "$rollup" | jq '[.[] | select((.conclusion // .state // "") | test("SUCCESS|NEUTRAL|SKIPPED"; "i"))] | length' 2>/dev/null || echo 0)
-  local pend; pend=$(printf '%s' "$rollup" | jq '[.[] | select((.status // "") | test("IN_PROGRESS|QUEUED|PENDING"; "i"))] | length' 2>/dev/null || echo 0)
+  # pending: CheckRun .status VEYA legacy StatusContext .state ("PENDING"/"EXPECTED") — ikisi de.
+  local pend; pend=$(printf '%s' "$rollup" | jq '[.[] | select(((.status // "") | test("IN_PROGRESS|QUEUED|PENDING"; "i")) or ((.state // "") | test("PENDING|EXPECTED"; "i")))] | length' 2>/dev/null || echo 0)
   [ "${bad:-1}" -eq 0 ] && [ "${pend:-0}" -eq 0 ] && [ "${ok:-0}" -gt 0 ]
 }
 
 log "=== PR-review poll START (DRY_RUN=$DRY_RUN ENABLED=$ENABLED MAX=$MAX) ==="
-CANDIDATES=0 REVIEWED=0
+CANDIDATES=0 REVIEWED=0 FETCH_FAIL=0
 for repo in "${REPOS[@]}"; do
-  prs=$(gh pr list -R "$repo" --state open --json number,headRefOid,title,statusCheckRollup,isDraft 2>/dev/null || echo '[]')
+  # gh hatasi (auth-expiry / rate-limit / outage) "0 PR" gibi YUTULMAMALI -> sessiz
+  # arizayi onle: fetch-fail'i ayri isaretle, OUTCOME=partial yap (rc=0 != tarandi).
+  if ! prs=$(gh pr list -R "$repo" --state open --json number,headRefOid,title,statusCheckRollup,isDraft 2>>"$LOG_FILE"); then
+    log "FETCH-FAIL: $repo (gh hatasi — taranAMADI, aday gizlenmis olabilir)"
+    FETCH_FAIL=1
+    continue
+  fi
   cnt=$(printf '%s' "$prs" | jq 'length' 2>/dev/null || echo 0)
   [ "${cnt:-0}" -eq 0 ] && continue
   for i in $(seq 0 $((cnt - 1))); do
@@ -82,6 +89,11 @@ for repo in "${REPOS[@]}"; do
     # REVIEWED=$((REVIEWED + 1))
   done
 done
-# OUTCOME marker (FAZ1 outcome-contract): poller her zaman calisti-amac=tarama
-echo "OUTCOME: pass | aday=$CANDIDATES reviewed=$REVIEWED dry_run=$DRY_RUN"
-log "=== PR-review poll DONE: aday=$CANDIDATES reviewed=$REVIEWED ==="
+# OUTCOME marker (FAZ1 outcome-contract): fetch-fail varsa SESSIZ-pass DEGIL -> partial
+# (en az bir repo taranamadi; aday gizlenmis olabilir).
+if [ "${FETCH_FAIL:-0}" = "1" ]; then
+  echo "OUTCOME: partial | fetch-fail (bir+ repo taranamadi) aday=$CANDIDATES reviewed=$REVIEWED"
+else
+  echo "OUTCOME: pass | aday=$CANDIDATES reviewed=$REVIEWED dry_run=$DRY_RUN"
+fi
+log "=== PR-review poll DONE: aday=$CANDIDATES reviewed=$REVIEWED fetch_fail=$FETCH_FAIL ==="
