@@ -11,13 +11,9 @@ from datetime import datetime
 from app.exceptions import NotFoundError
 
 
-def _safe_extractall(tar: tarfile.TarFile, dest: str) -> None:
-    """tar path-traversal'a karşı güvenli extract. Py3.11.4+/3.12+ -> filter="data"
-    (PEP 706). Daha eski 3.11.x'te filter param YOK (TypeError) -> manuel member-
-    validation (mutlak/../-kaçış + symlink/hardlink reddi). Codex #28."""
-    if hasattr(tarfile, "data_filter"):
-        tar.extractall(path=dest, filter="data")
-        return
+def _validate_tar_members(tar: tarfile.TarFile, dest: str) -> None:
+    """tar üyelerini path-traversal + unsafe-link'e karşı doğrula (saf; yazma yok).
+    Py<3.11.4 fallback'i için (filter param yok). Kötü üye -> TarError. Codex #28."""
     dest_real = os.path.realpath(dest)
     for m in tar.getmembers():
         target = os.path.realpath(os.path.join(dest, m.name))
@@ -25,7 +21,16 @@ def _safe_extractall(tar: tarfile.TarFile, dest: str) -> None:
             raise tarfile.TarError(f"unsafe path in tar (traversal): {m.name}")
         if m.issym() or m.islnk():
             raise tarfile.TarError(f"unsafe link in tar: {m.name}")
-    tar.extractall(path=dest)
+
+
+def _safe_extractall(tar: tarfile.TarFile, dest: str) -> None:
+    """tar path-traversal'a karşı güvenli extract. Py3.11.4+/3.12+ -> filter="data"
+    (PEP 706). Daha eski 3.11.x'te filter param YOK -> manuel member-validation."""
+    if hasattr(tarfile, "data_filter"):
+        tar.extractall(path=dest, filter="data")
+        return
+    _validate_tar_members(tar, dest)
+    tar.extractall(path=dest)  # pragma: no cover (yalnız Py<3.11.4; modern'de erişilmez)
 
 
 def _is_sqlite_file(path: str) -> bool:

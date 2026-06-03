@@ -50,6 +50,43 @@ def test_backup_restore_blocks_tar_traversal(tmp_path):
     assert not (tmp_path / "escape.txt").exists()
 
 
+def _make_tar(path, member_name, data=b"x"):
+    with tarfile.open(path, "w:gz") as tar:
+        info = tarfile.TarInfo(name=member_name)
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+
+
+def test_validate_tar_members_blocks_traversal_and_links(tmp_path):
+    """Py<3.11.4 fallback'inin saf-doğrulaması: traversal + symlink reddi, benign pass.
+    (3.14'te _safe_extractall filter='data' branch'ini alır; bu saf-fn her Python'da test.)"""
+    from app.core.backup_manager import _validate_tar_members
+
+    # malicious ../ -> traversal reddi
+    evil = tmp_path / "evil.tar.gz"
+    _make_tar(evil, "../escape.txt", b"pwned")
+    with tarfile.open(evil, "r:gz") as tar:
+        with pytest.raises(tarfile.TarError):
+            _validate_tar_members(tar, str(tmp_path / "dest"))
+
+    # symlink -> unsafe-link reddi
+    link_tar = tmp_path / "link.tar.gz"
+    with tarfile.open(link_tar, "w:gz") as tar:
+        info = tarfile.TarInfo(name="evil-link")
+        info.type = tarfile.SYMTYPE
+        info.linkname = "/etc/passwd"
+        tar.addfile(info)
+    with tarfile.open(link_tar, "r:gz") as tar:
+        with pytest.raises(tarfile.TarError):
+            _validate_tar_members(tar, str(tmp_path / "dest"))
+
+    # benign -> raise YOK (None döner)
+    good = tmp_path / "good.tar.gz"
+    _make_tar(good, "ok.txt", b"hello")
+    with tarfile.open(good, "r:gz") as tar:
+        assert _validate_tar_members(tar, str(tmp_path / "dest")) is None
+
+
 async def test_projects_sync_requires_write(client, read_headers):
     """/projects/sync (git pull = mutasyon) read-perm ile YAPILAMAMALI -> 403."""
     resp = await client.post("/api/v1/projects/sync", headers=read_headers)
