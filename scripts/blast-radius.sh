@@ -9,7 +9,9 @@
 # Garanti: read-only (hiçbir şey değiştirmez), bulunamayan dosya -> uyarı + exit 1.
 set -uo pipefail
 
-ROOT="/opt/linux-ai-server"
+# ROOT'u script konumundan türet (hardcoded DEĞİL) — repo nereye clone/checkout
+# edilirse edilsin çalışır (CI runner path'i != /opt/linux-ai-server).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCAN_DIRS=(app automation scripts)
 GREP_X=(--exclude-dir=__pycache__ --exclude=*.pyc -I)
 
