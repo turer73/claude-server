@@ -37,3 +37,9 @@
 7. **notify-cron test** → surer: disabled-case test var, OUTCOME enabled-yolda; **gerçek boşluk: ENABLED+no-pending OUTCOME:pass testi yok** → ekle. [surer/klipper, küçük]
 
 **Domain-split:** klipper=#1/#2/#3/#4 (app-config+CI), ortak=#5, surer=#7 (notify-cron). Öncelik: #4(CI-matrix kolay+değerli) + #1(jwt-secret kolay) → sonra #2/#3 (auth-hardening) → #5 (drift). HARD-RULE + worktree + branch-ownership uygula.
+
+## TELEGRAM-STREAM triyaj (2026-06-03, kullanıcı ileti)
+Çoğu info/sağlıklı. Actionable:
+- **VPS-backup vol 5/6** (1 volume eksik, tekrarlayan) — backup-bütünlük, triyaj-kuyruğu (memory `761`). pull-vps-backup partial-rc=0 doğru raporluyor (FAZ1 çalışıyor).
+- **E2E residual:** Panola 120/121 (1-fail) + kuafor-sidebar-desktop-fail — bilinen, ayrı-panola işi.
+- **🟢 Autonomous-spawn threat-scanner FALSE-POSITIVE'leri** (#99776 cred-env-cat-own-.env, #99797/#99803 exfil-curl-pipe = not-okundu-işaretleme curl'ü): ajanların MEŞRU iç-operasyonları flag'leniyor (high-recall). **Scanner-whitelist tuning:** (a) spawn'ın kendi /home/klipper-auto/.env bootstrap-okuması, (b) localhost `/api/v1/memory/notes/*/read` curl'ü → whitelist. Yoksa her not-read "tehdit" alarmı = alarm-yorgunluğu. [klipper, küçük-orta, yeni-oturum]
