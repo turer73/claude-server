@@ -34,10 +34,13 @@ cd "$LOCAL" || { log "FAIL cd $LOCAL"; echo "OUTCOME: fail | cd-fail"; exit 3; }
 BLAST_BLOCK=""
 BR_SH="/opt/linux-ai-server/scripts/blast-radius.sh"
 if [ "$NAME" = "claude-server" ] && [ -x "$BR_SH" ]; then
-    BASE_SHA="$(gh pr view "$PR" -R "$REPO" --json baseRefOid -q .baseRefOid 2>/dev/null || true)"
-    if git fetch -q origin "pull/$PR/head" 2>/dev/null; then
+    # timeout: ag-op asilirsa (gh API / fetch) fail-safe devreye girsin —
+    # aksi halde enrichment spawn-oncesi SURESIZ bloklar (cron-wrap'ta outer
+    # timeout yok). timeout/124 -> bos deger -> blok atlanir (Codex P2).
+    BASE_SHA="$(timeout 15 gh pr view "$PR" -R "$REPO" --json baseRefOid -q .baseRefOid 2>/dev/null || true)"
+    if timeout 30 git fetch -q origin "pull/$PR/head" 2>/dev/null; then
         BR_RANGE="${BASE_SHA:-origin/master}...FETCH_HEAD"
-        BR_OUT="$("$BR_SH" --diff "$BR_RANGE" 2>/dev/null || true)"
+        BR_OUT="$(timeout 30 "$BR_SH" --diff "$BR_RANGE" 2>/dev/null || true)"
         if [ -n "$BR_OUT" ]; then
             BLAST_BLOCK="
 EK BAĞLAM — BLAST-RADIUS (otomatik, FAZ4-S3; master-içerik yaklaşımı, PR-HEAD değil):
