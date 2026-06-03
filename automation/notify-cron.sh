@@ -13,7 +13,7 @@
 # (fail -> mark-YOK -> sonraki run retry -> NO-LOSS).
 set +e
 
-_envget() { grep -E "^$1=" /opt/linux-ai-server/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d "\"'"; }
+_envget() { local _f="${NOTIFY_ENV_FILE:-/opt/linux-ai-server/.env}"; grep -E "^$1=" "$_f" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "\"'"; }
 
 # env-var override > .env (test/systemd env-var'i kazanir; cron .env'den okur).
 NOTIFY_CRON_ENABLED="${NOTIFY_CRON_ENABLED:-$(_envget NOTIFY_CRON_ENABLED)}"
