@@ -15,7 +15,12 @@ import json
 import os
 import sqlite3
 
-DB_PATH = "/opt/linux-ai-server/data/server.db"
+from app.db.database import DEFAULT_DB_PATH
+
+# Tek runtime gerçeği os.environ["DB_PATH"] (prod systemd set eder). Env yoksa
+# main.py schema'yı DEFAULT_DB_PATH'e kurar -> emit/read AYNI sabiti kullanmalı,
+# yoksa events farklı/tablosuz path'e yazıp sessizce drop olur (Codex #18 P2).
+DB_PATH = DEFAULT_DB_PATH
 SEVERITIES = ("info", "warn", "critical")
 # Mevcut alert üreticileri (devops_agent.py, alert-check.sh) "warning"/"error"
 # vocabulary'si kullanıyor. Bunları kanonik severity'ye eşle; aksi halde

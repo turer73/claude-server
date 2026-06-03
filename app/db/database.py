@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import aiosqlite
 
+# DB path fallback'i için TEK kaynak. Production systemd DB_PATH set eder; bu
+# yalnızca env yokken devreye girer. main.py (schema init) ve events.py (emit/read)
+# AYNI değeri kullanmalı — yoksa events farklı/tablosuz path'e yazıp sessiz drop olur.
+DEFAULT_DB_PATH = "/tmp/linux-ai-server-test.db"  # noqa: S108 — kasıtlı fallback; prod DB_PATH override eder
+
 SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS api_keys (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

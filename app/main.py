@@ -65,9 +65,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     import os
 
     from app.auth.api_key import generate_api_key, hash_api_key
-    from app.db.database import Database
+    from app.db.database import DEFAULT_DB_PATH, Database
 
-    db_path = os.environ.get("DB_PATH", "/tmp/linux-ai-server-test.db")
+    db_path = os.environ.get("DB_PATH", DEFAULT_DB_PATH)
     db = Database(db_path)
     await db.initialize()
 

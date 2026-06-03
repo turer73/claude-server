@@ -31,6 +31,14 @@ def test_emit_event_inserts_and_validates(monkeypatch, tmp_path):
     assert ev.emit_event("x", "", "t") is None
 
 
+def test_db_path_default_matches_app_init():
+    # events.py emit/read, main.py'ın schema kurduğu AYNI fallback'i kullanmalı;
+    # aksi halde DB_PATH-set-olmayan ortamda events sessizce drop olur (Codex #18 P2).
+    from app.db.database import DEFAULT_DB_PATH
+
+    assert ev.DB_PATH == DEFAULT_DB_PATH
+
+
 def test_severity_alias_warning_is_notifyable(monkeypatch, tmp_path):
     # Mevcut alert vocabulary'si "warning"/"error" -> kanonik warn/critical olmalı;
     # aksi halde pending_notifications (warn/critical) bunları sessizce eler.
