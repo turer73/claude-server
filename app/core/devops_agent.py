@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from app.core.config import get_settings
+from app.core.events import emit_event
 from app.core.monitor_agent import MonitorAgent
 from app.core.shell_executor import ShellExecutor
 
@@ -332,6 +333,23 @@ class DevOpsAgent:
             await self._db.execute(
                 "INSERT INTO alerts (timestamp, severity, source, message, resolved) VALUES (?, ?, ?, ?, ?)",
                 (alert.timestamp, alert.severity, alert.source, alert.message, False),
+            )
+        except Exception:
+            pass
+        # LIVESYS Faz 3.2 alerts-bridge: aynı threshold-alert'i merkezi events'e de
+        # yaz (TEK-writer noktası, scatter yok). alerts-INSERT KALIR (active_alerts/
+        # retention bağımlı). severity "warning"->warn _normalize_severity ile.
+        # KAYIT-ONLY: bildirim AYRI notify-cron'un işi (henüz yok); alerts bugüne dek
+        # zaten push-edilmiyordu -> double-notify yok. emit_event sync (sqlite3) ->
+        # event-loop'u bloklamamak için to_thread; best-effort, devops_agent'ı bozmaz.
+        try:
+            await asyncio.to_thread(
+                emit_event,
+                type="alert",
+                source=alert.source,
+                title=alert.message,
+                severity=alert.severity,
+                detail=None,
             )
         except Exception:
             pass

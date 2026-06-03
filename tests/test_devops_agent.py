@@ -242,6 +242,41 @@ async def test_store_alert_no_db():
     await agent._store_alert(alert)  # Should not raise
 
 
+async def test_store_alert_bridges_to_events(tmp_path, monkeypatch):
+    # LIVESYS Faz 3.2 alerts-bridge: _store_alert alerts-INSERT'in YANINDA merkezi
+    # events'e de emit_event yazar (TEK-writer). warning->warn normalize; alerts-INSERT
+    # korunur. KAYIT-ONLY (notify yok) -> double-notify yaratmaz.
+    monkeypatch.setattr("app.core.config.load_yaml_config", lambda path: {})
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    from app.core.devops_agent import Alert, DevOpsAgent
+    from app.db.database import Database
+
+    dbpath = str(tmp_path / "bridge.db")
+    monkeypatch.setenv("DB_PATH", dbpath)  # emit_event AYNI db'ye yazsin (alerts+events tek dosya)
+    db = Database(dbpath)
+    await db.initialize()  # SCHEMA_V1 -> alerts + events tablolari
+    agent = DevOpsAgent(db=db, interval=60)
+    alert = Alert(
+        id="cpu-1", severity="warning", source="cpu", message="CPU at 88%", value=88, threshold=85, timestamp="2026-06-03T06:00:00Z"
+    )
+    await agent._store_alert(alert)
+
+    alerts = await db.fetch_all("SELECT severity, source FROM alerts")
+    assert alerts == [{"severity": "warning", "source": "cpu"}]  # alerts-INSERT korundu
+
+    events = await db.fetch_all("SELECT type, source, severity, title, notified FROM events")
+    assert len(events) == 1  # bridge: events'e de yazildi
+    assert events[0]["type"] == "alert"
+    assert events[0]["source"] == "cpu"
+    assert events[0]["severity"] == "warn"  # warning -> warn normalize
+    assert events[0]["title"] == "CPU at 88%"
+    assert events[0]["notified"] == 0  # KAYIT-ONLY (notify-cron sonra drain eder)
+    await db.close()
+    get_settings.cache_clear()
+
+
 # ── Remediation Tests ──────────────────────────
 
 
