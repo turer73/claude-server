@@ -12,10 +12,28 @@ send_telegram() {
         -d chat_id="$TELEGRAM_CHAT_ID" -d parse_mode="Markdown" -d text="$1" >/dev/null 2>&1
 }
 
+# LIVESYS Faz3.2 alerts-bridge (FLAG-B, surer spec #99768): backup-fail'i merkezi
+# events tablosuna da yaz. ATOMIK CUTOVER: NOTIFY_CRON_ENABLED=true -> notify-cron
+# Telegram'i devralir (bu send_telegram DURUR, DOUBLE-yok). false (default) ->
+# legacy Telegram KORUNUR + event-kaydi (record-only, double yok). emit-event.sh
+# fail-safe (backup-monitor'u dusurmez); $1=severity (warning/critical), $2=mesaj.
+notify_backup() {
+    /opt/linux-ai-server/scripts/emit-event.sh "backup" "local-backup" "$1" "$2"
+    if [ "${NOTIFY_CRON_ENABLED:-false}" != "true" ]; then
+        send_telegram "$2"
+        # cron-wrap ile TUTARLI (surer #99772): legacy-telegram zaten attı ->
+        # just-emitted event'i mark (enable-aninda notify-cron double-engel).
+        local _db="${DB_PATH:-/opt/linux-ai-server/data/server.db}"
+        [ -f "$_db" ] && sqlite3 "$_db" \
+            "UPDATE events SET notified=1 WHERE source='local-backup' AND notified=0 AND id=(SELECT id FROM events WHERE source='local-backup' AND notified=0 ORDER BY id DESC LIMIT 1);" \
+            2>/dev/null || true
+    fi
+}
+
 # 1. Backup dizini var mı?
 if [ ! -d "$BACKUP_DIR" ]; then
     logger -t "$LOG_TAG" "Backup directory missing: $BACKUP_DIR"
-    send_telegram "🔴 *Backup Monitor*
+    notify_backup "critical" "🔴 *Backup Monitor*
 Backup dizini bulunamadı: \`$BACKUP_DIR\`"
     exit 1
 fi
@@ -24,7 +42,7 @@ fi
 LATEST=$(ls -t "$BACKUP_DIR"/*.tar.gz 2>/dev/null | head -1)
 if [ -z "$LATEST" ]; then
     logger -t "$LOG_TAG" "No backups found"
-    send_telegram "🔴 *Backup Monitor*
+    notify_backup "critical" "🔴 *Backup Monitor*
 Hiç yedek dosyası bulunamadı!"
     exit 1
 fi
@@ -37,7 +55,7 @@ AGE_HOURS=$(( (NOW_EPOCH - LATEST_EPOCH) / 3600 ))
 if [ "$AGE_HOURS" -ge "$MAX_AGE_HOURS" ]; then
     LATEST_NAME=$(basename "$LATEST")
     logger -t "$LOG_TAG" "Backup stale: $LATEST_NAME is ${AGE_HOURS}h old"
-    send_telegram "🟡 *Backup Monitor — Uyarı*
+    notify_backup "warning" "🟡 *Backup Monitor — Uyarı*
 Son yedek *${AGE_HOURS} saat* önce alınmış!
 📦 \`$LATEST_NAME\`
 Günlük backup çalışmamış olabilir."
@@ -50,7 +68,7 @@ LATEST_SIZE=$(stat -c %s "$LATEST")
 
 if [ "$LATEST_SIZE" -lt 1024 ]; then
     logger -t "$LOG_TAG" "Backup too small: $LATEST_NAME (${LATEST_SIZE}B)"
-    send_telegram "🔴 *Backup Monitor*
+    notify_backup "critical" "🔴 *Backup Monitor*
 Son yedek çok küçük (${LATEST_SIZE}B), bozuk olabilir!
 📦 \`$LATEST_NAME\`"
     exit 1
@@ -58,7 +76,7 @@ fi
 
 if ! tar -tzf "$LATEST" >/dev/null 2>&1; then
     logger -t "$LOG_TAG" "Backup corrupt: $LATEST_NAME"
-    send_telegram "🔴 *Backup Monitor*
+    notify_backup "critical" "🔴 *Backup Monitor*
 Son yedek bozuk — açılamıyor!
 📦 \`$LATEST_NAME\`"
     exit 1

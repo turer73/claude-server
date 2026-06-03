@@ -75,16 +75,25 @@ else
     # ve cift-bildirim YOK. emit-helper fail-safe (cron-job'u dusurmez). sev: warning->warn.
     /opt/linux-ai-server/scripts/emit-event.sh "job-outcome" "cron:${NAME}" "${SEV}" "cron ${NAME} ${RESULT}" "rc=${RC} ${DETAIL}"
 
-    # n8n webhook payload — workflow template path'leri tam uyumlu:
-    # $json.alert.{source,severity,message,value,threshold} (body wrapping yok, alert root'ta)
-    SAFE_CMD=$(printf "%s" "$CMD_STR" | tr -d '\\"`' | tr '\n\r\t' '   ' | head -c 200)
-    SAFE_MSG=$(printf "%s" "$DETAIL" | tr -d '\\"`' | tr '\n\r\t' '   ' | head -c 160)
-    BODY="{\"alert\":{\"source\":\"klipper-cron-${NAME}\",\"severity\":\"${SEV}\",\"message\":\"cron ${NAME} ${RESULT} rc=${RC} (${SAFE_MSG})\",\"value\":${RC},\"threshold\":0},\"meta\":{\"type\":\"cron_failure\",\"project\":\"klipper-cron\",\"device\":\"klipper\",\"command\":\"${SAFE_CMD}\",\"exit_code\":\"${RC}\",\"result\":\"${RESULT}\",\"outcome_source\":\"${SOURCE}\",\"auto_fix_eligible\":true,\"hook_source\":\"klipper-cron-wrap\"}}"
-    curl -s -X POST --max-time 3 \
-        -H "Content-Type: application/json" \
-        -H "X-Webhook-Secret: ${WEBHOOK_SECRET:-MISSING}" \
-        -d "${BODY}" \
-        "http://localhost:5678/webhook/klipper-alert" > /dev/null 2>&1 || true
+    # ATOMIK CUTOVER: NOTIFY_CRON_ENABLED=true aninda notify-cron devralir, bu POST durur.
+    # NOTIFY_CRON_ENABLED=false (default): legacy direkt n8n POST aktif (double-yok garanti icin
+    # emit-event'in yazdigi son satiri hemen mark_notified yap — notify-cron enable'da cift-bildirim engeli).
+    if [ "${NOTIFY_CRON_ENABLED:-false}" != "true" ]; then
+        SAFE_CMD=$(printf "%s" "$CMD_STR" | tr -d '\\"`' | tr '\n\r\t' '   ' | head -c 200)
+        SAFE_MSG=$(printf "%s" "$DETAIL" | tr -d '\\"`' | tr '\n\r\t' '   ' | head -c 160)
+        BODY="{\"alert\":{\"source\":\"klipper-cron-${NAME}\",\"severity\":\"${SEV}\",\"message\":\"cron ${NAME} ${RESULT} rc=${RC} (${SAFE_MSG})\",\"value\":${RC},\"threshold\":0},\"meta\":{\"type\":\"cron_failure\",\"project\":\"klipper-cron\",\"device\":\"klipper\",\"command\":\"${SAFE_CMD}\",\"exit_code\":\"${RC}\",\"result\":\"${RESULT}\",\"outcome_source\":\"${SOURCE}\",\"auto_fix_eligible\":true,\"hook_source\":\"klipper-cron-wrap\"}}"
+        curl -s -X POST --max-time 3 \
+            -H "Content-Type: application/json" \
+            -H "X-Webhook-Secret: ${WEBHOOK_SECRET:-MISSING}" \
+            -d "${BODY}" \
+            "http://localhost:5678/webhook/klipper-alert" > /dev/null 2>&1 || true
+        # Mark just-emitted event notified — notify-cron enable'da cift-bildirim engeli
+        if [ -f "$DB_PATH" ]; then
+            sqlite3 "$DB_PATH" \
+                "UPDATE events SET notified=1 WHERE source='cron:${NAME}' AND notified=0 AND id=(SELECT id FROM events WHERE source='cron:${NAME}' AND notified=0 ORDER BY id DESC LIMIT 1);" \
+                2>/dev/null || true
+        fi
+    fi
 fi
 
 exit $RC
