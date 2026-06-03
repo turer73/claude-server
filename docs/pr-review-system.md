@@ -2,7 +2,7 @@
 
 > **Amaç:** 7 ilgili repo'da açılan PR'ları otomatik kod-review'dan geçir; bulguları
 > PR'a inline yaz. Codex'in güvenilmezliğini (atlama/latency) yapısal kapat:
-> klipper tetikler, atlamaz. **Durum:** Faz 1 (poller foundation + digest-aggregate) DONE; Faz 2 (koşullu auto-comment) validated-next-step.
+> klipper tetikler, atlamaz. **Durum:** Faz 1 (poller + digest-aggregate) DONE+CANLI; Faz 2 (koşullu auto-review spawn) KURULDU/DISABLED (pilot claude-server) — surer cross-verify + ilk-5-spot-check sonrası ENABLED.
 
 ## Karar (kullanıcı, 2026-06-02)
 - Tetikleme: **CI-yeşil sonrası**. Çıktı: **PR'a `--comment` (inline)**.
@@ -31,3 +31,10 @@
 ## Açık / sırada
 - Review-spawn entegrasyonu (autonomous-claude.sh not-bağlı; dedicated review-spawn gerekli) + tek-PR manuel doğrulama → sonra ENABLED.
 - surer maliyet-sınırı/rol girdisi (VPS-repo'lar) bekleniyor.
+
+## Faz 2 — kuruldu (DISABLED, pilot)
+- `pr-review-spawn.sh`: headless `claude -p` direct-review + TEK özet bot-etiketli `gh pr comment` (multi-agent fan-out DEĞİL → Max-x20 bütçe-dostu). SPAWN_ENABLED guard.
+- `pr-review-settings.json`: review-scope (Read + git-read + gh pr view/diff/comment; Write/commit/push/merge/sudo DENY).
+- Poller FAZ2 trigger: main/master-hedef & (insan-flag `review-please` VEYA diff>400 VEYA Codex-sessiz). Caps: per-run 5 + günlük 10 (Max-x20 paylaşımlı koruma) + serialize + same-HEAD-skip. Pilot repo: claude-server.
+- Billing = Max x20 (paylaşımlı). Codex-optim: trigger'da önce `@codex review` force (ücretsiz), sonra Claude-spawn fallback (sonraki iter).
+- ENABLE: `DRY_RUN=0 + PR_REVIEW_ENABLED=1` (poller) + `SPAWN_ENABLED=1` (spawn). surer cross-verify + ilk-5 insan-spot-check ŞART.

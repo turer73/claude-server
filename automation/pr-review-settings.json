@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "_comment": "FAZ2 PR-review spawn permission scope — SADECE OKU + gh-comment. Kod-yazma/commit/push/merge/destructive YOK. autonomous-claude-settings.json'dan dar.",
+  "permissions": {
+    "allow": [
+      "Read(//opt/linux-ai-server/**)",
+      "Read(//data/projects/**)",
+      "Read(//tmp/**)",
+      "Grep",
+      "Glob",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git branch*)",
+      "Bash(gh pr view*)",
+      "Bash(gh pr diff*)",
+      "Bash(gh pr comment*)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(grep *)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(wc *)",
+      "Bash(echo *)"
+    ],
+    "deny": [
+      "Write",
+      "Edit",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git push*)",
+      "Bash(git rebase*)",
+      "Bash(git checkout*)",
+      "Bash(gh pr merge*)",
+      "Bash(gh pr close*)",
+      "Bash(gh pr edit*)",
+      "Bash(rm *)",
+      "Bash(dd *)",
+      "Bash(sudo *)",
+      "Bash(systemctl *)",
+      "Bash(docker *)",
+      "Bash(ssh *)",
+      "Bash(scp *)",
+      "WebFetch",
+      "WebSearch"
+    ]
+  }
+}

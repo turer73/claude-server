@@ -44,19 +44,79 @@ mark_reviewed() {
 # CI-yesil mi? statusCheckRollup'ta FAILURE/ERROR yoksa + en az 1 SUCCESS varsa yesil.
 ci_green() {
   local rollup="$1"
-  local bad; bad=$(printf '%s' "$rollup" | jq '[.[] | select((.conclusion // .state // "") | test("FAIL|ERROR|CANCELLED|TIMED_OUT"; "i"))] | length' 2>/dev/null || echo 1)
+  # ACTION_REQUIRED/STALE de "yeşil-değil" (premature-review önle — surer minor-2).
+  local bad; bad=$(printf '%s' "$rollup" | jq '[.[] | select((.conclusion // .state // "") | test("FAIL|ERROR|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STALE"; "i"))] | length' 2>/dev/null || echo 1)
   local ok;  ok=$(printf '%s' "$rollup" | jq '[.[] | select((.conclusion // .state // "") | test("SUCCESS|NEUTRAL|SKIPPED"; "i"))] | length' 2>/dev/null || echo 0)
   # pending: CheckRun .status VEYA legacy StatusContext .state ("PENDING"/"EXPECTED") — ikisi de.
   local pend; pend=$(printf '%s' "$rollup" | jq '[.[] | select(((.status // "") | test("IN_PROGRESS|QUEUED|PENDING"; "i")) or ((.state // "") | test("PENDING|EXPECTED"; "i")))] | length' 2>/dev/null || echo 0)
   [ "${bad:-1}" -eq 0 ] && [ "${pend:-0}" -eq 0 ] && [ "${ok:-0}" -gt 0 ]
 }
 
-log "=== PR-review poll START (DRY_RUN=$DRY_RUN ENABLED=$ENABLED MAX=$MAX) ==="
+# ── FAZ2 (koşullu auto-review spawn) config + helper ──
+FAZ2_PILOT_REPOS="${FAZ2_PILOT_REPOS:-turer73/claude-server}"  # pilot: sadece claude-server
+FLAG_LABEL="${PR_REVIEW_FLAG_LABEL:-review-please}"            # insan-flag etiketi
+DIFF_THRESHOLD="${PR_REVIEW_DIFF_THRESHOLD:-400}"             # büyük-diff eşiği
+DAILY_MAX="${PR_REVIEW_DAILY_MAX:-10}"                         # günlük hard-cap (Max-x20 paylaşımlı)
+DAILY_FILE="${PR_REVIEW_DAILY_FILE:-/opt/linux-ai-server/data/hook-state/pr-review-daily.json}"
+SPAWN="/opt/linux-ai-server/automation/pr-review-spawn.sh"
+
+daily_count() {  # bugünkü spawn sayısı
+  local today; today=$(date -u +%Y-%m-%d)
+  jq -r --arg d "$today" '.[$d] // 0' "$DAILY_FILE" 2>/dev/null || echo 0
+}
+daily_inc() {
+  local today; today=$(date -u +%Y-%m-%d) tmp; tmp=$(mktemp)
+  [ -f "$DAILY_FILE" ] || echo '{}' > "$DAILY_FILE"
+  jq --arg d "$today" '.[$d]=((.[$d]//0)+1) | with_entries(select(.key>=($d|sub("-[0-9]+$";""))))' "$DAILY_FILE" > "$tmp" 2>/dev/null && mv "$tmp" "$DAILY_FILE"
+}
+
+# Codex durumu (surer #99737 thumbsup-clean refinement): auto-skip ≠ temiz.
+#   none     = pulls/N/reviews'da codex-entry YOK -> auto-skip (#13 gibi) -> force gerek
+#   findings = entry VAR + inline VAR -> Codex bulgu buldu (FAZ1-digest yüzeye çıkarır)
+#   clean    = entry VAR + inline YOK (+👍) -> gerçekten temiz
+#   unknown  = gh-fail -> spurious-trigger yok
+codex_state() {
+  local repo="$1" num="$2" head="$3" rev inl
+  # Codex-P2: review/comment'leri SADECE current-HEAD'e göre say. GitHub
+  # pulls/N/reviews ESKI-commit review'larini da dondurur (.commit_id) -> PR
+  # yeni-commit alinca stale-review "clean/findings" sayilip force+spawn ATLANIR.
+  # commit_id==head ile filtrele (head bos ise eski-davranis, tum-review).
+  if [ -n "$head" ]; then
+    rev=$(gh api "repos/$repo/pulls/$num/reviews" --jq --arg h "$head" '[.[]|select(.user.login=="chatgpt-codex-connector[bot]" and .commit_id==$h)]|length' 2>/dev/null || echo X)
+  else
+    rev=$(gh api "repos/$repo/pulls/$num/reviews" --jq '[.[]|select(.user.login=="chatgpt-codex-connector[bot]")]|length' 2>/dev/null || echo X)
+  fi
+  [[ "$rev" =~ ^[0-9]+$ ]] || { echo unknown; return; }
+  [ "$rev" -eq 0 ] && { echo none; return; }
+  if [ -n "$head" ]; then
+    inl=$(gh api "repos/$repo/pulls/$num/comments" --jq --arg h "$head" '[.[]|select(.user.login=="chatgpt-codex-connector[bot]" and (.commit_id==$h or .original_commit_id==$h))]|length' 2>/dev/null || echo 0)
+  else
+    inl=$(gh api "repos/$repo/pulls/$num/comments" --jq '[.[]|select(.user.login=="chatgpt-codex-connector[bot]")]|length' 2>/dev/null || echo 0)
+  fi
+  { [[ "$inl" =~ ^[0-9]+$ ]] && [ "$inl" -gt 0 ]; } && { echo findings; return; }
+  echo clean
+}
+
+# FAZ2 karar: spawn | force-codex | skip. main-hedef ZORUNLU. flag/diff>eşik ->
+# spawn (non-codex). Yoksa codex_state: none->force-codex (önce @codex review
+# ücretsiz-zorla), findings/clean->skip (Codex hallediyor), unknown->skip.
+faz2_decision() {
+  local repo="$1" num="$2" base="$3" adds="$4" dels="$5" labels="$6" head="$7"
+  case "$base" in main|master) ;; *) echo skip; return ;; esac
+  echo "$labels" | grep -qi "$FLAG_LABEL" && { echo spawn; return; }
+  [ "$(( ${adds:-0} + ${dels:-0} ))" -gt "$DIFF_THRESHOLD" ] && { echo spawn; return; }
+  case "$(codex_state "$repo" "$num" "$head")" in
+    none) echo force-codex ;;
+    *) echo skip ;;
+  esac
+}
+
+log "=== PR-review poll START (DRY_RUN=$DRY_RUN ENABLED=$ENABLED MAX=$MAX DAILY_MAX=$DAILY_MAX) ==="
 CANDIDATES=0 REVIEWED=0 FETCH_FAIL=0
 for repo in "${REPOS[@]}"; do
   # gh hatasi (auth-expiry / rate-limit / outage) "0 PR" gibi YUTULMAMALI -> sessiz
   # arizayi onle: fetch-fail'i ayri isaretle, OUTCOME=partial yap (rc=0 != tarandi).
-  if ! prs=$(gh pr list -R "$repo" --state open --json number,headRefOid,title,statusCheckRollup,isDraft 2>>"$LOG_FILE"); then
+  if ! prs=$(gh pr list -R "$repo" --state open --json number,headRefOid,title,statusCheckRollup,isDraft,baseRefName,additions,deletions,labels 2>>"$LOG_FILE"); then
     log "FETCH-FAIL: $repo (gh hatasi — taranAMADI, aday gizlenmis olabilir)"
     FETCH_FAIL=1
     continue
@@ -74,26 +134,62 @@ for repo in "${REPOS[@]}"; do
     if ! ci_green "$rollup"; then continue; fi
     key="${repo}#${num}"
     if [ "$(reviewed_head "$key")" = "$head" ]; then continue; fi  # bu HEAD review edildi
+    # FAZ2 pilot: sadece pilot-repo'larda spawn-aday
+    case " $FAZ2_PILOT_REPOS " in *" $repo "*) ;; *) continue ;; esac
+    base=$(printf '%s' "$pr" | jq -r '.baseRefName')
+    adds=$(printf '%s' "$pr" | jq -r '.additions // 0')
+    dels=$(printf '%s' "$pr" | jq -r '.deletions // 0')
+    labels=$(printf '%s' "$pr" | jq -r '[.labels[]?.name] | join(",")')
+    decision=$(faz2_decision "$repo" "$num" "$base" "$adds" "$dels" "$labels" "$head")
+    [ "$decision" = "skip" ] && continue
     CANDIDATES=$((CANDIDATES + 1))
-    log "ADAY: $key HEAD=${head:0:8} CI-yesil \"$title\""
-    if [ "$REVIEWED" -ge "$MAX" ]; then log "  rate-limit ($MAX) -> kuyrukta birakildi"; continue; fi
+    fkey="force:${key}"
+    # ── force-codex (surer #99737): Codex-auto-skip -> önce @codex review ZORLA
+    # (ücretsiz, once-per-HEAD idempotent), bu poll DEFER. Sonraki poll Codex hâlâ
+    # yoksa spawn-eligible. @codex-comment outward-write -> sadece ENABLED'da. ──
+    if [ "$decision" = "force-codex" ]; then
+      if [ "$(reviewed_head "$fkey")" = "$head" ]; then
+        decision=spawn  # bu HEAD'de zaten force edildi, Codex gelmedi -> Claude-spawn
+      else
+        log "ADAY(FAZ2): $key Codex-auto-skip -> @codex review FORCE (defer)"
+        if [ "$DRY_RUN" = "1" ] || [ "$ENABLED" != "1" ]; then
+          log "  [dry] @codex review force ATLANDI"
+        elif gh pr comment "$num" -R "$repo" --body "@codex review" >>"$LOG_FILE" 2>&1; then
+          mark_reviewed "$fkey" "$head"; log "  @codex review forced (mark $fkey)"
+        else
+          log "  @codex force FAIL -> sonraki run tekrar"
+        fi
+        continue
+      fi
+    fi
+    # ── decision=spawn: cap + dedicated review-spawn ──
+    log "ADAY(FAZ2-spawn): $key HEAD=${head:0:8} base=$base diff=$((adds+dels)) labels=[$labels] \"$title\""
+    if [ "$REVIEWED" -ge "$MAX" ]; then log "  per-run cap ($MAX) -> defer"; continue; fi
+    dc=$(daily_count)
+    if [ "${dc:-0}" -ge "$DAILY_MAX" ]; then log "  günlük cap ($DAILY_MAX, bugün=$dc) -> defer (SESSIZ-DROP yok)"; continue; fi
     if [ "$DRY_RUN" = "1" ] || [ "$ENABLED" != "1" ]; then
-      log "  [dry-run] spawn/post ATLANDI (gercek review icin DRY_RUN=0 + PR_REVIEW_ENABLED=1)"
+      log "  [dry-run] spawn ATLANDI (DRY_RUN=0 + PR_REVIEW_ENABLED=1 + SPAWN_ENABLED=1 gerek)"
       continue
     fi
-    # ── ENABLED: review-spawn (ayri-dogrulanmis adimda implement edilecek) ──
-    # TODO(validated-next): autonomous review-spawn -> /code-review high $num --comment
-    #   (dedicated spawn, surer-not-kanalindan ayri; cwd=repo local checkout)
-    log "  [ENABLED] review-spawn entegrasyonu henuz baglanmadi (next-step) — atlandi"
-    # mark_reviewed "$key" "$head"   # spawn basarili olunca
-    # REVIEWED=$((REVIEWED + 1))
+    log "  [ENABLED] spawn: $SPAWN $repo $num"
+    if SPAWN_ENABLED=1 bash "$SPAWN" "$repo" "$num" >>"$LOG_FILE" 2>&1; then
+      mark_reviewed "$key" "$head"; daily_inc; REVIEWED=$((REVIEWED + 1))
+      log "  spawn OK -> reviewed, mark_reviewed($key)"
+    else
+      # back-off (surer ADD-1): spawn-fail (rate-limit dahil) -> mark YOK -> sonraki
+      # cron-run'a defer (retry-burst YOK; öncelik: interaktif > otonom-review).
+      SPAWN_FAILS=$((${SPAWN_FAILS:-0} + 1))
+      log "  spawn FAIL $key -> defer next-run (back-off, mark YOK)"
+    fi
   done
 done
-# OUTCOME marker (FAZ1 outcome-contract): fetch-fail varsa SESSIZ-pass DEGIL -> partial
-# (en az bir repo taranamadi; aday gizlenmis olabilir).
-if [ "${FETCH_FAIL:-0}" = "1" ]; then
-  echo "OUTCOME: partial | fetch-fail (bir+ repo taranamadi) aday=$CANDIDATES reviewed=$REVIEWED"
+# OUTCOME marker (FAZ1 outcome-contract) + monitoring (surer ADD-2): aday/reviewed/
+# gunluk-spawn/spawn-fail gorunur (contention SESSIZ degil). fetch-fail VEYA spawn-fail
+# -> partial (sessiz-pass yok).
+DC_NOW=$(daily_count)
+if [ "${FETCH_FAIL:-0}" = "1" ] || [ "${SPAWN_FAILS:-0}" -gt 0 ]; then
+  echo "OUTCOME: partial | aday=$CANDIDATES reviewed=$REVIEWED gunluk=$DC_NOW spawn_fail=${SPAWN_FAILS:-0} fetch_fail=${FETCH_FAIL:-0}"
 else
-  echo "OUTCOME: pass | aday=$CANDIDATES reviewed=$REVIEWED dry_run=$DRY_RUN"
+  echo "OUTCOME: pass | aday=$CANDIDATES reviewed=$REVIEWED gunluk=$DC_NOW dry_run=$DRY_RUN"
 fi
-log "=== PR-review poll DONE: aday=$CANDIDATES reviewed=$REVIEWED fetch_fail=$FETCH_FAIL ==="
+log "=== PR-review poll DONE: aday=$CANDIDATES reviewed=$REVIEWED gunluk=$DC_NOW spawn_fail=${SPAWN_FAILS:-0} fetch_fail=$FETCH_FAIL ==="
