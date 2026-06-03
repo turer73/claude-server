@@ -31,6 +31,25 @@ def test_emit_event_inserts_and_validates(monkeypatch, tmp_path):
     assert ev.emit_event("x", "", "t") is None
 
 
+def test_payload_non_json_native_does_not_crash(monkeypatch, tmp_path):
+    # datetime/bytes/Path gibi JSON-native olmayan payload emit_event'i crash
+    # ETMEMELI (best-effort sözleşmesi). default=str ile serialize edilmeli.
+    import datetime as _dt
+
+    monkeypatch.setattr(ev, "DB_PATH", _events_db(tmp_path))
+    eid = ev.emit_event(
+        "job-outcome", "cron:x", "ts payload", severity="warn",
+        payload={"ts": _dt.datetime(2026, 6, 3, 5, 0), "raw": b"\x00\x01"},
+    )
+    assert isinstance(eid, int)  # crash yok, satır yazıldı
+    import sqlite3 as _sq
+
+    con = _sq.connect(ev.DB_PATH)
+    row = con.execute("SELECT payload FROM events WHERE id=?", (eid,)).fetchone()
+    con.close()
+    assert "2026-06-03" in row[0]  # datetime str'e serialize oldu
+
+
 def test_db_path_default_matches_app_init():
     # events.py emit/read, main.py'ın schema kurduğu AYNI fallback'i kullanmalı;
     # aksi halde DB_PATH-set-olmayan ortamda events sessizce drop olur (Codex #18 P2).

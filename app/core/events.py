@@ -38,6 +38,18 @@ def _normalize_severity(severity: str | None) -> str:
     return s if s in SEVERITIES else "info"
 
 
+def _serialize_payload(payload: dict | None) -> str | None:
+    """payload -> JSON string (best-effort). datetime/Path/bytes gibi JSON-native
+    olmayan değerler emit_event'i ASLA crash etmemeli (modül 'hata→None' sözleşmesi,
+    Claude-heartbeat değil). default=str çoğunu çözer; kalan (circular vb.) için repr."""
+    if payload is None:
+        return None
+    try:
+        return json.dumps(payload, default=str)
+    except (TypeError, ValueError):
+        return json.dumps({"_unserializable": repr(payload)[:500]})
+
+
 def emit_event(
     type: str,
     source: str,
@@ -55,7 +67,7 @@ def emit_event(
         try:
             cur = con.execute(
                 "INSERT INTO events (type, source, severity, title, detail, payload) VALUES (?,?,?,?,?,?)",
-                (type, source, severity, title, detail, json.dumps(payload) if payload is not None else None),
+                (type, source, severity, title, detail, _serialize_payload(payload)),
             )
             con.commit()
             return cur.lastrowid
