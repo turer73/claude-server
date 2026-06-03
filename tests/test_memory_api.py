@@ -705,7 +705,10 @@ async def test_protected_router_requires_key_when_set(client, memory_db, monkeyp
 
     monkeypatch.setattr(mem_module, "MEMORY_API_KEY", "secret-key")
 
-    # No header → 401
+    # No header → 401. (conftest client GLOBAL X-Memory-Key default gönderir; bu testte
+    # GERÇEK no-header path'i test etmek için kaldır — Codex #27: global header missing-
+    # header testini maskelemesin.)
+    client.headers.pop("X-Memory-Key", None)
     resp = await client.get("/api/v1/memory/devices")
     assert resp.status_code == 401
 
