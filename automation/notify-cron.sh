@@ -1,12 +1,12 @@
 #!/bin/bash
 # notify-cron.sh — LIVESYS FAZ3.2 step-d: events tablosu pending -> Telegram bildirimi.
-# Author: surer (draft) + klipper (cross-verify fix'leri: obs-1/2/3, #99772).
+# Author: surer (draft) + klipper (cross-verify: obs-1/2/3, #99772) + Codex (#24 LIMIT/rc/OUTCOME)
 #        2026-06-03: n8n backend -> direkt Telegram Bot API (n8n klipper'da workflow yok).
 #
 # DISABLED-first: .env'de NOTIFY_CRON_ENABLED=true ayarlanana kadar calismaz.
 # Cadence: */20 (automation/crontab'da kayitli)
 #
-# ATOMIK CUTOVER: NOTIFY_CRON_ENABLED=true aninda klipper-cron-wrap direkt n8n POST'u
+# ATOMIK CUTOVER: NOTIFY_CRON_ENABLED=true aninda klipper-cron-wrap direkt n8n POST
 # + backup-monitor send_telegram durur; bu script devralir (DOUBLE-yok).
 #
 # SEND-THEN-MARK: mark_notified SADECE basarili HTTP 200 sonrasi -> at-least-once
@@ -15,27 +15,40 @@ set +e
 
 _envget() { grep -E "^$1=" /opt/linux-ai-server/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d "\"'"; }
 
+# env-var override > .env (test/systemd env-var'i kazanir; cron .env'den okur).
 NOTIFY_CRON_ENABLED="${NOTIFY_CRON_ENABLED:-$(_envget NOTIFY_CRON_ENABLED)}"
 [ "${NOTIFY_CRON_ENABLED:-false}" = "true" ] || exit 0
 
-DB_PATH="$(_envget DB_PATH)"; DB_PATH="${DB_PATH:-/opt/linux-ai-server/data/server.db}"
+DB_PATH="${DB_PATH:-$(_envget DB_PATH)}"; DB_PATH="${DB_PATH:-/opt/linux-ai-server/data/server.db}"
 TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-$(_envget TELEGRAM_BOT_TOKEN)}"
 TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-$(_envget TELEGRAM_CHAT_ID)}"
 LOG="/var/log/linux-ai-server/notify-cron.log"
 
 mkdir -p "$(dirname "$LOG")" 2>/dev/null
-[ -f "$DB_PATH" ] || { echo "[$(date -Iseconds)] DB not found: $DB_PATH" >> "$LOG"; exit 0; }
+
+# DB-yok = notify-cron calisamaz; SESSIZ-pass DEGIL (Codex #24): OUTCOME:fail emit.
+[ -f "$DB_PATH" ] || { echo "[$(date -Iseconds)] DB not found: $DB_PATH" >> "$LOG"; echo "OUTCOME: fail | DB yok: $DB_PATH"; exit 0; }
+
 if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-    echo "[$(date -Iseconds)] TELEGRAM_BOT_TOKEN veya TELEGRAM_CHAT_ID eksik — bildirim ATLANAMAZ" >> "$LOG"
+    echo "[$(date -Iseconds)] TELEGRAM creds eksik" >> "$LOG"
+    echo "OUTCOME: fail | TELEGRAM_BOT_TOKEN veya TELEGRAM_CHAT_ID eksik"
     exit 0
 fi
 
 TG_URL="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"
 
+# LIMIT 50: batch/spam-cap (Codex #24). Outage/producer-bug sonrasi sinirsiz burst
+# onler; kalan-backlog sonraki */20 run'da drenaj edilir (no-loss korunur).
 IDS=$(sqlite3 "$DB_PATH" \
-    "SELECT id FROM events WHERE severity IN ('warn','critical') AND notified=0 ORDER BY id ASC;" \
+    "SELECT id FROM events WHERE severity IN ('warn','critical') AND notified=0 ORDER BY id ASC LIMIT 50;" \
     2>/dev/null)
-[ -z "$IDS" ] && exit 0
+q_rc=$?
+if [ "$q_rc" -ne 0 ]; then
+    echo "[$(date -Iseconds)] sqlite read FAIL rc=$q_rc db=$DB_PATH" >> "$LOG"
+    echo "OUTCOME: fail | events okunamadi (sqlite rc=$q_rc)"
+    exit 0
+fi
+[ -z "$IDS" ] && { echo "OUTCOME: pass | no-pending"; exit 0; }
 
 echo "[$(date -Iseconds)] notify-cron: pending events — processing..." >> "$LOG"
 sent=0; failed=0
@@ -81,4 +94,13 @@ ${ts}"
 done
 
 echo "[$(date -Iseconds)] notify-cron done: sent=${sent} failed=${failed}" >> "$LOG"
-exit 0
+
+# OUTCOME-contract (FAZ1; Codex #23/#24): notify-cron'un kendi saglik sinyali.
+# fail: bildirim-pipeline down (Telegram unreachable); partial: bazi iletildi.
+if [ "${failed:-0}" -gt 0 ] && [ "${sent:-0}" -eq 0 ]; then
+    echo "OUTCOME: fail | notify-pipeline down: sent=0 failed=${failed} (pending-retry, NO-LOSS)"
+elif [ "${failed:-0}" -gt 0 ]; then
+    echo "OUTCOME: partial | sent=${sent} failed=${failed} (pending-retry)"
+else
+    echo "OUTCOME: pass | sent=${sent}"
+fi
