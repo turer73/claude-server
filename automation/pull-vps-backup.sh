@@ -90,6 +90,11 @@ _relay_vps_backup() {
   fi
   safe="$(printf '%s' "$det" | tr -d '\\`"' | tr '\n\r\t' '   ' | head -c 300)"; safe="${safe//\'/\'\'}"
   sqlite3 "$db" "INSERT INTO cron_outcomes (job,result,rc,source,detail) VALUES ('vps-backup-push','${res:-fail}',0,'relay','$safe');" 2>/dev/null || true
+  if [ "${res:-fail}" != "pass" ]; then
+    local bsev=critical
+    [ "$res" = "partial" ] && bsev=warning
+    /opt/linux-ai-server/scripts/emit-event.sh "backup" "vps:backup-push" "$bsev" "VPS backup ${res:-fail}" "$det"
+  fi
 }
 
 _emit_outcome() {
