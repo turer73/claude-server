@@ -34,15 +34,24 @@ WEBHOOK_SECRET="${WEBHOOK_SECRET:-$(_envget WEBHOOK_SECRET)}"
 LOG="/var/log/linux-ai-server/notify-cron.log"
 
 mkdir -p "$(dirname "$LOG")" 2>/dev/null
-[ -f "$DB_PATH" ] || { echo "[$(date -Iseconds)] DB not found: $DB_PATH" >> "$LOG"; exit 0; }
+# DB-yok = notify-cron calisamaz; SESSIZ-pass DEGIL (Codex #24): OUTCOME:fail emit.
+[ -f "$DB_PATH" ] || { echo "[$(date -Iseconds)] DB not found: $DB_PATH" >> "$LOG"; echo "OUTCOME: fail | DB yok: $DB_PATH (notify-cron calisamaz)"; exit 0; }
 
 # pending: warn/critical, notified=0, FIFO (en eski once).
 # obs/Codex (#23): LIMIT 50 = batch/spam-cap (app/core/events.pending_notifications
 # ile tutarli). Outage/producer-bug sonrasi sinirsiz burst onler; kalan-backlog
 # sonraki */20 run'da drenaj edilir (no-loss korunur).
+# Codex #24: sqlite EXIT-STATUS ayri kontrol. Yanlis-DB / events-tablosu-yok/bozuk ->
+# bos-cikti -> "no-pending"-pass SANILMASIN (READ-side sessiz-ariza); rc!=0 -> OUTCOME:fail.
 IDS=$(sqlite3 "$DB_PATH" \
     "SELECT id FROM events WHERE severity IN ('warn','critical') AND notified=0 ORDER BY id ASC LIMIT 50;" \
     2>/dev/null)
+q_rc=$?
+if [ "$q_rc" -ne 0 ]; then
+    echo "[$(date -Iseconds)] sqlite read FAIL rc=$q_rc db=$DB_PATH" >> "$LOG"
+    echo "OUTCOME: fail | events okunamadi (sqlite rc=$q_rc) — backlog gizli olabilir, no-pending DEGIL"
+    exit 0
+fi
 [ -z "$IDS" ] && { echo "OUTCOME: pass | no-pending"; exit 0; }
 
 echo "[$(date -Iseconds)] notify-cron: pending events — processing..." >> "$LOG"
