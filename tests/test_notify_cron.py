@@ -29,9 +29,10 @@ def test_notify_cron_disabled_is_noop():
 
 def test_notify_cron_unset_defaults_disabled():
     # Flag hiç set değilse de default false -> no-op (fail-safe varsayılan)
+    # NOTIFY_ENV_FILE=/dev/null: prod .env (NOTIFY_CRON_ENABLED=true olabilir) izole et
     r = subprocess.run(
         ["bash", str(SCRIPT)],
-        env={"PATH": "/usr/bin:/bin"},  # NOTIFY_CRON_ENABLED yok
+        env={"PATH": "/usr/bin:/bin", "NOTIFY_ENV_FILE": "/dev/null"},
         capture_output=True,
         text=True,
         timeout=10,

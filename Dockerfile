@@ -20,10 +20,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /install /usr/local
 COPY app/ /app/app/
 COPY config/ /app/config/
+COPY scripts/ /app/scripts/
 
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
+ENV DB_PATH=/var/lib/linux-ai-server/server.db
 EXPOSE 8420
 
 USER aiserver

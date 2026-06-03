@@ -3,11 +3,44 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import socket
 import time
 
 import httpx
 import psutil
+
+# GUVENLIK: SSRF guard - bu ag araliklaarina HTTP istegi engellenir.
+_SSRF_BLOCKED: tuple = (
+    ipaddress.ip_network('127.0.0.0/8'),
+    ipaddress.ip_network('::1/128'),
+    ipaddress.ip_network('10.0.0.0/8'),
+    ipaddress.ip_network('172.16.0.0/12'),
+    ipaddress.ip_network('192.168.0.0/16'),
+    ipaddress.ip_network('169.254.0.0/16'),
+    ipaddress.ip_network('100.64.0.0/10'),
+    ipaddress.ip_network('fc00::/7'),
+    ipaddress.ip_network('fe80::/10'),
+)
+_SSRF_BLOCKED_HOSTS = frozenset({'localhost', 'metadata.google.internal', 'metadata.internal'})
+
+
+def _assert_safe_url(url: str) -> None:
+    """SSRF guard: private/loopback/link-local hedefleri reddeder. ValueError firlatir."""
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    host = (parsed.hostname or '').lower().rstrip('.')
+    if not host:
+        raise ValueError(f'SSRF-guard: URL gecersiz veya host yok: {url!r}')
+    if host in _SSRF_BLOCKED_HOSTS:
+        raise ValueError(f'SSRF-guard: engellenen host: {host!r}')
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return
+    for net in _SSRF_BLOCKED:
+        if ip in net:
+            raise ValueError(f'SSRF-guard: engellenen IP ({ip} in {net})')
 
 
 class NetworkProxy:
@@ -77,7 +110,8 @@ class NetworkProxy:
         timeout: int = 30,
     ) -> dict:
         start = time.monotonic()
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        _assert_safe_url(url)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
             resp = await client.request(
                 method=method,
                 url=url,
