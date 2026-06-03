@@ -7,7 +7,15 @@
 #   blast-radius.sh --diff [range]   -> CHANGESET (S2): git diff --name-only ile değişen TÜM
 #                                       dosyaların AGREGAT etki-haritası. range vars=@{u}...HEAD.
 #
-# Felsefe: heavyweight AST/import-graph DEĞİL — deterministik grep. read-only.
+# Felsefe: heavyweight AST/import-graph DEĞİL — deterministik grep/awk. read-only. ADVISORY
+# (review-yardımcısı, gate DEĞİL). SQL-statement-aware: SELECT..FROM (multiline dahil) +
+# INSERT/UPDATE (tırnaklı satır). docstring/comment "from X" elenir.
+#
+# BİLİNEN HEURISTIC-LİMİTLER (Codex #29; advisory olduğu için kabul, kök-çözüm=AST):
+#   - Çok-satırlı UNQUOTED INSERT/UPDATE (heredoc; nadir) kaçabilir (:31).
+#   - Yorum/string'de "select" geçen satır in_sel açar -> sonraki "from X" yanlış sayılabilir
+#     (:39); nadir + FP-yönlü (advisory'de kaçan-tablo=FN'den iyi). ; / """ / ) ile kapanır.
+#   Şüpheli changeset'te dosya-bazlı doğrula; kesin statik-analiz gerekirse S5=AST.
 set -uo pipefail
 
 # ROOT'u script konumundan türet (hardcoded DEĞİL) — clone/checkout yeri fark etmez.
