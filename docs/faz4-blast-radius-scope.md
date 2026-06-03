@@ -20,10 +20,17 @@ Heavyweight AST/import-graph kütüphanesi DEĞİL (over-engineer). Önce **grep
 3. Çıktı: kısa rapor (`dosya → tablolar: [...] | consumers: [...]`). PR-review-poller'ın review-prompt'una opsiyonel ek.
 - Test: `events.py` → tablo `events`; consumers `digest/devops_agent/cron-wrap/pull-vps-backup` (FAZ3.2 wiring) doğru çıkmalı (kendi-üstümüzde dogfood).
 
-## Sonraki slice'lar (sonra)
-- S2: route→core hop otomatik (import-takip).
-- S3: PR-review entegrasyonu (poller blast-radius'u review-prompt'a enjekte).
-- S4: "yüksek-blast" PR'larda ekstra-dikkat sinyali (FAZ2 review-spawn kararına girdi).
+## Slice durumu
+- ✅ **S1** (#22): tek-dosya forward(2-hop)+reverse. (route→core hop S1'in 2-hop'unda zaten var.)
+- ✅ **S2** (bu PR): `--diff [range]` changeset-mode — değişen TÜM dosyaların AGREGAT etki-haritası
+  (varsayılan range `@{u}...HEAD`, fallback `HEAD~1`; değişen-set consumer'lardan hariç).
+  + FP-filtre iyileştirme: `FROM` yalnız SELECT-içeren satırda sayılır → docstring-prose
+  ("from tracking") elenir, gerçek `SELECT..FROM t` kalır. Dogfood: #28 changeset temiz.
+- ⬜ **S3:** PR-review entegrasyonu (poller `blast-radius --diff`'i review-prompt'a enjekte).
+- ⬜ **S4:** "yüksek-blast" PR'larda ekstra-dikkat sinyali (FAZ2 review-spawn kararına girdi).
+
+**Bilinen limit (grep):** çok-dosya changeset'lerde nadir prose-FP kalabilir; kesin
+ayrım AST gerektirir (gerekirse S5). Tek-DB kaynak modülleri + SELECT-FROM net.
 
 ## Gate
 S1 build = kullanıcı go. FAZ4'ün geri kalanı FAZ3 (notify-cron) kapandıktan sonra önceliklenir.
