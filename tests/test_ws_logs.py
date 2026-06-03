@@ -4,12 +4,18 @@ from unittest.mock import patch
 
 from starlette.testclient import TestClient
 
+from app.auth.jwt_handler import create_token
+from tests.conftest import TEST_JWT_SECRET
+
+# GÜVENLIK: /ws/logs artık auth şart (log-sızıntı fix) -> token query-param.
+_TOK = create_token(subject="t", permissions="admin", secret=TEST_JWT_SECRET)
+
 
 def test_ws_logs_file_not_found(app):
     """Test log WebSocket handles missing log file."""
     with patch("app.ws.logs.os.path.isfile", return_value=False):
         client = TestClient(app)
-        with client.websocket_connect("/ws/logs") as ws:
+        with client.websocket_connect(f"/ws/logs?token={_TOK}") as ws:
             data = ws.receive_json()
             assert "error" in data
             assert "not found" in data["error"]
@@ -25,7 +31,7 @@ def test_ws_logs_streams_lines(app, tmp_path):
         client = TestClient(app)
         # The ws handler seeks to end, so it won't send existing lines
         # We just verify it connects and doesn't crash
-        with client.websocket_connect("/ws/logs") as ws:
+        with client.websocket_connect(f"/ws/logs?token={_TOK}") as ws:
             # The handler is tailing, so no immediate output expected
             # Just verify connection established without error
             pass

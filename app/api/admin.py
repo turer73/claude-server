@@ -15,7 +15,7 @@ import subprocess
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, field_validator
 
-from app.middleware.dependencies import require_auth
+from app.middleware.dependencies import require_admin, require_auth
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -96,7 +96,7 @@ HELPER_PATH = "/opt/linux-ai-server/scripts/set-env-secret.sh"
 
 
 @router.get("/secrets")
-async def list_secrets(_: None = Depends(require_auth)) -> dict:
+async def list_secrets(_: None = Depends(require_admin)) -> dict:
     """.env'deki KEY listesi. Value asla donmez — sadece key + length."""
     if not os.path.exists(ENV_PATH):
         return {"count": 0, "keys": []}
@@ -118,8 +118,12 @@ async def list_secrets(_: None = Depends(require_auth)) -> dict:
 
 
 @router.post("/secrets")
-async def set_secret(data: SecretSet, _: None = Depends(require_auth)) -> dict:
-    """.env'e KEY=VALUE upsert. Helper subprocess (idempotent)."""
+async def set_secret(data: SecretSet, _: None = Depends(require_admin)) -> dict:
+    """.env'e KEY=VALUE upsert. Helper subprocess (idempotent).
+
+    require_ADMIN (güvenlik fix): read-JWT'li biri .env secret yazabilir =
+    privilege escalation'dı (kendi admin-key'ini set edebilirdi).
+    """
     if not os.path.exists(HELPER_PATH):
         raise HTTPException(500, f"helper missing: {HELPER_PATH}")
     try:

@@ -50,8 +50,10 @@ def verify_pentest_key(
     older callers using X-Memory-Key keep working.
     """
     expected = _memory.MEMORY_API_KEY
+    # FAIL-CLOSED (güvenlik fix): key yüklenmemişse pentest/target/run/findings
+    # endpoint'lerini AÇMA (eski 'if not expected: return' fail-open'dı).
     if not expected:
-        return
+        raise HTTPException(status_code=503, detail="API key not configured (fail-closed)")
     provided = x_pentest_key or x_memory_key
     if provided != expected:
         raise HTTPException(status_code=401, detail="Invalid API key")

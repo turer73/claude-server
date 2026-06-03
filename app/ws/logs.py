@@ -7,11 +7,16 @@ import os
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.ws.auth import authenticate_ws
+
 router = APIRouter()
 
 
 @router.websocket("/ws/logs")
 async def ws_logs(websocket: WebSocket):
+    # GÜVENLIK: auth'suz accept log sızdırıyordu -> doğrula (read yeterli).
+    if await authenticate_ws(websocket) is None:
+        return
     await websocket.accept()
     log_path = "/var/log/linux-ai-server/server.log"
 

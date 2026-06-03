@@ -14,8 +14,11 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _bypass_memory_auth(monkeypatch):
-    monkeypatch.setattr("app.api.memory.MEMORY_API_KEY", "")
+def _set_memory_auth(monkeypatch):
+    # fail-closed güvenlik fix: key'i set et (client X-Memory-Key gönderir).
+    from tests.conftest import TEST_MEMORY_KEY
+
+    monkeypatch.setattr("app.api.memory.MEMORY_API_KEY", TEST_MEMORY_KEY)
 
 
 @pytest.mark.anyio

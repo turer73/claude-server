@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.webhooks import router as webhooks_router
 from app.core.monitor_agent import MonitorAgent
+from app.middleware.dependencies import require_auth
 from app.models.schemas import AlertConfig, MetricsSnapshot
 
 router = APIRouter(prefix="/api/v1/monitor", tags=["monitor"])
@@ -19,7 +20,10 @@ def get_monitor() -> MonitorAgent:
 
 
 @router.get("/metrics", response_model=MetricsSnapshot)
-async def current_metrics(monitor: MonitorAgent = Depends(get_monitor)):
+async def current_metrics(
+    monitor: MonitorAgent = Depends(get_monitor),
+    _: None = Depends(require_auth),  # güvenlik fix: metrik sızıntısı (auth-suzdu)
+):
     return monitor.collect_metrics()
 
 
@@ -27,6 +31,7 @@ async def current_metrics(monitor: MonitorAgent = Depends(get_monitor)):
 async def check_alerts(
     config: AlertConfig,
     monitor: MonitorAgent = Depends(get_monitor),
+    _: None = Depends(require_auth),  # güvenlik fix: auth-suz POST tetikleme
 ):
     metrics = monitor.collect_metrics()
     thresholds = {

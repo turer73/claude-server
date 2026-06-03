@@ -7,6 +7,7 @@ import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.monitor_agent import MonitorAgent
+from app.ws.auth import authenticate_ws
 
 router = APIRouter()
 _monitor = MonitorAgent()
@@ -14,6 +15,9 @@ _monitor = MonitorAgent()
 
 @router.websocket("/ws/monitor")
 async def ws_monitor(websocket: WebSocket):
+    # GÜVENLIK: auth'suz accept metrik sızdırıyordu -> doğrula (read yeterli).
+    if await authenticate_ws(websocket) is None:
+        return
     await websocket.accept()
     try:
         while True:
