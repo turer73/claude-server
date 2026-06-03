@@ -85,6 +85,8 @@ def test_validate_blocks_catastrophic(rm_executor, cmd):
         "rm -rf /var/log/old",  # alt-path
         "dd if=in.img of=out.img",  # device degil
         "chmod -R 755 ./dist",
+        "chmod -R 755 /home/aiserver/project",  # alt-path, tum /home degil (Codex P2)
+        "chown -R aiserver /opt/linux-ai-server",  # alt-path, tum /opt degil (Codex P2)
     ],
 )
 def test_validate_allows_legit_rm(rm_executor, cmd):

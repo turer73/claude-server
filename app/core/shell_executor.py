@@ -45,8 +45,10 @@ _DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(?:wipefs|shred)\b[^;&|]*?/dev/(?:sd|nvme|vd|hd|mmcblk)"), "wipefs/shred device"),
     (re.compile(r">\s*/dev/(?:sd|nvme|vd|hd|mmcblk)"), "block-device redirect"),
     (
-        re.compile(r"ch(?:mod|own)\s+(?:-\S*R\S*|--recursive)\s+\S+\s+/(?:\s|$|etc|usr|bin|sbin|lib|boot|var|home|root|opt)"),
-        "chmod/chown -R sistem-dizini",
+        # rm guard'i ile ayni hedef-siniri: SADECE tum sistem-dizini/kok (alt-path
+        # legit: `chmod -R 755 /opt/.../proje`, `chown -R u /home/u/x` ENGELLENMEZ).
+        re.compile(r"ch(?:mod|own)\s+(?:-\S*R\S*|--recursive)\s+\S+\s+" + _SYS_TARGET),
+        "chmod/chown -R sistem-dizini/kok",
     ),
     (re.compile(r":\s*\(\s*\)\s*\{"), "fork bomb"),
 ]
