@@ -17,7 +17,9 @@ class FileManager:
     def validate_path(self, path: str) -> str:
         real = os.path.realpath(path)
         for allowed in self._allowed:
-            if real.startswith(allowed):
+            # GÜVENLIK: salt-prefix BUG'lıydı — /tmp/foo izinliyse /tmp/foobar/secret de
+            # geçerdi (sibling-prefix). Tam-eşleşme VEYA ayraç-sınırlı alt-yol şart.
+            if real == allowed or real.startswith(allowed + os.sep):
                 return real
         raise AuthorizationError(f"Path {path} not in allowed paths")
 

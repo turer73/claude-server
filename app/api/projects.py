@@ -10,7 +10,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends
 
-from app.middleware.dependencies import require_auth
+from app.middleware.dependencies import require_auth, require_write
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
@@ -204,8 +204,12 @@ async def dependency_audit(_=Depends(require_auth)):
 
 
 @router.post("/sync")
-async def sync_repos(_=Depends(require_auth)):
-    """Git pull tüm projeler."""
+async def sync_repos(_=Depends(require_write)):
+    """Git pull tüm projeler.
+
+    require_WRITE (güvenlik fix): git pull = mutasyon (working-tree değişir);
+    read-perm yetmemeli (eski require_auth read-JWT'ye izin veriyordu).
+    """
     results = {}
     for proj in PROJECTS:
         path = proj["path"]

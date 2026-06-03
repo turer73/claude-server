@@ -119,7 +119,10 @@ class BackupManager:
             raise NotFoundError(f"Backup not found: {backup_path}")
         os.makedirs(target_dir, exist_ok=True)
         with tarfile.open(backup_path, "r:gz") as tar:
-            tar.extractall(path=target_dir)
+            # GÜVENLIK: filter="data" (PEP 706, Py3.12+) — tar path-traversal engeller
+            # (mutlak yol / ../ kaçış / unsafe-link / device). Eski plain extractall
+            # kötü-niyetli tar ile target_dir DIŞINA yazabilirdi.
+            tar.extractall(path=target_dir, filter="data")
         return True
 
     def delete_backup(self, backup_path: str) -> bool:
