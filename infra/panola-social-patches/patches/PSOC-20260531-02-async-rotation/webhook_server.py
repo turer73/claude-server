@@ -467,11 +467,15 @@ def check_comments_and_notify():
     import requests as req
 
     token = os.environ.get("INSTAGRAM_ACCESS_TOKEN", "")
-    tg_token = "8231422151:AAGdVsu1UPdLINaqDr5avqC94mwU1njgIKs"
-    chat_id = "8558299279"
+    # GUVENLIK: secret ASLA hardcoded olmaz — env'den. (Public-leak: eski token
+    # GitHub secret-scanning ile yakalandi -> @BotFather'da revoke + env'e yeni.)
+    tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
 
     if not token:
         return {"error": "No Instagram token"}
+    if not tg_token or not chat_id:
+        return {"error": "TELEGRAM_BOT_TOKEN/CHAT_ID env eksik"}
 
     with get_db() as db:
         posts = db.execute(
