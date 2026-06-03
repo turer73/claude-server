@@ -56,6 +56,15 @@ def test_from_needs_select_drops_docstring_fp():
         assert fp not in out, f"docstring-FP sızdı: {fp!r}"
 
 
+def test_multiline_select_from_detected():
+    """Multiline SQL (SELECT bir satırda, FROM sonraki) tablolari YAKALANMALI — kaçan-tablo
+    (false-negative) blast-radius'ta tehlikeli. rag_index_bilge.py 4 tablo okur (Codex #29)."""
+    r = _run("scripts/rag_index_bilge.py")
+    assert r.returncode == 0
+    for t in ("- memories", "- discoveries", "- sessions", "- tasks_log"):
+        assert t in r.stdout, f"multiline SELECT tablosu kaçtı: {t}"
+
+
 def test_diff_mode_empty_range():
     """--diff modu: değişiklik içermeyen range -> temiz exit 0 + 'değişen dosya yok'."""
     r = _run("--diff", "HEAD...HEAD")

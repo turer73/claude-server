@@ -19,16 +19,31 @@ cd "$ROOT" || exit 1
 # Bir dosyadaki DB tablo KULLANIMI (INSERT INTO/UPDATE/FROM). Python import satırları
 # DIŞLANIR; CREATE TABLE sayılmaz (şema-tanımı). prose/dosya-adı false-positive stopword'le elenir.
 _tables_in() {
-    # SQL tırnaklı string içinde. INSERT INTO/UPDATE net-SQL (her tırnaklı satırda).
-    # FROM zayıf-sinyal (docstring "from tracking" de tırnaklı) -> YALNIZ SELECT-içeren
-    # satırda say (gerçek sorgu). Böylece docstring/prose "from X" elenir, "SELECT..FROM t" kalır.
-    local q
-    q="$(grep -hvE "^[[:space:]]*(from|import)[[:space:]]" "$1" 2>/dev/null | grep -hE "[\"']")"
+    # SQL-statement-aware (grep yetersiz: FROM ya prose-"from tracking" docstring'i ya
+    # gerçek sorgu). awk: INSERT INTO/UPDATE her zaman; FROM yalnız SELECT-statement
+    # İÇİNDEYKEN (multiline SELECT..\n..FROM dahil -> false-NEGATIVE yok; blast-radius'ta
+    # kaçan-tablo FP'den tehlikeli). SELECT bayrağı ; veya """ / kapanış-paren'de kapanır.
+    # Python import satırları hariç (SQL FROM ile karışmasın).
+    grep -hvE "^[[:space:]]*(from|import)[[:space:]]" "$1" 2>/dev/null | awk '
     {
-        printf '%s\n' "$q" | grep -hoiE "(INSERT INTO|UPDATE)[[:space:]]+[a-z_][a-z0-9_]*"
-        printf '%s\n' "$q" | grep -hiE "select" | grep -hoiE "FROM[[:space:]]+[a-z_][a-z0-9_]*"
-    } |
-        awk '{print tolower($NF)}' |
+        line = tolower($0)
+        # INSERT INTO/UPDATE: SADECE tırnaklı satırda (SQL string) -> "# Update deploy"
+        # yorumu sayılmaz. (FROM tırnak-şartsız: multiline FROM satırı tırnaksız olabilir.)
+        if (line ~ /"/ || line ~ /\047/) {
+            tmp = line
+            while (match(tmp, /(insert into|update)[ \t]+[a-z_][a-z0-9_]*/)) {
+                s = substr(tmp, RSTART, RLENGTH); nf = split(s, a, /[ \t]+/); print a[nf]
+                tmp = substr(tmp, RSTART + RLENGTH)
+            }
+        }
+        if (line ~ /select/) in_sel = 1
+        rest = line
+        while (in_sel && match(rest, /from[ \t]+[a-z_][a-z0-9_]*/)) {
+            s = substr(rest, RSTART, RLENGTH); nf = split(s, a, /[ \t]+/); print a[nf]
+            rest = substr(rest, RSTART + RLENGTH)
+        }
+        if (line ~ /;/ || line ~ /"""/ || line ~ /\)/) in_sel = 0
+    }' |
         grep -ivE "^(select|where|order|group|limit|set|by|as|on|values|null|server|coverage|claude_memory|rag_metrics)$" |
         sort -u
 }
