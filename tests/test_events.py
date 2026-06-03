@@ -31,6 +31,17 @@ def test_emit_event_inserts_and_validates(monkeypatch, tmp_path):
     assert ev.emit_event("x", "", "t") is None
 
 
+def test_severity_alias_warning_is_notifyable(monkeypatch, tmp_path):
+    # Mevcut alert vocabulary'si "warning"/"error" -> kanonik warn/critical olmalı;
+    # aksi halde pending_notifications (warn/critical) bunları sessizce eler.
+    monkeypatch.setattr(ev, "DB_PATH", _events_db(tmp_path))
+    ev.emit_event("alert", "devops_agent", "esik asimi", severity="warning")
+    ev.emit_event("alert", "alert-check", "kritik", severity="error")
+    pend = ev.pending_notifications()
+    sevs = sorted(e["severity"] for e in pend)
+    assert sevs == ["critical", "warn"]  # warning->warn, error->critical; ikisi de bildirilir
+
+
 def test_recent_events_severity_filter(monkeypatch, tmp_path):
     monkeypatch.setattr(ev, "DB_PATH", _events_db(tmp_path))
     ev.emit_event("a", "s", "info-evt", severity="info")

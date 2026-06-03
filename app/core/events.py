@@ -17,10 +17,20 @@ import sqlite3
 
 DB_PATH = "/opt/linux-ai-server/data/server.db"
 SEVERITIES = ("info", "warn", "critical")
+# Mevcut alert üreticileri (devops_agent.py, alert-check.sh) "warning"/"error"
+# vocabulary'si kullanıyor. Bunları kanonik severity'ye eşle; aksi halde
+# "warning" -> info'ya düşer ve pending_notifications (warn/critical) sessizce eler.
+_SEVERITY_ALIAS = {"warning": "warn", "error": "critical", "err": "critical", "crit": "critical"}
 
 
 def _db_path() -> str:
     return os.environ.get("DB_PATH") or DB_PATH
+
+
+def _normalize_severity(severity: str | None) -> str:
+    s = (severity or "info").strip().lower()
+    s = _SEVERITY_ALIAS.get(s, s)
+    return s if s in SEVERITIES else "info"
 
 
 def emit_event(
@@ -32,8 +42,7 @@ def emit_event(
     payload: dict | None = None,
 ) -> int | None:
     """Merkezi events tablosuna bir olay yaz. id döner (hata/geçersiz → None)."""
-    if severity not in SEVERITIES:
-        severity = "info"
+    severity = _normalize_severity(severity)
     if not type or not source or not title:
         return None
     try:
@@ -86,7 +95,7 @@ def pending_notifications() -> list[dict]:
         try:
             rows = con.execute(
                 "SELECT id, timestamp, type, source, severity, title, detail FROM events "
-                "WHERE notified=0 AND severity IN ('warn','critical') ORDER BY id"
+                "WHERE notified=0 AND severity IN ('warn','critical') ORDER BY id LIMIT 50"
             ).fetchall()
         finally:
             con.close()
