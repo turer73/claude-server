@@ -11,6 +11,23 @@ from datetime import datetime
 from app.exceptions import NotFoundError
 
 
+def _safe_extractall(tar: tarfile.TarFile, dest: str) -> None:
+    """tar path-traversal'a karşı güvenli extract. Py3.11.4+/3.12+ -> filter="data"
+    (PEP 706). Daha eski 3.11.x'te filter param YOK (TypeError) -> manuel member-
+    validation (mutlak/../-kaçış + symlink/hardlink reddi). Codex #28."""
+    if hasattr(tarfile, "data_filter"):
+        tar.extractall(path=dest, filter="data")
+        return
+    dest_real = os.path.realpath(dest)
+    for m in tar.getmembers():
+        target = os.path.realpath(os.path.join(dest, m.name))
+        if target != dest_real and not target.startswith(dest_real + os.sep):
+            raise tarfile.TarError(f"unsafe path in tar (traversal): {m.name}")
+        if m.issym() or m.islnk():
+            raise tarfile.TarError(f"unsafe link in tar: {m.name}")
+    tar.extractall(path=dest)
+
+
 def _is_sqlite_file(path: str) -> bool:
     """Return True if file is a SQLite database (magic header check)."""
     if not path.endswith(".db") or not os.path.isfile(path):
@@ -119,10 +136,7 @@ class BackupManager:
             raise NotFoundError(f"Backup not found: {backup_path}")
         os.makedirs(target_dir, exist_ok=True)
         with tarfile.open(backup_path, "r:gz") as tar:
-            # GÜVENLIK: filter="data" (PEP 706, Py3.12+) — tar path-traversal engeller
-            # (mutlak yol / ../ kaçış / unsafe-link / device). Eski plain extractall
-            # kötü-niyetli tar ile target_dir DIŞINA yazabilirdi.
-            tar.extractall(path=target_dir, filter="data")
+            _safe_extractall(tar, target_dir)
         return True
 
     def delete_backup(self, backup_path: str) -> bool:
