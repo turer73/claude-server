@@ -99,15 +99,17 @@
 ## FAZ 3 — Olay omurgası + dijest push (farkındalık ÇIKTISI bağlanır)
 **Hedef:** F-C1 kapat (dijest gerçekten push edilsin) + aksiyonlar kendini *duyursun*.
 - ✅ **3.1 Dijest scheduler — YAPILDI** (F-C1): `automation/digest-send.sh` + crontab `0 8 * * *` (klipper-cron-wrap, NOTHING_NEW guard). Uçtan uca doğrulandı (gerçek Telegram push). has_signal guard zaten var + cron_outcomes/liveness/pr_review sinyalleri bağlandı.
-- 🟡 **3.2 Hafif olay omurgası — BÜYÜK ÖLÇÜDE YAPILDI (2026-06-03), (d) notify kaldı:**
-  - ✅ **Foundation** (PR #18 `a259650`): `server.db.events` tablosu + `app/core/events.py` (`emit_event`/`recent_events`/`pending_notifications`/`mark_notified`, severity-normalize, payload-guard, tek-kaynak DB-path) + `scripts/emit-event.sh` (TEK bash emit-helper). Codex 4 sessiz-arıza/crash bulgusu merge-öncesi fix.
-  - ✅ **Producer-wiring (KAYIT-ONLY, double-notify yok):** (a) job-outcome `klipper-cron-wrap.sh` OUTCOME!=pass (PR #19 `2751dd37`) + (b) alerts-bridge `devops_agent._store_alert` (PR #20 `14c6e98`) + (c) VPS-backup-emit `pull-vps-backup.sh` (PR #21 `539daef`, surer SSH-impl/klipper-verify).
-  - ⬜ **(d) notify-cron — SIRADAKİ, surer-onayına bağlı (riskli=gerçek Telegram):** `events.pending_notifications` drain → Telegram/n8n → `mark_notified` (TEK auto-notifier). Eklenince ATOMIK retire/exclude: (1) `klipper-cron-wrap.sh:78` n8n-webhook (2) `backup-monitor.sh` send_telegram (FLAG-B); **keep** `_send_webhook` (remediation≠alert). FLAG-A: digest'i bridge-sonrası events'ten okut.
+- ✅ **3.2 Hafif olay omurgası — TAMAMLANDI (2026-06-03), FAZ 3 KOMPLE:**
+  - ✅ **Foundation** (PR #18 `a259650`): `server.db.events` + `app/core/events.py` + `scripts/emit-event.sh`. Codex 4 sessiz-arıza/crash fix.
+  - ✅ **Producer-wiring (KAYIT-ONLY):** (a) job-outcome #19 `2751dd37` + (b) alerts-bridge #20 `14c6e98` + (c) VPS-backup-emit #21 `539daef`.
+  - ✅ **(d) notify-cron CANLI** (PR #23 + #27 `95c44ef`): `events.pending` drain → **Telegram-direct** (n8n-workflow yok → surer adapte) → `mark_notified`. NOTIFY_CRON_ENABLED=true + crontab `*/20`. ATOMIK-cutover: cron-wrap n8n-POST guard'lı, backup-monitor `notify_backup` wrapper. SEND-THEN-MARK + LIMIT50 + OUTCOME-on-fail + read-fail-closed (Codex #23/#24). `_send_webhook` remediation KEEP (ayrı semantik).
   - *Claude'u kalp-atışı yapma; deterministik kayıt + eşik.* Detay: memory `project-faz32-producer-wiring-2026-06-03`.
 
 ## FAZ 4 — Blast-radius / değişiklik-öncesi etki (Yetenek 4'ün proaktif yarısı — F-F1)
 **Hedef:** bir değişiklik neye dokunduğunu ÖNCEDEN bilsin (şu an elle grep). Hafif bağımlılık/etki haritası (route↔DB↔consumer). Ana hatlı; gelince detay.
 - **PR-review sistemi BURAYA bağlanır** (değişiklik-öncesi-etki-farkındalığı): merge-öncesi otomatik review = değişikliğin riskini önceden yüzeye çıkarma. Detay: `docs/pr-review-system.md` + memory `project-pr-review-system-2026-06-02`.
+- ✅ **S1** (#22): `scripts/blast-radius.sh <dosya>` — forward(2-hop tablolar)+reverse(consumer). ✅ **S2** (#29 `e6865c0`): `--diff [range]` changeset-mode + awk SELECT-statement-aware FP-filtre (multiline SELECT..FROM yakalar, docstring/comment "from X" eler). Advisory; heuristic-limit dokümante (kök=AST/S5).
+- ⬜ **S3 (SIRADAKİ):** PR-review-poller'a `blast-radius --diff` enjeksiyon → review-prompt'a "bu PR şu tablolara dokunuyor, consumer'lar: ...". Detay/spec: `docs/new-session-prep.md`. ⬜ S4: yüksek-blast → FAZ2 review-spawn sinyali.
 
 ---
 ## EK WORKSTREAM — Cross-project PR-review sistemi (LIVESYS-entegre, ayrı doküman)

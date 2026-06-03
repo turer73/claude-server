@@ -13,9 +13,9 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "blast-radius.sh"
 
 
-def _run(arg):
+def _run(*args):
     return subprocess.run(
-        [str(SCRIPT), arg],
+        [str(SCRIPT), *args],
         capture_output=True,
         text=True,
         cwd=str(ROOT),
@@ -41,3 +41,32 @@ def test_missing_file_exits_nonzero():
     r = _run("app/core/does_not_exist_xyz.py")
     assert r.returncode == 1
     assert "dosya yok" in (r.stdout + r.stderr)
+
+
+def test_from_needs_select_drops_docstring_fp():
+    """FROM-needs-SELECT filtresi: deploy.py gerçek SQL (SELECT FROM memories/sessions/
+    tasks_log) yakalanmalı; docstring prose ('from tracking'/'from memory DB') ELENMELI."""
+    r = _run("app/api/deploy.py")
+    assert r.returncode == 0
+    out = r.stdout
+    for real in ("- memories", "- sessions", "- tasks_log"):
+        assert real in out, f"gerçek tablo kayıp: {real}"
+    # docstring-prose false-positive'leri olmamalı
+    for fp in ("- tracking", "- memory\n", "- yaml", "- process"):
+        assert fp not in out, f"docstring-FP sızdı: {fp!r}"
+
+
+def test_multiline_select_from_detected():
+    """Multiline SQL (SELECT bir satırda, FROM sonraki) tablolari YAKALANMALI — kaçan-tablo
+    (false-negative) blast-radius'ta tehlikeli. rag_index_bilge.py 4 tablo okur (Codex #29)."""
+    r = _run("scripts/rag_index_bilge.py")
+    assert r.returncode == 0
+    for t in ("- memories", "- discoveries", "- sessions", "- tasks_log"):
+        assert t in r.stdout, f"multiline SELECT tablosu kaçtı: {t}"
+
+
+def test_diff_mode_empty_range():
+    """--diff modu: değişiklik içermeyen range -> temiz exit 0 + 'değişen dosya yok'."""
+    r = _run("--diff", "HEAD...HEAD")
+    assert r.returncode == 0
+    assert "değişen dosya yok" in (r.stdout + r.stderr)
