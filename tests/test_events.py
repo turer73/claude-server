@@ -38,7 +38,10 @@ def test_payload_non_json_native_does_not_crash(monkeypatch, tmp_path):
 
     monkeypatch.setattr(ev, "DB_PATH", _events_db(tmp_path))
     eid = ev.emit_event(
-        "job-outcome", "cron:x", "ts payload", severity="warn",
+        "job-outcome",
+        "cron:x",
+        "ts payload",
+        severity="warn",
         payload={"ts": _dt.datetime(2026, 6, 3, 5, 0), "raw": b"\x00\x01"},
     )
     assert isinstance(eid, int)  # crash yok, satır yazıldı
