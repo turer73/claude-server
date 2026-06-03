@@ -70,6 +70,11 @@ else
     SEV="critical"; [ "$RESULT" = "partial" ] && SEV="warning"
     /opt/linux-ai-server/scripts/klipper-event.sh "cron-${NAME}" "${RESULT} rc=${RC} (${DETAIL})"
 
+    # LIVESYS Faz 3.2: merkezi events kaydi (job-outcome). YALNIZCA kayit — bildirim
+    # AYRI notify-cron'un isi (henuz yok), bu yuzden ustteki alert-POST hala tek-notifier
+    # ve cift-bildirim YOK. emit-helper fail-safe (cron-job'u dusurmez). sev: warning->warn.
+    /opt/linux-ai-server/scripts/emit-event.sh "job-outcome" "cron:${NAME}" "${SEV}" "cron ${NAME} ${RESULT}" "rc=${RC} ${DETAIL}"
+
     # n8n webhook payload — workflow template path'leri tam uyumlu:
     # $json.alert.{source,severity,message,value,threshold} (body wrapping yok, alert root'ta)
     SAFE_CMD=$(printf "%s" "$CMD_STR" | tr -d '\\"`' | tr '\n\r\t' '   ' | head -c 200)
