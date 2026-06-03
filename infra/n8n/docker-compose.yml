@@ -11,7 +11,7 @@ services:
       - N8N_SECURE_COOKIE=false
       - GENERIC_TIMEZONE=Europe/Istanbul
       - TZ=Europe/Istanbul
-      - N8N_API_KEY=panola-n8n-api-2026
+      - N8N_API_KEY=${N8N_API_KEY}
       - N8N_HOST=100.84.251.49
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
