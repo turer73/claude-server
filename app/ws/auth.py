@@ -11,6 +11,7 @@ from jose import JWTError
 
 from app.auth.jwt_handler import decode_token
 from app.core.config import get_settings
+from app.exceptions import AuthenticationError
 
 # RFC6455 1008 = policy violation (auth red).
 WS_POLICY_VIOLATION = 1008
@@ -35,7 +36,9 @@ async def authenticate_ws(websocket, require_admin: bool = False) -> dict | None
     elif token:
         try:
             claims = decode_token(token, settings.jwt_secret)
-        except JWTError:
+        except (AuthenticationError, JWTError):
+            # decode_token jose hatalarini AuthenticationError'a sarar (JWTError DEGIL);
+            # ikisini de yakala -> malformed/expired token temiz 1008-reddi (500/trace degil).
             claims = None
 
     if claims is None:

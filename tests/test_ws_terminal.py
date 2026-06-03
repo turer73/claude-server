@@ -30,6 +30,15 @@ def test_ws_terminal_rejects_non_admin_token(app):
             ws.receive_json()
 
 
+def test_ws_terminal_rejects_malformed_token(app):
+    """Bozuk/geçersiz token TEMIZ 1008-reddi olmalı (500/trace DEĞİL) — decode_token
+    AuthenticationError fırlatır, JWTError değil (Codex #26 bug fix)."""
+    client = TestClient(app)
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/ws/terminal?token=not.a.valid.jwt") as ws:
+            ws.receive_json()
+
+
 @pytest.mark.anyio
 async def test_ws_terminal_session_lifecycle(app, tmp_path, monkeypatch):
     """Test terminal WebSocket creates session and handles commands."""
