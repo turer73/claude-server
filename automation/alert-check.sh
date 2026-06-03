@@ -16,7 +16,10 @@ if [ -f /opt/linux-ai-server/.env ]; then
   set -a; source /opt/linux-ai-server/.env; set +a
 fi
 
-METRICS=$(curl -s --max-time 10 $API/api/v1/monitor/metrics)
+# GÜVENLIK: /metrics artık auth ŞART (auth-bypass fix). Internal automation ->
+# X-API-Key (=INTERNAL_API_KEY, .env'den source edildi) -> admin scope. Auth'suz
+# kalsa 401 -> metrikler 0 parse -> alert-pipeline SESSIZ körleşirdi (Codex #27 P1).
+METRICS=$(curl -s --max-time 10 -H "X-API-Key: ${INTERNAL_API_KEY}" $API/api/v1/monitor/metrics)
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 CPU=$(echo $METRICS | python3 -c 'import sys,json; print(json.load(sys.stdin).get("cpu_percent",0))')
