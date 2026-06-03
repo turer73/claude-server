@@ -25,7 +25,7 @@ _SSRF_BLOCKED: tuple = (
 _SSRF_BLOCKED_HOSTS = frozenset({"localhost", "metadata.google.internal", "metadata.internal"})
 
 
-def _assert_safe_url(url: str) -> None:
+async def _assert_safe_url(url: str) -> None:
     """SSRF guard: private/loopback/link-local hedefleri reddeder. ValueError firlatir."""
     from urllib.parse import urlparse
 
@@ -111,7 +111,7 @@ class NetworkProxy:
         timeout: int = 30,
     ) -> dict:
         start = time.monotonic()
-        _assert_safe_url(url)
+        await _assert_safe_url(url)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
             resp = await client.request(
                 method=method,
