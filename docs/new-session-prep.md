@@ -25,3 +25,15 @@
 - notify-cron test artık `NOTIFY_ENV_FILE=/dev/null` ile izole (bu PR).
 
 İlgili memory: `project-session-2026-06-03-security-faz4`, `project-faz32-producer-wiring-2026-06-03`, `feedback-merge-gate-codex-check-2026-06-03`.
+
+## BATCH-4 — kullanıcı bulguları (2026-06-03, surer #99804 ileti) — YENİ-OTURUM triyaj
+7 bulgu değerlendirildi (wind-down'da ertelendi, yeni-oturum):
+1. **jwt_secret config-içinde** → env-only yapılmalı (`app/core/config.py`). [klipper, küçük-orta]
+2. **Shell whitelist geniş** (rm/reboot/mkfs `config.py:86`) → "whitelist" yanıltıcı; gerçek-whitelist VEYA dürüst-adlandır + tehlikeli-komut-blok. [klipper, orta] (FAZ4-S3 DEĞİL — ayrı güvenlik.)
+3. **Allowed paths geniş** (/proc,/sys,/etc file_manager) → yetki-seviyesi ayrımı (read vs admin path-scope). [klipper, orta]
+4. **CI 3.11-only, prod 3.14** → CI matrix [3.11, 3.14] (özellikle tarfile filter / 3.12+ özellikleri). [klipper, küçük — `.github/workflows/ci.yml`]
+5. **Repo↔canlı config drift** (schema-validation yok) → startup config-schema-validate (.env/systemd/yaml tutarlılık). [klipper/surer ortak, orta] (#11 env-path + .env-dual-key ailesi.)
+6. **Kırık-test üstünde servis** (#515/#518) → zaten loglu, triyaj-kuyruğu.
+7. **notify-cron test** → surer: disabled-case test var, OUTCOME enabled-yolda; **gerçek boşluk: ENABLED+no-pending OUTCOME:pass testi yok** → ekle. [surer/klipper, küçük]
+
+**Domain-split:** klipper=#1/#2/#3/#4 (app-config+CI), ortak=#5, surer=#7 (notify-cron). Öncelik: #4(CI-matrix kolay+değerli) + #1(jwt-secret kolay) → sonra #2/#3 (auth-hardening) → #5 (drift). HARD-RULE + worktree + branch-ownership uygula.
