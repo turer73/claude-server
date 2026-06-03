@@ -19,7 +19,15 @@ send_telegram() {
 # fail-safe (backup-monitor'u dusurmez); $1=severity (warning/critical), $2=mesaj.
 notify_backup() {
     /opt/linux-ai-server/scripts/emit-event.sh "backup" "local-backup" "$1" "$2"
-    [ "${NOTIFY_CRON_ENABLED:-false}" = "true" ] || send_telegram "$2"
+    if [ "${NOTIFY_CRON_ENABLED:-false}" != "true" ]; then
+        send_telegram "$2"
+        # cron-wrap ile TUTARLI (surer #99772): legacy-telegram zaten attı ->
+        # just-emitted event'i mark (enable-aninda notify-cron double-engel).
+        local _db="${DB_PATH:-/opt/linux-ai-server/data/server.db}"
+        [ -f "$_db" ] && sqlite3 "$_db" \
+            "UPDATE events SET notified=1 WHERE source='local-backup' AND notified=0 AND id=(SELECT id FROM events WHERE source='local-backup' AND notified=0 ORDER BY id DESC LIMIT 1);" \
+            2>/dev/null || true
+    fi
 }
 
 # 1. Backup dizini var mı?
