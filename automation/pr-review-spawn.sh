@@ -28,7 +28,7 @@ log() { echo "[$(date -Iseconds)] $1" | tee -a "$LOG"; }
 read -r -d '' PROMPT <<PEOF || true
 Sen otomatik bir PR-review ajanisin (pilot). Gorev (SADECE bunlar; baska hicbir sey yapma):
 1. Bu PR'in diff'ini incele: gh pr diff $PR -R $REPO
-2. Diff'i correctness-bug acisindan review et (inverted-condition, off-by-one, null-deref, missing-await, falsy-zero, sessiz-hata-yutma, escape eksikligi, removed-guard). Degisen fonksiyonun degismeyen satirlari da kapsamda.
+2. SADECE DIFF uzerinden review et (correctness-bug: inverted-condition, off-by-one, null-deref, missing-await, falsy-zero, sessiz-hata-yutma, escape eksikligi, removed-guard). ONEMLI: working-tree PR-HEAD DEGIL (checkout yok) -> repo dosyalarini OKUMA/guvenme (master'i okursun, PR'in degil = yaniltici). Yalniz diff-icerigine dayan; diff-disi-baglam gerekirse "diff-disi-dogrulama gerek" diye not dus.
 3. Bulgulari TEK bir ozet PR-comment olarak post et: gh pr comment $PR -R $REPO --body "..."
    Comment'in EN BASINA bu prefix'i koy (aynen):
    [otomatik review - klipper; FP olabilir, insan-dogrula]
