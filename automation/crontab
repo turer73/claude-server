@@ -42,6 +42,6 @@
 # notify-cron: events tablosu pending (warn/critical) -> n8n bildirimi [FAZ3.2 step-d]
 # DISABLED: Once (1) data/notify-cron.sh'i automation/'a tasiyip chmod +x yap,
 #           (2) .env'e NOTIFY_CRON_ENABLED=true ekle, (3) bu satiri uncomment et + install-cron.sh calistir.
-# */20 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh notify-cron /opt/linux-ai-server/automation/notify-cron.sh
+*/20 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh notify-cron /opt/linux-ai-server/automation/notify-cron.sh
 # Renderhane bakiye uyarisi (panola-social VPS /api/health proxy, saatlik) — v2-06 PSOC-20260528
 0 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh renderhane-balance /opt/linux-ai-server/automation/social-renderhane-balance-alert.sh
