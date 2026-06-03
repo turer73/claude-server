@@ -26,20 +26,24 @@ _envget() { grep -E "^$1=" /opt/linux-ai-server/.env 2>/dev/null | head -1 | cut
 NOTIFY_CRON_ENABLED="${NOTIFY_CRON_ENABLED:-$(_envget NOTIFY_CRON_ENABLED)}"
 [ "${NOTIFY_CRON_ENABLED:-false}" = "true" ] || exit 0
 
-DB_PATH="$(_envget DB_PATH)"; DB_PATH="${DB_PATH:-/opt/linux-ai-server/data/server.db}"
-N8N_WEBHOOK="$(_envget N8N_WEBHOOK_URL)"; N8N_WEBHOOK="${N8N_WEBHOOK:-http://localhost:5678/webhook/klipper-alert}"
+# env-var override > .env (test/systemd env-var'i kazanir; cron .env'den okur).
+DB_PATH="${DB_PATH:-$(_envget DB_PATH)}"; DB_PATH="${DB_PATH:-/opt/linux-ai-server/data/server.db}"
+N8N_WEBHOOK="${N8N_WEBHOOK_URL:-$(_envget N8N_WEBHOOK_URL)}"; N8N_WEBHOOK="${N8N_WEBHOOK:-http://localhost:5678/webhook/klipper-alert}"
 # WEBHOOK_SECRET: cron-wrap ile AYNI webhook+secret (klipper-alert) — tutarli auth.
-WEBHOOK_SECRET="$(_envget WEBHOOK_SECRET)"
+WEBHOOK_SECRET="${WEBHOOK_SECRET:-$(_envget WEBHOOK_SECRET)}"
 LOG="/var/log/linux-ai-server/notify-cron.log"
 
 mkdir -p "$(dirname "$LOG")" 2>/dev/null
 [ -f "$DB_PATH" ] || { echo "[$(date -Iseconds)] DB not found: $DB_PATH" >> "$LOG"; exit 0; }
 
-# pending: warn/critical, notified=0, FIFO (en eski once)
+# pending: warn/critical, notified=0, FIFO (en eski once).
+# obs/Codex (#23): LIMIT 50 = batch/spam-cap (app/core/events.pending_notifications
+# ile tutarli). Outage/producer-bug sonrasi sinirsiz burst onler; kalan-backlog
+# sonraki */20 run'da drenaj edilir (no-loss korunur).
 IDS=$(sqlite3 "$DB_PATH" \
-    "SELECT id FROM events WHERE severity IN ('warn','critical') AND notified=0 ORDER BY id ASC;" \
+    "SELECT id FROM events WHERE severity IN ('warn','critical') AND notified=0 ORDER BY id ASC LIMIT 50;" \
     2>/dev/null)
-[ -z "$IDS" ] && exit 0
+[ -z "$IDS" ] && { echo "OUTCOME: pass | no-pending"; exit 0; }
 
 echo "[$(date -Iseconds)] notify-cron: pending events — processing..." >> "$LOG"
 sent=0; failed=0
@@ -78,4 +82,15 @@ for id in $IDS; do
 done
 
 echo "[$(date -Iseconds)] notify-cron done: sent=${sent} failed=${failed}" >> "$LOG"
+
+# OUTCOME-contract (FAZ1; Codex #23): notify-cron'un KENDI saglik sinyali. Sends fail
+# edip event'ler pending kalirsa, marker'siz exit-0 -> cron-wrap "pass" sanardi =
+# bildirim-pipeline ariza SESSIZ (planin tezi, notifier'in kendinde!). Artik gorunur:
+if [ "${failed:-0}" -gt 0 ] && [ "${sent:-0}" -eq 0 ]; then
+    echo "OUTCOME: fail | notify-pipeline down: sent=0 failed=${failed} (pending-retry, NO-LOSS)"
+elif [ "${failed:-0}" -gt 0 ]; then
+    echo "OUTCOME: partial | sent=${sent} failed=${failed} (pending-retry)"
+else
+    echo "OUTCOME: pass | sent=${sent}"
+fi
 exit 0
