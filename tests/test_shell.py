@@ -49,6 +49,48 @@ def test_validate_dangerous_mkfs(executor):
         executor.validate_command("mkfs /dev/sda1")
 
 
+@pytest.fixture
+def rm_executor():
+    # rm whitelist'te -> tehlikeli-pattern testleri whitelist'e degil bloga takilsin
+    return ShellExecutor(whitelist=["ls", "echo", "cat", "rm", "dd", "chmod", "chown"])
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "rm  -rf   /",  # cift bosluk normalize
+        "rm -rf /etc",  # tum sistem-dizini
+        "rm -fr ~",  # bayrak sirasi + home
+        "rm -rf /*",  # kok glob
+        "rm --recursive --force /var",
+        "dd if=/dev/zero of=/dev/sda",
+        "chmod -R 777 /",
+        "echo x > /dev/sda",
+        "wipefs -a /dev/nvme0n1",
+        "sudo rm -rf /usr",  # sudo prefix tehlikeyi gizlemez
+    ],
+)
+def test_validate_blocks_catastrophic(rm_executor, cmd):
+    with pytest.raises(AuthorizationError, match="Blocked dangerous"):
+        rm_executor.validate_command(cmd)
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "rm file.txt",
+        "rm -rf ./node_modules",
+        "rm -rf /tmp/linux-ai-server/build",  # /tmp katastrofik-listede degil
+        "rm -rf /home/klipperos/cache",  # alt-path, tum /home degil
+        "rm -rf /var/log/old",  # alt-path
+        "dd if=in.img of=out.img",  # device degil
+        "chmod -R 755 ./dist",
+    ],
+)
+def test_validate_allows_legit_rm(rm_executor, cmd):
+    assert rm_executor.validate_command(cmd) is True
+
+
 def test_validate_command_empty(executor):
     with pytest.raises(AuthorizationError):
         executor.validate_command("")

@@ -1,19 +1,55 @@
-"""Shell executor — full shell access via bash with whitelist validation.
+"""Shell executor — TAM-SHELL admin araci (whitelist DEGIL).
 
-Security model: JWT admin auth is the gate. Once authenticated as admin,
-full shell access is granted through bash -c for pipe, redirection, etc.
-The whitelist validates the *first* command in the pipeline.
+GUVENLIK MODELI (durust): Bu endpoint authenticated admin'e TAM bash erisimi
+verir (`create_subprocess_shell` -> pipe/redirect/chain/$()/ hepsi calisir).
+ASIL guvenlik siniri = JWT/API-key ADMIN AUTH; admin ile sistem zaten tam-kontrol
+(sudo NOPASSWD). Dashboard terminal + run-agent.sh bunu bilincli kullanir.
+
+Bu modulde IKI katman var, ama ikisi de guvenlik-siniri DEGIL:
+  1) _first_command_whitelisted: SADECE ilk komutu kontrol eder; `cat x; <her sey>`
+     ile asilabilir (tam string shell'e gider). Bu bir yazim-hatasi/yanlislik
+     suzgeci; kotu-niyetli admin'e karsi koruma SAGLAMAZ.
+  2) _DANGEROUS_PATTERNS: katastrofik komutlari (rm -rf /, mkfs/dd ham-device,
+     fork-bomb, ...) engeller. AMAC: KAZA onleme (typo/yanlis-path), bilincli
+     bypass'a karsi degil — blocklist her zaman asilabilir. Tetiklenen her blok
+     audit icin WARNING loglanir.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
+import re
 import time
 
 from app.exceptions import AuthorizationError, ShellExecutionError
 
-# Dangerous patterns that are NEVER allowed regardless of auth
+logger = logging.getLogger(__name__)
+
+# Geriye-donuk: eski isim disariya referansli olabilir (test/doc).
 BLOCKED_PATTERNS = ["rm -rf /", "mkfs /dev/sd", "dd if=/dev/zero of=/dev/sd", ":(){", ":()", "forkbomb"]
+
+# rm'in recursive+force bayrak kombinasyonlari (sira serbest).
+_RM_RF = (
+    r"rm\s+(?:-\S*r\S*f\S*|-\S*f\S*r\S*|-[rR]\s+-f\S*|-f\S*\s+-[rR]"
+    r"|--recursive\s+--force|--force\s+--recursive|-[rR]\s+--force|--recursive\s+-f\S*)"
+)
+# Katastrofik hedef = kok, glob, ~/$HOME veya TUM sistem-dizini (alt-path DEGIL).
+_SYS_TARGET = r"(?:/|/\*|~|\$HOME|/(?:etc|usr|bin|sbin|lib\w*|boot|var|home|root|opt|dev|proc|sys)(?:/\*?)?)(?:\s|$)"
+
+# (regex, etiket) — KAZA onleme amacli; guvenlik-siniri degil (auth odur).
+_DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(_RM_RF + r"\s+" + _SYS_TARGET), "rm -rf sistem-dizini/kok"),
+    (re.compile(r"mkfs(?:\.\w+)?\b[^;&|]*?/dev/(?:sd|nvme|vd|hd|mmcblk)"), "mkfs ham-device"),
+    (re.compile(r"\bdd\b[^;&|]*\bof=/dev/(?:sd|nvme|vd|hd|mmcblk)"), "dd ham-device"),
+    (re.compile(r"\b(?:wipefs|shred)\b[^;&|]*?/dev/(?:sd|nvme|vd|hd|mmcblk)"), "wipefs/shred device"),
+    (re.compile(r">\s*/dev/(?:sd|nvme|vd|hd|mmcblk)"), "block-device redirect"),
+    (
+        re.compile(r"ch(?:mod|own)\s+(?:-\S*R\S*|--recursive)\s+\S+\s+/(?:\s|$|etc|usr|bin|sbin|lib|boot|var|home|root|opt)"),
+        "chmod/chown -R sistem-dizini",
+    ),
+    (re.compile(r":\s*\(\s*\)\s*\{"), "fork bomb"),
+]
 
 
 class ShellExecutor:
@@ -24,24 +60,28 @@ class ShellExecutor:
         if not command or not command.strip():
             raise AuthorizationError("Empty command")
 
-        # Block catastrophic commands
-        for pattern in BLOCKED_PATTERNS:
-            if pattern in command:
-                raise AuthorizationError(f"Blocked dangerous pattern: {pattern!r}")
+        # Whitespace-normalize: `rm  -rf   /` gibi kacamaklar yakalansin.
+        normalized = re.sub(r"\s+", " ", command.strip())
 
-        # Validate the first command in the pipeline is whitelisted
-        # Strip leading env vars like VAR=val, sudo, etc.
-        stripped = command.strip()
-        # Handle sudo prefix
+        # Katmanlardan biri: katastrofik-komut blok (kaza onleme; auth degil).
+        for pattern, label in _DANGEROUS_PATTERNS:
+            if pattern.search(normalized):
+                logger.warning("shell blocked dangerous command (%s): %r", label, command[:200])
+                raise AuthorizationError(f"Blocked dangerous pattern: {label}")
+
+        # Soft suzgec: ilk komut whitelist'te mi (typo/yanlislik; bypass edilebilir).
+        stripped = normalized
         if stripped.startswith("sudo "):
             stripped = stripped[5:].strip()
-        # Handle env var prefix like KEY=val cmd
-        while "=" in stripped.split()[0] if stripped.split() else False:
-            stripped = stripped.split(None, 1)[1] if " " in stripped else stripped
+        # `KEY=val cmd` env-var prefix'lerini atla
+        while stripped.split() and "=" in stripped.split()[0]:
+            parts = stripped.split(None, 1)
+            if len(parts) < 2:
+                break
+            stripped = parts[1]
 
         base = stripped.split()[0].split("/")[-1]  # basename
-        # Also check pipe targets aren't the only validation — first cmd matters
-        if base not in self._whitelist and base not in ("sudo",):
+        if base not in self._whitelist and base != "sudo":
             raise AuthorizationError(f"Command {base!r} not in whitelist")
 
         return True
