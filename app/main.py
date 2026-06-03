@@ -153,8 +153,11 @@ def create_app() -> FastAPI:
     if _settings.jwt_secret in ("", "change-me-via-env"):
         raise RuntimeError(
             "JWT_SECRET zorunlu ve placeholder/bos olamaz. Guvenli deger uretip "
-            "env'e koyun: `openssl rand -hex 32` -> systemd Environment/EnvironmentFile "
-            "veya .env (server.yml world-readable; secret ICIN KULLANMAYIN)."
+            "PROCESS ENV'ine gecirin: `openssl rand -hex 32` -> systemd unit "
+            "`Environment=JWT_SECRET=...` ya da `EnvironmentFile=<yol>`. "
+            "DIKKAT: Settings env_file OKUMAZ; ciplak .env DOSYASI tek basina "
+            "yuklenmez (EnvironmentFile ile baglamadan ise yaramaz). server.yml "
+            "world-readable -> secret ICIN KULLANMAYIN."
         )
     _cors_origins = [
         "http://localhost:8420",
