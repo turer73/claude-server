@@ -39,3 +39,30 @@ def test_notify_cron_unset_defaults_disabled():
     )
     assert r.returncode == 0
     assert r.stdout == ""
+
+
+def test_notify_cron_enabled_no_pending_outputs_outcome(tmp_path):
+    # ENABLED=true ama event yok → OUTCOME:pass|no-pending (cron-wrap monitoring icin)
+    empty_env = tmp_path / 'empty.env'
+    empty_env.write_text('')
+    empty_db = tmp_path / 'empty.db'
+    import sqlite3
+    conn = sqlite3.connect(str(empty_db))
+    conn.execute('CREATE TABLE events (id INTEGER PRIMARY KEY, type TEXT, source TEXT, severity TEXT, title TEXT, detail TEXT, notified INTEGER DEFAULT 0, timestamp TEXT)')
+    conn.commit()
+    conn.close()
+    r = subprocess.run(
+        ['bash', str(SCRIPT)],
+        env={
+            'NOTIFY_CRON_ENABLED': 'true',
+            'TELEGRAM_BOT_TOKEN': 'test-dummy-token',
+            'TELEGRAM_CHAT_ID': '99999',
+            'NOTIFY_ENV_FILE': str(empty_env),
+            'DB_PATH': str(empty_db),
+            'PATH': '/usr/bin:/bin',
+        },
+        capture_output=True, text=True, timeout=10,
+    )
+    assert r.returncode == 0
+    assert 'OUTCOME: pass' in r.stdout
+    assert 'no-pending' in r.stdout
