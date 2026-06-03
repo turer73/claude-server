@@ -62,7 +62,6 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
-Environment=JWT_SECRET=change-me-in-production
 EnvironmentFile=-/etc/linux-ai-server/env
 
 # Security hardening
@@ -74,6 +73,15 @@ PrivateTmp=yes
 [Install]
 WantedBy=multi-user.target
 UNIT
+
+# GUVENLIK: JWT_SECRET'i her kurulumda benzersiz rastgele uret — placeholder
+# ASLA shipped degil (eski 'change-me-in-production' public-default = JWT forge).
+# EnvironmentFile ile yuklenir; create_app guard placeholder/bos'u reddeder.
+mkdir -p /etc/linux-ai-server
+if ! grep -qs '^JWT_SECRET=' /etc/linux-ai-server/env; then
+    printf 'JWT_SECRET=%s\n' "$(openssl rand -hex 32)" >> /etc/linux-ai-server/env
+fi
+chmod 600 /etc/linux-ai-server/env
 
 # Generate initial API key
 python3 /opt/linux-ai-server/scripts/generate_api_key.py

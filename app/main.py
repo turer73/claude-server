@@ -146,6 +146,21 @@ def create_app() -> FastAPI:
     from app.core.config import get_settings
 
     _settings = get_settings()
+    # GUVENLIK: jwt_secret env-only ve placeholder/bos olamaz. Aksi halde JWT'ler
+    # public-default ile imzalanir -> herkes gecerli admin-token forge eder. Bind
+    # oncesi fail-fast (runtime-generate YANLIS: 2 worker farkli secret + restart'ta
+    # token invalidasyonu). Test/prod env'i JWT_SECRET'i set eder; conftest de.
+    from app.core.config import INSECURE_JWT_SECRETS
+
+    if _settings.jwt_secret in INSECURE_JWT_SECRETS:
+        raise RuntimeError(
+            "JWT_SECRET zorunlu ve placeholder/bos olamaz. Guvenli deger uretip "
+            "PROCESS ENV'ine gecirin: `openssl rand -hex 32` -> systemd unit "
+            "`Environment=JWT_SECRET=...` ya da `EnvironmentFile=<yol>`. "
+            "DIKKAT: Settings env_file OKUMAZ; ciplak .env DOSYASI tek basina "
+            "yuklenmez (EnvironmentFile ile baglamadan ise yaramaz). server.yml "
+            "world-readable -> secret ICIN KULLANMAYIN."
+        )
     _cors_origins = [
         "http://localhost:8420",
         "http://localhost:3000",

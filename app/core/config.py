@@ -12,6 +12,11 @@ from pydantic_settings import BaseSettings, NoDecode
 
 DEFAULT_ENV_FILE = "/opt/linux-ai-server/.env"
 
+# GUVENLIK: bilinen guvensiz jwt_secret placeholder'lari. create_app bunlarla
+# (ve bos string) baslamayi reddeder. config.py default'u + scripts/install.sh'in
+# systemd unit'ine dustugu degerler. Public/predictable -> JWT forge edilebilir.
+INSECURE_JWT_SECRETS = frozenset({"", "change-me-via-env", "change-me-in-production"})
+
 
 def read_env_var(name: str, env_file: str = DEFAULT_ENV_FILE) -> str:
     """Read a single var from process env with KEY=VALUE file fallback.
@@ -217,6 +222,14 @@ def get_settings() -> Settings:
 
     # Only pass keys that match Settings fields (flat keys only)
     valid_fields = Settings.model_fields
-    filtered = {k: v for k, v in yaml_overrides.items() if k in valid_fields}
+    # GUVENLIK: jwt_secret YAML'dan (cogu kez world-readable, ornek /etc/.../
+    # server.yml 0644) ASLA gelmemeli — env-only. Prod'da server.yml'e dusen
+    # "change-me-via-env" placeholder env'i eziyor ve public-default ile JWT
+    # imzalamaya yol aciyordu (rotate edildi). Burada YAML'dan dislanir; degeri
+    # env saglar, yoksa create_app guard'i placeholder/bos'u reddeder.
+    # NOT (#5 config-drift takip): telegram/supabase/coolify token'lari da halen
+    # server.yml'den geliyor; once env'e tasinmadan dislanmamali (kirilir).
+    _yaml_excluded = {"jwt_secret"}
+    filtered = {k: v for k, v in yaml_overrides.items() if k in valid_fields and k not in _yaml_excluded}
 
     return Settings(**filtered)
