@@ -277,6 +277,38 @@ async def test_store_alert_bridges_to_events(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
+async def test_store_alert_bridge_emit_failure_is_safe(tmp_path, monkeypatch):
+    # emit_event beklenmedik şekilde raise etse bile _store_alert bozulmamalı
+    # (best-effort guard); alerts-INSERT yine de gerçekleşmiş olmalı.
+    monkeypatch.setattr("app.core.config.load_yaml_config", lambda path: {})
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    from app.core.devops_agent import Alert, DevOpsAgent
+    from app.db.database import Database
+
+    dbpath = str(tmp_path / "bridge_fail.db")
+    monkeypatch.setenv("DB_PATH", dbpath)
+    db = Database(dbpath)
+    await db.initialize()
+
+    def _boom(*a, **k):
+        raise RuntimeError("emit blew up")
+
+    monkeypatch.setattr("app.core.devops_agent.emit_event", _boom)
+
+    agent = DevOpsAgent(db=db, interval=60)
+    alert = Alert(
+        id="cpu-1", severity="critical", source="cpu", message="CPU 99%", value=99, threshold=85, timestamp="2026-06-03T06:00:00Z"
+    )
+    await agent._store_alert(alert)  # emit raise -> PROPAGATE ETMEMELI
+
+    alerts = await db.fetch_all("SELECT severity FROM alerts")
+    assert len(alerts) == 1  # alerts-INSERT emit-fail'den ETKILENMEDI
+    await db.close()
+    get_settings.cache_clear()
+
+
 # ── Remediation Tests ──────────────────────────
 
 
