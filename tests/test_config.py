@@ -173,7 +173,8 @@ def test_create_app_rejects_placeholder_jwt_secret(monkeypatch):
     from app.main import create_app
 
     monkeypatch.setattr(cfg, "load_yaml_config", lambda path: {})
-    for bad in ("change-me-via-env", ""):
+    # config default + scripts/install.sh systemd placeholder + bos
+    for bad in ("change-me-via-env", "change-me-in-production", ""):
         monkeypatch.setenv("JWT_SECRET", bad)
         cfg.get_settings.cache_clear()
         with pytest.raises(RuntimeError, match="JWT_SECRET"):

@@ -150,7 +150,9 @@ def create_app() -> FastAPI:
     # public-default ile imzalanir -> herkes gecerli admin-token forge eder. Bind
     # oncesi fail-fast (runtime-generate YANLIS: 2 worker farkli secret + restart'ta
     # token invalidasyonu). Test/prod env'i JWT_SECRET'i set eder; conftest de.
-    if _settings.jwt_secret in ("", "change-me-via-env"):
+    from app.core.config import INSECURE_JWT_SECRETS
+
+    if _settings.jwt_secret in INSECURE_JWT_SECRETS:
         raise RuntimeError(
             "JWT_SECRET zorunlu ve placeholder/bos olamaz. Guvenli deger uretip "
             "PROCESS ENV'ine gecirin: `openssl rand -hex 32` -> systemd unit "

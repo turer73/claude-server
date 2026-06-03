@@ -12,6 +12,11 @@ from pydantic_settings import BaseSettings, NoDecode
 
 DEFAULT_ENV_FILE = "/opt/linux-ai-server/.env"
 
+# GUVENLIK: bilinen guvensiz jwt_secret placeholder'lari. create_app bunlarla
+# (ve bos string) baslamayi reddeder. config.py default'u + scripts/install.sh'in
+# systemd unit'ine dustugu degerler. Public/predictable -> JWT forge edilebilir.
+INSECURE_JWT_SECRETS = frozenset({"", "change-me-via-env", "change-me-in-production"})
+
 
 def read_env_var(name: str, env_file: str = DEFAULT_ENV_FILE) -> str:
     """Read a single var from process env with KEY=VALUE file fallback.
