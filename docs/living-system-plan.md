@@ -98,12 +98,16 @@
 
 ## FAZ 3 — Olay omurgası + dijest push (farkındalık ÇIKTISI bağlanır)
 **Hedef:** F-C1 kapat (dijest gerçekten push edilsin) + aksiyonlar kendini *duyursun*.
-- 3.1 Dijest scheduler (cron/systemd-timer) + has_signal guard'ı (zaten var). 
-- 3.2 Hafif olay omurgası: anlamlı aksiyon (deploy/fix/job-outcome/alert) → merkezi olay kaydı + ilgili tarafa bildirim. Mevcut `/monitor/webhooks` + notes-kanalı (klipper↔surer zaten kullanıyor) genelleştirilir. *Claude'u kalp-atışı yapma; deterministik kayıt + eşik.*
-- DoD/kabul: faza gelince detaylandırılır.
+- ✅ **3.1 Dijest scheduler — YAPILDI** (F-C1): `automation/digest-send.sh` + crontab `0 8 * * *` (klipper-cron-wrap, NOTHING_NEW guard). Uçtan uca doğrulandı (gerçek Telegram push). has_signal guard zaten var + cron_outcomes/liveness/pr_review sinyalleri bağlandı.
+- 🔄 **3.2 Hafif olay omurgası — SIRADAKİ (aktif):** anlamlı aksiyon (deploy/fix/job-outcome/alert/**PR-event**) → merkezi olay kaydı + ilgili tarafa bildirim. Mevcut üreticiler genelleştirilir: `cron_outcomes` (FAZ1 job-outcome+alert), `alerts` tablosu, `klipper-event.sh`, `/monitor/webhooks`, notes-kanalı (klipper↔surer). *Claude'u kalp-atışı yapma; deterministik kayıt + eşik.* DoD: faza başlarken detaylandırılır.
 
 ## FAZ 4 — Blast-radius / değişiklik-öncesi etki (Yetenek 4'ün proaktif yarısı — F-F1)
 **Hedef:** bir değişiklik neye dokunduğunu ÖNCEDEN bilsin (şu an elle grep). Hafif bağımlılık/etki haritası (route↔DB↔consumer). Ana hatlı; gelince detay.
+- **PR-review sistemi BURAYA bağlanır** (değişiklik-öncesi-etki-farkındalığı): merge-öncesi otomatik review = değişikliğin riskini önceden yüzeye çıkarma. Detay: `docs/pr-review-system.md` + memory `project-pr-review-system-2026-06-02`.
+
+---
+## EK WORKSTREAM — Cross-project PR-review sistemi (LIVESYS-entegre, ayrı doküman)
+LIVESYS altyapısını yeniden kullanır: FAZ1 outcome-contract (poller→`cron_outcomes`), FAZ2 liveness deseni, FAZ3.1 digest-aggregate. Kavramsal: **FAZ 3.2** (PR-event'leri olay-omurgasının örneği) + **FAZ 4** (değişiklik-öncesi-etki). Durum: **FAZ1 aggregate→digest CANLI** (PR#15, ücretsiz) + **FAZ2 koşullu review-spawn DISABLED-pilot** (PR#16). ENABLE-checklist + tam detay: `docs/pr-review-system.md`.
 
 ## FAZ 5 — Kapalı-döngü otonomi (Yetenek 2 — F-E1/E2)
 **Hedef:** otonom aksiyon kendi sonucunu doğrulasın, başarısızsa rollback/eskale. Atıl sınıflandırma + dormant remediation canlandırılır + doğrulama eklenir. Ana hatlı.
