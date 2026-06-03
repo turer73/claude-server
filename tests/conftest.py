@@ -9,6 +9,9 @@ from app.main import create_app
 
 TEST_API_KEY = "test-api-key-for-testing-purposes-1234567890abcdef"
 TEST_JWT_SECRET = "test-secret-key-for-jwt-signing"
+# Memory API fail-closed (güvenlik fix): testler key'i BOŞALTMAZ; gerçek test-key
+# + client X-Memory-Key header'ında gönderir. memory_db fixture aynı değeri set eder.
+TEST_MEMORY_KEY = "test-memory-key-1234567890"
 
 
 @pytest.fixture
@@ -108,7 +111,9 @@ async def client(app, tmp_path, monkeypatch):
 
     transport = ASGITransport(app=app)
     try:
-        async with AsyncClient(transport=transport, base_url="http://test") as c:
+        # X-Memory-Key default header: memory fail-closed sonrası memory/RAG/research/
+        # classifier çağrıları geçer (non-memory endpoint'ler header'ı yok sayar).
+        async with AsyncClient(transport=transport, base_url="http://test", headers={"X-Memory-Key": TEST_MEMORY_KEY}) as c:
             yield c
     finally:
         await db.close()

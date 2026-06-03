@@ -117,8 +117,11 @@ CREATE VIRTUAL TABLE discoveries_fts USING fts5(
 
 @pytest.fixture
 def memory_db(tmp_path, monkeypatch):
-    """Per-test memory SQLite with full schema. Patches DB_PATH and disables
-    the X-Memory-Key check by clearing MEMORY_API_KEY."""
+    """Per-test memory SQLite with full schema. Patches DB_PATH ve MEMORY_API_KEY'i
+    gerçek test-key'e set eder (fail-closed güvenlik fix; client X-Memory-Key gönderir).
+    Eski 'MEMORY_API_KEY=\"\"' fail-open'ı test ediyordu — kaldırıldı."""
+    from tests.conftest import TEST_MEMORY_KEY
+
     db_path = tmp_path / "memory.db"
     conn = sqlite3.connect(db_path)
     conn.executescript(MEMORY_SCHEMA)
@@ -128,7 +131,7 @@ def memory_db(tmp_path, monkeypatch):
     from app.api import memory as mem_module
 
     monkeypatch.setattr(mem_module, "DB_PATH", str(db_path))
-    monkeypatch.setattr(mem_module, "MEMORY_API_KEY", "")
+    monkeypatch.setattr(mem_module, "MEMORY_API_KEY", TEST_MEMORY_KEY)
     return db_path
 
 
