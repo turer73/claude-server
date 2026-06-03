@@ -58,9 +58,12 @@ DB_PATH="${DB_PATH:-/opt/linux-ai-server/data/server.db}"
 if [ -f "$DB_PATH" ]; then
     SAFE_DETAIL="$(printf '%s' "$DETAIL" | tr -d '\\`"' | tr '\n\r\t' '   ' | head -c 300)"
     SAFE_DETAIL="${SAFE_DETAIL//\'/\'\'}"  # SQL single-quote escape
-    sqlite3 "$DB_PATH" \
+    # .timeout 10000: WAL-contention (FastAPI 2-worker + diger yazicilar) aninda
+    # SQLITE_BUSY(5) yerine 10sn lock bekle — aksi halde cron_outcomes INSERT
+    # sessizce duser (#517: 19:15'ten beri yazilmiyordu). Fail artik LOG'a gorunur.
+    sqlite3 -cmd ".timeout 10000" "$DB_PATH" \
         "INSERT INTO cron_outcomes (job,result,rc,source,detail) VALUES ('${NAME}','${RESULT}',${RC},'${SOURCE}','${SAFE_DETAIL}');" \
-        2>>"$LOG" || true
+        2>>"$LOG" || echo "[$(date -Iseconds)] WARN cron_outcomes INSERT basarisiz (db busy/locked) job=${NAME}" >>"$LOG"
 fi
 
 # ── Alert: gercek RESULT'a gore (sadece rc!=0 degil) — partial de yuzeye cikar. ──
@@ -89,7 +92,7 @@ else
             "http://localhost:5678/webhook/klipper-alert" > /dev/null 2>&1 || true
         # Mark just-emitted event notified — notify-cron enable'da cift-bildirim engeli
         if [ -f "$DB_PATH" ]; then
-            sqlite3 "$DB_PATH" \
+            sqlite3 -cmd ".timeout 10000" "$DB_PATH" \
                 "UPDATE events SET notified=1 WHERE source='cron:${NAME}' AND notified=0 AND id=(SELECT id FROM events WHERE source='cron:${NAME}' AND notified=0 ORDER BY id DESC LIMIT 1);" \
                 2>/dev/null || true
         fi
