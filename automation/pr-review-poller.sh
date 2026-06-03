@@ -67,7 +67,7 @@ daily_count() {  # bugünkü spawn sayısı
 daily_inc() {
   local today; today=$(date -u +%Y-%m-%d) tmp; tmp=$(mktemp)
   [ -f "$DAILY_FILE" ] || echo '{}' > "$DAILY_FILE"
-  jq --arg d "$today" '.[$d]=((.[$d]//0)+1) | with_entries(select(.key>=($d|sub("-[0-9]+$";"")) or true))' "$DAILY_FILE" > "$tmp" 2>/dev/null && mv "$tmp" "$DAILY_FILE"
+  jq --arg d "$today" '.[$d]=((.[$d]//0)+1) | with_entries(select(.key>=($d|sub("-[0-9]+$";""))))' "$DAILY_FILE" > "$tmp" 2>/dev/null && mv "$tmp" "$DAILY_FILE"
 }
 
 # Codex durumu (surer #99737 thumbsup-clean refinement): auto-skip ≠ temiz.
@@ -76,11 +76,23 @@ daily_inc() {
 #   clean    = entry VAR + inline YOK (+👍) -> gerçekten temiz
 #   unknown  = gh-fail -> spurious-trigger yok
 codex_state() {
-  local repo="$1" num="$2" rev inl
-  rev=$(gh api "repos/$repo/pulls/$num/reviews" --jq '[.[]|select(.user.login=="chatgpt-codex-connector[bot]")]|length' 2>/dev/null || echo X)
+  local repo="$1" num="$2" head="$3" rev inl
+  # Codex-P2: review/comment'leri SADECE current-HEAD'e göre say. GitHub
+  # pulls/N/reviews ESKI-commit review'larini da dondurur (.commit_id) -> PR
+  # yeni-commit alinca stale-review "clean/findings" sayilip force+spawn ATLANIR.
+  # commit_id==head ile filtrele (head bos ise eski-davranis, tum-review).
+  if [ -n "$head" ]; then
+    rev=$(gh api "repos/$repo/pulls/$num/reviews" --jq --arg h "$head" '[.[]|select(.user.login=="chatgpt-codex-connector[bot]" and .commit_id==$h)]|length' 2>/dev/null || echo X)
+  else
+    rev=$(gh api "repos/$repo/pulls/$num/reviews" --jq '[.[]|select(.user.login=="chatgpt-codex-connector[bot]")]|length' 2>/dev/null || echo X)
+  fi
   [[ "$rev" =~ ^[0-9]+$ ]] || { echo unknown; return; }
   [ "$rev" -eq 0 ] && { echo none; return; }
-  inl=$(gh api "repos/$repo/pulls/$num/comments" --jq '[.[]|select(.user.login=="chatgpt-codex-connector[bot]")]|length' 2>/dev/null || echo 0)
+  if [ -n "$head" ]; then
+    inl=$(gh api "repos/$repo/pulls/$num/comments" --jq --arg h "$head" '[.[]|select(.user.login=="chatgpt-codex-connector[bot]" and (.commit_id==$h or .original_commit_id==$h))]|length' 2>/dev/null || echo 0)
+  else
+    inl=$(gh api "repos/$repo/pulls/$num/comments" --jq '[.[]|select(.user.login=="chatgpt-codex-connector[bot]")]|length' 2>/dev/null || echo 0)
+  fi
   { [[ "$inl" =~ ^[0-9]+$ ]] && [ "$inl" -gt 0 ]; } && { echo findings; return; }
   echo clean
 }
@@ -89,11 +101,11 @@ codex_state() {
 # spawn (non-codex). Yoksa codex_state: none->force-codex (önce @codex review
 # ücretsiz-zorla), findings/clean->skip (Codex hallediyor), unknown->skip.
 faz2_decision() {
-  local repo="$1" num="$2" base="$3" adds="$4" dels="$5" labels="$6"
+  local repo="$1" num="$2" base="$3" adds="$4" dels="$5" labels="$6" head="$7"
   case "$base" in main|master) ;; *) echo skip; return ;; esac
   echo "$labels" | grep -qi "$FLAG_LABEL" && { echo spawn; return; }
   [ "$(( ${adds:-0} + ${dels:-0} ))" -gt "$DIFF_THRESHOLD" ] && { echo spawn; return; }
-  case "$(codex_state "$repo" "$num")" in
+  case "$(codex_state "$repo" "$num" "$head")" in
     none) echo force-codex ;;
     *) echo skip ;;
   esac
@@ -128,7 +140,7 @@ for repo in "${REPOS[@]}"; do
     adds=$(printf '%s' "$pr" | jq -r '.additions // 0')
     dels=$(printf '%s' "$pr" | jq -r '.deletions // 0')
     labels=$(printf '%s' "$pr" | jq -r '[.labels[]?.name] | join(",")')
-    decision=$(faz2_decision "$repo" "$num" "$base" "$adds" "$dels" "$labels")
+    decision=$(faz2_decision "$repo" "$num" "$base" "$adds" "$dels" "$labels" "$head")
     [ "$decision" = "skip" ] && continue
     CANDIDATES=$((CANDIDATES + 1))
     fkey="force:${key}"
