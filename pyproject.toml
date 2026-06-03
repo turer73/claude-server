@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "linux-ai-server"
 version = "0.1.0"
 description = "API server for full kernel-level Linux control via REST and MCP"
-requires-python = ">=3.11"
+requires-python = ">=3.11.4"  # tarfile extraction filter (PEP706) -> 3.11.4+
 license = "GPL-2.0-only"
 authors = [{ name = "Zaman Huseyinli" }]
 dependencies = [

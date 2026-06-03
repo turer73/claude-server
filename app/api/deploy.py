@@ -8,7 +8,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.core.config import get_settings
@@ -244,12 +244,22 @@ class NoteRequest(BaseModel):
     content: str
 
 
+def _safe_note_path(name: str) -> Path:
+    """WORKSPACE içinde güvenli not yolu. GÜVENLIK: kullanıcı `name`'i path-traversal
+    (../ veya mutlak) içerebilir -> resolve sonrası WORKSPACE dışına çıkıyorsa reddet.
+    Admin-only olsa da defense-in-depth (admin token ele geçerse workspace-dışı yazma)."""
+    base = Path(WORKSPACE).resolve()
+    target = (base / name).resolve()
+    if target != base and base not in target.parents:
+        raise HTTPException(status_code=400, detail=f"invalid note name (path traversal): {name}")
+    return target
+
+
 @router.post("/workspace/notes")
 async def save_note(req: NoteRequest, _: None = Depends(require_admin)) -> dict:
     """Save a note to Claude's workspace."""
-    notes_dir = Path(WORKSPACE)
-    notes_dir.mkdir(parents=True, exist_ok=True)
-    path = notes_dir / req.name
+    Path(WORKSPACE).mkdir(parents=True, exist_ok=True)
+    path = _safe_note_path(req.name)
     path.write_text(req.content)
     return {"saved": req.name, "size": len(req.content)}
 
@@ -257,7 +267,7 @@ async def save_note(req: NoteRequest, _: None = Depends(require_admin)) -> dict:
 @router.get("/workspace/notes/{name}")
 async def read_note(name: str, _: None = Depends(require_admin)) -> dict:
     """Read a workspace note."""
-    path = Path(WORKSPACE) / name
+    path = _safe_note_path(name)
     if not path.is_file():
         return {"error": f"Note {name} not found"}
     return {"name": name, "content": path.read_text()}
