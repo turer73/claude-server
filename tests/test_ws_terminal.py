@@ -5,8 +5,38 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
-from tests.conftest import TEST_API_KEY
+from app.auth.jwt_handler import create_token
+from tests.conftest import TEST_API_KEY, TEST_JWT_SECRET
+
+# ── GÜVENLIK REGRESYON: kimliksiz RCE açığının KAPALI olduğunu kilitle ──
+
+
+def test_ws_terminal_rejects_without_token(app):
+    """Token'sız /ws/terminal REDDEDILMELI (eski: kimliksiz RCE)."""
+    client = TestClient(app)
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/ws/terminal") as ws:
+            ws.receive_json()
+
+
+def test_ws_terminal_rejects_non_admin_token(app):
+    """read-perm token /ws/terminal'e YETMEMELI (terminal=admin-only shell)."""
+    token = create_token(subject="r", permissions="read", secret=TEST_JWT_SECRET)
+    client = TestClient(app)
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(f"/ws/terminal?token={token}") as ws:
+            ws.receive_json()
+
+
+def test_ws_terminal_rejects_malformed_token(app):
+    """Bozuk/geçersiz token TEMIZ 1008-reddi olmalı (500/trace DEĞİL) — decode_token
+    AuthenticationError fırlatır, JWTError değil (Codex #26 bug fix)."""
+    client = TestClient(app)
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/ws/terminal?token=not.a.valid.jwt") as ws:
+            ws.receive_json()
 
 
 @pytest.mark.anyio
@@ -32,9 +62,11 @@ async def test_ws_terminal_session_lifecycle(app, tmp_path, monkeypatch):
     mock_mgr.get_session.return_value = mock_session
     mock_mgr.destroy_session = MagicMock()
 
+    # GÜVENLIK: /ws/terminal artık ADMIN-auth şart (kimliksiz RCE fix) -> token geç.
+    token = create_token(subject="test-admin", permissions="admin", secret=TEST_JWT_SECRET)
     with patch("app.ws.terminal._terminal_mgr", mock_mgr):
         client = TestClient(app)
-        with client.websocket_connect("/ws/terminal") as ws:
+        with client.websocket_connect(f"/ws/terminal?token={token}") as ws:
             # Should receive session_created
             data = ws.receive_json()
             assert data["type"] == "session_created"

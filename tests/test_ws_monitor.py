@@ -4,6 +4,12 @@ from unittest.mock import MagicMock, patch
 
 from starlette.testclient import TestClient
 
+from app.auth.jwt_handler import create_token
+from tests.conftest import TEST_JWT_SECRET
+
+# GÜVENLIK: /ws/monitor artık auth şart (metrik-sızıntı fix) -> token query-param.
+_TOK = create_token(subject="t", permissions="admin", secret=TEST_JWT_SECRET)
+
 
 def test_ws_monitor_sends_metrics(app, tmp_path, monkeypatch):
     """Test monitor WebSocket sends metrics and handles disconnect."""
@@ -19,7 +25,7 @@ def test_ws_monitor_sends_metrics(app, tmp_path, monkeypatch):
 
     with patch("app.ws.monitor._monitor", mock_monitor):
         client = TestClient(app)
-        with client.websocket_connect("/ws/monitor") as ws:
+        with client.websocket_connect(f"/ws/monitor?token={_TOK}") as ws:
             data = ws.receive_json()
             assert "cpu_percent" in data
             assert data["cpu_percent"] == 45.0

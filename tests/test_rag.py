@@ -18,9 +18,12 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _bypass_memory_auth(monkeypatch):
-    """Blank the module-level MEMORY_API_KEY so verify_key short-circuits."""
-    monkeypatch.setattr("app.api.memory.MEMORY_API_KEY", "")
+def _set_memory_auth(monkeypatch):
+    """MEMORY_API_KEY'i test-key'e set et (fail-closed güvenlik fix; client
+    X-Memory-Key gönderir). Eski 'blank=short-circuit' fail-open'ı test ediyordu."""
+    from tests.conftest import TEST_MEMORY_KEY
+
+    monkeypatch.setattr("app.api.memory.MEMORY_API_KEY", TEST_MEMORY_KEY)
 
 
 @pytest.mark.anyio

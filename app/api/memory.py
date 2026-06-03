@@ -25,7 +25,12 @@ TRASH_TITLES = re.compile(r"^(test|test bug|test fix|test workaround|deneme|asdf
 
 
 def verify_key(x_memory_key: str = Header(None)):
-    if MEMORY_API_KEY and x_memory_key != MEMORY_API_KEY:
+    # FAIL-CLOSED (güvenlik fix): MEMORY_API_KEY yüklenmemişse erişimi AÇMA.
+    # Eski 'if KEY and ...' boş-key'de 401 atmıyordu -> env-yükleme hatasında
+    # memory/RAG/research/classifier tamamen korumasız kalıyordu.
+    if not MEMORY_API_KEY:
+        raise HTTPException(503, "Memory API key not configured (fail-closed)")
+    if x_memory_key != MEMORY_API_KEY:
         raise HTTPException(401, "Invalid memory API key")
 
 

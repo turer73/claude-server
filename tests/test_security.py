@@ -132,10 +132,10 @@ class TestUnauthenticatedAccess:
         assert resp.status_code == 401
 
     @pytest.mark.anyio
-    async def test_monitor_metrics_no_auth(self, client):
-        """Monitor metrics endpoint is public (no auth required)."""
+    async def test_monitor_metrics_requires_auth(self, client):
+        """GÜVENLIK fix: /metrics artık auth ŞART (eskiden public=metrik sızıntısı)."""
         resp = await client.get("/api/v1/monitor/metrics")
-        assert resp.status_code == 200
+        assert resp.status_code == 401
 
     @pytest.mark.anyio
     async def test_agents_list_requires_auth(self, client):
@@ -146,6 +146,20 @@ class TestUnauthenticatedAccess:
     async def test_network_interfaces_requires_auth(self, client):
         resp = await client.get("/api/v1/network/interfaces")
         assert resp.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_memory_fail_closed_when_key_unset(self, client, monkeypatch):
+        """GÜVENLIK: MEMORY_API_KEY yüklenmemişse memory API AÇILMAZ (503 fail-closed,
+        eskiden fail-open=tamamen korumasız)."""
+        monkeypatch.setattr("app.api.memory.MEMORY_API_KEY", "")
+        resp = await client.get("/api/v1/memory/devices")
+        assert resp.status_code == 503
+
+    @pytest.mark.anyio
+    async def test_admin_secrets_requires_admin(self, client, read_headers):
+        """GÜVENLIK: read-perm .env secret YAZAMAZ (privilege escalation fix -> 403)."""
+        resp = await client.post("/api/v1/admin/secrets", json={"key": "X_TEST", "value": "y"}, headers=read_headers)
+        assert resp.status_code == 403
 
     @pytest.mark.anyio
     async def test_logs_sources_requires_auth(self, client):

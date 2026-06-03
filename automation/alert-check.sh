@@ -16,8 +16,24 @@ if [ -f /opt/linux-ai-server/.env ]; then
   set -a; source /opt/linux-ai-server/.env; set +a
 fi
 
-METRICS=$(curl -s --max-time 10 $API/api/v1/monitor/metrics)
+# GÜVENLIK: /metrics artık auth ŞART (auth-bypass fix). Internal automation ->
+# X-API-Key (=INTERNAL_API_KEY, .env'den source edildi) -> admin scope.
+RESP=$(curl -s --max-time 10 -w "\n%{http_code}" -H "X-API-Key: ${INTERNAL_API_KEY}" $API/api/v1/monitor/metrics)
+HTTP_CODE=$(printf '%s' "$RESP" | tail -n1)
+METRICS=$(printf '%s' "$RESP" | sed '$d')
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# FAIL-CLOSED (Codex #27 P2): /metrics auth/fetch başarısızsa (key eksik/rotate, API
+# down) SESSIZ 0-parse DEĞİL -> 0-default'lar hiçbir eşik tetiklemez = alert-pipeline
+# körleşir (planın tezi: sessiz-arıza). Explicit critical alert + abort.
+if [ "$HTTP_CODE" != "200" ]; then
+    FAILMSG="monitoring /metrics auth/fetch FAIL http=${HTTP_CODE} (INTERNAL_API_KEY eksik/rotate? API down?) — alert-pipeline KÖR"
+    BODY="{\"alert\":{\"source\":\"alert-check\",\"severity\":\"critical\",\"message\":\"${FAILMSG}\",\"value\":0,\"threshold\":0},\"meta\":{\"type\":\"monitoring_self_failure\",\"http\":\"${HTTP_CODE}\",\"device\":\"klipper\"}}"
+    curl -s -X POST --max-time 5 -H "Content-Type: application/json" \
+        -H "X-Webhook-Secret: ${WEBHOOK_SECRET:-MISSING}" -d "$BODY" "$N8N_WEBHOOK" >/dev/null 2>&1 || true
+    echo "OUTCOME: fail | ${FAILMSG}"
+    exit 1
+fi
 
 CPU=$(echo $METRICS | python3 -c 'import sys,json; print(json.load(sys.stdin).get("cpu_percent",0))')
 MEM=$(echo $METRICS | python3 -c 'import sys,json; print(json.load(sys.stdin).get("memory_percent",0))')

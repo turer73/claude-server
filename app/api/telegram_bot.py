@@ -158,7 +158,11 @@ def telegram_update(
     x_telegram_bot_api_secret_token: str | None = Header(None),
 ):
     """Telegram webhook receiver. Secret_token ile auth."""
-    if TELEGRAM_WEBHOOK_SECRET:
-        if x_telegram_bot_api_secret_token != TELEGRAM_WEBHOOK_SECRET:
-            raise HTTPException(403, "invalid webhook secret")
+    # FAIL-CLOSED (güvenlik fix): secret yüklenmemişse endpoint'i AÇMA. Eski
+    # 'if SECRET:' fail-open'dı -> secret yoksa public research_ask tetikleme
+    # (dışarıdan LLM/RAG iş yükü). process_update'e auth'suz girilemez.
+    if not TELEGRAM_WEBHOOK_SECRET:
+        raise HTTPException(503, "Telegram webhook secret not configured (fail-closed)")
+    if x_telegram_bot_api_secret_token != TELEGRAM_WEBHOOK_SECRET:
+        raise HTTPException(403, "invalid webhook secret")
     return process_update(update)

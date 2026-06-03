@@ -7,6 +7,7 @@ import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.terminal_manager import TerminalManager
+from app.ws.auth import authenticate_ws
 
 router = APIRouter()
 _terminal_mgr = TerminalManager(max_sessions=5)
@@ -14,6 +15,10 @@ _terminal_mgr = TerminalManager(max_sessions=5)
 
 @router.websocket("/ws/terminal")
 async def ws_terminal(websocket: WebSocket):
+    # GÜVENLIK: terminal = keyfi shell (REST /shell/exec gibi) -> ADMIN şart.
+    # Auth'suz accept = kimliksiz RCE'ydi (LAN/Tailscale'e açık). Önce doğrula.
+    if await authenticate_ws(websocket, require_admin=True) is None:
+        return
     await websocket.accept()
     sid = _terminal_mgr.create_session()
     session = _terminal_mgr.get_session(sid)
