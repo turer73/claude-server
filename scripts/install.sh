@@ -29,8 +29,10 @@ mkdir -p /etc/linux-ai-server
 
 # Copy files
 cp -r app/ /opt/linux-ai-server/
+cp -r scripts/ /opt/linux-ai-server/scripts/
 cp pyproject.toml /opt/linux-ai-server/
 cp -r config/ /etc/linux-ai-server/
+cp config/env /etc/linux-ai-server/env 2>/dev/null || true
 
 # Install Python dependencies
 cd /opt/linux-ai-server

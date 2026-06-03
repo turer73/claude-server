@@ -1,0 +1,5 @@
+# linux-ai-server production environment
+# Temiz kurulumda bu dosya /etc/linux-ai-server/env olarak konumlanir.
+# Hassas degerler (JWT_SECRET, API key) burada degil, servis restart ile set edilmeli.
+
+DB_PATH=/var/lib/linux-ai-server/server.db
