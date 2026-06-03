@@ -217,6 +217,14 @@ def get_settings() -> Settings:
 
     # Only pass keys that match Settings fields (flat keys only)
     valid_fields = Settings.model_fields
-    filtered = {k: v for k, v in yaml_overrides.items() if k in valid_fields}
+    # GUVENLIK: jwt_secret YAML'dan (cogu kez world-readable, ornek /etc/.../
+    # server.yml 0644) ASLA gelmemeli — env-only. Prod'da server.yml'e dusen
+    # "change-me-via-env" placeholder env'i eziyor ve public-default ile JWT
+    # imzalamaya yol aciyordu (rotate edildi). Burada YAML'dan dislanir; degeri
+    # env saglar, yoksa create_app guard'i placeholder/bos'u reddeder.
+    # NOT (#5 config-drift takip): telegram/supabase/coolify token'lari da halen
+    # server.yml'den geliyor; once env'e tasinmadan dislanmamali (kirilir).
+    _yaml_excluded = {"jwt_secret"}
+    filtered = {k: v for k, v in yaml_overrides.items() if k in valid_fields and k not in _yaml_excluded}
 
     return Settings(**filtered)

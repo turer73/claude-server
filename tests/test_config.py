@@ -148,6 +148,39 @@ def test_read_env_var_missing_key_returns_empty(monkeypatch, tmp_path):
     assert read_env_var("FOO", str(env_file)) == ""
 
 
+# ── jwt_secret env-only sertlestirme (batch4 #1) ────────────────────────────
+
+
+def test_jwt_secret_excluded_from_yaml(monkeypatch):
+    """GUVENLIK: YAML jwt_secret saglasa bile env kazanir (world-readable yaml
+    secret kaynagi olamaz). server.yml'e dusen placeholder env'i eziyordu."""
+    import app.core.config as cfg
+
+    monkeypatch.setattr(cfg, "load_yaml_config", lambda path: {"jwt_secret": "yaml-pwned", "server_port": 1234})
+    monkeypatch.setenv("JWT_SECRET", "real-env-secret")
+    cfg.get_settings.cache_clear()
+    s = cfg.get_settings()
+    assert s.jwt_secret == "real-env-secret"  # yaml YOK SAYILDI
+    assert s.server_port == 1234  # secret-disi yaml override hala uygulanir
+    cfg.get_settings.cache_clear()
+
+
+def test_create_app_rejects_placeholder_jwt_secret(monkeypatch):
+    """create_app placeholder/bos jwt_secret ile fail-fast (bind oncesi)."""
+    import pytest
+
+    import app.core.config as cfg
+    from app.main import create_app
+
+    monkeypatch.setattr(cfg, "load_yaml_config", lambda path: {})
+    for bad in ("change-me-via-env", ""):
+        monkeypatch.setenv("JWT_SECRET", bad)
+        cfg.get_settings.cache_clear()
+        with pytest.raises(RuntimeError, match="JWT_SECRET"):
+            create_app()
+    cfg.get_settings.cache_clear()
+
+
 def test_read_env_var_empty_env_value_uses_file(monkeypatch, tmp_path):
     """Empty string in os.environ counts as 'unset' so file fallback runs."""
     env_file = tmp_path / ".env"
