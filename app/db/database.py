@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import aiosqlite
 
+# DB path fallback'i için TEK kaynak. Production systemd DB_PATH set eder; bu
+# yalnızca env yokken devreye girer. main.py (schema init) ve events.py (emit/read)
+# AYNI değeri kullanmalı — yoksa events farklı/tablosuz path'e yazıp sessiz drop olur.
+DEFAULT_DB_PATH = "/tmp/linux-ai-server-test.db"  # noqa: S108 — kasıtlı fallback; prod DB_PATH override eder
+
 SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS api_keys (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,6 +105,24 @@ CREATE TABLE IF NOT EXISTS cron_outcomes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cron_outcomes_job ON cron_outcomes(job, timestamp DESC);
+
+-- LIVESYS Faz 3.2: hafif olay omurgası. Dağınık olay-üreticileri (cron_outcomes,
+-- liveness, pr-review, alerts, deploy/fix) TEK merkezi kayda route eder; digest+
+-- alert okur; severity>=warn deterministik bildirim (Claude-heartbeat DEĞİL).
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    type TEXT NOT NULL,              -- job-outcome | liveness | pr-event | alert | deploy | fix | backup | ...
+    source TEXT NOT NULL,            -- üretici (örn. cron:demo-reset, liveness:rag, pr:claude-server#16)
+    severity TEXT NOT NULL DEFAULT 'info',  -- info | warn | critical
+    title TEXT NOT NULL,
+    detail TEXT,
+    payload TEXT,                    -- opsiyonel JSON
+    notified INTEGER NOT NULL DEFAULT 0     -- bildirim gönderildi mi (idempotent)
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_ts ON events(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_events_sev ON events(severity, notified, timestamp DESC);
 """
 
 
