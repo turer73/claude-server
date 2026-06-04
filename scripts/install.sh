@@ -90,6 +90,14 @@ chmod 600 /etc/linux-ai-server/env
 # Generate initial API key
 python3 /opt/linux-ai-server/scripts/generate_api_key.py
 
+# Codex P1: generate_api_key.py ROOT olarak calisir -> server.db'yi root:root 0644
+# yaratir (line 43 chown'dan SONRA) -> aiserver servisi ilk-write'ta SQLITE_READONLY.
+# Key-gen SONRASI sahiplik+grup-yaz duzelt + setgid (gelecek -wal/-shm grup-devralir;
+# UMask=0002 ile birlikte ikinci-user de yazabilir, #517 sinifi kapali).
+chown -R aiserver:aiserver /var/lib/linux-ai-server
+chmod -R g+w /var/lib/linux-ai-server
+chmod g+s /var/lib/linux-ai-server
+
 # Enable and start
 systemctl daemon-reload
 systemctl enable linux-ai-server
