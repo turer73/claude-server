@@ -812,33 +812,45 @@ async def test_verify_skipped_in_notify_mode(client, app):
     assert all(r["verify_status"] == "skipped" and r["escalated"] == 0 and r["executed"] == 0 for r in rows)
 
 
-async def test_escalate_persistent_critical_after_interval(client, app):
-    """Çözülmeyen critical alert interval sonrası yeniden escalate eder (re-ping)."""
-    from app.core.devops_agent import DevOpsAgent
-    from app.core.events import recent_events
+async def test_escalate_persistent_critical_after_interval(monkeypatch):
+    """Çözülmeyen critical alert interval sonrası re-escalate eder. emit_event mock'lanır
+    (cross-connection db-race yok -> CI-deterministik)."""
+    from app.core import devops_agent as da
 
-    db = app.state.db
-    agent = DevOpsAgent(db=db, interval=60)
+    agent = da.DevOpsAgent(db=None, interval=60)
     agent._active_alerts["memory"] = _crit_alert("memory")
-    agent._last_escalation["memory"] = 0.0  # çok eski -> hemen escalate
+    agent._last_escalation["memory"] = 0.0  # çok eski -> escalate
+    calls = []
+    monkeypatch.setattr(da, "emit_event", lambda **kw: calls.append(kw))
     await agent._escalate_persistent()
 
-    evs = recent_events(min_severity="critical")
-    assert any("escalation:memory" in (e.get("source") or "") for e in evs)
+    assert any(c.get("source") == "escalation:memory" and c.get("severity") == "critical" for c in calls)
 
 
-async def test_escalate_persistent_within_interval_no_repeat(client, app):
-    """Interval içinde tekrar escalate ETMEZ (spam-önleme)."""
-    import time as _t
+async def test_escalate_persistent_first_seen_no_escalate(monkeypatch):
+    """İlk-görülme escalate ETMEZ (saat başlar); interval içinde de tekrar etmez."""
+    from app.core import devops_agent as da
 
-    from app.core.devops_agent import DevOpsAgent
-    from app.core.events import recent_events
+    agent = da.DevOpsAgent(db=None, interval=60)
+    agent._active_alerts["cpu"] = _crit_alert("cpu")  # _last_escalation'da YOK
+    calls = []
+    monkeypatch.setattr(da, "emit_event", lambda **kw: calls.append(kw))
+    await agent._escalate_persistent()
+    assert calls == []  # ilk-görülme -> init, escalate yok
+    assert "cpu" in agent._last_escalation  # saat başlatıldı
+    await agent._escalate_persistent()  # interval içinde -> hâlâ yok
+    assert calls == []
 
-    db = app.state.db
-    agent = DevOpsAgent(db=db, interval=60)
-    agent._active_alerts["cpu"] = _crit_alert("cpu")
-    agent._last_escalation["cpu"] = _t.monotonic()  # interval içinde
+
+async def test_escalate_persistent_nonmetric_source(monkeypatch):
+    """Codex P2: metrik-DIŞI kaynak (service:*, _detect-dışı) da escalate eder (uniform-init)."""
+    from app.core import devops_agent as da
+
+    agent = da.DevOpsAgent(db=None, interval=60)
+    agent._active_alerts["service:linux-ai-server"] = _crit_alert("service:linux-ai-server")
+    agent._last_escalation["service:linux-ai-server"] = 0.0  # eski
+    calls = []
+    monkeypatch.setattr(da, "emit_event", lambda **kw: calls.append(kw))
     await agent._escalate_persistent()
 
-    evs = recent_events(min_severity="critical")
-    assert not any("escalation:cpu" in (e.get("source") or "") for e in evs)
+    assert any(c.get("source") == "escalation:service:linux-ai-server" for c in calls)

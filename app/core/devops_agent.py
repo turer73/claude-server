@@ -319,9 +319,8 @@ class DevOpsAgent:
                 )
                 self._active_alerts[source] = alert
                 alerts.append(alert)
-                # ilk-bildirim alert'in kendisi; re-eskalasyon saati şimdi başlasın.
-                if severity == "critical":
-                    self._last_escalation[source] = time.monotonic()
+                # re-eskalasyon saati _escalate_persistent'te ilk-görülmede başlatılır
+                # (tek-nokta, tüm kaynaklar için uniform).
                 asyncio.create_task(self._store_alert(alert))
 
         return alerts
@@ -507,11 +506,18 @@ class DevOpsAgent:
         for source, alert in list(self._active_alerts.items()):
             if alert.severity != "critical":
                 continue
-            last = self._last_escalation.get(source, nowm)
-            if (nowm - last) < self._escalation_interval:
+            # ilk-görülme: kaynak NEREDE yaratılırsa yaratılsın (_detect / _check_services
+            # service:* / _check_vps vps:*) eskalasyon-saatini burada başlat -> interval
+            # sonra re-escalate. (Codex P2: yalnız _detect-init metrik-dışı critical'leri
+            # kaçırıyordu; tek-nokta uniform-init ile hepsi kapsanır.)
+            if source not in self._last_escalation:
+                self._last_escalation[source] = nowm
+                continue
+            elapsed = nowm - self._last_escalation[source]
+            if elapsed < self._escalation_interval:
                 continue
             self._last_escalation[source] = nowm
-            mins = int((nowm - last) / 60) + int(self._escalation_interval / 60)
+            mins = int(elapsed / 60)
             try:
                 await asyncio.to_thread(
                     emit_event,
