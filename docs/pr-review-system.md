@@ -32,9 +32,9 @@
 - Review-spawn entegrasyonu (autonomous-claude.sh not-bağlı; dedicated review-spawn gerekli) + tek-PR manuel doğrulama → sonra ENABLED.
 - surer maliyet-sınırı/rol girdisi (VPS-repo'lar) bekleniyor.
 
-## Faz 2 — kuruldu (DISABLED, pilot)
+## Faz 2 — ENABLED+CANLI (2026-06-04; pilot=claude-server)
 - `pr-review-spawn.sh`: headless `claude -p` direct-review + TEK özet bot-etiketli `gh pr comment` (multi-agent fan-out DEĞİL → Max-x20 bütçe-dostu). SPAWN_ENABLED guard.
 - `pr-review-settings.json`: review-scope (Read + git-read + gh pr view/diff/comment; Write/commit/push/merge/sudo DENY).
 - Poller FAZ2 trigger: main/master-hedef & (insan-flag `review-please` VEYA diff>400 VEYA Codex-sessiz). Caps: per-run 5 + günlük 10 (Max-x20 paylaşımlı koruma) + serialize + same-HEAD-skip. Pilot repo: claude-server.
 - Billing = Max x20 (paylaşımlı). Codex-optim: trigger'da önce `@codex review` force (ücretsiz), sonra Claude-spawn fallback (sonraki iter).
-- ENABLE: `DRY_RUN=0 + PR_REVIEW_ENABLED=1` (poller) + `SPAWN_ENABLED=1` (spawn). surer cross-verify + ilk-5 insan-spot-check ŞART.
+- **ENABLED (2026-06-04):** `automation/crontab` pr-review satırında `DRY_RUN=0 PR_REVIEW_ENABLED=1 SPAWN_ENABLED=1` (canlı crontab = repo eşit, drift yok). Spot-check: throwaway PR#40 (2/2 yem-bug). **Rollback:** crontab satırından env-prefix kaldır → DRY_RUN'a döner. CAVEAT: surer-cross-verify atlandı (kullanıcı-onaylı human-spot-check); ilk gerçek auto-review'lar izlenmeli.

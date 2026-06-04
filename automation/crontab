@@ -13,8 +13,8 @@
 0 7 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh e2e-live-test /opt/linux-ai-server/automation/e2e-live-test.sh
 # Günlük operasyon dijesti -> Telegram (08:00, sabah işleri sonrası; NOTHING_NEW guard) [F-C1]
 0 8 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh digest /opt/linux-ai-server/automation/digest-send.sh
-# Cross-project PR-review poller — her 2 saat, DRY_RUN (script default; spawn/post KAPALI, canlı-gözlem)
-0 */2 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh pr-review-poll /opt/linux-ai-server/automation/pr-review-poller.sh
+# Cross-project PR-review poller — her 2 saat, ENABLED 2026-06-04 (spawn+post ACIK; pilot=claude-server; cap 5-run+10-gun; Codex-once-force). Rollback: env-prefix kaldir.
+0 */2 * * * DRY_RUN=0 PR_REVIEW_ENABLED=1 SPAWN_ENABLED=1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh pr-review-poll /opt/linux-ai-server/automation/pr-review-poller.sh
 # Klipper HDD backup — VPS Dokploy + volumes (7 gun retention)
 0 4 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh pull-vps-backup /opt/linux-ai-server/automation/pull-vps-backup.sh
 # One-shot: gozlem haftasi sonu hatirlatma (2026-05-21, self-cleaning)
