@@ -32,7 +32,7 @@ log = logging.getLogger("tg-poller")
 
 POLL_TIMEOUT = 30  # long-poll timeout
 SLEEP_ON_ERROR = 5
-ALLOWED_UPDATES = ["message"]  # callback_query gerektiginde genislet
+ALLOWED_UPDATES = ["message", "callback_query"]  # callback_query: ACK-butonu (Slice-1)
 
 
 def main() -> int:

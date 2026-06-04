@@ -129,3 +129,112 @@ async def test_webhook_secret_accepted_when_correct(client, monkeypatch):
         headers={"X-Telegram-Bot-Api-Secret-Token": "expected-secret"},
     )
     assert resp.status_code == 200
+
+
+def test_process_update_callback_ack_marks_event(tmp_path, monkeypatch):
+    """Inline '✅ Gördüm' callback (owner-chat) -> events.acked=1."""
+    import sqlite3
+
+    from app.api.telegram_bot import process_update
+
+    db = tmp_path / "ev.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, acked INTEGER DEFAULT 0)")
+    con.execute("INSERT INTO events (id, acked) VALUES (5, 0)")
+    con.commit()
+    con.close()
+    monkeypatch.setenv("DB_PATH", str(db))
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "777")
+    upd = {"callback_query": {"id": "cb1", "data": "ack:5", "message": {"chat": {"id": 777}}}}
+    with patch("app.api.telegram_bot._answer_callback") as ans:
+        out = process_update(upd)
+    assert out["action"] == "ack"
+    assert out["marked"] is True
+    con = sqlite3.connect(db)
+    v = con.execute("SELECT acked FROM events WHERE id=5").fetchone()[0]
+    con.close()
+    assert v == 1
+    ans.assert_called()
+
+
+def test_process_update_callback_unauthorized(monkeypatch):
+    """Sahip-DIŞI chat'ten callback -> reddedilir, acked YAPILMAZ."""
+    from app.api.telegram_bot import process_update
+
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "777")
+    with patch("app.api.telegram_bot._answer_callback"), patch("app.api.telegram_bot._mark_event_acked") as mk:
+        out = process_update({"callback_query": {"id": "cb2", "data": "ack:5", "message": {"chat": {"id": 999}}}})
+    assert out["skipped"] == "unauthorized callback"
+    mk.assert_not_called()
+
+
+def test_process_update_callback_unknown_action(monkeypatch):
+    """Owner-chat ama bilinmeyen callback_data -> skip (ack YAPILMAZ)."""
+    from app.api.telegram_bot import process_update
+
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "777")
+    with patch("app.api.telegram_bot._answer_callback") as ans, patch("app.api.telegram_bot._mark_event_acked") as mk:
+        out = process_update({"callback_query": {"id": "cb3", "data": "frobnicate:9", "message": {"chat": {"id": 777}}}})
+    assert "unknown callback" in out["skipped"]
+    mk.assert_not_called()
+    ans.assert_called()
+
+
+def test_mark_event_acked_rejects_non_numeric_id():
+    """SQL-injection yüzeyi yok: numeric-olmayan event_id -> False (DB'ye dokunmaz)."""
+    from app.api.telegram_bot import _mark_event_acked
+
+    assert _mark_event_acked("5 OR 1=1") is False
+    assert _mark_event_acked("abc") is False
+
+
+def test_mark_event_acked_missing_row(tmp_path, monkeypatch):
+    """Var-olmayan event id -> rowcount 0 -> False."""
+    import sqlite3
+
+    from app.api.telegram_bot import _mark_event_acked
+
+    db = tmp_path / "ev.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, acked INTEGER DEFAULT 0)")
+    con.commit()
+    con.close()
+    monkeypatch.setenv("DB_PATH", str(db))
+    assert _mark_event_acked("404") is False
+
+
+def test_answer_callback_noop_without_token(monkeypatch):
+    """Token yoksa _answer_callback sessiz no-op (network'e gitmez)."""
+    import app.api.telegram_bot as tb
+
+    monkeypatch.setattr(tb, "TELEGRAM_BOT_TOKEN", "")
+    with patch("app.api.telegram_bot.requests.post") as post:
+        tb._answer_callback("cbX", "merhaba")
+    post.assert_not_called()
+
+
+def test_answer_callback_posts_with_token(monkeypatch):
+    """Token varsa answerCallbackQuery POST edilir (best-effort)."""
+    import app.api.telegram_bot as tb
+
+    monkeypatch.setattr(tb, "TELEGRAM_BOT_TOKEN", "T")
+    with patch("app.api.telegram_bot.requests.post") as post:
+        tb._answer_callback("cbY", "ok")
+    post.assert_called_once()
+
+
+def test_answer_callback_swallows_network_error(monkeypatch):
+    """POST hata atsa bile _answer_callback sessiz (best-effort, raise YOK)."""
+    import app.api.telegram_bot as tb
+
+    monkeypatch.setattr(tb, "TELEGRAM_BOT_TOKEN", "T")
+    with patch("app.api.telegram_bot.requests.post", side_effect=RuntimeError("net")):
+        tb._answer_callback("cbZ", "ok")  # raise etmemeli
+
+
+def test_mark_event_acked_db_error_returns_false(tmp_path, monkeypatch):
+    """Bozuk DB yolu (dizin) -> sqlite3 connect/exec hata -> False (raise YOK)."""
+    from app.api.telegram_bot import _mark_event_acked
+
+    monkeypatch.setenv("DB_PATH", str(tmp_path))  # dizin -> connect/exec başarısız
+    assert _mark_event_acked("5") is False

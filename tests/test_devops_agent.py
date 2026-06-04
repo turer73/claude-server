@@ -861,3 +861,41 @@ async def test_escalate_persistent_nonmetric_source(monkeypatch):
     await agent._escalate_persistent()
 
     assert any(c.get("source") == "escalation:service:linux-ai-server" for c in calls)
+
+
+async def test_escalate_skips_acked_source(client, app, monkeypatch):
+    """ACK'lenmiş kaynak re-escalate ETMEZ (nag-etme). events.acked=1 -> skip."""
+    import time as _t
+
+    from app.core import devops_agent as da
+
+    db = app.state.db
+    agent = da.DevOpsAgent(db=db, interval=60)
+    agent._active_alerts["memory"] = _crit_alert("memory")
+    agent._last_escalation["memory"] = _t.monotonic() - agent._escalation_interval - 10
+    # acked event (aynı async-conn ile insert -> cross-conn race yok)
+    await db.execute("INSERT INTO events (type, source, severity, title, acked) VALUES ('alert','memory','critical','x',1)")
+    calls = []
+    monkeypatch.setattr(da, "emit_event", lambda **kw: calls.append(kw))
+    await agent._escalate_persistent()
+    assert calls == []  # acked -> escalate YOK
+
+
+async def test_source_acked_no_db_returns_false():
+    """db yoksa _source_acked False (fail-loud: escalate-devam)."""
+    from app.core import devops_agent as da
+
+    agent = da.DevOpsAgent(db=None, interval=60)
+    assert await agent._source_acked("memory") is False
+
+
+async def test_source_acked_db_error_returns_false():
+    """db.fetch_one hata atarsa _source_acked False (escalate susmaz)."""
+    from app.core import devops_agent as da
+
+    class _BadDB:
+        async def fetch_one(self, *a, **k):
+            raise RuntimeError("boom")
+
+    agent = da.DevOpsAgent(db=_BadDB(), interval=60)
+    assert await agent._source_acked("memory") is False

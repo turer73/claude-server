@@ -516,6 +516,11 @@ class DevOpsAgent:
             elapsed = nowm - self._last_escalation[source]
             if elapsed < self._escalation_interval:
                 continue
+            # ACK-saygı: kullanıcı Telegram '✅ Gördüm' ile bu kaynağın son alert/
+            # escalation event'ini onayladıysa YENİDEN BASMA (nag-etme). Skip ->
+            # yeni unacked event yaratılmaz -> latest acked kalır -> sessiz (auto-resolve'a dek).
+            if await self._source_acked(source):
+                continue
             self._last_escalation[source] = nowm
             mins = int(elapsed / 60)
             try:
@@ -529,6 +534,21 @@ class DevOpsAgent:
                 )
             except Exception:
                 pass
+
+    async def _source_acked(self, source: str) -> bool:
+        """Bu kaynağın EN SON alert/escalation event'i kullanıcı tarafından ACK'lendi mi
+        (events.acked). Telegram '✅ Gördüm' butonu poller'da acked=1 yapar -> escalation
+        durur. Best-effort (db yok/hata -> False = escalate-devam, fail-loud tercih)."""
+        if not self._db:
+            return False
+        try:
+            row = await self._db.fetch_one(
+                "SELECT acked FROM events WHERE source IN (?, ?) ORDER BY id DESC LIMIT 1",
+                (source, f"escalation:{source}"),
+            )
+            return bool(row and row.get("acked"))
+        except Exception:
+            return False
 
     # ── LIVESYS Faz 5 Slice-2: verify -> escalate ──────────────
 
