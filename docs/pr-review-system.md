@@ -2,7 +2,7 @@
 
 > **Amaç:** 7 ilgili repo'da açılan PR'ları otomatik kod-review'dan geçir; bulguları
 > PR'a inline yaz. Codex'in güvenilmezliğini (atlama/latency) yapısal kapat:
-> klipper tetikler, atlamaz. **Durum:** Faz 1 (poller + digest-aggregate) DONE+CANLI; Faz 2 (koşullu auto-review spawn) KURULDU/DISABLED (pilot claude-server) — surer cross-verify + ilk-5-spot-check sonrası ENABLED.
+> klipper tetikler, atlamaz. **Durum:** Faz 1 (poller + digest-aggregate) DONE+CANLI; **Faz 2 (koşullu auto-review spawn) ENABLED+CANLI (2026-06-04)** — cron `DRY_RUN=0 PR_REVIEW_ENABLED=1 SPAWN_ENABLED=1`, pilot claude-server, cap 5/run+10/gün. Spot-check: throwaway PR#40 (2/2 yem-bug yakalandı). CAVEAT: surer-cross-verify atlandı (kullanıcı-onaylı human-spot-check); ilk gerçek auto-review'lar izlenmeli. Rollback: cron-satırından env-prefix kaldır. FAZ4-S3 (blast-radius prompt-enjekte) + S4 (yüksek-blast→spawn) besler. Detay: memory `project-faz2-pr-review-enabled-2026-06-04`.
 
 ## Karar (kullanıcı, 2026-06-02)
 - Tetikleme: **CI-yeşil sonrası**. Çıktı: **PR'a `--comment` (inline)**.
