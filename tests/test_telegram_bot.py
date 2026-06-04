@@ -354,6 +354,42 @@ def test_process_update_claude_new_is_fresh(monkeypatch):
     assert h.call_args[0][1] == "sıfırdan başla"
 
 
+def test_claude_worker_success_saves_and_replies(monkeypatch):
+    """Worker: başarılı run -> bulgu kaydet + footer + oturum güncelle + yanıt gönder."""
+    import app.api.telegram_bot as tb
+
+    monkeypatch.setattr(tb, "_send_typing", lambda c: None)
+    monkeypatch.setattr(
+        tb, "_run_claude", lambda p, session_id=None: {"ok": True, "result": "disk %80", "session_id": "s9", "model": "opus"}
+    )
+    saved = {}
+    monkeypatch.setattr(tb, "_save_finding", lambda p, a: saved.setdefault("called", (p, a)) or True)
+    sent = {}
+    monkeypatch.setattr(tb, "_send_message", lambda c, t, reply_to=None: sent.update(text=t))
+    tb._CLAUDE_SESSION.pop(555, None)
+    tb._claude_worker(555, "disk durumu", 1, fresh=False)
+    assert "disk %80" in sent["text"]
+    assert "hafızaya kaydedildi" in sent["text"]
+    assert "Max-plan" in sent["text"]
+    assert tb._CLAUDE_SESSION[555] == "s9"  # oturum güncellendi
+    assert saved["called"][0] == "disk durumu"
+
+
+def test_claude_worker_error_path(monkeypatch):
+    """Worker: run hata -> hata mesajı, kayıt YOK."""
+    import app.api.telegram_bot as tb
+
+    monkeypatch.setattr(tb, "_send_typing", lambda c: None)
+    monkeypatch.setattr(tb, "_run_claude", lambda p, session_id=None: {"ok": False, "error": "http 500"})
+    calls = []
+    monkeypatch.setattr(tb, "_save_finding", lambda p, a: calls.append((p, a)) or True)
+    sent = {}
+    monkeypatch.setattr(tb, "_send_message", lambda c, t, reply_to=None: sent.update(text=t))
+    tb._claude_worker(556, "x", 1, fresh=True)
+    assert "Claude hatası" in sent["text"]
+    assert calls == []  # hata yolunda kayıt YOK
+
+
 def test_handle_claude_empty_shows_help(monkeypatch):
     """Boş prompt -> kullanım yardımı (thread spawn YOK)."""
     from app.api.telegram_bot import _handle_claude
@@ -421,6 +457,26 @@ def test_save_finding_posts_discovery(monkeypatch):
     assert captured["url"].endswith("/api/v1/memory/discoveries")
     assert captured["body"]["type"] == "learning"
     assert captured["key"] == "mk-test"
+
+
+def test_save_finding_redacts_title(monkeypatch):
+    """Codex P2: title prompt'tan türüyor -> client-side redact (token sızması engeli)."""
+    import app.api.telegram_bot as tb
+
+    monkeypatch.setenv("MEMORY_API_KEY", "mk-test")
+    monkeypatch.setattr("app.core.privacy.redact", lambda s: ("CLEAN-TITLE", ["secret"]))
+    captured = {}
+
+    class _R:
+        status_code = 200
+
+    def _post(url, json=None, headers=None, timeout=None):
+        captured["body"] = json
+        return _R()
+
+    with patch("app.api.telegram_bot.requests.post", side_effect=_post):
+        tb._save_finding("token sk-DEADBEEF değeri ne", "cevap")
+    assert captured["body"]["title"] == "CLEAN-TITLE"
 
 
 def test_save_finding_no_key_is_noop(monkeypatch):

@@ -108,6 +108,33 @@ async def test_claude_run_default_uses_skip_permissions(client, auth_headers):
 
 
 @pytest.mark.anyio
+async def test_claude_run_vps_read_only_uses_plan_mode(client, auth_headers, monkeypatch):
+    """Codex P2: host=vps + read_only=True -> VPS args da `--permission-mode plan` içerir."""
+    mock_proc = AsyncMock()
+    mock_proc.communicate.return_value = (b'{"result":"ok"}', b"")
+    mock_proc.kill = MagicMock()
+    captured = {}
+
+    def _spawn(*args, **kwargs):
+        captured["argv"] = args
+        return mock_proc
+
+    class _S:
+        vps_host = "root@vps"
+
+    monkeypatch.setattr("app.api.claude_code.get_settings", lambda: _S())
+    with patch("asyncio.create_subprocess_exec", side_effect=_spawn):
+        resp = await client.post(
+            "/api/v1/claude/run",
+            json={"prompt": "durum", "host": "vps", "read_only": True},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+    remote = captured["argv"][-1]  # ssh_cmd son arg = remote komut string'i
+    assert "--permission-mode plan" in remote
+
+
+@pytest.mark.anyio
 async def test_claude_run_requires_admin(client, read_headers):
     resp = await client.post("/api/v1/claude/run", json={"prompt": "hello"}, headers=read_headers)
     assert resp.status_code in (401, 403)

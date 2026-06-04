@@ -135,6 +135,10 @@ async def _run_on_vps(body: ClaudePromptRequest) -> dict:
     # (security hard-stop in CLI), and the only login on VPS is root. Skip
     # the flag here; -p / --output-format json mode does not prompt anyway.
     args = ["claude", "-p", body.prompt, "--output-format", "json"]
+    # read_only -> plan modu (VPS yolu da onurlandırır; Codex P2: skip-permissions VPS'te
+    # zaten yok ama default-mode icra edebilir, plan modu salt-okunur garantiler).
+    if body.read_only:
+        args.extend(["--permission-mode", "plan"])
     if body.session_id:
         args.extend(["--resume", body.session_id])
     elif body.continue_last:

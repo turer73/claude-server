@@ -153,7 +153,12 @@ def _save_finding(prompt: str, answer: str) -> bool:
     key = read_env_var("MEMORY_API_KEY") or os.environ.get("MEMORY_API_KEY", "")
     if not key or not answer:
         return False
-    title = ("Telegram /claude: " + prompt.strip().replace("\n", " "))[:90]
+    # GÜVENLİK (Codex P2): title prompt'tan türüyor; /memory/discoveries SADECE details'i
+    # redact eder, title'ı değil -> prompt'taki token/şifre title'a sızabilir. Client-side redact.
+    from app.core.privacy import redact
+
+    title_raw = "Telegram /claude: " + prompt.strip().replace("\n", " ")
+    title = redact(title_raw)[0][:90]
     body = {
         "device_name": "telegram-claude",
         "project": "linux-ai-server",
@@ -188,42 +193,45 @@ def _handle_claude(chat_id: int, prompt: str, msg_id: int | None, fresh: bool = 
         )
         return {"ok": True, "action": "claude-help"}
 
-    def _work():
-        stop = threading.Event()
-
-        def _keepalive():
-            _send_typing(chat_id)
-            while not stop.wait(4.0):
-                _send_typing(chat_id)
-
-        ka = threading.Thread(target=_keepalive, daemon=True)
-        ka.start()
-        try:
-            sid = None if fresh else _CLAUDE_SESSION.get(chat_id)
-            res = _run_claude(prompt, session_id=sid)
-            if res.get("error") or not res.get("ok", False):
-                reply = f"❌ *Claude hatası:* `{res.get('error') or res.get('stderr', 'bilinmeyen')[:200]}`"
-            else:
-                answer = res.get("result") or "(boş yanıt)"
-                new_sid = res.get("session_id")
-                if new_sid:
-                    _CLAUDE_SESSION[chat_id] = new_sid
-                # Bulguyu hafızaya kaydet (köprü-yazar, read-only korunur).
-                saved = _save_finding(prompt, answer) if res.get("result") else False
-                # cost GÖSTERME: Max-plan abonelikte faturalanmaz; CLI'nin nosyonel
-                # ($API-eşdeğeri) değeri kullanıcıyı yanıltır ("API istemiyorum").
-                tag = "💾 hafızaya kaydedildi · " if saved else ""
-                footer = f"\n\n{tag}`{res.get('model', 'claude')}` · Max-plan (salt-okunur)"
-                reply = answer[:3800] + footer
-        except Exception as e:
-            reply = f"❌ *Claude hatası:* `{str(e)[:200]}`"
-        finally:
-            stop.set()
-            ka.join(timeout=1.0)
-        _send_message(chat_id, reply, reply_to=msg_id)
-
-    threading.Thread(target=_work, daemon=True).start()
+    threading.Thread(target=_claude_worker, args=(chat_id, prompt, msg_id, fresh), daemon=True).start()
     return {"ok": True, "action": "claude-spawned"}
+
+
+def _claude_worker(chat_id: int, prompt: str, msg_id: int | None, fresh: bool) -> None:
+    """/claude arka-plan işçisi (thread'de koşar; modül-seviye -> test edilebilir).
+    typing keep-alive + read-only run + oturum-güncelle + bulgu-kaydet + yanıt."""
+    stop = threading.Event()
+
+    def _keepalive():
+        _send_typing(chat_id)
+        while not stop.wait(4.0):
+            _send_typing(chat_id)
+
+    ka = threading.Thread(target=_keepalive, daemon=True)
+    ka.start()
+    try:
+        sid = None if fresh else _CLAUDE_SESSION.get(chat_id)
+        res = _run_claude(prompt, session_id=sid)
+        if res.get("error") or not res.get("ok", False):
+            reply = f"❌ *Claude hatası:* `{res.get('error') or res.get('stderr', 'bilinmeyen')[:200]}`"
+        else:
+            answer = res.get("result") or "(boş yanıt)"
+            new_sid = res.get("session_id")
+            if new_sid:
+                _CLAUDE_SESSION[chat_id] = new_sid
+            # Bulguyu hafızaya kaydet (köprü-yazar, read-only korunur).
+            saved = _save_finding(prompt, answer) if res.get("result") else False
+            # cost GÖSTERME: Max-plan abonelikte faturalanmaz; CLI'nin nosyonel
+            # ($API-eşdeğeri) değeri kullanıcıyı yanıltır ("API istemiyorum").
+            tag = "💾 hafızaya kaydedildi · " if saved else ""
+            footer = f"\n\n{tag}`{res.get('model', 'claude')}` · Max-plan (salt-okunur)"
+            reply = answer[:3800] + footer
+    except Exception as e:
+        reply = f"❌ *Claude hatası:* `{str(e)[:200]}`"
+    finally:
+        stop.set()
+        ka.join(timeout=1.0)
+    _send_message(chat_id, reply, reply_to=msg_id)
 
 
 def _handle_callback(cb: dict) -> dict:
