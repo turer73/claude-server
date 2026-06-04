@@ -160,7 +160,10 @@ class DevOpsAgent:
         # Active alerts (keyed by source)
         self._active_alerts: dict[str, Alert] = {}
 
-        # Remediation log
+        # LIVESYS Faz 5 — otonom remediation kapısı (notify=güvenli-default, exec YOK).
+        self._remediation_mode = settings.remediation_mode
+
+        # Remediation log (in-memory hızlı-erişim; kalıcı kayıt -> remediation_log tablosu)
         self._remediation_log: deque[RemediationRecord] = deque(maxlen=200)
 
         # Cooldown tracker: source → last remediation time
@@ -383,34 +386,68 @@ class DevOpsAgent:
             return
 
         self._cooldowns[alert.source] = now
+        mode = self._remediation_mode
 
         for step in playbook:
             cmd = step["cmd"]
             desc = step["desc"]
-            try:
-                result = await self._executor.execute(cmd, timeout=30)
-                record = RemediationRecord(
-                    timestamp=datetime.now(UTC).isoformat(),
-                    alert_source=alert.source,
-                    action=desc,
-                    command=cmd,
-                    result=result.get("stdout", "")[:500],
-                    success=result.get("exit_code", 1) == 0,
-                )
-            except Exception as e:
-                record = RemediationRecord(
-                    timestamp=datetime.now(UTC).isoformat(),
-                    alert_source=alert.source,
-                    action=desc,
-                    command=cmd,
-                    result=str(e)[:500],
-                    success=False,
-                )
+            executed = False
+            success: bool | None = None
+            if mode == "auto":
+                # OPT-IN: playbook'u gerçekten yürüt (eski davranış). Yıkıcı adımlar
+                # mümkün (prune --volumes / rm backup); verify/rollback FAZ5-S2'de.
+                executed = True
+                try:
+                    result = await self._executor.execute(cmd, timeout=30)
+                    out = result.get("stdout", "")[:500]
+                    success = result.get("exit_code", 1) == 0
+                except Exception as e:
+                    out = str(e)[:500]
+                    success = False
+            else:
+                # GÜVENLİ DEFAULT (notify/dry_run): YÜRÜTME. Niyeti kaydet; mevcut
+                # alert-notify zaten operatöre haber verir (escalate). exec YOK.
+                out = f"skipped: remediation_mode={mode} (otonom yürütme kapalı)"
+            record = RemediationRecord(
+                timestamp=datetime.now(UTC).isoformat(),
+                alert_source=alert.source,
+                action=desc,
+                command=cmd,
+                result=out,
+                success=bool(success),
+            )
             self._remediation_log.append(record)
-            alert.remediation = desc
+            await self._persist_remediation(alert, mode, desc, cmd, executed, out, success)
+            alert.remediation = f"[{mode}] {desc}"
 
-        # Send webhook event
+        # Send webhook event (n8n) — mode dahil
         await self._send_webhook(alert)
+
+    async def _persist_remediation(
+        self, alert: Alert, mode: str, action: str, command: str, executed: bool, result: str, success: bool | None
+    ) -> None:
+        """Kalıcı remediation ledger (server.db.remediation_log). Best-effort:
+        DB yoksa/yazamazsa sessizce geç (remediation akışını bozma)."""
+        if not self._db:
+            return
+        try:
+            await self._db.execute(
+                "INSERT INTO remediation_log "
+                "(alert_source, severity, mode, action, command, executed, result, success) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    alert.source,
+                    alert.severity,
+                    mode,
+                    action,
+                    command,
+                    1 if executed else 0,
+                    result,
+                    None if success is None else (1 if success else 0),
+                ),
+            )
+        except Exception:
+            pass
 
     async def _send_webhook(self, alert: Alert) -> None:
         """Notify via webhook for n8n integration."""

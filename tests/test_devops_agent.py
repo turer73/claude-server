@@ -318,6 +318,7 @@ async def test_remediate_cpu_critical():
     from app.core.devops_agent import Alert, DevOpsAgent
 
     agent = DevOpsAgent(db=None, interval=60)
+    agent._remediation_mode = "auto"  # FAZ5: exec yolunu test et (default 'notify' artık yürütmez)
     alert = Alert(id="cpu-1", severity="critical", source="cpu", message="CPU at 95%", value=95, threshold=85, timestamp="now")
 
     mock_result = {"stdout": "done\n", "stderr": "", "exit_code": 0}
@@ -636,3 +637,77 @@ async def test_devops_vps_latest_route(devops_client, auth_headers):
     resp = await devops_client.get("/api/v1/devops/vps/latest", headers=auth_headers)
     assert resp.status_code == 200
     assert "vps" in resp.json()
+
+
+# ── LIVESYS Faz 5 Slice-1: autonomy-gate + ledger ──────────────
+
+
+def _crit_alert(source="memory"):
+    from app.core.devops_agent import Alert
+
+    return Alert(
+        id=f"{source}-1",
+        severity="critical",
+        source=source,
+        message="test critical",
+        value=99.0,
+        threshold=85.0,
+        timestamp="2026-06-04T00:00:00Z",
+    )
+
+
+async def _noop_webhook(*a, **k):
+    return None
+
+
+async def test_remediation_default_mode_is_notify():
+    """GÜVENLİ DEFAULT: config.remediation_mode == 'notify' (otonom exec kapalı)."""
+    from app.core.config import Settings
+
+    assert Settings().remediation_mode == "notify"
+
+
+async def test_remediate_notify_mode_does_not_execute(client, app):
+    """notify mode: playbook YÜRÜTÜLMEZ; ledger'a executed=0 yazılır."""
+    from app.core.devops_agent import DevOpsAgent
+
+    db = app.state.db
+    agent = DevOpsAgent(db=db, interval=60)
+    agent._remediation_mode = "notify"
+    agent._send_webhook = _noop_webhook
+    calls = []
+
+    async def fake_exec(cmd, timeout=30):
+        calls.append(cmd)
+        return {"stdout": "x", "exit_code": 0}
+
+    agent._executor.execute = fake_exec
+    await agent._remediate(_crit_alert("memory"))
+
+    assert calls == []  # HİÇBİR komut çalışmadı
+    rows = await db.fetch_all("SELECT executed, mode, success FROM remediation_log WHERE alert_source='memory'")
+    assert len(rows) >= 1
+    assert all(r["executed"] == 0 and r["mode"] == "notify" for r in rows)
+
+
+async def test_remediate_auto_mode_executes(client, app):
+    """auto mode (opt-in): playbook YÜRÜTÜLÜR; ledger'a executed=1 yazılır."""
+    from app.core.devops_agent import DevOpsAgent
+
+    db = app.state.db
+    agent = DevOpsAgent(db=db, interval=60)
+    agent._remediation_mode = "auto"
+    agent._send_webhook = _noop_webhook
+    calls = []
+
+    async def fake_exec(cmd, timeout=30):
+        calls.append(cmd)
+        return {"stdout": "ok", "exit_code": 0}
+
+    agent._executor.execute = fake_exec
+    await agent._remediate(_crit_alert("disk"))
+
+    assert len(calls) >= 1  # komut(lar) çalıştı
+    rows = await db.fetch_all("SELECT executed, mode FROM remediation_log WHERE alert_source='disk'")
+    assert len(rows) >= 1
+    assert all(r["executed"] == 1 and r["mode"] == "auto" for r in rows)

@@ -123,6 +123,27 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_events_sev ON events(severity, notified, timestamp DESC);
+
+-- LIVESYS Faz 5 (kapalı-döngü otonomi) Slice-1: kalıcı remediation ledger.
+-- devops_agent her remediation girişimini (yürütülen VEYA mode!=auto'da niyet)
+-- buraya yazar (in-memory deque yerine kalıcı audit). verify_status/escalated
+-- sonraki slice'lar için (verify→rollback/escalate); şimdilik NULL.
+CREATE TABLE IF NOT EXISTS remediation_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    alert_source TEXT NOT NULL,      -- cpu | memory | disk | temperature | service:<x> | docker:<x>
+    severity TEXT,
+    mode TEXT NOT NULL,              -- notify | dry_run | auto (config.remediation_mode)
+    action TEXT,                     -- playbook adım açıklaması
+    command TEXT,                    -- planlanan/yürütülen komut
+    executed INTEGER NOT NULL DEFAULT 0,    -- 1 = gerçekten çalıştı (mode=auto), 0 = niyet/skip
+    result TEXT,                     -- stdout/err (executed) veya 'skipped: mode=<m>'
+    success INTEGER,                 -- exec başarılı mı (executed=1 iken); NULL = uygulanmadı
+    verify_status TEXT,              -- FAZ5-S2: post-action doğrulama (NULL şimdilik)
+    escalated INTEGER NOT NULL DEFAULT 0    -- FAZ5-S2: eskale edildi mi
+);
+
+CREATE INDEX IF NOT EXISTS idx_remediation_ts ON remediation_log(timestamp DESC);
 """
 
 

@@ -190,6 +190,12 @@ class Settings(BaseSettings):
     alert_memory_percent: int = 85
     alert_disk_percent: int = 90
     alert_temperature_c: int = 80
+    # LIVESYS Faz 5 — otonom remediation kapısı. GÜVENLİ DEFAULT 'notify':
+    # critical alert'te devops_agent playbook'u YÜRÜTMEZ (sadece alert + kalıcı
+    # ledger; mevcut alert-notify zaten operatöre haber verir). 'auto' = opt-in,
+    # playbook'u çalıştırır (eski davranış — verify/rollback FAZ5-S2'ye kadar YOK;
+    # yıkıcı adımlar var: docker prune --volumes / rm backup). 'dry_run' = niyeti loglar.
+    remediation_mode: str = "notify"  # notify | dry_run | auto
 
     # DevOps agent watchlists (CSV in env, e.g. MONITOR_CRITICAL_CONTAINERS=dozzle,uptime-kuma)
     # NoDecode disables pydantic-settings' default JSON parse so the validator below sees raw CSV.
