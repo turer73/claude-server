@@ -815,11 +815,15 @@ async def test_verify_skipped_in_notify_mode(client, app):
 async def test_escalate_persistent_critical_after_interval(monkeypatch):
     """Çözülmeyen critical alert interval sonrası re-escalate eder. emit_event mock'lanır
     (cross-connection db-race yok -> CI-deterministik)."""
+    import time as _t
+
     from app.core import devops_agent as da
 
     agent = da.DevOpsAgent(db=None, interval=60)
     agent._active_alerts["memory"] = _crit_alert("memory")
-    agent._last_escalation["memory"] = 0.0  # çok eski -> escalate
+    # monotonic-göreceli geçmiş (0.0 DEĞİL — taze-boot'ta monotonic küçük -> elapsed
+    # yanlış hesaplanır, CI-fail; interval+10s öncesi her sistemde elapsed>=interval).
+    agent._last_escalation["memory"] = _t.monotonic() - agent._escalation_interval - 10
     calls = []
     monkeypatch.setattr(da, "emit_event", lambda **kw: calls.append(kw))
     await agent._escalate_persistent()
@@ -844,11 +848,14 @@ async def test_escalate_persistent_first_seen_no_escalate(monkeypatch):
 
 async def test_escalate_persistent_nonmetric_source(monkeypatch):
     """Codex P2: metrik-DIŞI kaynak (service:*, _detect-dışı) da escalate eder (uniform-init)."""
+    import time as _t
+
     from app.core import devops_agent as da
 
     agent = da.DevOpsAgent(db=None, interval=60)
     agent._active_alerts["service:linux-ai-server"] = _crit_alert("service:linux-ai-server")
-    agent._last_escalation["service:linux-ai-server"] = 0.0  # eski
+    # monotonic-göreceli geçmiş (taze-boot CI-safe, 0.0 değil)
+    agent._last_escalation["service:linux-ai-server"] = _t.monotonic() - agent._escalation_interval - 10
     calls = []
     monkeypatch.setattr(da, "emit_event", lambda **kw: calls.append(kw))
     await agent._escalate_persistent()
