@@ -354,6 +354,46 @@ def test_process_update_claude_new_is_fresh(monkeypatch):
     assert h.call_args[0][1] == "sıfırdan başla"
 
 
+def test_send_message_falls_back_to_plain_on_markdown_error(monkeypatch):
+    """Codex P2: Markdown 400 -> parse_mode'suz düz metin retry (mesaj kaybolmaz)."""
+    import app.api.telegram_bot as tb
+
+    monkeypatch.setattr(tb, "TELEGRAM_BOT_TOKEN", "T")
+    calls = []
+
+    class _R:
+        ok = False  # ilk Markdown denemesi başarısız
+
+    def _post(url, json=None, timeout=None):
+        calls.append(dict(json))  # kopya — payload reuse/mutate ediliyor
+        return _R()
+
+    with patch("app.api.telegram_bot.requests.post", side_effect=_post):
+        tb._send_message(123, "dengesiz `backtick ve _alt")
+    assert len(calls) == 2  # markdown + plain retry
+    assert "parse_mode" in calls[0]
+    assert "parse_mode" not in calls[1]  # fallback düz metin
+
+
+def test_send_message_no_retry_when_ok(monkeypatch):
+    """Markdown başarılıysa tek POST (gereksiz retry yok)."""
+    import app.api.telegram_bot as tb
+
+    monkeypatch.setattr(tb, "TELEGRAM_BOT_TOKEN", "T")
+    calls = []
+
+    class _R:
+        ok = True
+
+    def _post(url, json=None, timeout=None):
+        calls.append(json)
+        return _R()
+
+    with patch("app.api.telegram_bot.requests.post", side_effect=_post):
+        tb._send_message(123, "temiz mesaj")
+    assert len(calls) == 1
+
+
 def test_claude_worker_success_saves_and_replies(monkeypatch):
     """Worker: başarılı run -> bulgu kaydet + footer + oturum güncelle + yanıt gönder."""
     import app.api.telegram_bot as tb

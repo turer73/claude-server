@@ -29,7 +29,9 @@ router = APIRouter(prefix="/webhooks/telegram", tags=["telegram-webhook"])
 
 
 def _send_message(chat_id: int, text: str, reply_to: int | None = None) -> None:
-    """Markdown sendMessage helper. Best-effort, sessizce fail eder."""
+    """Markdown sendMessage helper. Best-effort. Codex P2: Markdown parse hatasında
+    (dengesiz `_`/`*`/`[`/backtick — Claude log/path çıktısında sık) Telegram 400 döner
+    ve mesaj SESSİZCE kaybolur -> DÜZ-METİN fallback (yanıt asla kaybolmasın)."""
     if not TELEGRAM_BOT_TOKEN:
         return
     payload: dict = {
@@ -41,7 +43,11 @@ def _send_message(chat_id: int, text: str, reply_to: int | None = None) -> None:
     if reply_to:
         payload["reply_to_message_id"] = reply_to
     try:
-        requests.post(f"{TELEGRAM_API}/sendMessage", json=payload, timeout=10)
+        r = requests.post(f"{TELEGRAM_API}/sendMessage", json=payload, timeout=10)
+        if not getattr(r, "ok", False):
+            # Markdown parse başarısız -> parse_mode'suz düz metin olarak tekrar dene.
+            payload.pop("parse_mode", None)
+            requests.post(f"{TELEGRAM_API}/sendMessage", json=payload, timeout=10)
     except Exception:
         pass
 
