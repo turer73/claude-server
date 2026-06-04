@@ -69,6 +69,10 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=/var/lib/linux-ai-server /var/log/linux-ai-server /var/AI-stump
 PrivateTmp=yes
+# UMask=0002: server.db + -wal/-shm grup-yazilabilir (664) olsun -> setgid data-dir
+# + ortak-grup ile ikinci-bir-user (or. note-poller/klipper-auto emit-event.sh
+# uzerinden) da yazabilsin -> SQLITE_READONLY (#517) sinifi kapali.
+UMask=0002
 
 [Install]
 WantedBy=multi-user.target
@@ -85,6 +89,14 @@ chmod 600 /etc/linux-ai-server/env
 
 # Generate initial API key
 python3 /opt/linux-ai-server/scripts/generate_api_key.py
+
+# Codex P1: generate_api_key.py ROOT olarak calisir -> server.db'yi root:root 0644
+# yaratir (line 43 chown'dan SONRA) -> aiserver servisi ilk-write'ta SQLITE_READONLY.
+# Key-gen SONRASI sahiplik+grup-yaz duzelt + setgid (gelecek -wal/-shm grup-devralir;
+# UMask=0002 ile birlikte ikinci-user de yazabilir, #517 sinifi kapali).
+chown -R aiserver:aiserver /var/lib/linux-ai-server
+chmod -R g+w /var/lib/linux-ai-server
+chmod g+s /var/lib/linux-ai-server
 
 # Enable and start
 systemctl daemon-reload
