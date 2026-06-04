@@ -46,7 +46,22 @@ def _build_env():
     oauth = _load_claude_token()
     if oauth:
         env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth
+    # MAX-PLAN ZORUNLU (kullanıcı: "API istemiyorum"): API-key/auth-token env'i SİL ki
+    # claude CLI her zaman abonelik kimliğine (~/.claude/.credentials.json veya OAuth
+    # token) düşsün — pay-per-token API'ye ASLA. İleride .env/drop-in'e API-key sızsa
+    # bile bu strip garanti sağlar.
+    env.pop("ANTHROPIC_API_KEY", None)
+    env.pop("ANTHROPIC_AUTH_TOKEN", None)
     return env
+
+
+def _is_authenticated() -> bool:
+    """Max-plan kimliği mevcut mu: OAuth token VEYA ~/.claude/.credentials.json
+    (claude login). status authenticated=false yanıltıcıydı — token-env yoksa bile
+    credentials dosyası ile run çalışır."""
+    if _load_claude_token():
+        return True
+    return os.path.exists(os.path.expanduser("~/.claude/.credentials.json"))
 
 
 def _parse_claude_json(raw: str, cwd: str, stderr_text: str = "", host: str = "klipper") -> dict:
@@ -120,6 +135,10 @@ async def _run_on_vps(body: ClaudePromptRequest) -> dict:
     # (security hard-stop in CLI), and the only login on VPS is root. Skip
     # the flag here; -p / --output-format json mode does not prompt anyway.
     args = ["claude", "-p", body.prompt, "--output-format", "json"]
+    # read_only -> plan modu (VPS yolu da onurlandırır; Codex P2: skip-permissions VPS'te
+    # zaten yok ama default-mode icra edebilir, plan modu salt-okunur garantiler).
+    if body.read_only:
+        args.extend(["--permission-mode", "plan"])
     if body.session_id:
         args.extend(["--resume", body.session_id])
     elif body.continue_last:
@@ -174,6 +193,10 @@ class ClaudePromptRequest(BaseModel):
     # klipper-side session_id and vice versa; the UI surfaces this if it
     # cares to track host-per-session.
     host: str = "klipper"
+    # read_only=True -> `--permission-mode plan` (salt-okunur: okur/analiz eder, komut
+    # icra etmez / dosya değiştirmez). skip-permissions YERİNE. Telegram /claude bunu
+    # kullanır (sınırsız-agent yüzeyi açma). Default False = mevcut web-UI davranışı.
+    read_only: bool = False
 
 
 @router.get("/status", dependencies=[Depends(require_auth)])
@@ -189,11 +212,19 @@ async def claude_status():
     )
     stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
     version = stdout.decode().strip() if stdout else "unknown"
-    token = _load_claude_token()
+    # auth_method: subscription (Max-plan OAuth token / credentials.json) — API-key
+    # _build_env'de strip edildiği için run her zaman abonelikten gider.
+    if _load_claude_token():
+        auth_method = "oauth_token"
+    elif os.path.exists(os.path.expanduser("~/.claude/.credentials.json")):
+        auth_method = "subscription_credentials"
+    else:
+        auth_method = "none"
     return {
         "available": True,
         "version": version,
-        "authenticated": bool(os.environ.get("ANTHROPIC_API_KEY") or token),
+        "authenticated": _is_authenticated(),
+        "auth_method": auth_method,
         "binary": binary,
     }
 
@@ -207,7 +238,10 @@ async def run_claude(body: ClaudePromptRequest):
     if not binary:
         return {"error": "Claude Code CLI bulunamadi"}
 
-    cmd = [binary, "-p", body.prompt, "--output-format", "json", "--dangerously-skip-permissions"]
+    # read_only -> plan modu (salt-okunur, mutasyon/icra yok); değilse mevcut
+    # skip-permissions (web-UI). Telegram /claude read_only=True gönderir.
+    perm = ["--permission-mode", "plan"] if body.read_only else ["--dangerously-skip-permissions"]
+    cmd = [binary, "-p", body.prompt, "--output-format", "json", *perm]
 
     # Session continuity
     if body.session_id:
