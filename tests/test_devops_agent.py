@@ -711,3 +711,26 @@ async def test_remediate_auto_mode_executes(client, app):
     rows = await db.fetch_all("SELECT executed, mode FROM remediation_log WHERE alert_source='disk'")
     assert len(rows) >= 1
     assert all(r["executed"] == 1 and r["mode"] == "auto" for r in rows)
+
+
+async def test_remediate_service_notify_mode_does_not_execute(client, app):
+    """Codex P1: servis/container remediation da gate'li — notify'da systemctl YOK."""
+    from app.core.devops_agent import DevOpsAgent
+
+    db = app.state.db
+    agent = DevOpsAgent(db=db, interval=60)
+    agent._remediation_mode = "notify"
+    agent._send_webhook = _noop_webhook
+    calls = []
+
+    async def fake_exec(cmd, timeout=30):
+        calls.append(cmd)
+        return {"stdout": "", "exit_code": 0}
+
+    agent._executor.execute = fake_exec
+    await agent._remediate_service("linux-ai-server", _crit_alert("service:linux-ai-server"))
+
+    assert calls == []  # systemctl restart YÜRÜTÜLMEDİ
+    rows = await db.fetch_all("SELECT executed, mode FROM remediation_log WHERE alert_source='service:linux-ai-server'")
+    assert len(rows) >= 1
+    assert all(r["executed"] == 0 for r in rows)

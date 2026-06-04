@@ -386,45 +386,49 @@ class DevOpsAgent:
             return
 
         self._cooldowns[alert.source] = now
-        mode = self._remediation_mode
 
         for step in playbook:
-            cmd = step["cmd"]
-            desc = step["desc"]
-            executed = False
-            success: bool | None = None
-            if mode == "auto":
-                # OPT-IN: playbook'u gerçekten yürüt (eski davranış). Yıkıcı adımlar
-                # mümkün (prune --volumes / rm backup); verify/rollback FAZ5-S2'de.
-                executed = True
-                try:
-                    result = await self._executor.execute(cmd, timeout=30)
-                    out = result.get("stdout", "")[:500]
-                    success = result.get("exit_code", 1) == 0
-                except Exception as e:
-                    out = str(e)[:500]
-                    success = False
-            else:
-                # GÜVENLİ DEFAULT (notify/dry_run): YÜRÜTME. Niyeti kaydet; mevcut
-                # alert-notify zaten operatöre haber verir (escalate). exec YOK.
-                out = f"skipped: remediation_mode={mode} (otonom yürütme kapalı)"
-            record = RemediationRecord(
-                timestamp=datetime.now(UTC).isoformat(),
-                alert_source=alert.source,
-                action=desc,
-                command=cmd,
-                result=out,
-                success=bool(success),
-            )
-            self._remediation_log.append(record)
-            await self._persist_remediation(alert, mode, desc, cmd, executed, out, success)
-            alert.remediation = f"[{mode}] {desc}"
+            await self._apply_remediation(alert, alert.source, step["desc"], step["cmd"])
 
         # Send webhook event (n8n) — mode dahil
         await self._send_webhook(alert)
 
-    async def _persist_remediation(
-        self, alert: Alert, mode: str, action: str, command: str, executed: bool, result: str, success: bool | None
+    async def _apply_remediation(self, alert: Alert, source: str, action: str, command: str, timeout: int = 30) -> None:
+        """Tek-nokta remediation adımı — TÜM yollar (playbook + servis + container)
+        bunu kullanır (Codex P1: gate her yerde). mode-gate: 'auto' değilse YÜRÜTME
+        YOK, sadece niyet kaydedilir (mevcut alert-notify escalate eder). in-memory
+        log + kalıcı ledger + alert.remediation."""
+        mode = self._remediation_mode
+        executed = False
+        success: bool | None = None
+        if mode == "auto":
+            # OPT-IN: gerçekten yürüt (eski davranış). Yıkıcı adımlar mümkün
+            # (prune --volumes / rm backup / restart); verify/rollback FAZ5-S2'de.
+            executed = True
+            try:
+                result = await self._executor.execute(command, timeout=timeout)
+                out = result.get("stdout", "")[:500]
+                success = result.get("exit_code", 1) == 0
+            except Exception as e:
+                out = str(e)[:500]
+                success = False
+        else:
+            out = f"skipped: remediation_mode={mode} (otonom yürütme kapalı)"
+        self._remediation_log.append(
+            RemediationRecord(
+                timestamp=datetime.now(UTC).isoformat(),
+                alert_source=source,
+                action=action,
+                command=command,
+                result=out,
+                success=bool(success),
+            )
+        )
+        await self._persist_remediation_row(source, alert.severity, mode, action, command, executed, out, success)
+        alert.remediation = f"[{mode}] {action}"
+
+    async def _persist_remediation_row(
+        self, source: str, severity: str, mode: str, action: str, command: str, executed: bool, result: str, success: bool | None
     ) -> None:
         """Kalıcı remediation ledger (server.db.remediation_log). Best-effort:
         DB yoksa/yazamazsa sessizce geç (remediation akışını bozma)."""
@@ -436,8 +440,8 @@ class DevOpsAgent:
                 "(alert_source, severity, mode, action, command, executed, result, success) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    alert.source,
-                    alert.severity,
+                    source,
+                    severity,
                     mode,
                     action,
                     command,
@@ -630,28 +634,8 @@ class DevOpsAgent:
             return
         self._cooldowns[source] = now
 
-        cmd = f"systemctl restart {service}"
-        try:
-            result = await self._executor.execute(cmd, timeout=15)
-            record = RemediationRecord(
-                timestamp=datetime.now(UTC).isoformat(),
-                alert_source=source,
-                action=f"Restart {service}",
-                command=cmd,
-                result=result.get("stdout", "")[:200],
-                success=result.get("exit_code", 1) == 0,
-            )
-        except Exception as e:
-            record = RemediationRecord(
-                timestamp=datetime.now(UTC).isoformat(),
-                alert_source=source,
-                action=f"Restart {service}",
-                command=cmd,
-                result=str(e)[:200],
-                success=False,
-            )
-        self._remediation_log.append(record)
-        alert.remediation = f"Restart {service}"
+        # mode-gate (Codex P1): notify/dry_run'da systemctl restart YÜRÜTÜLMEZ.
+        await self._apply_remediation(alert, source, f"Restart {service}", f"systemctl restart {service}", timeout=15)
         await self._send_webhook(alert)
 
     async def _remediate_container(self, container: str, alert: Alert) -> None:
@@ -661,28 +645,8 @@ class DevOpsAgent:
             return
         self._cooldowns[source] = now
 
-        cmd = f"docker start {container}"
-        try:
-            result = await self._executor.execute(cmd, timeout=15)
-            record = RemediationRecord(
-                timestamp=datetime.now(UTC).isoformat(),
-                alert_source=source,
-                action=f"Start {container}",
-                command=cmd,
-                result=result.get("stdout", "")[:200],
-                success=result.get("exit_code", 1) == 0,
-            )
-        except Exception as e:
-            record = RemediationRecord(
-                timestamp=datetime.now(UTC).isoformat(),
-                alert_source=source,
-                action=f"Start {container}",
-                command=cmd,
-                result=str(e)[:200],
-                success=False,
-            )
-        self._remediation_log.append(record)
-        alert.remediation = f"Start {container}"
+        # mode-gate (Codex P1): notify/dry_run'da docker start YÜRÜTÜLMEZ.
+        await self._apply_remediation(alert, source, f"Start {container}", f"docker start {container}", timeout=15)
         await self._send_webhook(alert)
 
     # ── Query Methods (for API) ────────────────────────
