@@ -123,10 +123,12 @@ LIVESYS altyapısını yeniden kullanır: FAZ1 outcome-contract (poller→`cron_
 - Detay: memory `security-jwt-secret-public-default-2026-06-03`, `security-telegram-token-leak-2026-06-04`, `project-session-2026-06-03-takeover-batch4-faz4s3`.
 
 ## FAZ 5 — Kapalı-döngü otonomi (Yetenek 2 — F-E1/E2)
-**Hedef:** otonom aksiyon kendi sonucunu doğrulasın, başarısızsa rollback/eskale. Atıl sınıflandırma + dormant remediation canlandırılır + doğrulama eklenir. Ana hatlı.
+**Hedef:** otonom aksiyon kendi sonucunu doğrulasın, başarısızsa rollback/eskale. Atıl sınıflandırma + dormant remediation canlandırılır + doğrulama eklenir.
+- ✅ **KOMPLE (2026-06-04, PR#41+#42).** KEŞİF: remediation "atıl" değil ZATEN-AKTİF'ti (verify/rollback yok; prune--volumes/rm-backup koşulsuz). **S1** (#41): `remediation_mode` default `notify` (otonom-exec kapalı) + kalıcı `remediation_log` ledger + tek-`_apply_remediation` (3-yol gate: playbook+service+container). **S2** (#42): `_verify_remediation` (metrik-resample / `systemctl is-active` / `docker inspect`) → fail → escalate (critical event + `escalated=1`). **Rollback dürüst-kısıt:** çoğu aksiyon geri-alınamaz → escalate-only (rollback yalnız reversible/governor, henüz eklenmedi). Default `notify` güvenli; `auto` opt-in-edilebilir (verify+escalate ile). Memory `project-faz5-slice1-autonomy-gate-2026-06-04`.
 
 ## FAZ 6 — Orkestra rolü/sınır (Yetenek 5)
-**İlke (build değil, sınır):** kalıcı/tekrarlayan = deterministik kod; Claude = büyük/belirsiz/yargı kararlarının şefi, olay-omurgasıyla tetiklenir — **kalp atışı değil**. Bu, planın sonunda netleşir.
+**İlke (build değil, sınır):** kalıcı/tekrarlayan = deterministik kod; Claude = büyük/belirsiz/yargı kararlarının şefi, olay-omurgasıyla tetiklenir — **kalp atışı değil**.
+- ✅ **KOMPLE (2026-06-04).** Sınır tanımlandı + mevcut LLM-çağırma yüzeyi denetlendi (**uyumlu** — ağır-LLM olay-tetikli, scheduled-cron deterministik, kalp-atışı-yargı YOK; tek meşru istisna pr-review-poll=poll-to-derive-event) + gelecek-kural konuldu. Feature eklenmedi. Detay: `docs/faz6-orchestra-boundary.md`.
 
 ---
 
