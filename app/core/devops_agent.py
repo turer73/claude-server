@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -42,6 +43,10 @@ class RemediationRecord:
 
 
 # ── Playbooks ──────────────────────────────────────────────
+
+# Güvenli systemd-unit / docker-container ad deseni (Slice-2 force-remediate shell
+# injection guard). systemd templated unit (foo@bar) için '@' dahil.
+_SAFE_UNIT_NAME = re.compile(r"[A-Za-z0-9._@-]+")
 
 PLAYBOOKS: dict[str, list[dict]] = {
     "cpu_critical": [
@@ -624,6 +629,11 @@ class DevOpsAgent:
                 source = source[len(pfx) :]
                 break
         base, _, name = source.partition(":")
+        # GÜVENLİK (defense-in-depth, RCE-yüzeyi): service/docker adı shell-komutuna
+        # gömülüyor. Kaynak iç-yazımlı olsa da, herhangi bir gelecekteki injection
+        # yolunu kapat -> yalnız güvenli unit/container-ad karakterleri. Aksi -> aksiyon yok.
+        if base in ("service", "docker") and name and not _SAFE_UNIT_NAME.fullmatch(name):
+            return None
         if base == "service" and name:
             return [{"desc": f"Restart {name}", "cmd": f"systemctl restart {name}"}]
         if base == "docker" and name:

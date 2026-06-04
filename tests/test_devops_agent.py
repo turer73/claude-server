@@ -931,6 +931,19 @@ def test_executable_playbook_resolution():
     assert agent.has_actionable_playbook("cron:backup") is False
 
 
+def test_executable_playbook_rejects_shell_injection_name():
+    """GÜVENLİK: service/docker adında shell-metakarakter -> aksiyon YOK (RCE guard)."""
+    from app.core import devops_agent as da
+
+    agent = da.DevOpsAgent(db=None, interval=60)
+    assert agent.has_actionable_playbook("service:x; rm -rf /") is False
+    assert agent.has_actionable_playbook("docker:n8n && curl evil") is False
+    assert agent.has_actionable_playbook("service:$(whoami)") is False
+    # meşru systemd templated unit (@) ve normal container geçer
+    assert agent.has_actionable_playbook("service:getty@tty1") is True
+    assert agent.has_actionable_playbook("docker:uptime-kuma") is True
+
+
 async def test_force_remediate_executes_and_verifies_pass(monkeypatch):
     """[🔧 Uygula] memory -> playbook çalışır + verify pass."""
     from app.core import devops_agent as da
