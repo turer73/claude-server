@@ -114,6 +114,118 @@ def _force_remediate(event_id: str) -> dict:
         return {"ok": False, "error": str(e)[:200]}
 
 
+# /claude oturum-sürekliliği: owner-chat -> son Claude Code session_id (poller process
+# uzun-ömürlü, update'ler arası kalır). /claude devam ettirir, /claude-new sıfırlar.
+_CLAUDE_SESSION: dict[int, str] = {}
+
+
+def _run_claude(prompt: str, session_id: str | None = None) -> dict:
+    """Owner-onaylı /claude -> localhost Claude Code run (internal-key, admin scope).
+    Poller AYRI process -> in-app değil HTTP. session_id verilirse --resume (süreklilik)."""
+    import os
+
+    key = read_env_var("INTERNAL_API_KEY") or os.environ.get("INTERNAL_API_KEY", "")
+    # SALT-OKUNUR (read_only=plan modu): Telegram'dan tam-agent/skip-permissions AÇMA.
+    # Claude okur+analiz eder, komut icra etmez / dosya değiştirmez (güvenlik kararı).
+    body: dict = {"prompt": prompt, "max_turns": 40, "read_only": True}
+    if session_id:
+        body["session_id"] = session_id
+    try:
+        r = requests.post(
+            "http://localhost:8420/api/v1/claude/run",
+            json=body,
+            headers={"X-API-Key": key},
+            timeout=320,  # run API 300s'de kill eder; biraz üstü
+        )
+        if r.status_code != 200:
+            return {"ok": False, "error": f"http {r.status_code}"}
+        return r.json()
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def _save_finding(prompt: str, answer: str) -> bool:
+    """Salt-okunur /claude bulgusunu hafızaya (discoveries) kaydet — KÖPRÜ yazar,
+    agent DEĞİL (read-only güvenlik korunur). Best-effort; hata reply'ı bozmaz.
+    type=learning, project=linux-ai-server. Secret redaction + 5dk dedup server-side."""
+    import os
+
+    key = read_env_var("MEMORY_API_KEY") or os.environ.get("MEMORY_API_KEY", "")
+    if not key or not answer:
+        return False
+    title = ("Telegram /claude: " + prompt.strip().replace("\n", " "))[:90]
+    body = {
+        "device_name": "telegram-claude",
+        "project": "linux-ai-server",
+        "type": "learning",
+        "title": title,
+        "details": answer[:4000],
+        "rationale": "Telegram salt-okunur /claude araştırma bulgusu (köprü-kayıt).",
+    }
+    try:
+        r = requests.post(
+            "http://localhost:8420/api/v1/memory/discoveries",
+            json=body,
+            headers={"X-Memory-Key": key},
+            timeout=10,
+        )
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def _handle_claude(chat_id: int, prompt: str, msg_id: int | None, fresh: bool = False) -> dict:
+    """Owner-onaylı /claude: Claude Code'u çağırır (threaded -> poller bloklanmaz),
+    typing keep-alive, oturum-sürekliliği. Owner-auth ÇAĞRAN katmanda (process_update)."""
+    if not prompt:
+        _send_message(
+            chat_id,
+            "*Kullanım:*\n`/claude <soru>` — Claude Code araştırır (oturum devam eder)\n"
+            "`/claude-new <...>` — yeni oturum (geçmişi sıfırla)\n\n"
+            "_SALT-OKUNUR: log/dosya okur + analiz eder, değişiklik/komut-icra YAPMAZ._\n"
+            "_Bulgular hafızaya (discoveries) kaydedilir · Max-plan (API faturası yok)._",
+            reply_to=msg_id,
+        )
+        return {"ok": True, "action": "claude-help"}
+
+    def _work():
+        stop = threading.Event()
+
+        def _keepalive():
+            _send_typing(chat_id)
+            while not stop.wait(4.0):
+                _send_typing(chat_id)
+
+        ka = threading.Thread(target=_keepalive, daemon=True)
+        ka.start()
+        try:
+            sid = None if fresh else _CLAUDE_SESSION.get(chat_id)
+            res = _run_claude(prompt, session_id=sid)
+            if res.get("error") or not res.get("ok", False):
+                reply = f"❌ *Claude hatası:* `{res.get('error') or res.get('stderr', 'bilinmeyen')[:200]}`"
+            else:
+                answer = res.get("result") or "(boş yanıt)"
+                new_sid = res.get("session_id")
+                if new_sid:
+                    _CLAUDE_SESSION[chat_id] = new_sid
+                # Bulguyu hafızaya kaydet (köprü-yazar, read-only korunur).
+                saved = _save_finding(prompt, answer) if res.get("result") else False
+                # cost GÖSTERME: Max-plan abonelikte faturalanmaz; CLI'nin nosyonel
+                # ($API-eşdeğeri) değeri kullanıcıyı yanıltır ("API istemiyorum").
+                tag = "💾 hafızaya kaydedildi · " if saved else ""
+                footer = f"\n\n{tag}`{res.get('model', 'claude')}` · Max-plan (salt-okunur)"
+                reply = answer[:3800] + footer
+        except Exception as e:
+            reply = f"❌ *Claude hatası:* `{str(e)[:200]}`"
+        finally:
+            stop.set()
+            ka.join(timeout=1.0)
+        _send_message(chat_id, reply, reply_to=msg_id)
+
+    threading.Thread(target=_work, daemon=True).start()
+    return {"ok": True, "action": "claude-spawned"}
+
+
 def _handle_callback(cb: dict) -> dict:
     """Inline-buton callback (ACK / Uygula). GÜVENLİK: yalnız sahip-chat (TELEGRAM_CHAT_ID)."""
     data = cb.get("data", "") or ""
@@ -197,6 +309,18 @@ def process_update(update: dict) -> dict:
 
     if not chat_id:
         return {"ok": True, "skipped": "no chat_id"}
+
+    # /claude, /claude-new — SAHİP-ONLY (tam-agent: sunucuda komut çalıştırır/dosya
+    # düzenler). Max-plan abonelik (claude_code._build_env API-key'i strip eder).
+    m_cc = re.match(r"^/claude(-new)?(@\w+)?(\s|$)", text)
+    if m_cc:
+        owner = read_env_var("TELEGRAM_CHAT_ID")
+        if not owner or str(chat_id) != str(owner):
+            _send_message(chat_id, "⛔ /claude yalnız sahip-chat'e açık.", reply_to=msg_id)
+            return {"ok": True, "skipped": "claude unauthorized"}
+        fresh = bool(m_cc.group(1))  # /claude-new -> oturum sıfırla
+        prompt = re.sub(r"^/claude(-new)?(@\w+)?\s*", "", text).strip()
+        return _handle_claude(chat_id, prompt, msg_id, fresh=fresh)
 
     # /research, /research-hi, /research-claude (or @bot_username variants)
     m = re.match(r"^/research(-hi|-claude)?(@\w+)?(\s|$)", text)

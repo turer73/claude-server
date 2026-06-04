@@ -317,6 +317,124 @@ def test_force_remediate_network_error(monkeypatch):
     assert "conn refused" in res["error"]
 
 
+_CC = "app.api.telegram_bot._handle_claude"
+
+
+def test_process_update_claude_unauthorized(monkeypatch):
+    """/claude SAHİP-DIŞI chat'ten -> reddedilir, _handle_claude ÇAĞRILMAZ (agent-RCE guard)."""
+    from app.api.telegram_bot import process_update
+
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "777")
+    with patch(_CC) as h, patch("app.api.telegram_bot._send_message"):
+        out = process_update(_fake_update("/claude rm test", chat_id=999))
+    assert out["skipped"] == "claude unauthorized"
+    h.assert_not_called()
+
+
+def test_process_update_claude_owner_routes(monkeypatch):
+    """/claude owner-chat -> _handle_claude(prompt, fresh=False)."""
+    from app.api.telegram_bot import process_update
+
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "777")
+    with patch(_CC, return_value={"ok": True, "action": "claude-spawned"}) as h:
+        process_update(_fake_update("/claude disk doluluk ne?", chat_id=777))
+    h.assert_called_once()
+    assert h.call_args[0][1] == "disk doluluk ne?"
+    assert h.call_args.kwargs.get("fresh") is False
+
+
+def test_process_update_claude_new_is_fresh(monkeypatch):
+    """/claude-new -> fresh=True (oturum sıfırla)."""
+    from app.api.telegram_bot import process_update
+
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "777")
+    with patch(_CC, return_value={}) as h:
+        process_update(_fake_update("/claude-new sıfırdan başla", chat_id=777))
+    assert h.call_args.kwargs.get("fresh") is True
+    assert h.call_args[0][1] == "sıfırdan başla"
+
+
+def test_handle_claude_empty_shows_help(monkeypatch):
+    """Boş prompt -> kullanım yardımı (thread spawn YOK)."""
+    from app.api.telegram_bot import _handle_claude
+
+    with patch("app.api.telegram_bot._send_message") as snd:
+        out = _handle_claude(777, "", 1)
+    assert out["action"] == "claude-help"
+    snd.assert_called_once()
+
+
+def test_run_claude_http_error():
+    """run endpoint non-200 -> {ok:False} (raise YOK)."""
+    import app.api.telegram_bot as tb
+
+    class _R:
+        status_code = 500
+
+    with patch("app.api.telegram_bot.requests.post", return_value=_R()):
+        res = tb._run_claude("x")
+    assert res["ok"] is False
+
+
+def test_run_claude_passes_session_id():
+    """session_id verilince body'ye eklenir (--resume süreklilik)."""
+    import app.api.telegram_bot as tb
+
+    captured = {}
+
+    class _R:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True, "result": "tamam"}
+
+    def _post(url, json=None, headers=None, timeout=None):
+        captured.update(json or {})
+        return _R()
+
+    with patch("app.api.telegram_bot.requests.post", side_effect=_post):
+        res = tb._run_claude("selam", session_id="sess-123")
+    assert captured["session_id"] == "sess-123"
+    assert captured["read_only"] is True  # Telegram -> salt-okunur (plan modu)
+    assert res["ok"] is True
+
+
+def test_save_finding_posts_discovery(monkeypatch):
+    """Bulgu discoveries'e POST edilir (köprü-yazar, agent değil)."""
+    import app.api.telegram_bot as tb
+
+    monkeypatch.setenv("MEMORY_API_KEY", "mk-test")
+    captured = {}
+
+    class _R:
+        status_code = 200
+
+    def _post(url, json=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["body"] = json
+        captured["key"] = (headers or {}).get("X-Memory-Key")
+        return _R()
+
+    with patch("app.api.telegram_bot.requests.post", side_effect=_post):
+        ok = tb._save_finding("disk neden doldu", "docker image'ları şişmiş")
+    assert ok is True
+    assert captured["url"].endswith("/api/v1/memory/discoveries")
+    assert captured["body"]["type"] == "learning"
+    assert captured["key"] == "mk-test"
+
+
+def test_save_finding_no_key_is_noop(monkeypatch):
+    """MEMORY_API_KEY yoksa kayıt denemez (sessiz False)."""
+    import app.api.telegram_bot as tb
+
+    monkeypatch.setattr(tb, "read_env_var", lambda k: "")
+    monkeypatch.delenv("MEMORY_API_KEY", raising=False)
+    with patch("app.api.telegram_bot.requests.post") as post:
+        ok = tb._save_finding("x", "y")
+    assert ok is False
+    post.assert_not_called()
+
+
 def test_process_update_callback_fix_endpoint_error(monkeypatch):
     """force-remediate ok=False -> '❌ Uygulanamadı' toast'u."""
     from app.api.telegram_bot import process_update
