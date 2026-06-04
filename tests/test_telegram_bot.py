@@ -238,3 +238,93 @@ def test_mark_event_acked_db_error_returns_false(tmp_path, monkeypatch):
 
     monkeypatch.setenv("DB_PATH", str(tmp_path))  # dizin -> connect/exec başarısız
     assert _mark_event_acked("5") is False
+
+
+# ── Slice-2: [🔧 Uygula] fix callback ──────────────────────────
+
+
+def test_process_update_callback_fix_owner_executes(monkeypatch):
+    """Owner-chat [🔧 Uygula] -> _force_remediate çağrılır, verify-pass toast'u döner."""
+    from app.api.telegram_bot import process_update
+
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "777")
+    upd = {"callback_query": {"id": "cb9", "data": "fix:12", "message": {"chat": {"id": 777}}}}
+    with (
+        patch("app.api.telegram_bot._answer_callback") as ans,
+        patch("app.api.telegram_bot._force_remediate", return_value={"ok": True, "executed": True, "verify": "pass"}) as fr,
+    ):
+        out = process_update(upd)
+    assert out["action"] == "fix"
+    fr.assert_called_once_with("12")
+    assert "doğrulandı" in ans.call_args[0][1]
+
+
+def test_process_update_callback_fix_unauthorized(monkeypatch):
+    """Sahip-DIŞI chat'ten [🔧 Uygula] -> RCE-yüzeyi kapalı: _force_remediate ÇAĞRILMAZ."""
+    from app.api.telegram_bot import process_update
+
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "777")
+    with patch("app.api.telegram_bot._answer_callback"), patch("app.api.telegram_bot._force_remediate") as fr:
+        out = process_update({"callback_query": {"id": "cbA", "data": "fix:12", "message": {"chat": {"id": 999}}}})
+    assert out["skipped"] == "unauthorized callback"
+    fr.assert_not_called()
+
+
+def test_process_update_callback_fix_bad_id(monkeypatch):
+    """fix:<non-numeric> -> _force_remediate ÇAĞRILMAZ (id-guard)."""
+    from app.api.telegram_bot import process_update
+
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "777")
+    with patch("app.api.telegram_bot._answer_callback"), patch("app.api.telegram_bot._force_remediate") as fr:
+        out = process_update({"callback_query": {"id": "cbB", "data": "fix:1;rm", "message": {"chat": {"id": 777}}}})
+    assert out["skipped"] == "bad fix id"
+    fr.assert_not_called()
+
+
+def test_process_update_callback_fix_no_actionable(monkeypatch):
+    """force-remediate executed=False -> 'otomatik aksiyon yok' toast'u."""
+    from app.api.telegram_bot import process_update
+
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "777")
+    with (
+        patch("app.api.telegram_bot._answer_callback") as ans,
+        patch("app.api.telegram_bot._force_remediate", return_value={"ok": True, "executed": False, "reason": "no_actionable_playbook"}),
+    ):
+        process_update({"callback_query": {"id": "cbC", "data": "fix:5", "message": {"chat": {"id": 777}}}})
+    assert "otomatik aksiyon yok" in ans.call_args[0][1]
+
+
+def test_force_remediate_http_error(monkeypatch):
+    """force endpoint 503 -> {ok:False, http:503} (raise YOK)."""
+    import app.api.telegram_bot as tb
+
+    class _Resp:
+        status_code = 503
+
+    with patch("app.api.telegram_bot.requests.post", return_value=_Resp()):
+        res = tb._force_remediate("7")
+    assert res["ok"] is False
+    assert res["http"] == 503
+
+
+def test_force_remediate_network_error(monkeypatch):
+    """force endpoint network hata -> {ok:False, error:...} (raise YOK)."""
+    import app.api.telegram_bot as tb
+
+    with patch("app.api.telegram_bot.requests.post", side_effect=RuntimeError("conn refused")):
+        res = tb._force_remediate("7")
+    assert res["ok"] is False
+    assert "conn refused" in res["error"]
+
+
+def test_process_update_callback_fix_endpoint_error(monkeypatch):
+    """force-remediate ok=False -> '❌ Uygulanamadı' toast'u."""
+    from app.api.telegram_bot import process_update
+
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "777")
+    with (
+        patch("app.api.telegram_bot._answer_callback") as ans,
+        patch("app.api.telegram_bot._force_remediate", return_value={"ok": False, "http": 503}),
+    ):
+        process_update({"callback_query": {"id": "cbD", "data": "fix:5", "message": {"chat": {"id": 777}}}})
+    assert "Uygulanamadı" in ans.call_args[0][1]

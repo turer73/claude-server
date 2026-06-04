@@ -56,6 +56,20 @@ suggest_action() {
     esac
 }
 
+# Slice-2: bu kaynağa [🔧 Uygula] tek-tıkla-aksiyon butonu sunulabilir mi?
+# devops_agent._executable_playbook ile AYNI küme (memory/disk/temperature/service/
+# docker). cpu=sadece-inceleme, cron/diğer=playbook-yok -> sadece [✅ Gördüm].
+# escalation:/remediation: önekleri iç-kaynağa indirgenir (orada aksiyon olabilir).
+has_action() {
+    local s="$1" base
+    case "$s" in escalation:*|remediation:*) s="${s#*:}";; esac
+    base="${s%%:*}"
+    case "$base" in
+        memory|disk|temperature|service|docker) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # LIMIT 50: batch/spam-cap (Codex #24). Outage/producer-bug sonrasi sinirsiz burst
 # onler; kalan-backlog sonraki */20 run'da drenaj edilir (no-loss korunur).
 IDS=$(sqlite3 "$DB_PATH" \
@@ -97,10 +111,16 @@ ${SUGGEST}
 ${ts}"
 
     JSON_MSG=$(printf '%s' "$MSG" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
-    # inline '✅ Gördüm' ACK butonu — callback_data='ack:<event_id>'. Tıklanınca
-    # telegram-poller process_update yakalar -> events.acked=1 -> escalation durur.
-    # (Slice-2: '🔧 Uygula' aksiyon-butonu eklenecek.)
-    REPLY_MARKUP="{\"inline_keyboard\":[[{\"text\":\"✅ Gördüm\",\"callback_data\":\"ack:${id}\"}]]}"
+    # inline butonlar — callback'leri telegram-poller process_update yakalar:
+    #   [🔧 Uygula] fix:<id>  -> devops force-remediate (playbook çalıştır+verify)
+    #   [✅ Gördüm] ack:<id>  -> events.acked=1 -> escalation durur
+    # [🔧 Uygula] YALNIZ çalıştırılabilir-playbook olan kaynaklara (has_action).
+    if has_action "$src"; then
+        BTN_ROW="{\"text\":\"🔧 Uygula\",\"callback_data\":\"fix:${id}\"},{\"text\":\"✅ Gördüm\",\"callback_data\":\"ack:${id}\"}"
+    else
+        BTN_ROW="{\"text\":\"✅ Gördüm\",\"callback_data\":\"ack:${id}\"}"
+    fi
+    REPLY_MARKUP="{\"inline_keyboard\":[[${BTN_ROW}]]}"
     BODY="{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":${JSON_MSG},\"reply_markup\":${REPLY_MARKUP}}"
 
     HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 \

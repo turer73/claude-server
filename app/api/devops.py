@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 
 from app.middleware.dependencies import require_auth
 
@@ -115,3 +116,33 @@ async def list_playbooks(_: None = Depends(require_auth)) -> dict:
         "critical_containers": settings.monitor_critical_containers,
         "vps_containers": settings.monitor_vps_containers,
     }
+
+
+class ForceRemediateRequest(BaseModel):
+    """Slice-2 [🔧 Uygula]: kullanıcı-onaylı manuel remediation tetikleme.
+    source VEYA event_id (event_id -> events.source çözülür)."""
+
+    source: str | None = None
+    event_id: int | None = None
+
+
+@router.post("/remediate/force")
+async def force_remediate(req: ForceRemediateRequest, request: Request, _: None = Depends(require_auth)) -> dict:
+    """Telegram [🔧 Uygula] -> playbook'u ELLE çalıştır (remediation_mode BYPASS;
+    tıklama = açık insan-onayı). Auth: internal-key (admin scope) -> owner-chat
+    kontrolü telegram_bot katmanında. event_id verilirse source DB'den çözülür."""
+    agent = _get_agent(request)
+    if not agent:
+        raise HTTPException(503, "DevOps agent not initialized")
+    source = req.source
+    if not source and req.event_id is not None:
+        db = getattr(request.app.state, "db", None)
+        if not db:
+            raise HTTPException(503, "db unavailable")
+        row = await db.fetch_one("SELECT source FROM events WHERE id=?", (req.event_id,))
+        if not row:
+            raise HTTPException(404, "event not found")
+        source = row["source"]
+    if not source:
+        raise HTTPException(400, "source or event_id required")
+    return await agent.force_remediate(source)

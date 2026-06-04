@@ -94,8 +94,28 @@ def _mark_event_acked(event_id: str) -> bool:
         return False
 
 
+def _force_remediate(event_id: str) -> dict:
+    """[🔧 Uygula] -> localhost devops force-remediate (internal-key). Poller AYRI
+    process -> in-app agent'a erişemez -> HTTP. Owner-auth ÇAĞRAN katmanda yapıldı."""
+    import os
+
+    key = read_env_var("INTERNAL_API_KEY") or os.environ.get("INTERNAL_API_KEY", "")
+    try:
+        r = requests.post(
+            "http://localhost:8420/api/v1/devops/remediate/force",
+            json={"event_id": int(event_id)},
+            headers={"X-API-Key": key},
+            timeout=90,
+        )
+        if r.status_code != 200:
+            return {"ok": False, "http": r.status_code}
+        return r.json()
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
 def _handle_callback(cb: dict) -> dict:
-    """Inline-buton callback (ACK). GÜVENLİK: yalnız sahip-chat (TELEGRAM_CHAT_ID)."""
+    """Inline-buton callback (ACK / Uygula). GÜVENLİK: yalnız sahip-chat (TELEGRAM_CHAT_ID)."""
     data = cb.get("data", "") or ""
     cb_id = cb.get("id")
     from_chat = (cb.get("message") or {}).get("chat", {}).get("id")
@@ -108,6 +128,25 @@ def _handle_callback(cb: dict) -> dict:
         ok = _mark_event_acked(eid)
         _answer_callback(cb_id, "✅ ACK alındı — eskalasyon durdu" if ok else "ack uygulanamadı")
         return {"ok": True, "action": "ack", "event": eid, "marked": ok}
+    if data.startswith("fix:"):
+        eid = data.split(":", 1)[1]
+        if not eid.isdigit():
+            _answer_callback(cb_id, "geçersiz id")
+            return {"ok": True, "skipped": "bad fix id"}
+        res = _force_remediate(eid)
+        if not res.get("ok"):
+            _answer_callback(cb_id, f"❌ Uygulanamadı ({res.get('http') or res.get('error') or 'hata'})")
+        elif not res.get("executed"):
+            _answer_callback(cb_id, "ℹ️ Bu uyarı için otomatik aksiyon yok (sadece-inceleme)")
+        else:
+            verify = res.get("verify")
+            toast = {
+                "pass": "✅ Uygulandı + doğrulandı (düzeldi)",
+                "fail": "⚠️ Uygulandı ama hâlâ kritik — eskale edildi",
+                "n/a": "✅ Uygulandı (doğrulama yok)",
+            }.get(verify, "✅ Uygulandı")
+            _answer_callback(cb_id, toast)
+        return {"ok": True, "action": "fix", "event": eid, "result": res}
     _answer_callback(cb_id, "bilinmeyen aksiyon")
     return {"ok": True, "skipped": f"unknown callback: {data[:40]}"}
 
