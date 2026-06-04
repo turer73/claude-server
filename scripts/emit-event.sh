@@ -10,7 +10,8 @@
 #          sozlesmesinin bash karsiligi), SQL-escape, DB-yoksa-sessiz-skip.
 #
 # NOT: notified=0 (schema default). Bu helper YALNIZCA kayit yazar; bildirim AYRI
-# notify-cron'un isi (henuz yok -> mevcut alert-POST tek-notifier kalir, cift-bildirim yok).
+# notify-cron'un isi (CANLI, */20 cron) -> warn/critical event'leri Telegram'a
+# [✅ Gördüm]/[🔧 Uygula] butonlariyla gonderir. Tek-omurga (2026-06-04 konsolidasyon).
 set +e
 
 TYPE="${1:-}"

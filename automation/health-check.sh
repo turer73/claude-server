@@ -1,47 +1,43 @@
 #!/bin/bash
-# Automated health check — triggers webhook + logs result + Telegram alert
-API=http://localhost:8420
-LOG="/var/log/linux-ai-server/health-check.log"
-STATE_FILE="/tmp/health-check-state"
+# App health watchdog -> events-spine.
+#
+# 2026-06-04 KONSOLIDASYON (tek-omurga): direkt-Telegram EMEKLİ. Sağlıksızlık artık
+# events-spine'a yazılır (emit-event.sh) -> notify-cron -> Telegram. Kaynak
+# 'service:linux-ai-server' => alert otomatik [🔧 Uygula]=systemctl restart butonu alır
+# (Slice-2). Edge-detection (STATE) ile durum-değişiminde tek event.
+API="${API:-http://localhost:8420}"
+EMIT="${EMIT_EVENT:-/opt/linux-ai-server/scripts/emit-event.sh}"
+LOG="${HEALTH_CHECK_LOG:-/var/log/linux-ai-server/health-check.log}"
+STATE_FILE="${HEALTH_CHECK_STATE:-/tmp/health-check-state}"
 
-# .env'den oku
-if [ -f /opt/linux-ai-server/.env ]; then
-  set -a; source /opt/linux-ai-server/.env; set +a
+ENV_FILE="${NOTIFY_ENV_FILE:-/opt/linux-ai-server/.env}"
+if [ -f "$ENV_FILE" ]; then
+  set -a; source "$ENV_FILE"; set +a
 fi
 
-RESULT=$(curl -s --max-time 10 -X POST $API/api/v1/monitor/webhooks/trigger/health_check -H 'Content-Type: application/json' -H "X-API-Key: ${INTERNAL_API_KEY:-MISSING}")
-HEALTHY=$(echo $RESULT | python3 -c 'import sys,json; print(json.load(sys.stdin).get("healthy",False))' 2>/dev/null)
+RESULT=$(curl -s --max-time 10 -X POST "$API/api/v1/monitor/webhooks/trigger/health_check" -H 'Content-Type: application/json' -H "X-API-Key: ${INTERNAL_API_KEY:-MISSING}")
+HEALTHY=$(echo "$RESULT" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("healthy",False))' 2>/dev/null)
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
 PREV_STATE=$(cat "$STATE_FILE" 2>/dev/null || echo "unknown")
 
 if [ "$HEALTHY" = "True" ]; then
-    echo "[$TIMESTAMP] Health OK" >> "$LOG"
-    # Düzelme bildirimi (unhealthy → healthy geçişi)
-    if [ "$PREV_STATE" = "unhealthy" ] && [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
-      curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-        -d chat_id="$TELEGRAM_CHAT_ID" \
-        -d parse_mode="Markdown" \
-        -d text="✅ *Klipper Sunucu — Düzeldi*
-Servis tekrar sağlıklı.
-🕐 $(date '+%H:%M %d/%m/%Y')" > /dev/null 2>&1
+    echo "[$TIMESTAMP] Health OK" >> "$LOG" 2>/dev/null
+    # Düzelme: log (notify-cron warn/critical-only -> info-recovery spam yok).
+    if [ "$PREV_STATE" = "unhealthy" ]; then
+        echo "[$TIMESTAMP] RECOVERED — servis tekrar sağlıklı" >> "$LOG" 2>/dev/null
     fi
-    echo "healthy" > "$STATE_FILE"
+    echo "healthy" > "$STATE_FILE" 2>/dev/null
+    echo "OUTCOME: pass | healthy"
 else
-    echo "[$TIMESTAMP] UNHEALTHY — $RESULT" >> "$LOG"
-    # Telegram alert (sadece ilk düşüşte, spam olmasın)
-    if [ "$PREV_STATE" != "unhealthy" ] && [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
-      curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-        -d chat_id="$TELEGRAM_CHAT_ID" \
-        -d parse_mode="Markdown" \
-        -d text="🚨 *Klipper Sunucu — UNHEALTHY*
-Servis yanıt vermiyor veya sağlıksız!
-🕐 $(date '+%H:%M %d/%m/%Y')" > /dev/null 2>&1
+    echo "[$TIMESTAMP] UNHEALTHY — $RESULT" >> "$LOG" 2>/dev/null
+    # Edge: yalnız healthy->unhealthy geçişinde emit (spam yok). service:linux-ai-server
+    # => notify-cron [🔧 Uygula]=systemctl restart linux-ai-server butonu sunar.
+    if [ "$PREV_STATE" != "unhealthy" ]; then
+        "$EMIT" alert "service:linux-ai-server" critical \
+            "Health check UNHEALTHY: servis yanıt vermiyor/sağlıksız" \
+            "/health başarısız. Yanıt: $(printf '%s' "$RESULT" | head -c 200)"
     fi
-    echo "unhealthy" > "$STATE_FILE"
-    # Webhook event
-    curl -s -X POST $API/api/v1/monitor/webhooks/receive \
-      -H 'Content-Type: application/json' \
-      -H "X-API-Key: ${INTERNAL_API_KEY:-MISSING}" \
-      -d "{\"source\": \"health-check\", \"event\": \"alert\", \"data\": {\"healthy\": false, \"timestamp\": \"$TIMESTAMP\"}}" > /dev/null 2>&1
+    echo "unhealthy" > "$STATE_FILE" 2>/dev/null
+    echo "OUTCOME: fail | unhealthy -> spine"
 fi
+exit 0
