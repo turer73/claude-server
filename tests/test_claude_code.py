@@ -85,9 +85,14 @@ async def test_claude_run_read_only_uses_allowlist(client, auth_headers):
     tools = argv[argv.index("--allowedTools") + 1]
     assert "Bash(git log:*)" in tools
     assert "Read" in tools
-    assert "Edit" not in tools  # mutasyon yok
-    assert "Write" not in tools
+    assert "git branch" not in tools  # P2: git branch mutasyon yapabilir, hariç
     assert "--dangerously-skip-permissions" not in argv
+    # P1: disallowedTools mutasyonu KESİN engeller (settings'i ezer)
+    assert "--disallowedTools" in argv
+    dis = argv[argv.index("--disallowedTools") + 1]
+    assert "Edit" in dis
+    assert "Write" in dis
+    assert "Bash(rm:*)" in dis
 
 
 @pytest.mark.anyio

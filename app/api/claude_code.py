@@ -34,7 +34,7 @@ READ_ONLY_ALLOWED_TOOLS = " ".join(
         "Bash(git status:*)",
         "Bash(git diff:*)",
         "Bash(git show:*)",
-        "Bash(git branch:*)",
+        # NOT: `git branch` HARİÇ — -D/-m ile mutasyon yapabilir (Codex P2).
         "Bash(journalctl:*)",
         "Bash(systemctl status:*)",
         "Bash(systemctl is-active:*)",
@@ -55,6 +55,30 @@ READ_ONLY_ALLOWED_TOOLS = " ".join(
         "Bash(wc:*)",
         "Bash(uname:*)",
         "Bash(sensors:*)",
+    ]
+)
+
+# --allowedTools EKLEYİCİDİR (kısıtlayıcı değil): hesabın settings.json'ı ekstra araç
+# izniyorsa allowlist tek başına read-only'yi GARANTİ ETMEZ (Codex P1). --disallowedTools
+# EN YÜKSEK önceliklidir (settings + allow'u ezer) -> mutasyon araçlarını KESİN engelle.
+# Dosya-mutasyon araçları + en yıkıcı kabuk komutları. (settings şu an boş ama
+# enforcement gelecekteki/proje-settings'e karşı da dayanıklı olsun.)
+READ_ONLY_DISALLOWED_TOOLS = " ".join(
+    [
+        "Edit",
+        "Write",
+        "NotebookEdit",
+        "Bash(rm:*)",
+        "Bash(rmdir:*)",
+        "Bash(mv:*)",
+        "Bash(dd:*)",
+        "Bash(truncate:*)",
+        "Bash(tee:*)",
+        "Bash(chmod:*)",
+        "Bash(chown:*)",
+        "Bash(mkfs:*)",
+        "Bash(kill:*)",
+        "Bash(pkill:*)",
     ]
 )
 
@@ -177,7 +201,7 @@ async def _run_on_vps(body: ClaudePromptRequest) -> dict:
     # read_only -> salt-okunur allowlist (VPS yolu da onurlandırır; Codex P2). skip-
     # permissions VPS'te zaten yok; allowlist read-only kabuğa izin + mutasyon reddi.
     if body.read_only:
-        args.extend(["--allowedTools", READ_ONLY_ALLOWED_TOOLS])
+        args.extend(["--allowedTools", READ_ONLY_ALLOWED_TOOLS, "--disallowedTools", READ_ONLY_DISALLOWED_TOOLS])
     if body.session_id:
         args.extend(["--resume", body.session_id])
     elif body.continue_last:
@@ -279,7 +303,11 @@ async def run_claude(body: ClaudePromptRequest):
 
     # read_only -> salt-okunur allowlist (git log/journalctl gibi read-only kabuk ÇALIŞIR,
     # mutasyon reddedilir); değilse mevcut skip-permissions (web-UI). Telegram read_only=True.
-    perm = ["--allowedTools", READ_ONLY_ALLOWED_TOOLS] if body.read_only else ["--dangerously-skip-permissions"]
+    if body.read_only:
+        # allow read-only + disallow mutasyon (disallow precedence -> settings'i ezer, P1).
+        perm = ["--allowedTools", READ_ONLY_ALLOWED_TOOLS, "--disallowedTools", READ_ONLY_DISALLOWED_TOOLS]
+    else:
+        perm = ["--dangerously-skip-permissions"]
     cmd = [binary, "-p", body.prompt, "--output-format", "json", *perm]
 
     # Session continuity
