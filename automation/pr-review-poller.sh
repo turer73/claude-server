@@ -126,8 +126,9 @@ blast_high() {
   ( cd "$ROOT" && timeout 30 git fetch -q origin "pull/$num/head" 2>/dev/null ) || { echo 0; return; }
   range="${basesha:-origin/master}...FETCH_HEAD"
   out=$( cd "$ROOT" && timeout 30 "$BLAST_SH" --diff "$range" 2>/dev/null || true )
-  # grep -c no-match'te "0" yazar + exit 1 -> '|| echo 0' EKLEME (cift-satir bug'i).
-  n=$(printf '%s\n' "$out" | grep -c '^     - ')
+  # UNIQUE consumer say (Codex P2): ayni dosya farkli tablolar altinda tekrar
+  # bullet'lanir -> sort -u ile tekille (duplike sismesi esigi yaniltmasin).
+  n=$(printf '%s\n' "$out" | grep '^     - ' | sort -u | grep -c '^' || true)
   { [ "${n:-0}" -ge "$BLAST_THRESHOLD" ] && echo 1; } || echo 0
 }
 
