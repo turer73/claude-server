@@ -109,11 +109,18 @@
 **Hedef:** bir değişiklik neye dokunduğunu ÖNCEDEN bilsin (şu an elle grep). Hafif bağımlılık/etki haritası (route↔DB↔consumer). Ana hatlı; gelince detay.
 - **PR-review sistemi BURAYA bağlanır** (değişiklik-öncesi-etki-farkındalığı): merge-öncesi otomatik review = değişikliğin riskini önceden yüzeye çıkarma. Detay: `docs/pr-review-system.md` + memory `project-pr-review-system-2026-06-02`.
 - ✅ **S1** (#22): `scripts/blast-radius.sh <dosya>` — forward(2-hop tablolar)+reverse(consumer). ✅ **S2** (#29 `e6865c0`): `--diff [range]` changeset-mode + awk SELECT-statement-aware FP-filtre (multiline SELECT..FROM yakalar, docstring/comment "from X" eler). Advisory; heuristic-limit dokümante (kök=AST/S5).
-- ⬜ **S3 (SIRADAKİ):** PR-review-poller'a `blast-radius --diff` enjeksiyon → review-prompt'a "bu PR şu tablolara dokunuyor, consumer'lar: ...". Detay/spec: `docs/new-session-prep.md`. ⬜ S4: yüksek-blast → FAZ2 review-spawn sinyali.
+- ✅ **S3** (#35 `547c93c`): `pr-review-spawn.sh` claude-server PR'ı için `blast-radius --diff <base>...<PR-head>` çıktısını review-prompt'a "EK BAĞLAM — BLAST-RADIUS" bloğu enjekte eder (reviewer dokunulan tablolar + diff-DIŞI consumer'ları ÖNCEDEN görür). read-only + fail-safe (gh/git/script `timeout` 15/30/30) + dormant (FAZ2 enable'da devreye). master-içerik yaklaşımı (PR-HEAD değil) prompt'ta belirtilir.
+- ✅ **S4** (`automation/pr-review-poller.sh`): yüksek-blast sinyali — `faz2_decision` spawn-değilse ama PR ≥`PR_REVIEW_BLAST_THRESHOLD` (vars 5) consumer'a dokunuyorsa (klipper-spesifik blast-radius) **spawn'a yükseltilir** (küçük-diff/büyük-etki: kritik paylaşılan tabloya minik dokunuş diff-eşiğinin altında kalsa da review tetikler). fail-safe (timeout→0) + sadece claude-server.
+- **FAZ 4 KOMPLE** (S1-S4). Heuristic-limit (kök=AST/S5) dokümante; ileride S5=AST opsiyonel.
 
 ---
 ## EK WORKSTREAM — Cross-project PR-review sistemi (LIVESYS-entegre, ayrı doküman)
 LIVESYS altyapısını yeniden kullanır: FAZ1 outcome-contract (poller→`cron_outcomes`), FAZ2 liveness deseni, FAZ3.1 digest-aggregate. Kavramsal: **FAZ 3.2** (PR-event'leri olay-omurgasının örneği) + **FAZ 4** (değişiklik-öncesi-etki). Durum: **FAZ1 aggregate→digest CANLI** (PR#15, ücretsiz) + **FAZ2 koşullu review-spawn DISABLED-pilot** (PR#16). ENABLE-checklist + tam detay: `docs/pr-review-system.md`.
+
+## EK — Güvenlik sertleştirme (batch4 + secret-leak'ler, 2026-06-03/04)
+- ✅ **batch4** (kullanıcı #99804): #1 JWT-secret env-only+create_app-guard (PR#33) · #2 shell dürüst-doc+katastrofik-blok+audit-log (PR#34) · #3 path-scope NON-ISSUE · #4 CI [3.11,3.14] matrix (PR#38) · #5 config-drift kök-çözüm: TÜM secret'lar env-only + nested-recursive drift-WARNING (PR#37). **5/5 KAPANDI.**
+- ✅ **2 canlı secret-açığı kapatıldı:** prod JWT imzalama secret'i public-default `change-me-via-env`'di (#33, rotate) + Telegram bot-token GitHub-secret-scan ile public sızdı (#36, kullanıcı revoke + klipper/n8n env-rotate). Ortak kök-neden = secret world-readable `server.yml`'de + Settings env-ezme → **#5 ile kökten giderildi**.
+- Detay: memory `security-jwt-secret-public-default-2026-06-03`, `security-telegram-token-leak-2026-06-04`, `project-session-2026-06-03-takeover-batch4-faz4s3`.
 
 ## FAZ 5 — Kapalı-döngü otonomi (Yetenek 2 — F-E1/E2)
 **Hedef:** otonom aksiyon kendi sonucunu doğrulasın, başarısızsa rollback/eskale. Atıl sınıflandırma + dormant remediation canlandırılır + doğrulama eklenir. Ana hatlı.
