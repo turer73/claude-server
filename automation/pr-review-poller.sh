@@ -59,6 +59,9 @@ DIFF_THRESHOLD="${PR_REVIEW_DIFF_THRESHOLD:-400}"             # büyük-diff eş
 DAILY_MAX="${PR_REVIEW_DAILY_MAX:-10}"                         # günlük hard-cap (Max-x20 paylaşımlı)
 DAILY_FILE="${PR_REVIEW_DAILY_FILE:-/opt/linux-ai-server/data/hook-state/pr-review-daily.json}"
 SPAWN="/opt/linux-ai-server/automation/pr-review-spawn.sh"
+# FAZ4-S4: yüksek-blast spawn-sinyali (klipper-spesifik blast-radius)
+BLAST_SH="/opt/linux-ai-server/scripts/blast-radius.sh"
+BLAST_THRESHOLD="${PR_REVIEW_BLAST_THRESHOLD:-5}"             # >= N consumer -> yüksek-blast
 
 daily_count() {  # bugünkü spawn sayısı
   local today; today=$(date -u +%Y-%m-%d)
@@ -111,6 +114,23 @@ faz2_decision() {
   esac
 }
 
+# FAZ4-S4: yüksek-blast mı? echo 1/0. SADECE claude-server (blast-radius klipper-
+# spesifik). read-only + FAIL-SAFE (gh/git/script timeout veya hata -> 0 = sinyal yok,
+# review akışını ASLA bloklamaz). consumer-bullet (5-boşluk) sayar; >= eşik -> yüksek.
+blast_high() {
+  local repo="$1" num="$2"
+  case "$repo" in */claude-server) ;; *) echo 0; return ;; esac
+  [ -x "$BLAST_SH" ] || { echo 0; return; }
+  local basesha range out n
+  basesha=$(timeout 15 gh pr view "$num" -R "$repo" --json baseRefOid -q .baseRefOid 2>/dev/null || true)
+  ( cd "$ROOT" && timeout 30 git fetch -q origin "pull/$num/head" 2>/dev/null ) || { echo 0; return; }
+  range="${basesha:-origin/master}...FETCH_HEAD"
+  out=$( cd "$ROOT" && timeout 30 "$BLAST_SH" --diff "$range" 2>/dev/null || true )
+  # grep -c no-match'te "0" yazar + exit 1 -> '|| echo 0' EKLEME (cift-satir bug'i).
+  n=$(printf '%s\n' "$out" | grep -c '^     - ')
+  { [ "${n:-0}" -ge "$BLAST_THRESHOLD" ] && echo 1; } || echo 0
+}
+
 log "=== PR-review poll START (DRY_RUN=$DRY_RUN ENABLED=$ENABLED MAX=$MAX DAILY_MAX=$DAILY_MAX) ==="
 CANDIDATES=0 REVIEWED=0 FETCH_FAIL=0
 for repo in "${REPOS[@]}"; do
@@ -141,6 +161,19 @@ for repo in "${REPOS[@]}"; do
     dels=$(printf '%s' "$pr" | jq -r '.deletions // 0')
     labels=$(printf '%s' "$pr" | jq -r '[.labels[]?.name] | join(",")')
     decision=$(faz2_decision "$repo" "$num" "$base" "$adds" "$dels" "$labels" "$head")
+    # FAZ4-S4: spawn-değilse ama yüksek-blast ise -> spawn'a yükselt (küçük-diff/
+    # büyük-etki: kritik paylaşılan tabloya minik dokunuş diff-eşiğinin altında
+    # kalsa da review tetikler). main-base gerekli (faz2 zaten kontrol etti).
+    if [ "$decision" != "spawn" ]; then
+      case "$base" in
+        main | master)
+          if [ "$(blast_high "$repo" "$num")" = "1" ]; then
+            log "ADAY(FAZ4-S4): $key yüksek-blast (>=${BLAST_THRESHOLD} consumer) -> spawn (diff küçük olsa da)"
+            decision=spawn
+          fi
+          ;;
+      esac
+    fi
     [ "$decision" = "skip" ] && continue
     CANDIDATES=$((CANDIDATES + 1))
     fkey="force:${key}"
