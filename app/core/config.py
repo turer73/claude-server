@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from functools import lru_cache
 from typing import Annotated
@@ -16,6 +17,23 @@ DEFAULT_ENV_FILE = "/opt/linux-ai-server/.env"
 # (ve bos string) baslamayi reddeder. config.py default'u + scripts/install.sh'in
 # systemd unit'ine dustugu degerler. Public/predictable -> JWT forge edilebilir.
 INSECURE_JWT_SECRETS = frozenset({"", "change-me-via-env", "change-me-in-production"})
+
+# GUVENLIK (#5): bu Settings alanlari SECRET'tir; world-readable YAML'dan ASLA
+# yuklenmez (get_settings dislar) — yalniz env. server.yml'e secret koymak +
+# YAML'in env'i ezmesi JWT public-default ve Telegram token leak'inin kok nedeniydi.
+_SECRET_FIELDS = frozenset(
+    {
+        "jwt_secret",
+        "internal_api_key",
+        "memory_api_key",
+        "vercel_token",
+        "cloudflare_token",
+        "supabase_token",
+        "github_token",
+        "coolify_token",
+        "telegram_bot_token",
+    }
+)
 
 
 def read_env_var(name: str, env_file: str = DEFAULT_ENV_FILE) -> str:
@@ -222,14 +240,18 @@ def get_settings() -> Settings:
 
     # Only pass keys that match Settings fields (flat keys only)
     valid_fields = Settings.model_fields
-    # GUVENLIK: jwt_secret YAML'dan (cogu kez world-readable, ornek /etc/.../
-    # server.yml 0644) ASLA gelmemeli — env-only. Prod'da server.yml'e dusen
-    # "change-me-via-env" placeholder env'i eziyor ve public-default ile JWT
-    # imzalamaya yol aciyordu (rotate edildi). Burada YAML'dan dislanir; degeri
-    # env saglar, yoksa create_app guard'i placeholder/bos'u reddeder.
-    # NOT (#5 config-drift takip): telegram/supabase/coolify token'lari da halen
-    # server.yml'den geliyor; once env'e tasinmadan dislanmamali (kirilir).
-    _yaml_excluded = {"jwt_secret"}
-    filtered = {k: v for k, v in yaml_overrides.items() if k in valid_fields and k not in _yaml_excluded}
+    # GUVENLIK (#5 config-drift): TUM secret alanlar YAML'dan ASLA gelmez — env-only.
+    # server.yml cogu kez world-readable (0644) + Settings(**filtered) ile env'i EZER;
+    # bu kombinasyon hem JWT public-default'una hem Telegram token public-leak'ine yol
+    # acti. Secret'lar artik yalniz env'den (systemd Environment/EnvironmentFile);
+    # yoksa create_app guard'i (jwt) reddeder veya alan bos kalir.
+    yaml_secret_keys = _SECRET_FIELDS & yaml_overrides.keys()
+    if yaml_secret_keys:
+        # drift tespiti: secret YAML'da -> YOK SAYILDI uyarisi (sessiz-ezme degil)
+        logging.getLogger(__name__).warning(
+            "config: world-readable YAML'da secret alan(lar) bulundu ve YOK SAYILDI (env kullanin): %s",
+            sorted(yaml_secret_keys),
+        )
+    filtered = {k: v for k, v in yaml_overrides.items() if k in valid_fields and k not in _SECRET_FIELDS}
 
     return Settings(**filtered)
