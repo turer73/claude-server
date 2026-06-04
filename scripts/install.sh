@@ -69,6 +69,10 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=/var/lib/linux-ai-server /var/log/linux-ai-server /var/AI-stump
 PrivateTmp=yes
+# UMask=0002: server.db + -wal/-shm grup-yazilabilir (664) olsun -> setgid data-dir
+# + ortak-grup ile ikinci-bir-user (or. note-poller/klipper-auto emit-event.sh
+# uzerinden) da yazabilsin -> SQLITE_READONLY (#517) sinifi kapali.
+UMask=0002
 
 [Install]
 WantedBy=multi-user.target
