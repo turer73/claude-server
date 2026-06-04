@@ -194,6 +194,23 @@ def test_all_secret_fields_excluded_from_yaml(monkeypatch, caplog):
     cfg.get_settings.cache_clear()
 
 
+def test_nested_yaml_secret_triggers_drift_warning(monkeypatch, caplog):
+    """Codex P2: nested şekil (config/server.yml'deki auth.jwt_secret) de drift
+    uyarısı tetiklemeli — top-level intersection bunu kaçırırdı."""
+    import logging
+
+    import app.core.config as cfg
+
+    monkeypatch.setattr(cfg, "load_yaml_config", lambda path: {"auth": {"jwt_secret": "nested-leak"}})
+    monkeypatch.setenv("JWT_SECRET", "env-jwt")
+    cfg.get_settings.cache_clear()
+    with caplog.at_level(logging.WARNING):
+        s = cfg.get_settings()
+    assert s.jwt_secret == "env-jwt"  # nested zaten yüklenmez
+    assert any("YOK SAYILDI" in r.message and "jwt_secret" in r.message for r in caplog.records)
+    cfg.get_settings.cache_clear()
+
+
 def test_create_app_rejects_placeholder_jwt_secret(monkeypatch):
     """create_app placeholder/bos jwt_secret ile fail-fast (bind oncesi)."""
     import pytest

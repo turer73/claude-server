@@ -69,6 +69,21 @@ def load_yaml_config(path: str) -> dict:
         return {}
 
 
+def _collect_keys(obj) -> set[str]:
+    """YAML dökümanındaki TÜM key'leri (her derinlikte) topla. Drift-uyarısı
+    nested şekli (ör. config/server.yml'deki `auth.jwt_secret`) de yakalasın diye
+    flat-intersection yerine recursive tarama (Codex P2)."""
+    keys: set[str] = set()
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            keys.add(k)
+            keys |= _collect_keys(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            keys |= _collect_keys(item)
+    return keys
+
+
 class Settings(BaseSettings):
     # Server
     server_host: str = "0.0.0.0"
@@ -245,7 +260,8 @@ def get_settings() -> Settings:
     # bu kombinasyon hem JWT public-default'una hem Telegram token public-leak'ine yol
     # acti. Secret'lar artik yalniz env'den (systemd Environment/EnvironmentFile);
     # yoksa create_app guard'i (jwt) reddeder veya alan bos kalir.
-    yaml_secret_keys = _SECRET_FIELDS & yaml_overrides.keys()
+    # recursive: nested secret'lari da (ör. auth.jwt_secret) yakala (Codex P2)
+    yaml_secret_keys = _SECRET_FIELDS & _collect_keys(yaml_overrides)
     if yaml_secret_keys:
         # drift tespiti: secret YAML'da -> YOK SAYILDI uyarisi (sessiz-ezme degil)
         logging.getLogger(__name__).warning(
