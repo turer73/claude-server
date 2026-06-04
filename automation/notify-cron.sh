@@ -44,15 +44,15 @@ suggest_action() {
     local src="$1" base name
     base="${src%%:*}"; name="${src#*:}"
     case "$base" in
-        memory) echo "🔧 Öneri: \`docker system prune -f\` (volume hariç) + \`pip cache purge\`. 🔍 Bak: free -h; docker ps --size; ps aux --sort=-%mem | head" ;;
-        disk)   echo "🔧 Öneri: docker prune + büyük-log truncate. 🔍 Bak: df -h; du -sh /var/log/* /opt/linux-ai-server/data/* 2>/dev/null | sort -h | tail" ;;
-        cpu)    echo "🔧 Öneri: yük-yapan süreci incele/sınırla. 🔍 Bak: ps aux --sort=-%cpu | head; uptime" ;;
-        temperature) echo "🔧 Öneri: yükü azalt / governor powersave. 🔍 Bak: sensors; cat /proc/linux_ai" ;;
-        service) echo "🔧 Öneri: \`sudo systemctl restart ${name}\`. 🔍 Bak: journalctl -u ${name} -n 50 --no-pager" ;;
-        docker)  echo "🔧 Öneri: \`docker start ${name}\`. 🔍 Bak: docker logs --tail 50 ${name}" ;;
-        cron)    echo "🔧 Öneri: log'u incele + işi elle çalıştır. 🔍 Bak: tail -40 /var/log/linux-ai-server/${name}.log" ;;
-        escalation|remediation) echo "⛔ MANUEL MÜDAHALE GEREK: otonom düzeltme yetmedi/kapalı — '${name}' hâlâ kritik. Kaynağı elle çöz." ;;
-        *) echo "🔧 Öneri: detayı incele + ilgili log'a bak (kaynak: ${src})." ;;
+        memory) echo "🔧 Öneri: \`docker system prune -f\` (volume hariç) + \`pip cache purge\`. ⚠️ Risk: durmuş container/unused-image silinir (çalışanlar etkilenmez). 🔍 Bak: free -h; docker ps --size; ps aux --sort=-%mem | head" ;;
+        disk)   echo "🔧 Öneri: docker prune + büyük-log truncate. ⚠️ Risk: unused-image silinir + >50M log'lar 10M'a kırpılır (eski-log-kaybı). 🔍 Bak: df -h; du -sh /var/log/* /opt/linux-ai-server/data/* 2>/dev/null | sort -h | tail" ;;
+        cpu)    echo "🔧 Öneri: yük-yapan süreci incele/sınırla. ⚠️ Risk: yok (sadece-inceleme, otomatik-aksiyon yok). 🔍 Bak: ps aux --sort=-%cpu | head; uptime" ;;
+        temperature) echo "🔧 Öneri: yükü azalt / governor powersave. ⚠️ Risk: powersave = CPU yavaşlar (performans düşer). 🔍 Bak: sensors; cat /proc/linux_ai" ;;
+        service) echo "🔧 Öneri: \`sudo systemctl restart ${name}\`. ⚠️ Risk: ${name} kısa kesinti (restart sırasında). 🔍 Bak: journalctl -u ${name} -n 50 --no-pager" ;;
+        docker)  echo "🔧 Öneri: \`docker start ${name}\`. ⚠️ Risk: düşük (container başlatma). 🔍 Bak: docker logs --tail 50 ${name}" ;;
+        cron)    echo "🔧 Öneri: log'u incele + işi elle çalıştır. ⚠️ Risk: işe-bağlı (önce log'a bak). 🔍 Bak: tail -40 /var/log/linux-ai-server/${name}.log" ;;
+        escalation|remediation) echo "⛔ MANUEL MÜDAHALE GEREK: otonom düzeltme yetmedi/kapalı — '${name}' hâlâ kritik. ⚠️ Çözülene dek pinglenir. Kaynağı elle çöz." ;;
+        *) echo "🔧 Öneri: detayı incele + ilgili log'a bak. ⚠️ Risk: bilinmiyor (önce incele). (kaynak: ${src})" ;;
     esac
 }
 
@@ -97,7 +97,11 @@ ${SUGGEST}
 ${ts}"
 
     JSON_MSG=$(printf '%s' "$MSG" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
-    BODY="{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":${JSON_MSG}}"
+    # inline '✅ Gördüm' ACK butonu — callback_data='ack:<event_id>'. Tıklanınca
+    # telegram-poller process_update yakalar -> events.acked=1 -> escalation durur.
+    # (Slice-2: '🔧 Uygula' aksiyon-butonu eklenecek.)
+    REPLY_MARKUP="{\"inline_keyboard\":[[{\"text\":\"✅ Gördüm\",\"callback_data\":\"ack:${id}\"}]]}"
+    BODY="{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":${JSON_MSG},\"reply_markup\":${REPLY_MARKUP}}"
 
     HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 \
         -X POST "$TG_URL" \

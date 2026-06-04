@@ -118,7 +118,8 @@ CREATE TABLE IF NOT EXISTS events (
     title TEXT NOT NULL,
     detail TEXT,
     payload TEXT,                    -- opsiyonel JSON
-    notified INTEGER NOT NULL DEFAULT 0     -- bildirim gönderildi mi (idempotent)
+    notified INTEGER NOT NULL DEFAULT 0,    -- bildirim gönderildi mi (idempotent)
+    acked INTEGER NOT NULL DEFAULT 0        -- kullanıcı Telegram '✅ Gördüm' ile onayladı mı (escalation durur)
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(timestamp DESC);
@@ -158,7 +159,17 @@ class Database:
         self._conn = await aiosqlite.connect(self.db_path)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.executescript(SCHEMA_V1)
+        await self._migrate()
         await self._conn.commit()
+
+    async def _migrate(self) -> None:
+        """İdempotent kolon-eklemeleri: CREATE TABLE IF NOT EXISTS mevcut (prod)
+        tabloya yeni kolon EKLEMEZ -> ALTER ile ekle (yoksa). Fresh-db'de SCHEMA_V1
+        zaten içerir -> atlanır."""
+        cur = await self._conn.execute("PRAGMA table_info(events)")
+        cols = {row[1] for row in await cur.fetchall()}
+        if cols and "acked" not in cols:
+            await self._conn.execute("ALTER TABLE events ADD COLUMN acked INTEGER NOT NULL DEFAULT 0")
 
     async def close(self) -> None:
         if self._conn:

@@ -861,3 +861,21 @@ async def test_escalate_persistent_nonmetric_source(monkeypatch):
     await agent._escalate_persistent()
 
     assert any(c.get("source") == "escalation:service:linux-ai-server" for c in calls)
+
+
+async def test_escalate_skips_acked_source(client, app, monkeypatch):
+    """ACK'lenmiş kaynak re-escalate ETMEZ (nag-etme). events.acked=1 -> skip."""
+    import time as _t
+
+    from app.core import devops_agent as da
+
+    db = app.state.db
+    agent = da.DevOpsAgent(db=db, interval=60)
+    agent._active_alerts["memory"] = _crit_alert("memory")
+    agent._last_escalation["memory"] = _t.monotonic() - agent._escalation_interval - 10
+    # acked event (aynı async-conn ile insert -> cross-conn race yok)
+    await db.execute("INSERT INTO events (type, source, severity, title, acked) VALUES ('alert','memory','critical','x',1)")
+    calls = []
+    monkeypatch.setattr(da, "emit_event", lambda **kw: calls.append(kw))
+    await agent._escalate_persistent()
+    assert calls == []  # acked -> escalate YOK

@@ -59,6 +59,59 @@ def _send_typing(chat_id: int) -> None:
         pass
 
 
+def _answer_callback(callback_id: str, text: str) -> None:
+    """answerCallbackQuery — butonun spinner'ını durdurur + toast gösterir. Best-effort."""
+    if not TELEGRAM_BOT_TOKEN or not callback_id:
+        return
+    try:
+        requests.post(
+            f"{TELEGRAM_API}/answerCallbackQuery",
+            json={"callback_query_id": callback_id, "text": text[:200]},
+            timeout=5,
+        )
+    except Exception:
+        pass
+
+
+def _mark_event_acked(event_id: str) -> bool:
+    """events.acked=1 (server.db). poller klipperos + db grup-yazılabilir (#517).
+    Escalation _escalate_persistent acked kaynakları atlar."""
+    import os
+    import sqlite3
+
+    if not str(event_id).isdigit():
+        return False
+    db_path = os.environ.get("DB_PATH") or "/opt/linux-ai-server/data/server.db"
+    try:
+        con = sqlite3.connect(db_path, timeout=10)
+        try:
+            cur = con.execute("UPDATE events SET acked=1 WHERE id=?", (int(event_id),))
+            con.commit()
+            return cur.rowcount > 0
+        finally:
+            con.close()
+    except Exception:
+        return False
+
+
+def _handle_callback(cb: dict) -> dict:
+    """Inline-buton callback (ACK). GÜVENLİK: yalnız sahip-chat (TELEGRAM_CHAT_ID)."""
+    data = cb.get("data", "") or ""
+    cb_id = cb.get("id")
+    from_chat = (cb.get("message") or {}).get("chat", {}).get("id")
+    owner = read_env_var("TELEGRAM_CHAT_ID")
+    if not owner or str(from_chat) != str(owner):
+        _answer_callback(cb_id, "yetkisiz")
+        return {"ok": True, "skipped": "unauthorized callback"}
+    if data.startswith("ack:"):
+        eid = data.split(":", 1)[1]
+        ok = _mark_event_acked(eid)
+        _answer_callback(cb_id, "✅ ACK alındı — eskalasyon durdu" if ok else "ack uygulanamadı")
+        return {"ok": True, "action": "ack", "event": eid, "marked": ok}
+    _answer_callback(cb_id, "bilinmeyen aksiyon")
+    return {"ok": True, "skipped": f"unknown callback: {data[:40]}"}
+
+
 def _md_escape(text: str) -> str:
     """Markdown v1 — sadece backtick/underscore/star kacir."""
     return re.sub(r"([`_*\[\]])", r"\\\1", text)
@@ -94,6 +147,10 @@ def _format_reply(result: dict, q: str) -> str:
 
 def process_update(update: dict) -> dict:
     """Webhook + polling tarafindan paylasilan core handler — auth-bagimsiz."""
+    # Inline-buton (ACK) callback'i — message'tan ÖNCE (owner-auth _handle_callback'te).
+    if update.get("callback_query"):
+        return _handle_callback(update["callback_query"])
+
     msg = update.get("message") or update.get("edited_message") or {}
     text = msg.get("text", "") or ""
     chat_id = msg.get("chat", {}).get("id")

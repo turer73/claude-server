@@ -129,3 +129,40 @@ async def test_webhook_secret_accepted_when_correct(client, monkeypatch):
         headers={"X-Telegram-Bot-Api-Secret-Token": "expected-secret"},
     )
     assert resp.status_code == 200
+
+
+def test_process_update_callback_ack_marks_event(tmp_path, monkeypatch):
+    """Inline '✅ Gördüm' callback (owner-chat) -> events.acked=1."""
+    import sqlite3
+
+    from app.api.telegram_bot import process_update
+
+    db = tmp_path / "ev.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, acked INTEGER DEFAULT 0)")
+    con.execute("INSERT INTO events (id, acked) VALUES (5, 0)")
+    con.commit()
+    con.close()
+    monkeypatch.setenv("DB_PATH", str(db))
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "777")
+    upd = {"callback_query": {"id": "cb1", "data": "ack:5", "message": {"chat": {"id": 777}}}}
+    with patch("app.api.telegram_bot._answer_callback") as ans:
+        out = process_update(upd)
+    assert out["action"] == "ack"
+    assert out["marked"] is True
+    con = sqlite3.connect(db)
+    v = con.execute("SELECT acked FROM events WHERE id=5").fetchone()[0]
+    con.close()
+    assert v == 1
+    ans.assert_called()
+
+
+def test_process_update_callback_unauthorized(monkeypatch):
+    """Sahip-DIŞI chat'ten callback -> reddedilir, acked YAPILMAZ."""
+    from app.api.telegram_bot import process_update
+
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "777")
+    with patch("app.api.telegram_bot._answer_callback"), patch("app.api.telegram_bot._mark_event_acked") as mk:
+        out = process_update({"callback_query": {"id": "cb2", "data": "ack:5", "message": {"chat": {"id": 999}}}})
+    assert out["skipped"] == "unauthorized callback"
+    mk.assert_not_called()
