@@ -165,6 +165,52 @@ def test_jwt_secret_excluded_from_yaml(monkeypatch):
     cfg.get_settings.cache_clear()
 
 
+def test_all_secret_fields_excluded_from_yaml(monkeypatch, caplog):
+    """GUVENLIK (#5): TUM secret alanlar YAML'dan dislanir + drift uyarisi loglanir;
+    secret-disi alanlar (server_port) YAML'dan gelmeye devam eder."""
+    import logging
+
+    import app.core.config as cfg
+
+    yaml_doc = {
+        "jwt_secret": "y",
+        "supabase_token": "y",
+        "coolify_token": "y",
+        "telegram_bot_token": "y",
+        "internal_api_key": "y",
+        "server_port": 4321,  # secret-disi -> uygulanmali
+    }
+    monkeypatch.setattr(cfg, "load_yaml_config", lambda path: yaml_doc)
+    monkeypatch.setenv("JWT_SECRET", "env-jwt")
+    monkeypatch.setenv("SUPABASE_TOKEN", "env-supa")
+    cfg.get_settings.cache_clear()
+    with caplog.at_level(logging.WARNING):
+        s = cfg.get_settings()
+    assert s.jwt_secret == "env-jwt"  # yaml degil env
+    assert s.supabase_token == "env-supa"  # yaml degil env
+    assert s.coolify_token == ""  # yaml'da vardi ama dislandi, env yok -> default
+    assert s.server_port == 4321  # secret-disi yaml override gecerli
+    assert any("YOK SAYILDI" in r.message for r in caplog.records)  # drift uyarisi
+    cfg.get_settings.cache_clear()
+
+
+def test_nested_yaml_secret_triggers_drift_warning(monkeypatch, caplog):
+    """Codex P2: nested şekil (config/server.yml'deki auth.jwt_secret) de drift
+    uyarısı tetiklemeli — top-level intersection bunu kaçırırdı."""
+    import logging
+
+    import app.core.config as cfg
+
+    monkeypatch.setattr(cfg, "load_yaml_config", lambda path: {"auth": {"jwt_secret": "nested-leak"}})
+    monkeypatch.setenv("JWT_SECRET", "env-jwt")
+    cfg.get_settings.cache_clear()
+    with caplog.at_level(logging.WARNING):
+        s = cfg.get_settings()
+    assert s.jwt_secret == "env-jwt"  # nested zaten yüklenmez
+    assert any("YOK SAYILDI" in r.message and "jwt_secret" in r.message for r in caplog.records)
+    cfg.get_settings.cache_clear()
+
+
 def test_create_app_rejects_placeholder_jwt_secret(monkeypatch):
     """create_app placeholder/bos jwt_secret ile fail-fast (bind oncesi)."""
     import pytest
