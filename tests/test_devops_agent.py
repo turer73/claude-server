@@ -170,6 +170,20 @@ async def test_playbooks_defined():
     assert "docker_down" in PLAYBOOKS
 
 
+async def test_playbooks_no_destructive_steps():
+    """FAZ5 safening regresyon-guard: hiçbir playbook adımı yıkıcı/geri-alınamaz
+    olmamalı — volume veri-silme (--volumes), otonom backup-silme, rm -rf yasak.
+    (auto-mode'da false-positive critical'de veri kaybını önler.)"""
+    from app.core.devops_agent import PLAYBOOKS
+
+    for key, steps in PLAYBOOKS.items():
+        for step in steps:
+            cmd = step["cmd"]
+            assert "--volumes" not in cmd, f"{key}: --volumes (volume veri-silme) yasak"
+            assert "backup" not in cmd.lower(), f"{key}: otonom backup-silme yasak"
+            assert "rm -rf" not in cmd, f"{key}: rm -rf yasak"
+
+
 # ── Store Metrics Tests ────────────────────────
 
 

@@ -47,15 +47,19 @@ PLAYBOOKS: dict[str, list[dict]] = {
     "cpu_critical": [
         {"desc": "Log top CPU consumers", "cmd": "ps aux --sort=-%cpu | head -6"},
     ],
+    # GUVENLIK (FAZ5 playbook-safening): YIKICI/geri-alinamaz adimlar cikarildi.
+    # `--volumes` (adli/named volume veri-silme) ve otonom-backup-silme YASAK —
+    # auto-mode'da false-positive critical'de veri kaybi riski. Sadece guvenli
+    # reclaim: image/container/network prune (volume HARIC), cache/eski-tmp temizle,
+    # dev log truncate. Backup-rotation = daily-backup.sh'in isi, remediation'in DEGIL.
     "memory_critical": [
-        {"desc": "Docker prune unused", "cmd": "docker system prune -f --volumes 2>/dev/null || true"},
+        {"desc": "Docker prune (volume HARIC)", "cmd": "docker system prune -f 2>/dev/null || true"},
         {"desc": "Clear pip cache", "cmd": "pip cache purge 2>/dev/null || true"},
-        {"desc": "Clear tmp files", "cmd": "find /tmp -type f -mtime +1 -delete 2>/dev/null || true"},
+        {"desc": "Clear old tmp files", "cmd": "find /tmp -type f -mtime +1 -delete 2>/dev/null || true"},
     ],
     "disk_critical": [
-        {"desc": "Docker prune", "cmd": "docker system prune -f 2>/dev/null || true"},
-        {"desc": "Rotate logs", "cmd": "find /var/log -name '*.log' -size +50M -exec truncate -s 10M {} \\; 2>/dev/null || true"},
-        {"desc": "Remove old backups", "cmd": "ls -t /data/backups/*.tar.gz 2>/dev/null | tail -n +4 | xargs rm -f 2>/dev/null || true"},
+        {"desc": "Docker prune (volume HARIC)", "cmd": "docker system prune -f 2>/dev/null || true"},
+        {"desc": "Truncate dev logs", "cmd": "find /var/log -name '*.log' -size +50M -exec truncate -s 10M {} \\; 2>/dev/null || true"},
     ],
     "temperature_critical": [
         {
@@ -406,10 +410,10 @@ class DevOpsAgent:
         executed = False
         success: bool | None = None
         if mode == "auto":
-            # OPT-IN: gerçekten yürüt (eski davranış). Yıkıcı adımlar mümkün
-            # (prune --volumes / rm backup / restart). FAZ5-S2: aksiyon sonrası
-            # _verify_and_escalate verify eder (fail -> escalate). Çoğu yıkıcı-aksiyon
-            # geri-alınamaz -> rollback YALNIZ reversible (governor); gerisi escalate.
+            # OPT-IN: gerçekten yürüt. Playbook'lar güvenlileştirildi (yıkıcı/geri-
+            # alınamaz adımlar — prune --volumes / backup-silme — çıkarıldı); kalanlar
+            # güvenli-reclaim + restart. FAZ5-S2: aksiyon sonrası _verify_and_escalate
+            # verify eder (fail -> escalate; restart geri-alınamaz -> escalate-only).
             executed = True
             try:
                 result = await self._executor.execute(command, timeout=timeout)
