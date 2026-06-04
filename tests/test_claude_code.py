@@ -61,8 +61,9 @@ async def test_claude_run_success(client, auth_headers):
 
 
 @pytest.mark.anyio
-async def test_claude_run_read_only_uses_plan_mode(client, auth_headers):
-    """read_only=True -> `--permission-mode plan` (skip-permissions DEĞİL). Telegram /claude bunu kullanır."""
+async def test_claude_run_read_only_uses_allowlist(client, auth_headers):
+    """read_only=True -> `--allowedTools <read-only set>` (skip-permissions DEĞİL).
+    git log gibi read-only kabuk ÇALIŞIR, mutasyon araçları (Edit/Write) listede yok."""
     mock_proc = AsyncMock()
     mock_proc.communicate.return_value = (b'{"result":"ok","session_id":"s1"}', b"")
     mock_proc.kill = MagicMock()
@@ -80,8 +81,12 @@ async def test_claude_run_read_only_uses_plan_mode(client, auth_headers):
         resp = await client.post("/api/v1/claude/run", json={"prompt": "durum?", "read_only": True}, headers=auth_headers)
         assert resp.status_code == 200
     argv = captured["argv"]
-    assert "--permission-mode" in argv
-    assert "plan" in argv
+    assert "--allowedTools" in argv
+    tools = argv[argv.index("--allowedTools") + 1]
+    assert "Bash(git log:*)" in tools
+    assert "Read" in tools
+    assert "Edit" not in tools  # mutasyon yok
+    assert "Write" not in tools
     assert "--dangerously-skip-permissions" not in argv
 
 
@@ -108,8 +113,8 @@ async def test_claude_run_default_uses_skip_permissions(client, auth_headers):
 
 
 @pytest.mark.anyio
-async def test_claude_run_vps_read_only_uses_plan_mode(client, auth_headers, monkeypatch):
-    """Codex P2: host=vps + read_only=True -> VPS args da `--permission-mode plan` içerir."""
+async def test_claude_run_vps_read_only_uses_allowlist(client, auth_headers, monkeypatch):
+    """Codex P2: host=vps + read_only=True -> VPS remote komutu `--allowedTools` içerir."""
     mock_proc = AsyncMock()
     mock_proc.communicate.return_value = (b'{"result":"ok"}', b"")
     mock_proc.kill = MagicMock()
@@ -131,7 +136,7 @@ async def test_claude_run_vps_read_only_uses_plan_mode(client, auth_headers, mon
         )
         assert resp.status_code == 200
     remote = captured["argv"][-1]  # ssh_cmd son arg = remote komut string'i
-    assert "--permission-mode plan" in remote
+    assert "--allowedTools" in remote
 
 
 @pytest.mark.anyio

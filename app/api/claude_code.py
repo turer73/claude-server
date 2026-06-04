@@ -19,6 +19,45 @@ router = APIRouter(prefix="/api/v1/claude", tags=["claude-code"])
 
 CLAUDE_BIN = os.path.expanduser("~/.npm-global/bin/claude")
 
+# read_only=True (Telegram /claude) için SALT-OKUNUR araç allowlist'i. Plan-modu
+# salt-okunur kabuğu da onaya takıyordu (git log çalışmıyordu) -> küratörlü allowlist:
+# dosya-okuma + GÜVENLİ read-only kabuk. Mutasyon araçları (Edit/Write/yıkıcı Bash)
+# listede YOK -> headless -p modunda otomatik reddedilir (prompt yok). NOT: allowedTools
+# tam-sandbox değil (Claude Code doc); owner-only + mutasyon-yok katmanları. find/curl/
+# xargs/sqlite3 (yazabilen/exec-eden) bilinçle HARİÇ.
+READ_ONLY_ALLOWED_TOOLS = " ".join(
+    [
+        "Read",
+        "Grep",
+        "Glob",
+        "Bash(git log:*)",
+        "Bash(git status:*)",
+        "Bash(git diff:*)",
+        "Bash(git show:*)",
+        "Bash(git branch:*)",
+        "Bash(journalctl:*)",
+        "Bash(systemctl status:*)",
+        "Bash(systemctl is-active:*)",
+        "Bash(systemctl list-units:*)",
+        "Bash(docker ps:*)",
+        "Bash(docker logs:*)",
+        "Bash(docker inspect:*)",
+        "Bash(docker stats:*)",
+        "Bash(df:*)",
+        "Bash(du:*)",
+        "Bash(free:*)",
+        "Bash(ps:*)",
+        "Bash(uptime:*)",
+        "Bash(cat:*)",
+        "Bash(head:*)",
+        "Bash(tail:*)",
+        "Bash(ls:*)",
+        "Bash(wc:*)",
+        "Bash(uname:*)",
+        "Bash(sensors:*)",
+    ]
+)
+
 
 def _load_claude_token():
     token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
@@ -135,10 +174,10 @@ async def _run_on_vps(body: ClaudePromptRequest) -> dict:
     # (security hard-stop in CLI), and the only login on VPS is root. Skip
     # the flag here; -p / --output-format json mode does not prompt anyway.
     args = ["claude", "-p", body.prompt, "--output-format", "json"]
-    # read_only -> plan modu (VPS yolu da onurlandırır; Codex P2: skip-permissions VPS'te
-    # zaten yok ama default-mode icra edebilir, plan modu salt-okunur garantiler).
+    # read_only -> salt-okunur allowlist (VPS yolu da onurlandırır; Codex P2). skip-
+    # permissions VPS'te zaten yok; allowlist read-only kabuğa izin + mutasyon reddi.
     if body.read_only:
-        args.extend(["--permission-mode", "plan"])
+        args.extend(["--allowedTools", READ_ONLY_ALLOWED_TOOLS])
     if body.session_id:
         args.extend(["--resume", body.session_id])
     elif body.continue_last:
@@ -238,9 +277,9 @@ async def run_claude(body: ClaudePromptRequest):
     if not binary:
         return {"error": "Claude Code CLI bulunamadi"}
 
-    # read_only -> plan modu (salt-okunur, mutasyon/icra yok); değilse mevcut
-    # skip-permissions (web-UI). Telegram /claude read_only=True gönderir.
-    perm = ["--permission-mode", "plan"] if body.read_only else ["--dangerously-skip-permissions"]
+    # read_only -> salt-okunur allowlist (git log/journalctl gibi read-only kabuk ÇALIŞIR,
+    # mutasyon reddedilir); değilse mevcut skip-permissions (web-UI). Telegram read_only=True.
+    perm = ["--allowedTools", READ_ONLY_ALLOWED_TOOLS] if body.read_only else ["--dangerously-skip-permissions"]
     cmd = [binary, "-p", body.prompt, "--output-format", "json", *perm]
 
     # Session continuity
