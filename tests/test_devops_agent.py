@@ -810,3 +810,54 @@ async def test_verify_skipped_in_notify_mode(client, app):
     rows = await db.fetch_all("SELECT verify_status, escalated, executed FROM remediation_log WHERE alert_source='disk'")
     assert rows
     assert all(r["verify_status"] == "skipped" and r["escalated"] == 0 and r["executed"] == 0 for r in rows)
+
+
+async def test_escalate_persistent_critical_after_interval(monkeypatch):
+    """Çözülmeyen critical alert interval sonrası re-escalate eder. emit_event mock'lanır
+    (cross-connection db-race yok -> CI-deterministik)."""
+    import time as _t
+
+    from app.core import devops_agent as da
+
+    agent = da.DevOpsAgent(db=None, interval=60)
+    agent._active_alerts["memory"] = _crit_alert("memory")
+    # monotonic-göreceli geçmiş (0.0 DEĞİL — taze-boot'ta monotonic küçük -> elapsed
+    # yanlış hesaplanır, CI-fail; interval+10s öncesi her sistemde elapsed>=interval).
+    agent._last_escalation["memory"] = _t.monotonic() - agent._escalation_interval - 10
+    calls = []
+    monkeypatch.setattr(da, "emit_event", lambda **kw: calls.append(kw))
+    await agent._escalate_persistent()
+
+    assert any(c.get("source") == "escalation:memory" and c.get("severity") == "critical" for c in calls)
+
+
+async def test_escalate_persistent_first_seen_no_escalate(monkeypatch):
+    """İlk-görülme escalate ETMEZ (saat başlar); interval içinde de tekrar etmez."""
+    from app.core import devops_agent as da
+
+    agent = da.DevOpsAgent(db=None, interval=60)
+    agent._active_alerts["cpu"] = _crit_alert("cpu")  # _last_escalation'da YOK
+    calls = []
+    monkeypatch.setattr(da, "emit_event", lambda **kw: calls.append(kw))
+    await agent._escalate_persistent()
+    assert calls == []  # ilk-görülme -> init, escalate yok
+    assert "cpu" in agent._last_escalation  # saat başlatıldı
+    await agent._escalate_persistent()  # interval içinde -> hâlâ yok
+    assert calls == []
+
+
+async def test_escalate_persistent_nonmetric_source(monkeypatch):
+    """Codex P2: metrik-DIŞI kaynak (service:*, _detect-dışı) da escalate eder (uniform-init)."""
+    import time as _t
+
+    from app.core import devops_agent as da
+
+    agent = da.DevOpsAgent(db=None, interval=60)
+    agent._active_alerts["service:linux-ai-server"] = _crit_alert("service:linux-ai-server")
+    # monotonic-göreceli geçmiş (taze-boot CI-safe, 0.0 değil)
+    agent._last_escalation["service:linux-ai-server"] = _t.monotonic() - agent._escalation_interval - 10
+    calls = []
+    monkeypatch.setattr(da, "emit_event", lambda **kw: calls.append(kw))
+    await agent._escalate_persistent()
+
+    assert any(c.get("source") == "escalation:service:linux-ai-server" for c in calls)

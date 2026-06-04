@@ -176,6 +176,13 @@ class DevOpsAgent:
         self._cooldowns: dict[str, float] = {}
         self._cooldown_seconds = 300  # 5 minutes
 
+        # Persistent-critical re-eskalasyon: kalıcı critical alert dedup nedeniyle bir
+        # kez bildirilir; çözülene dek her _escalation_interval'da yeniden ping (okunmamış/
+        # ele-alınmamış critical sessizce unutulmasın). cron-fail'ler zaten her run'da
+        # yeni-event basar → doğal re-ping; bu yalnız devops-metrik/servis alert'leri için.
+        self._last_escalation: dict[str, float] = {}
+        self._escalation_interval = 1800  # 30 dk
+
     # ── Lifecycle ──────────────────────────────────────
 
     def start(self) -> None:
@@ -232,6 +239,9 @@ class DevOpsAgent:
 
         # 3. Auto-resolve old alerts
         self._auto_resolve(metrics)
+
+        # 3b. Persistent-critical re-eskalasyon (çözülmeyen critical'i pingle)
+        await self._escalate_persistent()
 
         # 4. Remediate
         for alert in new_alerts:
@@ -309,6 +319,8 @@ class DevOpsAgent:
                 )
                 self._active_alerts[source] = alert
                 alerts.append(alert)
+                # re-eskalasyon saati _escalate_persistent'te ilk-görülmede başlatılır
+                # (tek-nokta, tüm kaynaklar için uniform).
                 asyncio.create_task(self._store_alert(alert))
 
         return alerts
@@ -334,6 +346,7 @@ class DevOpsAgent:
 
         for source in resolved:
             del self._active_alerts[source]
+            self._last_escalation.pop(source, None)  # çözüldü -> eskalasyon-saati sıfırla
 
     async def _store_alert(self, alert: Alert) -> None:
         if not self._db:
@@ -484,6 +497,38 @@ class DevOpsAgent:
             )
         except Exception:
             pass
+
+    async def _escalate_persistent(self) -> None:
+        """Çözülmeyen critical alert'leri _escalation_interval'da yeniden bildir
+        (okunmamış/ele-alınmamış critical sessizce unutulmasın). Re-ping = yeni
+        escalation event -> notify-cron -> Telegram (aksiyon-önerili). Best-effort."""
+        nowm = time.monotonic()
+        for source, alert in list(self._active_alerts.items()):
+            if alert.severity != "critical":
+                continue
+            # ilk-görülme: kaynak NEREDE yaratılırsa yaratılsın (_detect / _check_services
+            # service:* / _check_vps vps:*) eskalasyon-saatini burada başlat -> interval
+            # sonra re-escalate. (Codex P2: yalnız _detect-init metrik-dışı critical'leri
+            # kaçırıyordu; tek-nokta uniform-init ile hepsi kapsanır.)
+            if source not in self._last_escalation:
+                self._last_escalation[source] = nowm
+                continue
+            elapsed = nowm - self._last_escalation[source]
+            if elapsed < self._escalation_interval:
+                continue
+            self._last_escalation[source] = nowm
+            mins = int(elapsed / 60)
+            try:
+                await asyncio.to_thread(
+                    emit_event,
+                    type="alert",
+                    source=f"escalation:{source}",
+                    title=f"HÂLÂ AÇIK (~{mins}dk): {alert.message} — çözülmedi, manuel müdahale gerek",
+                    severity="critical",
+                    detail="Otonom remediation kapalı/yetmedi; bu kaynak hâlâ kritik eşikte.",
+                )
+            except Exception:
+                pass
 
     # ── LIVESYS Faz 5 Slice-2: verify -> escalate ──────────────
 
