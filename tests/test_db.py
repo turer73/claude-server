@@ -23,6 +23,43 @@ async def test_database_creates_tables(db):
 
 
 @pytest.mark.anyio
+async def test_migrate_adds_acked_to_existing_events(tmp_path):
+    """Eski-şema (acked'siz) prod events tablosu -> initialize() ALTER ile acked ekler.
+    CREATE TABLE IF NOT EXISTS mevcut tabloya kolon EKLEMEZ; _migrate ALTER yapar.
+    Eski-satır default 0, INDEX'ler (timestamp) bozulmaz. İkinci init idempotent."""
+    import sqlite3
+
+    db_path = str(tmp_path / "legacy.db")
+    con = sqlite3.connect(db_path)
+    con.execute(
+        "CREATE TABLE events ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "timestamp TEXT NOT NULL DEFAULT (datetime('now')), "
+        "type TEXT NOT NULL, source TEXT NOT NULL, "
+        "severity TEXT NOT NULL DEFAULT 'info', title TEXT NOT NULL, "
+        "detail TEXT, payload TEXT, notified INTEGER NOT NULL DEFAULT 0)"
+    )
+    con.execute("INSERT INTO events (type, source, severity, title) VALUES ('alert','memory','critical','x')")
+    con.commit()
+    con.close()
+
+    database = Database(db_path)
+    await database.initialize()
+    cols = {row["name"] for row in await database.fetch_all("PRAGMA table_info(events)")}
+    assert "acked" in cols
+    row = await database.fetch_one("SELECT acked FROM events WHERE id=1")
+    assert row["acked"] == 0
+    await database.close()
+
+    # idempotent: ikinci initialize ALTER'i tekrar denemez (hata vermez)
+    database2 = Database(db_path)
+    await database2.initialize()
+    cols2 = {row["name"] for row in await database2.fetch_all("PRAGMA table_info(events)")}
+    assert "acked" in cols2
+    await database2.close()
+
+
+@pytest.mark.anyio
 async def test_audit_log_insert(db):
     await db.execute(
         "INSERT INTO audit_log (request_id, user, action, resource, status) VALUES (?, ?, ?, ?, ?)",

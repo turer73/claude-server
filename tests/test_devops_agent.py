@@ -879,3 +879,23 @@ async def test_escalate_skips_acked_source(client, app, monkeypatch):
     monkeypatch.setattr(da, "emit_event", lambda **kw: calls.append(kw))
     await agent._escalate_persistent()
     assert calls == []  # acked -> escalate YOK
+
+
+async def test_source_acked_no_db_returns_false():
+    """db yoksa _source_acked False (fail-loud: escalate-devam)."""
+    from app.core import devops_agent as da
+
+    agent = da.DevOpsAgent(db=None, interval=60)
+    assert await agent._source_acked("memory") is False
+
+
+async def test_source_acked_db_error_returns_false():
+    """db.fetch_one hata atarsa _source_acked False (escalate susmaz)."""
+    from app.core import devops_agent as da
+
+    class _BadDB:
+        async def fetch_one(self, *a, **k):
+            raise RuntimeError("boom")
+
+    agent = da.DevOpsAgent(db=_BadDB(), interval=60)
+    assert await agent._source_acked("memory") is False
