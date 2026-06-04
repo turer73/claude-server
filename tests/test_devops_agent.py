@@ -899,3 +899,155 @@ async def test_source_acked_db_error_returns_false():
 
     agent = da.DevOpsAgent(db=_BadDB(), interval=60)
     assert await agent._source_acked("memory") is False
+
+
+# ── Slice-2: force_remediate ([🔧 Uygula]) ──────────────────────
+
+
+class _FakeExec:
+    """Komutları çalıştırmadan kaydeder (gerçek docker/systemctl YOK)."""
+
+    def __init__(self, exit_code=0):
+        self.cmds = []
+        self.exit_code = exit_code
+
+    async def execute(self, cmd, timeout=30):
+        self.cmds.append(cmd)
+        return {"exit_code": self.exit_code, "stdout": "fake-ok"}
+
+
+def test_executable_playbook_resolution():
+    """has_actionable_playbook: aksiyon-küme doğru (cpu/cron hariç)."""
+    from app.core import devops_agent as da
+
+    agent = da.DevOpsAgent(db=None, interval=60)
+    assert agent.has_actionable_playbook("memory") is True
+    assert agent.has_actionable_playbook("disk") is True
+    assert agent.has_actionable_playbook("temperature") is True
+    assert agent.has_actionable_playbook("service:linux-ai-server") is True
+    assert agent.has_actionable_playbook("docker:n8n") is True
+    assert agent.has_actionable_playbook("escalation:memory") is True  # iç-kaynağa iner
+    assert agent.has_actionable_playbook("cpu") is False  # sadece-inceleme
+    assert agent.has_actionable_playbook("cron:backup") is False
+
+
+async def test_force_remediate_executes_and_verifies_pass(monkeypatch):
+    """[🔧 Uygula] memory -> playbook çalışır + verify pass."""
+    from app.core import devops_agent as da
+
+    agent = da.DevOpsAgent(db=None, interval=60)
+    agent._executor = _FakeExec(exit_code=0)
+    agent._verify_grace = 0
+
+    async def _ok(source):
+        return True
+
+    monkeypatch.setattr(agent, "_verify_remediation", _ok)
+    res = await agent.force_remediate("memory")
+    assert res["ok"] and res["executed"] is True
+    assert res["all_success"] is True
+    assert res["verify"] == "pass"
+    assert any("prune" in c for c in agent._executor.cmds)
+
+
+async def test_force_remediate_service_strips_escalation_prefix(monkeypatch):
+    """escalation:service:X -> service:X restart komutu üretilir."""
+    from app.core import devops_agent as da
+
+    agent = da.DevOpsAgent(db=None, interval=60)
+    agent._executor = _FakeExec(exit_code=0)
+    agent._verify_grace = 0
+
+    async def _ok(source):
+        return True
+
+    monkeypatch.setattr(agent, "_verify_remediation", _ok)
+    res = await agent.force_remediate("escalation:service:linux-ai-server")
+    assert res["source"] == "service:linux-ai-server"
+    assert any("systemctl restart linux-ai-server" in c for c in agent._executor.cmds)
+
+
+async def test_force_remediate_no_actionable_playbook():
+    """cpu -> çalıştırılacak aksiyon yok (executed False, exec YOK)."""
+    from app.core import devops_agent as da
+
+    agent = da.DevOpsAgent(db=None, interval=60)
+    agent._executor = _FakeExec()
+    res = await agent.force_remediate("cpu")
+    assert res["ok"] is True
+    assert res["executed"] is False
+    assert res["reason"] == "no_actionable_playbook"
+    assert agent._executor.cmds == []  # hiç komut çalışmadı
+
+
+async def test_force_remediate_verify_fail_escalates(monkeypatch):
+    """verify fail -> remediation:source critical event emit (escalate)."""
+    from app.core import devops_agent as da
+
+    agent = da.DevOpsAgent(db=None, interval=60)
+    agent._executor = _FakeExec(exit_code=0)
+    agent._verify_grace = 0
+
+    async def _fail(source):
+        return False
+
+    monkeypatch.setattr(agent, "_verify_remediation", _fail)
+    emitted = []
+    monkeypatch.setattr(da, "emit_event", lambda **kw: emitted.append(kw))
+    res = await agent.force_remediate("memory")
+    assert res["verify"] == "fail"
+    assert any(e.get("source") == "remediation:memory" and e.get("severity") == "critical" for e in emitted)
+
+
+async def test_force_remediate_endpoint_resolves_event_id(devops_client, app, auth_headers, monkeypatch):
+    """POST /remediate/force {event_id} -> events.source çözer -> force_remediate çağırır.
+    Gerçek shell YOK (executor fake)."""
+    db = app.state.db
+    await db.execute("INSERT INTO events (type, source, severity, title) VALUES ('alert','memory','critical','x')")
+    row = await db.fetch_one("SELECT MAX(id) AS id FROM events WHERE source='memory'")
+    eid = row["id"]
+    agent = app.state.devops_agent
+    agent._executor = _FakeExec(exit_code=0)
+    agent._verify_grace = 0
+
+    async def _ok(source):
+        return True
+
+    monkeypatch.setattr(agent, "_verify_remediation", _ok)
+    resp = await devops_client.post("/api/v1/devops/remediate/force", json={"event_id": eid}, headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["source"] == "memory"
+    assert data["executed"] is True
+
+
+async def test_force_remediate_endpoint_requires_auth(devops_client):
+    """Auth'suz force-remediate -> 401/403 (RCE-yüzeyi korunur)."""
+    resp = await devops_client.post("/api/v1/devops/remediate/force", json={"source": "memory"})
+    assert resp.status_code in (401, 403)
+
+
+async def test_force_remediate_endpoint_event_not_found(devops_client, auth_headers):
+    """Var-olmayan event_id -> 404."""
+    resp = await devops_client.post("/api/v1/devops/remediate/force", json={"event_id": 999999}, headers=auth_headers)
+    assert resp.status_code == 404
+
+
+async def test_force_remediate_endpoint_no_params(devops_client, auth_headers):
+    """source/event_id yok -> 400."""
+    resp = await devops_client.post("/api/v1/devops/remediate/force", json={}, headers=auth_headers)
+    assert resp.status_code == 400
+
+
+async def test_force_remediate_endpoint_no_agent(devops_client, app, auth_headers):
+    """Agent başlatılmamış -> 503."""
+    app.state.devops_agent = None
+    resp = await devops_client.post("/api/v1/devops/remediate/force", json={"source": "memory"}, headers=auth_headers)
+    assert resp.status_code == 503
+
+
+async def test_force_remediate_endpoint_no_db(devops_client, app, auth_headers):
+    """event_id verildi ama db yok -> 503."""
+    app.state.db = None
+    resp = await devops_client.post("/api/v1/devops/remediate/force", json={"event_id": 1}, headers=auth_headers)
+    assert resp.status_code == 503

@@ -613,6 +613,102 @@ class DevOpsAgent:
             except Exception:
                 pass
 
+    # ── Slice-2: kullanıcı-onaylı tek-tıkla aksiyon ([🔧 Uygula]) ──────
+
+    def _executable_playbook(self, source: str) -> list[dict] | None:
+        """source -> ÇALIŞTIRILABİLİR playbook adımları (template doldurulmuş).
+        None = bu kaynak için manuel-tetiklenebilir düzeltme yok (örn cpu = sadece-
+        inceleme). escalation:/remediation: önekleri asıl kaynağa indirgenir."""
+        for pfx in ("escalation:", "remediation:"):
+            if source.startswith(pfx):
+                source = source[len(pfx) :]
+                break
+        base, _, name = source.partition(":")
+        if base == "service" and name:
+            return [{"desc": f"Restart {name}", "cmd": f"systemctl restart {name}"}]
+        if base == "docker" and name:
+            return [{"desc": f"Start {name}", "cmd": f"docker start {name}"}]
+        if base == "cpu":
+            return None  # cpu_critical sadece-log -> çalıştırılacak düzeltme yok
+        steps = PLAYBOOKS.get(f"{base}_critical")
+        return steps or None
+
+    def has_actionable_playbook(self, source: str) -> bool:
+        """notify-cron + endpoint: bu kaynağa [🔧 Uygula] sunulabilir mi."""
+        return self._executable_playbook(source) is not None
+
+    async def force_remediate(self, source: str) -> dict:
+        """Kullanıcı [🔧 Uygula] ile AÇIK ONAY verdi -> remediation_mode-gate BYPASS
+        (insan-in-loop ayrı gate; notify-default'ta bile çalışır çünkü onay manuel).
+        Playbook'u yürüt + verify + ledger(mode='manual'). verify-fail -> escalate.
+        Owner-auth ÇAĞRAN katmanda (telegram owner-chat / endpoint internal-key)."""
+        for pfx in ("escalation:", "remediation:"):
+            if source.startswith(pfx):
+                source = source[len(pfx) :]
+                break
+        steps = self._executable_playbook(source)
+        if steps is None:
+            return {"ok": True, "executed": False, "reason": "no_actionable_playbook", "source": source}
+
+        results = []
+        all_ok = True
+        for step in steps:
+            try:
+                r = await self._executor.execute(step["cmd"], timeout=30)
+                ok = r.get("exit_code", 1) == 0
+                out = r.get("stdout", "")[:300]
+            except Exception as e:
+                ok = False
+                out = str(e)[:300]
+            all_ok = all_ok and ok
+            results.append({"action": step["desc"], "success": ok})
+            await self._persist_remediation_row(
+                source,
+                "critical",
+                "manual",
+                step["desc"],
+                step["cmd"],
+                executed=True,
+                result=out,
+                success=ok,
+                verify_status=None,
+            )
+
+        # verify (kısa grace -> cleanup/restart etkisi otursun)
+        if self._verify_grace:
+            await asyncio.sleep(self._verify_grace)
+        verified = await self._verify_remediation(source)
+        status = "n/a" if verified is None else ("pass" if verified else "fail")
+        if self._db:
+            try:
+                await self._db.execute(
+                    "UPDATE remediation_log SET verify_status=? WHERE alert_source=? AND mode='manual' AND verify_status IS NULL",
+                    (status, source),
+                )
+            except Exception:
+                pass
+        if status == "fail":
+            # düzeltme çalıştı ama sorun sürüyor -> yeni unacked critical -> escalate.
+            try:
+                await asyncio.to_thread(
+                    emit_event,
+                    type="alert",
+                    source=f"remediation:{source}",
+                    title=f"Manuel remediation BAŞARISIZ: {source} hâlâ kritik — elle müdahale gerek",
+                    severity="critical",
+                    detail="Kullanıcı [🔧 Uygula] ile çalıştırdı ama verify başarısız.",
+                )
+            except Exception:
+                pass
+        return {
+            "ok": True,
+            "executed": True,
+            "source": source,
+            "steps": results,
+            "all_success": all_ok,
+            "verify": status,
+        }
+
     async def _send_webhook(self, alert: Alert) -> None:
         """Notify via webhook for n8n integration."""
         try:
