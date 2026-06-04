@@ -30,11 +30,11 @@ READ_ONLY_ALLOWED_TOOLS = " ".join(
         "Read",
         "Grep",
         "Glob",
+        # git log/status: --output yazabilir (Codex P1) ama owner-only + disallow-mutasyon
+        # katmanları; git diff/show/branch HARİÇ (diff/show --output write-vektörü, branch
+        # -D/-m mutasyon). git status'ta --output yok (güvenli); git log en gerekli.
         "Bash(git log:*)",
         "Bash(git status:*)",
-        "Bash(git diff:*)",
-        "Bash(git show:*)",
-        # NOT: `git branch` HARİÇ — -D/-m ile mutasyon yapabilir (Codex P2).
         "Bash(journalctl:*)",
         "Bash(systemctl status:*)",
         "Bash(systemctl is-active:*)",
