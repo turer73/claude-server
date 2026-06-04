@@ -810,3 +810,35 @@ async def test_verify_skipped_in_notify_mode(client, app):
     rows = await db.fetch_all("SELECT verify_status, escalated, executed FROM remediation_log WHERE alert_source='disk'")
     assert rows
     assert all(r["verify_status"] == "skipped" and r["escalated"] == 0 and r["executed"] == 0 for r in rows)
+
+
+async def test_escalate_persistent_critical_after_interval(client, app):
+    """Çözülmeyen critical alert interval sonrası yeniden escalate eder (re-ping)."""
+    from app.core.devops_agent import DevOpsAgent
+    from app.core.events import recent_events
+
+    db = app.state.db
+    agent = DevOpsAgent(db=db, interval=60)
+    agent._active_alerts["memory"] = _crit_alert("memory")
+    agent._last_escalation["memory"] = 0.0  # çok eski -> hemen escalate
+    await agent._escalate_persistent()
+
+    evs = recent_events(min_severity="critical")
+    assert any("escalation:memory" in (e.get("source") or "") for e in evs)
+
+
+async def test_escalate_persistent_within_interval_no_repeat(client, app):
+    """Interval içinde tekrar escalate ETMEZ (spam-önleme)."""
+    import time as _t
+
+    from app.core.devops_agent import DevOpsAgent
+    from app.core.events import recent_events
+
+    db = app.state.db
+    agent = DevOpsAgent(db=db, interval=60)
+    agent._active_alerts["cpu"] = _crit_alert("cpu")
+    agent._last_escalation["cpu"] = _t.monotonic()  # interval içinde
+    await agent._escalate_persistent()
+
+    evs = recent_events(min_severity="critical")
+    assert not any("escalation:cpu" in (e.get("source") or "") for e in evs)

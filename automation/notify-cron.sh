@@ -37,6 +37,25 @@ fi
 
 TG_URL="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"
 
+# Aksiyon-önerisi: alert SADECE haber vermesin -> ne-yapmalı + nasıl (tanı-komutu).
+# Kaynak-tipine göre (klipper çalışma-akışı: bul→bildir→öner). auto-mode kapalı
+# olduğundan öneriler MANUEL; kaynak prefix'inden türetilir.
+suggest_action() {
+    local src="$1" base name
+    base="${src%%:*}"; name="${src#*:}"
+    case "$base" in
+        memory) echo "🔧 Öneri: \`docker system prune -f\` (volume hariç) + \`pip cache purge\`. 🔍 Bak: free -h; docker ps --size; ps aux --sort=-%mem | head" ;;
+        disk)   echo "🔧 Öneri: docker prune + büyük-log truncate. 🔍 Bak: df -h; du -sh /var/log/* /opt/linux-ai-server/data/* 2>/dev/null | sort -h | tail" ;;
+        cpu)    echo "🔧 Öneri: yük-yapan süreci incele/sınırla. 🔍 Bak: ps aux --sort=-%cpu | head; uptime" ;;
+        temperature) echo "🔧 Öneri: yükü azalt / governor powersave. 🔍 Bak: sensors; cat /proc/linux_ai" ;;
+        service) echo "🔧 Öneri: \`sudo systemctl restart ${name}\`. 🔍 Bak: journalctl -u ${name} -n 50 --no-pager" ;;
+        docker)  echo "🔧 Öneri: \`docker start ${name}\`. 🔍 Bak: docker logs --tail 50 ${name}" ;;
+        cron)    echo "🔧 Öneri: log'u incele + işi elle çalıştır. 🔍 Bak: tail -40 /var/log/linux-ai-server/${name}.log" ;;
+        escalation|remediation) echo "⛔ MANUEL MÜDAHALE GEREK: otonom düzeltme yetmedi/kapalı — '${name}' hâlâ kritik. Kaynağı elle çöz." ;;
+        *) echo "🔧 Öneri: detayı incele + ilgili log'a bak (kaynak: ${src})." ;;
+    esac
+}
+
 # LIMIT 50: batch/spam-cap (Codex #24). Outage/producer-bug sonrasi sinirsiz burst
 # onler; kalan-backlog sonraki */20 run'da drenaj edilir (no-loss korunur).
 IDS=$(sqlite3 "$DB_PATH" \
@@ -71,7 +90,10 @@ src: ${SAFE_SRC}
 ${SAFE_TITLE}"
     [ -n "$SAFE_DETAIL" ] && MSG="${MSG}
 ${SAFE_DETAIL}"
+    SUGGEST=$(suggest_action "$src")
     MSG="${MSG}
+
+${SUGGEST}
 ${ts}"
 
     JSON_MSG=$(printf '%s' "$MSG" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")

@@ -78,3 +78,20 @@ def test_notify_cron_enabled_no_pending_outputs_outcome(tmp_path):
     assert r.returncode == 0
     assert "OUTCOME: pass" in r.stdout
     assert "no-pending" in r.stdout
+
+
+def test_notify_cron_suggest_action_actionable():
+    """Aksiyon-önerisi: suggest_action() haber-vermekle kalmaz, ne-yapmalı + tanı üretir.
+    Fonksiyonu izole çıkar (sed) + eval + çeşitli source'larda doğrula."""
+    extract = "f=$(sed -n '/^suggest_action()/,/^}/p' automation/notify-cron.sh); eval \"$f\"; "
+    r = subprocess.run(
+        ["bash", "-c", extract + "suggest_action memory; suggest_action 'service:linux-ai-server'; suggest_action 'escalation:disk'"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    out = r.stdout
+    assert "Öneri" in out  # ne-yapmalı
+    assert "systemctl restart linux-ai-server" in out  # somut komut (service)
+    assert "MANUEL" in out  # escalation -> manuel müdahale
