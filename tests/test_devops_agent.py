@@ -734,3 +734,65 @@ async def test_remediate_service_notify_mode_does_not_execute(client, app):
     rows = await db.fetch_all("SELECT executed, mode FROM remediation_log WHERE alert_source='service:linux-ai-server'")
     assert len(rows) >= 1
     assert all(r["executed"] == 0 for r in rows)
+
+
+# ── LIVESYS Faz 5 Slice-2: verify -> escalate ──────────────
+
+
+def _auto_agent(db):
+    from app.core.devops_agent import DevOpsAgent
+
+    agent = DevOpsAgent(db=db, interval=60)
+    agent._remediation_mode = "auto"
+    agent._verify_grace = 0  # test: grace-sleep yok
+    agent._send_webhook = _noop_webhook
+
+    async def fake_exec(cmd, timeout=30):
+        return {"stdout": "ok", "exit_code": 0}
+
+    agent._executor.execute = fake_exec
+    return agent
+
+
+async def test_verify_pass_metric_below_threshold(client, app):
+    """auto + verify metrik eşik-altı -> verify_status=pass, escalated=0."""
+    db = app.state.db
+    agent = _auto_agent(db)
+    agent._monitor.collect_metrics = lambda: {"memory_percent": 10.0}  # eşik(85) altı
+    await agent._remediate(_crit_alert("memory"))
+
+    rows = await db.fetch_all("SELECT verify_status, escalated FROM remediation_log WHERE alert_source='memory'")
+    assert rows
+    assert all(r["verify_status"] == "pass" and r["escalated"] == 0 for r in rows)
+
+
+async def test_verify_fail_escalates(client, app):
+    """auto + verify metrik hâlâ eşik-üstü -> verify_status=fail, escalated=1 + escalate event."""
+    from app.core.events import recent_events
+
+    db = app.state.db
+    agent = _auto_agent(db)
+    agent._monitor.collect_metrics = lambda: {"memory_percent": 99.0}  # eşik(85) üstü -> fail
+    await agent._remediate(_crit_alert("memory"))
+
+    rows = await db.fetch_all("SELECT verify_status, escalated FROM remediation_log WHERE alert_source='memory'")
+    assert rows
+    assert all(r["verify_status"] == "fail" and r["escalated"] == 1 for r in rows)
+    # escalate -> critical event yazıldı
+    evs = recent_events(min_severity="critical")
+    assert any("remediation:memory" in (e.get("source") or "") for e in evs)
+
+
+async def test_verify_skipped_in_notify_mode(client, app):
+    """notify mode: exec yok -> verify de yok; satırlar 'skipped', escalated=0."""
+    from app.core.devops_agent import DevOpsAgent
+
+    db = app.state.db
+    agent = DevOpsAgent(db=db, interval=60)  # default notify
+    agent._verify_grace = 0
+    agent._send_webhook = _noop_webhook
+    await agent._remediate(_crit_alert("disk"))
+
+    rows = await db.fetch_all("SELECT verify_status, escalated, executed FROM remediation_log WHERE alert_source='disk'")
+    assert rows
+    assert all(r["verify_status"] == "skipped" and r["escalated"] == 0 and r["executed"] == 0 for r in rows)

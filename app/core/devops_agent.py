@@ -162,6 +162,8 @@ class DevOpsAgent:
 
         # LIVESYS Faz 5 — otonom remediation kapısı (notify=güvenli-default, exec YOK).
         self._remediation_mode = settings.remediation_mode
+        # S2: verify öncesi grace (restart/cleanup etkisi otursun). Test'te 0'lanır.
+        self._verify_grace = 2
 
         # Remediation log (in-memory hızlı-erişim; kalıcı kayıt -> remediation_log tablosu)
         self._remediation_log: deque[RemediationRecord] = deque(maxlen=200)
@@ -392,6 +394,8 @@ class DevOpsAgent:
 
         # Send webhook event (n8n) — mode dahil
         await self._send_webhook(alert)
+        # FAZ5-S2: verify -> fail ise escalate (yalnız mode=auto)
+        await self._verify_and_escalate(alert.source, alert)
 
     async def _apply_remediation(self, alert: Alert, source: str, action: str, command: str, timeout: int = 30) -> None:
         """Tek-nokta remediation adımı — TÜM yollar (playbook + servis + container)
@@ -403,7 +407,9 @@ class DevOpsAgent:
         success: bool | None = None
         if mode == "auto":
             # OPT-IN: gerçekten yürüt (eski davranış). Yıkıcı adımlar mümkün
-            # (prune --volumes / rm backup / restart); verify/rollback FAZ5-S2'de.
+            # (prune --volumes / rm backup / restart). FAZ5-S2: aksiyon sonrası
+            # _verify_and_escalate verify eder (fail -> escalate). Çoğu yıkıcı-aksiyon
+            # geri-alınamaz -> rollback YALNIZ reversible (governor); gerisi escalate.
             executed = True
             try:
                 result = await self._executor.execute(command, timeout=timeout)
@@ -424,11 +430,32 @@ class DevOpsAgent:
                 success=bool(success),
             )
         )
-        await self._persist_remediation_row(source, alert.severity, mode, action, command, executed, out, success)
+        # executed -> verify_status NULL (S2 verify-edecek); değilse 'skipped'
+        # (notify/dry_run satırları verify-UPDATE'inden ayrışsın).
+        await self._persist_remediation_row(
+            source,
+            alert.severity,
+            mode,
+            action,
+            command,
+            executed,
+            out,
+            success,
+            verify_status=None if executed else "skipped",
+        )
         alert.remediation = f"[{mode}] {action}"
 
     async def _persist_remediation_row(
-        self, source: str, severity: str, mode: str, action: str, command: str, executed: bool, result: str, success: bool | None
+        self,
+        source: str,
+        severity: str,
+        mode: str,
+        action: str,
+        command: str,
+        executed: bool,
+        result: str,
+        success: bool | None,
+        verify_status: str | None = None,
     ) -> None:
         """Kalıcı remediation ledger (server.db.remediation_log). Best-effort:
         DB yoksa/yazamazsa sessizce geç (remediation akışını bozma)."""
@@ -437,8 +464,8 @@ class DevOpsAgent:
         try:
             await self._db.execute(
                 "INSERT INTO remediation_log "
-                "(alert_source, severity, mode, action, command, executed, result, success) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(alert_source, severity, mode, action, command, executed, result, success, verify_status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     source,
                     severity,
@@ -448,10 +475,74 @@ class DevOpsAgent:
                     1 if executed else 0,
                     result,
                     None if success is None else (1 if success else 0),
+                    verify_status,
                 ),
             )
         except Exception:
             pass
+
+    # ── LIVESYS Faz 5 Slice-2: verify -> escalate ──────────────
+
+    async def _verify_remediation(self, source: str) -> bool | None:
+        """Aksiyon sonrası health re-check. True=düzeldi, False=hâlâ sorunlu,
+        None=verify-edilemez (cpu sadece-log / belirsiz). Heuristik: cleanup etkisi
+        gecikebilir -> False-fail mümkün (sonucu sadece escalate-notify, yıkıcı değil)."""
+        base = source.split(":", 1)[0]
+        try:
+            if base == "service":
+                svc = source.split(":", 1)[1]
+                r = await self._executor.execute(f"systemctl is-active {svc}", timeout=10)
+                return r.get("stdout", "").strip() == "active"
+            if base == "docker":
+                cont = source.split(":", 1)[1]
+                r = await self._executor.execute(f"docker inspect -f '{{{{.State.Running}}}}' {cont}", timeout=10)
+                return "true" in r.get("stdout", "").lower()
+            # metrik playbook: yeniden örnekle. cpu_critical SADECE log -> verify yok.
+            key = {"memory": "memory_percent", "disk": "disk_percent", "temperature": "temperature"}.get(base)
+            if not key:
+                return None
+            metrics = self._monitor.collect_metrics()
+            val = metrics.get(key)
+            thr = self._thresholds.get(base)
+            if val is None or thr is None:
+                return None
+            return val < thr
+        except Exception:
+            return None  # verify-edilemedi -> belirsiz (escalate etme)
+
+    async def _verify_and_escalate(self, source: str, alert: Alert) -> None:
+        """FAZ5-S2: yalnız mode=auto (notify'da exec yok -> verify-edecek şey yok).
+        verify -> ledger.verify_status güncelle; fail -> escalate (critical event +
+        escalated=1). Rollback: çoğu aksiyon geri-alınamaz -> escalate (manuel müdahale)."""
+        if self._remediation_mode != "auto":
+            return
+        # kısa grace: restart/cleanup etkisinin oturması için (False-fail azalt).
+        if self._verify_grace:
+            await asyncio.sleep(self._verify_grace)
+        ok = await self._verify_remediation(source)
+        status = "n/a" if ok is None else ("pass" if ok else "fail")
+        escalated = status == "fail"
+        if self._db:
+            try:
+                await self._db.execute(
+                    "UPDATE remediation_log SET verify_status=?, escalated=? WHERE alert_source=? AND verify_status IS NULL",
+                    (status, 1 if escalated else 0, source),
+                )
+            except Exception:
+                pass
+        if escalated:
+            # ESCALATE: otonom remediation çalıştı ama sorun sürüyor -> manuel müdahale.
+            try:
+                await asyncio.to_thread(
+                    emit_event,
+                    type="alert",
+                    source=f"remediation:{source}",
+                    title=f"Otonom remediation BAŞARISIZ: {source} hâlâ kritik — manuel müdahale gerek",
+                    severity="critical",
+                    detail=f"auto-remediation yürütüldü ama verify başarısız ({alert.message}).",
+                )
+            except Exception:
+                pass
 
     async def _send_webhook(self, alert: Alert) -> None:
         """Notify via webhook for n8n integration."""
@@ -640,6 +731,7 @@ class DevOpsAgent:
         # mode-gate (Codex P1): notify/dry_run'da systemctl restart YÜRÜTÜLMEZ.
         await self._apply_remediation(alert, source, f"Restart {service}", f"systemctl restart {service}", timeout=15)
         await self._send_webhook(alert)
+        await self._verify_and_escalate(source, alert)
 
     async def _remediate_container(self, container: str, alert: Alert) -> None:
         now = time.monotonic()
@@ -654,6 +746,7 @@ class DevOpsAgent:
         # mode-gate (Codex P1): notify/dry_run'da docker start YÜRÜTÜLMEZ.
         await self._apply_remediation(alert, source, f"Start {container}", f"docker start {container}", timeout=15)
         await self._send_webhook(alert)
+        await self._verify_and_escalate(source, alert)
 
     # ── Query Methods (for API) ────────────────────────
 
