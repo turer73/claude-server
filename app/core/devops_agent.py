@@ -630,7 +630,10 @@ class DevOpsAgent:
     async def _remediate_service(self, service: str, alert: Alert) -> None:
         now = time.monotonic()
         source = f"service:{service}"
-        if now - self._cooldowns.get(source, 0) < self._cooldown_seconds:
+        # taze-boot bug fix (Codex-CI): get(source,0)+monotonic<cooldown erken-return
+        # yapardi -> None-check (devops _remediate ile ayni).
+        last = self._cooldowns.get(source)
+        if last is not None and (now - last) < self._cooldown_seconds:
             return
         self._cooldowns[source] = now
 
@@ -641,7 +644,10 @@ class DevOpsAgent:
     async def _remediate_container(self, container: str, alert: Alert) -> None:
         now = time.monotonic()
         source = f"docker:{container}"
-        if now - self._cooldowns.get(source, 0) < self._cooldown_seconds:
+        # taze-boot bug fix (Codex-CI): get(source,0)+monotonic<cooldown erken-return
+        # yapardi -> None-check (devops _remediate ile ayni).
+        last = self._cooldowns.get(source)
+        if last is not None and (now - last) < self._cooldown_seconds:
             return
         self._cooldowns[source] = now
 
