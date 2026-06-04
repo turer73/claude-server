@@ -303,7 +303,8 @@ def test_force_remediate_http_error(monkeypatch):
 
     with patch("app.api.telegram_bot.requests.post", return_value=_Resp()):
         res = tb._force_remediate("7")
-    assert res["ok"] is False and res["http"] == 503
+    assert res["ok"] is False
+    assert res["http"] == 503
 
 
 def test_force_remediate_network_error(monkeypatch):
@@ -312,7 +313,8 @@ def test_force_remediate_network_error(monkeypatch):
 
     with patch("app.api.telegram_bot.requests.post", side_effect=RuntimeError("conn refused")):
         res = tb._force_remediate("7")
-    assert res["ok"] is False and "conn refused" in res["error"]
+    assert res["ok"] is False
+    assert "conn refused" in res["error"]
 
 
 def test_process_update_callback_fix_endpoint_error(monkeypatch):

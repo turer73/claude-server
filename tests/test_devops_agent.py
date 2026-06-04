@@ -944,7 +944,8 @@ async def test_force_remediate_executes_and_verifies_pass(monkeypatch):
 
     monkeypatch.setattr(agent, "_verify_remediation", _ok)
     res = await agent.force_remediate("memory")
-    assert res["ok"] and res["executed"] is True
+    assert res["ok"] is True
+    assert res["executed"] is True
     assert res["all_success"] is True
     assert res["verify"] == "pass"
     assert any("prune" in c for c in agent._executor.cmds)
