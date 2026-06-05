@@ -569,8 +569,17 @@ class DevOpsAgent:
                 return r.get("stdout", "").strip() == "active"
             if base == "docker":
                 cont = source.split(":", 1)[1]
-                r = await self._executor.execute(f"docker inspect -f '{{{{.State.Running}}}}' {cont}", timeout=10)
-                return "true" in r.get("stdout", "").lower()
+                # Codex P2: Running=true unhealthy'de de doğru -> false-recovery. Health-status'a
+                # da bak: healthcheck'li container 'healthy' olmalı; healthcheck'siz (none) ->
+                # Running yeter. Çıktı "<running>;<health|none>" (örn "true;healthy"/"true;none").
+                r = await self._executor.execute(
+                    f"docker inspect -f '{{{{.State.Running}}}};{{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{else}}}}none{{{{end}}}}' {cont}",
+                    timeout=10,
+                )
+                parts = r.get("stdout", "").strip().lower().split(";")
+                running = len(parts) >= 1 and parts[0] == "true"
+                health = parts[1] if len(parts) >= 2 else "none"
+                return running and health in ("healthy", "none")
             # metrik playbook: yeniden örnekle. cpu_critical SADECE log -> verify yok.
             key = {"memory": "memory_percent", "disk": "disk_percent", "temperature": "temperature"}.get(base)
             if not key:
