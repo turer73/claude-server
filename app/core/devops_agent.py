@@ -76,7 +76,7 @@ PLAYBOOKS: dict[str, list[dict]] = {
         {"desc": "Restart service", "cmd": "systemctl restart {service}"},
     ],
     "docker_down": [
-        {"desc": "Start container", "cmd": "docker start {container}"},
+        {"desc": "Restart container", "cmd": "docker restart {container}"},
     ],
 }
 
@@ -569,8 +569,21 @@ class DevOpsAgent:
                 return r.get("stdout", "").strip() == "active"
             if base == "docker":
                 cont = source.split(":", 1)[1]
-                r = await self._executor.execute(f"docker inspect -f '{{{{.State.Running}}}}' {cont}", timeout=10)
-                return "true" in r.get("stdout", "").lower()
+                # Codex P2: Running=true unhealthy'de de doğru -> false-recovery. Health-status'a
+                # da bak: healthcheck'li container 'healthy' olmalı; healthcheck'siz (none) ->
+                # Running yeter. Çıktı "<running>;<health|none>" (örn "true;healthy"/"true;none").
+                r = await self._executor.execute(
+                    f"docker inspect -f '{{{{.State.Running}}}};{{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{else}}}}none{{{{end}}}}' {cont}",
+                    timeout=10,
+                )
+                parts = r.get("stdout", "").strip().lower().split(";")
+                running = len(parts) >= 1 and parts[0] == "true"
+                health = parts[1] if len(parts) >= 2 else "none"
+                if not running or health == "unhealthy":
+                    return False
+                if health == "starting":
+                    return None  # Codex P2: start_period geçici -> belirsiz, escalate ETME
+                return True  # healthy veya healthcheck'siz (none)
             # metrik playbook: yeniden örnekle. cpu_critical SADECE log -> verify yok.
             key = {"memory": "memory_percent", "disk": "disk_percent", "temperature": "temperature"}.get(base)
             if not key:
@@ -637,7 +650,9 @@ class DevOpsAgent:
         if base == "service" and name:
             return [{"desc": f"Restart {name}", "cmd": f"systemctl restart {name}"}]
         if base == "docker" and name:
-            return [{"desc": f"Start {name}", "cmd": f"docker start {name}"}]
+            # restart: durmuş container'ı da başlatır, unhealthy'yi de düzeltir (Codex P2;
+            # 'docker start' çalışan-unhealthy'de no-op'tu).
+            return [{"desc": f"Restart {name}", "cmd": f"docker restart {name}"}]
         if base == "cpu":
             return None  # cpu_critical sadece-log -> çalıştırılacak düzeltme yok
         steps = PLAYBOOKS.get(f"{base}_critical")
@@ -774,14 +789,19 @@ class DevOpsAgent:
             try:
                 result = await self._executor.execute(f"docker ps --filter name={container} --format '{{{{.Status}}}}'", timeout=5)
                 status = result.get("stdout", "").strip()
-                if not status or "Up" not in status:
+                # Codex P2: 'Up (unhealthy)' de 'Up' içerir -> çalışıyor-ama-unhealthy kaçardı.
+                # Healthcheck'li container (n8n/qdrant) unhealthy = kritik outage -> yakala.
+                down = not status or "Up" not in status
+                unhealthy = "unhealthy" in status.lower()
+                if down or unhealthy:
                     source = f"docker:{container}"
                     if source not in self._active_alerts:
+                        msg = f"Container {container} is not running" if down else f"Container {container} UNHEALTHY ({status})"
                         alert = Alert(
                             id=f"{source}-{self._check_count}",
                             severity="critical",
                             source=source,
-                            message=f"Container {container} is not running",
+                            message=msg,
                             value=0,
                             threshold=1,
                             timestamp=now,
@@ -918,8 +938,9 @@ class DevOpsAgent:
             return
         self._cooldowns[source] = now
 
-        # mode-gate (Codex P1): notify/dry_run'da docker start YÜRÜTÜLMEZ.
-        await self._apply_remediation(alert, source, f"Start {container}", f"docker start {container}", timeout=15)
+        # mode-gate (Codex P1): notify/dry_run'da YÜRÜTÜLMEZ. restart: durmuş+unhealthy
+        # ikisini de kapsar (Codex P2).
+        await self._apply_remediation(alert, source, f"Restart {container}", f"docker restart {container}", timeout=15)
         await self._send_webhook(alert)
         await self._verify_and_escalate(source, alert)
 

@@ -204,8 +204,15 @@ class Settings(BaseSettings):
 
     # DevOps agent watchlists (CSV in env, e.g. MONITOR_CRITICAL_CONTAINERS=dozzle,uptime-kuma)
     # NoDecode disables pydantic-settings' default JSON parse so the validator below sees raw CSV.
-    monitor_critical_services: Annotated[list[str], NoDecode] = ["linux-ai-server"]
-    monitor_critical_containers: Annotated[list[str], NoDecode] = ["dozzle", "uptime-kuma"]
+    # Slice D: kapsam genişletme. telegram-poller=interactivity (ACK/Uygula/claude butonları;
+    # ölürse sessizce çalışmaz), ollama=LLM (research/classify). n8n=otomasyon, qdrant=RAG.
+    # devops _check_services/_check_containers izler -> down -> spine alert + [🔧 Uygula] restart.
+    monitor_critical_services: Annotated[list[str], NoDecode] = [
+        "linux-ai-server",
+        "klipper-telegram-poller",
+        "ollama",
+    ]
+    monitor_critical_containers: Annotated[list[str], NoDecode] = ["dozzle", "uptime-kuma", "n8n", "qdrant"]
     monitor_vps_containers: Annotated[list[str], NoDecode] = [
         # 2026-05-14: n8n + grafana + prometheus + dokploy-traefik VPS'ten
         # klipper'a tasindi (infra/{n8n,monitoring}/). Bu container'lar VPS'te

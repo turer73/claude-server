@@ -443,6 +443,74 @@ async def test_check_services_service_down():
     assert len(service_alerts) > 0
 
 
+async def test_check_containers_unhealthy_alerts():
+    """Codex P2: 'Up (unhealthy)' -> 'Up' içerse de kritik alert (çalışıyor-ama-bozuk)."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.core.devops_agent import DevOpsAgent
+
+    agent = DevOpsAgent(db=None, interval=60)
+    agent._critical_containers = ["qdrant"]
+    agent._critical_services = []  # sadece container'a odaklan
+
+    async def mock_exec(cmd, timeout=5):
+        if "docker ps" in cmd:
+            return {"stdout": "Up 2 hours (unhealthy)\n", "stderr": "", "exit_code": 0}
+        if "docker start" in cmd:
+            return {"stdout": "", "stderr": "", "exit_code": 0}
+        return {"stdout": "", "stderr": "", "exit_code": 0}
+
+    with patch.object(agent._executor, "execute", new_callable=AsyncMock, side_effect=mock_exec):
+        await agent._check_services()
+
+    assert "docker:qdrant" in agent._active_alerts
+    assert "UNHEALTHY" in agent._active_alerts["docker:qdrant"].message
+
+
+async def test_verify_remediation_docker_health_aware():
+    """Codex P2: restart sonrası Running=true ama unhealthy -> verify FALSE (false-recovery yok).
+    healthy/none -> True; unhealthy/stopped -> False."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.core.devops_agent import DevOpsAgent
+
+    agent = DevOpsAgent(db=None, interval=60)
+
+    async def _inspect(out):
+        async def mock_exec(cmd, timeout=10):
+            return {"stdout": out, "stderr": "", "exit_code": 0}
+
+        with patch.object(agent._executor, "execute", new_callable=AsyncMock, side_effect=mock_exec):
+            return await agent._verify_remediation("docker:qdrant")
+
+    assert await _inspect("true;healthy\n") is True
+    assert await _inspect("true;none\n") is True  # healthcheck'siz -> Running yeter
+    assert await _inspect("true;unhealthy\n") is False  # çalışıyor ama bozuk
+    assert await _inspect("false;none\n") is False  # durmuş
+    assert await _inspect("true;starting\n") is None  # Codex P2: start_period -> belirsiz, escalate yok
+
+
+async def test_check_containers_up_healthy_no_alert():
+    """'Up (healthy)' -> alarm YOK (unhealthy substring'i healthy'de yok)."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.core.devops_agent import DevOpsAgent
+
+    agent = DevOpsAgent(db=None, interval=60)
+    agent._critical_containers = ["qdrant"]
+    agent._critical_services = []
+
+    async def mock_exec(cmd, timeout=5):
+        if "docker ps" in cmd:
+            return {"stdout": "Up 2 hours (healthy)\n", "stderr": "", "exit_code": 0}
+        return {"stdout": "", "stderr": "", "exit_code": 0}
+
+    with patch.object(agent._executor, "execute", new_callable=AsyncMock, side_effect=mock_exec):
+        await agent._check_services()
+
+    assert "docker:qdrant" not in agent._active_alerts
+
+
 # ── Resolve Alert DB Tests ─────────────────────
 
 
