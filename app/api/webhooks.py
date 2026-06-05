@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from app.middleware.dependencies import require_admin
+from app.models.schemas import AlertConfig
 
 # No prefix here — will be mounted via monitoring router with explicit prefix
 router = APIRouter(tags=["webhooks"])
@@ -92,15 +93,8 @@ async def trigger_action(action: str, request: Request, _: dict = Depends(requir
     elif action == "alert_check":
         monitor = MonitorAgent()
         metrics = monitor.collect_metrics()
-        thresholds = body.get(
-            "thresholds",
-            {
-                "cpu_percent": 85,
-                "memory_percent": 85,
-                "disk_percent": 90,
-                "temperature_c": 80,
-            },
-        )
+        # TEK-KAYNAK (Codex P2): AlertConfig -> Settings (config.py); hardcode-drift yok.
+        thresholds = body.get("thresholds", AlertConfig().model_dump())
         alerts = monitor.check_alerts(metrics, thresholds)
         return {
             "action": "alert_check",

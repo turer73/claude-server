@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.config import get_settings
+
 # --- Common ---
 
 
@@ -271,10 +273,13 @@ class MetricsSnapshot(BaseModel):
 
 
 class AlertConfig(BaseModel):
-    cpu_percent: int = 85
-    memory_percent: int = 85
-    disk_percent: int = 90
-    temperature_c: int = 80
+    # Eşik default'ları TEK-KAYNAK = app/core/config.py Settings (Codex P2: drift önleme —
+    # eskiden Settings + burada + webhooks'ta 3 kopya hardcoded'du). default_factory ile
+    # instantiation'da Settings'ten okunur; caller açık verirse o kazanır.
+    cpu_percent: int = Field(default_factory=lambda: get_settings().alert_cpu_percent)
+    memory_percent: int = Field(default_factory=lambda: get_settings().alert_memory_percent)
+    disk_percent: int = Field(default_factory=lambda: get_settings().alert_disk_percent)
+    temperature_c: int = Field(default_factory=lambda: get_settings().alert_temperature_c)
 
 
 class AlertEntry(BaseModel):
