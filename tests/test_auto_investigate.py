@@ -30,11 +30,13 @@ def ai(tmp_path, monkeypatch):
     return mod
 
 
-def test_prompt_contains_source_and_recur(ai):
+def test_prompt_contains_source_recur_and_hint(ai):
     p = ai._prompt("cron:renderhane-balance", "4")
     assert "cron:renderhane-balance" in p
     assert "4 kez" in p
-    assert "SALT-OKUNUR" in p
+    assert "değiştirme" in p  # salt-okuma vurgusu
+    # cron kaynağı -> somut log-yolu ipucu (claude keşifte tur harcamasın)
+    assert "/var/log/linux-ai-server/renderhane-balance.log" in p
 
 
 def test_investigate_calls_claude_then_discovery(ai, monkeypatch):

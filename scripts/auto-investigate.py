@@ -70,11 +70,21 @@ def _mark(source: str) -> None:
 
 
 def _prompt(source: str, recur: str) -> str:
+    # Kaynak-tipine göre SOMUT yer ipucu -> claude keşifte tur harcamaz, çabuk sonuca gider
+    # (genel "ilgili log" promptu max_turns'ü tüketip boş dönüyordu).
+    base, _, name = source.partition(":")
+    if base == "cron" and name:
+        hint = f"Logu burada: /var/log/linux-ai-server/{name}.log (son ~30 satırı Read ile oku)."
+    elif base == "service" and name:
+        hint = f"`systemctl status {name}` ve ilgili son /var/log dosyasına bak."
+    elif base == "docker" and name:
+        hint = f"`docker logs --tail 50 {name}` çıktısına bak."
+    else:
+        hint = "İlgili log/durumu (1-2 dosya) oku."
     return (
-        f"Sunucuda '{source}' kaynağı son {RECUR_DAYS} günde {recur} kez critical-alert "
-        f"oldu (tekrar eden sorun). İlgili logları, servis/cron durumunu ve son commit'leri "
-        f"SALT-OKUNUR incele; sonra KISA (4-8 cümle, Türkçe) şunu ver: (1) en olası KÖK-NEDEN, "
-        f"(2) önerilen KALICI çözüm. Yalnız okuma yap, hiçbir şeyi değiştirme."
+        f"'{source}' kaynağı son {RECUR_DAYS} günde {recur} kez critical oldu. {hint} "
+        f"SADECE 1-2 dosya oku, fazla araştırma YAPMA. Sonra TEK kısa paragraf (3-5 cümle, "
+        f"Türkçe) yaz: olası kök-neden + önerilen çözüm. SALT-OKUMA, hiçbir şeyi değiştirme."
     )
 
 
@@ -92,7 +102,7 @@ def investigate(source: str, recur: str) -> dict:
     try:
         run = _post_json(
             f"{API_BASE}/api/v1/claude/run",
-            {"prompt": _prompt(source, recur), "read_only": True, "cwd": CWD, "max_turns": 12},
+            {"prompt": _prompt(source, recur), "read_only": True, "cwd": CWD, "max_turns": 30},
             {"X-API-Key": ikey},
             CLAUDE_TIMEOUT,
         )
