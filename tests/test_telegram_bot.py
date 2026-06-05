@@ -471,7 +471,8 @@ def test_run_claude_passes_session_id():
     with patch("app.api.telegram_bot.requests.post", side_effect=_post):
         res = tb._run_claude("selam", session_id="sess-123")
     assert captured["session_id"] == "sess-123"
-    assert captured["read_only"] is True  # Telegram -> salt-okunur (plan modu)
+    assert captured["read_only"] is True  # Telegram -> salt-okunur allowlist
+    assert captured["cwd"] == "/opt/linux-ai-server"  # repo bağlamı (git/dosya soruları)
     assert res["ok"] is True
 
 
