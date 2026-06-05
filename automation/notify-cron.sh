@@ -32,6 +32,10 @@ MEMORY_DB="${MEMORY_DB:-/opt/linux-ai-server/data/claude_memory.db}"
 RESOLVE_QUIET_MIN="${RESOLVE_QUIET_MIN:-90}"
 RECUR_DAYS="${RECUR_DAYS:-7}"
 RECUR_THRESHOLD="${RECUR_THRESHOLD:-3}"
+# Slice B (opt-in, default KAPALI): tekrarlayan-critical -> arka-planda otonom salt-okunur
+# /claude incelemesi. FAZ6 kapı: yalnız enable + tekrarlayan + (script-içi) rate-limit.
+AUTO_INVESTIGATE_ENABLED="${AUTO_INVESTIGATE_ENABLED:-$(_envget AUTO_INVESTIGATE_ENABLED)}"
+INVESTIGATE_SCRIPT="${INVESTIGATE_SCRIPT:-$(dirname "$0")/../scripts/auto-investigate.py}"
 
 mkdir -p "$(dirname "$LOG")" 2>/dev/null
 
@@ -176,6 +180,11 @@ for id in $IDS; do
         if [ "${RC:-0}" -ge "$RECUR_THRESHOLD" ]; then
             RECUR_LINE="🔁 TEKRARLAYAN (${RC}x / ${RECUR_DAYS}g) — kök-neden incelenmeli
 "
+            # Slice B (opt-in): tekrarlayan -> arka-planda otonom salt-okunur inceleme.
+            # fire-and-forget (notify-cron bloklanmaz); rate-limit+kapı script içinde.
+            if [ "${AUTO_INVESTIGATE_ENABLED:-false}" = "true" ] && [ -f "$INVESTIGATE_SCRIPT" ]; then
+                AUTO_INVESTIGATE_ENABLED=true python3 "$INVESTIGATE_SCRIPT" "$src" "$RC" >/dev/null 2>&1 &
+            fi
         fi
     fi
 
