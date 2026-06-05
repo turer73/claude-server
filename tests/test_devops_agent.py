@@ -61,6 +61,71 @@ async def test_devops_metrics_buffer(devops_client, auth_headers):
     assert resp.json()["count"] == 0  # No ticks yet
 
 
+async def test_metrics_history_window_isot_format(devops_client, app):
+    """Regresyon: metrics_history.timestamp Python isoformat() ile ISO-T ('T'-ayraçlı,
+    +00:00) yazılır; AMA schema DEFAULT'u datetime('now') = BOŞLUK-ayraçlı. Ham string-
+    compare iki formatı karıştırır ('T'(0x54) vs ' '(0x20)) → yanlış pencere. Fix
+    datetime(timestamp) ile her iki formatı UTC'ye normalize eder.
+
+    Test üç vakayı birden ayırt eder:
+      - taze ISO-T satır → pencerede (her zaman doğru olmalı)
+      - aynı-gün/eski ISO-T satır → DIŞARDA (ham-compare bunu yanlışça ALIRDI)
+      - taze BOŞLUK-format satır (schema-default taklidi) → İÇERDE (Codex P2: replace()-fix
+        bunu yanlışça DIŞLARDI; format-agnostik datetime() yakalar)
+    """
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    # UTC gece-yarısı kenarı: 30dk-eski satır aynı UTC-günde kurulamaz → ayrımı atla
+    if now.hour == 0 and now.minute < 35:
+        pytest.skip("UTC gece-yarısı penceresi — aynı-gün eski-satır kurulamıyor")
+
+    db = app.state.db
+    recent = (now - timedelta(minutes=5)).isoformat()  # ISO-T, pencerede
+    # Aynı UTC-günün başı: kesinlikle >30dk eski ama datetime('now') ile AYNI tarih-öneki
+    old_sameday = now.replace(hour=0, minute=0, second=1, microsecond=0).isoformat()
+    # BOŞLUK-format taze satır (schema DEFAULT datetime('now') taklidi): 'T' yok, tz yok
+    recent_space = (now - timedelta(minutes=3)).strftime("%Y-%m-%d %H:%M:%S")
+
+    for ts in (recent, old_sameday, recent_space):
+        await db.execute(
+            "INSERT INTO metrics_history "
+            "(timestamp, cpu_usage, memory_usage, disk_usage, temperature, load_avg, network_io) "
+            "VALUES (?, 0, 0, 0, 0, '[]', '{}')",
+            (ts,),
+        )
+
+    agent = app.state.devops_agent
+    got = {r["timestamp"] for r in await agent.get_metrics_history(minutes=30)}
+    assert recent in got  # taze ISO-T satır pencerede
+    assert old_sameday not in got  # BUG olsaydı ham-compare bunu yanlışça alırdı
+    assert recent_space in got  # Codex P2: boşluk-format taze satır da yakalanmalı
+
+
+async def test_metrics_window_uses_expression_index(devops_client, app):
+    """Codex P2: format-agnostik datetime(timestamp) predikatı RANGE-SEARCH yapabilmeli
+    (full-SCAN değil). Expression index idx_metrics_dt schema'da olmalı ve sorgu planı
+    onu kullanmalı — aksi halde pencere<500 satırda tüm tarih taranır."""
+    db = app.state.db
+    # 1) expression index'ler schema'da mevcut
+    idx = {
+        r["name"]
+        for r in await db.fetch_all("SELECT name FROM sqlite_master WHERE type='index' AND name IN ('idx_metrics_dt','idx_vps_metrics_dt')")
+    }
+    assert idx == {"idx_metrics_dt", "idx_vps_metrics_dt"}, f"expression index eksik: {idx}"
+
+    # 2) sorgu planı expression index'i kullanıyor (SCAN değil SEARCH)
+    plan = " ".join(
+        r["detail"]
+        for r in await db.fetch_all(
+            "EXPLAIN QUERY PLAN SELECT * FROM metrics_history "
+            "WHERE datetime(timestamp) > datetime('now', '-30 minutes') "
+            "ORDER BY datetime(timestamp) DESC LIMIT 500"
+        )
+    )
+    assert "idx_metrics_dt" in plan, f"expression index kullanılmıyor: {plan}"
+
+
 async def test_devops_remediation_log(devops_client, auth_headers):
     resp = await devops_client.get("/api/v1/devops/remediation/log", headers=auth_headers)
     assert resp.status_code == 200
