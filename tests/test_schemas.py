@@ -128,9 +128,12 @@ def test_ai_chat_request():
 
 
 def test_alert_config_defaults():
+    # TEK-KAYNAK: Settings (config.py)'ten okunur. 2026-06-05 tuning: mem 75, disk 85.
     cfg = AlertConfig()
     assert cfg.cpu_percent == 85
-    assert cfg.memory_percent == 85
+    assert cfg.memory_percent == 75
+    assert cfg.disk_percent == 85
+    assert cfg.temperature_c == 80
 
 
 def test_log_search_request():
