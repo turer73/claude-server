@@ -30,5 +30,14 @@ esac
     exit 2
 }
 
-# -readonly: motor-zorlamalı salt-okuma. 2>&1: SQL/readonly hataları görünsün. head: cap.
-sqlite3 -readonly -header -column -cmd ".timeout 5000" "$DB" "$SQL" 2>&1 | head -c 40000
+# GÜVENLİK (Codex P1): dot-command'lar (.shell/.system/.output/.import/.load) -readonly'yi
+# AŞAR (shell-exec/dosya-yazma/RCE). KANIT: '.shell echo X' shell çalıştırıyordu. İki katman:
+# (1) '.' ile başlayan satırı REDDET (version-bağımsız), (2) sqlite3 -safe (motor düzeyinde
+# tehlikeli dot-command + dosya-erişim + ATTACH'i kapatır).
+if printf '%s' "$SQL" | grep -qE '^[[:space:]]*\.'; then
+    echo "HATA: dot-command (satır-başı '.') yasak — yalnız SQL sorgusu (güvenlik)" >&2
+    exit 2
+fi
+
+# -readonly: DB yazma motorda red. -safe: tehlikeli dot-command/dosya/ATTACH kapalı. head: cap.
+sqlite3 -readonly -safe -header -column -cmd ".timeout 5000" "$DB" "$SQL" 2>&1 | head -c 40000

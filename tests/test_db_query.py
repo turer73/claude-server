@@ -69,6 +69,22 @@ def test_empty_sql_rejected(tmp_path):
     assert r.returncode == 2
 
 
+def test_dot_command_shell_blocked(tmp_path):
+    """Codex P1: .shell dot-command -readonly'yi aşıp RCE yapardı -> REDDEDİLİR."""
+    r = _run(tmp_path, "server", ".shell echo PWNED")
+    assert r.returncode == 2
+    assert "PWNED" not in r.stdout
+    assert "dot-command" in (r.stdout + r.stderr)
+
+
+def test_dot_command_output_file_blocked(tmp_path):
+    """.output (dosya-yazma) -> reddedilir, dosya oluşmaz."""
+    target = tmp_path / "leak.txt"
+    r = _run(tmp_path, "server", f".output {target}\nSELECT 1;")
+    assert r.returncode == 2
+    assert not target.exists()
+
+
 def test_drop_table_rejected(tmp_path):
     """DROP da motor-reddi (yazma)."""
     r = _run(tmp_path, "server", "DROP TABLE events;")
