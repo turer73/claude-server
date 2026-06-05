@@ -17,6 +17,7 @@ Pure observer: hiçbir şeye yazmaz. status ∈ {alive, stale, dead, unknown}.
 from __future__ import annotations
 
 import datetime as dt
+import os
 import socket
 import sqlite3
 import urllib.error
@@ -29,6 +30,7 @@ MEMORY_DB = "/opt/linux-ai-server/data/claude_memory.db"
 POLLER_STATE = "/opt/linux-ai-server/data/hook-state/poller-state.json"
 ALERTS_LOG = "/var/log/linux-ai-server/alerts.log"
 RAG_HEALTH_URL = "http://localhost:8420/api/v1/rag/health"
+ENV_FILE = "/opt/linux-ai-server/.env"
 
 VPS_TAILSCALE_IP = "100.126.113.23"
 VPS_PUBLIC_IP = "194.163.134.239"
@@ -186,6 +188,38 @@ def notes_poller_liveness(poll_interval_s: float = 30) -> dict:
     return {"source": "notes_poller", "klass": "B", "status": st, "detail": f"heartbeat {d}"}
 
 
+def _env_flag(key: str) -> str:
+    """Flag oku: os.environ ÖNCE (Codex P2: env-var override .env'i kazanır — notify-cron
+    script'iyle tutarlı), sonra .env dosyası. Bulunamazsa ''."""
+    v = os.environ.get(key)
+    if v:
+        return v
+    try:
+        with open(ENV_FILE) as fh:
+            for line in fh:
+                if line.startswith(f"{key}="):
+                    return line.split("=", 1)[1].strip().strip("\"'")
+    except OSError:
+        pass
+    return ""
+
+
+def notify_cron_liveness(cadence_s: float = 45 * 60) -> dict:
+    """notify-cron = alarm TESLİM-yolu. Codex P2: ENABLE-GATE — NOTIFY_CRON_ENABLED!=true
+    ise cron-wrap koşup cron_outcomes yazsa BİLE teslim YOK (script en başta exit 0) ->
+    dead. Enable ise cron_outcomes tazeliği (>45dk=dead)."""
+    if _env_flag("NOTIFY_CRON_ENABLED").lower() != "true":
+        return {
+            "source": "notify-cron",
+            "klass": "B",
+            "status": "dead",
+            "detail": "NOTIFY_CRON_ENABLED!=true (teslim KAPALI — alarm gitmez)",
+        }
+    r = cron_job_liveness("notify-cron", cadence_s, absent_status="dead")
+    r["source"] = "notify-cron"  # 'cron:notify-cron' -> sade etiket
+    return r
+
+
 def alerts_evaluator_liveness() -> dict:
     """B (self-heartbeat): alert-check.sh (*/5) her run alerts.log'a "OK ..."
     yazar (alert olmasa bile). Liveness = log son-satır tazeliği — alerts
@@ -273,6 +307,9 @@ REGISTRY = [
     ci_liveness,
     lambda: cron_job_liveness("vps-backup-push", 16 * 3600, absent_status="dead"),  # günlük; 16h→dead@48h (~2g)
     lambda: cron_job_liveness("demo-reset-test", 28 * 3600),
+    # notify-cron = alarm TESLİM-yolu; ölürse/kapalıysa HİÇBİR alarm gitmez (kör).
+    # enable-gate + */20 kadans tazeliği. Spine'ın kalbi; meta-monitor DIRECT izler.
+    notify_cron_liveness,
     notes_poller_liveness,
     alerts_evaluator_liveness,
     autonomy_liveness,

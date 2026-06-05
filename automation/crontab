@@ -43,5 +43,8 @@
 # DISABLED: Once (1) data/notify-cron.sh'i automation/'a tasiyip chmod +x yap,
 #           (2) .env'e NOTIFY_CRON_ENABLED=true ekle, (3) bu satiri uncomment et + install-cron.sh calistir.
 */20 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh notify-cron /opt/linux-ai-server/automation/notify-cron.sh
+# META-MONITOR: canli-sistem bekcilerini izle (liveness.check_all). Dead component ->
+# DIRECT Telegram (dead-man's switch) + spine. */10. Bekcileri-kim-bekliyor katmani.
+*/10 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh liveness-check /opt/linux-ai-server/automation/liveness-check.sh
 # Renderhane bakiye uyarisi (panola-social VPS /api/health proxy, saatlik) — v2-06 PSOC-20260528
 0 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh renderhane-balance /opt/linux-ai-server/automation/social-renderhane-balance-alert.sh
