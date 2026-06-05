@@ -255,3 +255,23 @@ def test_check_all_shape(monkeypatch, tmp_path):
     assert "results" in out
     assert isinstance(out["dead"], list)
     assert isinstance(out["stale"], list)
+
+
+def test_notify_cron_liveness_enable_gate(monkeypatch):
+    """Codex P2: NOTIFY_CRON_ENABLED!=true -> wrapper koşsa bile dead (teslim kapalı)."""
+    monkeypatch.setattr(lv, "_env_flag", lambda k: "false")
+    r = lv.notify_cron_liveness()
+    assert r["status"] == "dead"
+    assert r["source"] == "notify-cron"
+    assert "KAPALI" in r["detail"]
+
+
+def test_notify_cron_liveness_enabled_checks_recency(monkeypatch, tmp_path):
+    """ENABLED=true -> cron_outcomes tazeliğine bakar; source sade 'notify-cron'."""
+    monkeypatch.setattr(lv, "_env_flag", lambda k: "true")
+    p = tmp_path / "s.db"
+    _cron_db(p, [("notify-cron", "pass", "-5 minutes")])
+    monkeypatch.setattr(lv, "SERVER_DB", str(p))
+    r = lv.notify_cron_liveness(45 * 60)
+    assert r["source"] == "notify-cron"
+    assert r["status"] == "alive"

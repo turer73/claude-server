@@ -52,7 +52,6 @@ if [ "$DEAD" = "$PREV" ]; then
     echo "OUTCOME: partial | dead sürüyor: $DEAD"
     exit 0
 fi
-echo "$DEAD" > "$STATE" 2>/dev/null
 echo "[$TS] YENİ DEAD: $DEAD" >> "$LOG"
 
 MSG="🛑 META-MONITOR: canlı-sistem bekçisi ÖLÜ
@@ -61,13 +60,24 @@ Dead: ${DEAD}
 ${TS}"
 
 # 1) DIRECT Telegram (dead-man's switch — spine BYPASS, garantili kanal)
+TG_OK=0
 if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
-    curl -s --max-time 8 -X POST "$TG_URL" \
-        -d chat_id="$TELEGRAM_CHAT_ID" --data-urlencode "text=${MSG}" >/dev/null 2>&1
+    HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 -X POST "$TG_URL" \
+        -d chat_id="$TELEGRAM_CHAT_ID" --data-urlencode "text=${MSG}" 2>/dev/null)
+    [ "$HTTP" = "200" ] && TG_OK=1
 fi
 # 2) Spine kaydı (notify-cron canlıysa buton+SessionStart; değilse events'te iz)
 "$EMIT" alert "meta-monitor" critical "Canlı-sistem bekçisi ÖLÜ: ${DEAD}" \
     "liveness.check_all dead component; DIRECT-Telegram ile uyarıldı." 2>/dev/null || true
 
-echo "OUTCOME: fail | dead bekçi: $DEAD (DIRECT-Telegram + spine)"
+# State'i YALNIZ alarm başarıyla iletildiyse yaz (Codex P1). Aksi halde sonraki run
+# tekrar dener -> dead-man's switch kaybolmaz. Creds hiç yoksa direct-kanal mümkün
+# değil -> state yaz (spam önle, spine'a bırakıldı).
+if [ "$TG_OK" = "1" ] || [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+    echo "$DEAD" > "$STATE" 2>/dev/null
+else
+    echo "[$TS] DIRECT-Telegram BAŞARISIZ (http=${HTTP:-?}) -> state yazılmadı, sonraki run retry" >> "$LOG"
+fi
+
+echo "OUTCOME: fail | dead bekçi: $DEAD (direct_tg=${TG_OK})"
 exit 0
