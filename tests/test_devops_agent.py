@@ -102,6 +102,33 @@ async def test_metrics_history_window_isot_format(devops_client, app):
     assert recent_space in got  # Codex P2: boşluk-format taze satır da yakalanmalı
 
 
+async def test_metrics_window_uses_expression_index(devops_client, app):
+    """Codex P2: format-agnostik datetime(timestamp) predikatı RANGE-SEARCH yapabilmeli
+    (full-SCAN değil). Expression index idx_metrics_dt schema'da olmalı ve sorgu planı
+    onu kullanmalı — aksi halde pencere<500 satırda tüm tarih taranır."""
+    db = app.state.db
+    # 1) expression index'ler schema'da mevcut
+    idx = {
+        r["name"]
+        for r in await db.fetch_all(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name IN "
+            "('idx_metrics_dt','idx_vps_metrics_dt')"
+        )
+    }
+    assert idx == {"idx_metrics_dt", "idx_vps_metrics_dt"}, f"expression index eksik: {idx}"
+
+    # 2) sorgu planı expression index'i kullanıyor (SCAN değil SEARCH)
+    plan = " ".join(
+        r["detail"]
+        for r in await db.fetch_all(
+            "EXPLAIN QUERY PLAN SELECT * FROM metrics_history "
+            "WHERE datetime(timestamp) > datetime('now', '-30 minutes') "
+            "ORDER BY datetime(timestamp) DESC LIMIT 500"
+        )
+    )
+    assert "idx_metrics_dt" in plan, f"expression index kullanılmıyor: {plan}"
+
+
 async def test_devops_remediation_log(devops_client, auth_headers):
     resp = await devops_client.get("/api/v1/devops/remediation/log", headers=auth_headers)
     assert resp.status_code == 200

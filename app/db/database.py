@@ -68,6 +68,12 @@ CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user);
 CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics_history(timestamp);
 CREATE INDEX IF NOT EXISTS idx_vps_metrics_timestamp ON vps_metrics_history(timestamp);
+-- Expression index: zaman-pencere sorgusu format-agnostik datetime(timestamp) ile
+-- filtrelenir (ISO-T + boşluk-default karışımını UTC'ye normalize eder). Bu index o
+-- normalize-predicate'e karşı RANGE-SEARCH sağlar (Codex P2: aksi halde pencere<500
+-- satırda full index-SCAN). Bkz devops_agent.get_metrics_history.
+CREATE INDEX IF NOT EXISTS idx_metrics_dt ON metrics_history(datetime(timestamp));
+CREATE INDEX IF NOT EXISTS idx_vps_metrics_dt ON vps_metrics_history(datetime(timestamp));
 CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);
 
 CREATE TABLE IF NOT EXISTS ci_lesson_learned (

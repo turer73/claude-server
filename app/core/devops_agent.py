@@ -1008,11 +1008,13 @@ class DevOpsAgent:
             # (database.py) datetime('now') = BOŞLUK-ayraçlı → timestamp atlanırsa boşluk-
             # satır oluşur. Ham string-compare iki formatı karıştırır ('T'(0x54) vs ' '(0x20))
             # → yanlış pencere (ya hep-içeri ya boşluk-satırı-dışla). datetime(timestamp) HER
-            # İKİ formatı UTC'ye normalize eder → doğru, format-bağımsız pencere. Çağrı yalnız
-            # on-demand endpoint (hot-loop değil); 195k satırda ~26ms (index ORDER BY için).
+            # İKİ formatı UTC'ye normalize eder → doğru, format-bağımsız pencere.
+            # WHERE + ORDER BY ikisi de datetime(timestamp) → expression index idx_metrics_dt
+            # RANGE-SEARCH sağlar (Codex P2 #2: aksi halde pencere<500 satırda full-SCAN +
+            # temp-sort). database.py'de tanımlı.
             """SELECT * FROM metrics_history
                WHERE datetime(timestamp) > datetime('now', ?)
-               ORDER BY timestamp DESC LIMIT 500""",
+               ORDER BY datetime(timestamp) DESC LIMIT 500""",
             (f"-{minutes} minutes",),
         )
         return [dict(r) for r in rows]
@@ -1021,10 +1023,10 @@ class DevOpsAgent:
         if not self._db:
             return []
         rows = await self._db.fetch_all(
-            # Format-agnostik (ISO-T + boşluk-default) — bkz get_metrics_history (Codex P2).
+            # Format-agnostik + expression index idx_vps_metrics_dt — bkz get_metrics_history.
             """SELECT * FROM vps_metrics_history
                WHERE datetime(timestamp) > datetime('now', ?)
-               ORDER BY timestamp DESC LIMIT 500""",
+               ORDER BY datetime(timestamp) DESC LIMIT 500""",
             (f"-{minutes} minutes",),
         )
         return [dict(r) for r in rows]
