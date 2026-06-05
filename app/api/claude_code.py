@@ -79,6 +79,13 @@ READ_ONLY_DISALLOWED_TOOLS = " ".join(
         "Bash(mkfs:*)",
         "Bash(kill:*)",
         "Bash(pkill:*)",
+        # journalctl YIKICI bayrakları (Codex P1: log siler/döndürür). Best-effort
+        # (prefix-eşleşme flag-konumuna duyarlı; owner-only + model read-only-niyet katmanlı).
+        "Bash(journalctl --vacuum-time:*)",
+        "Bash(journalctl --vacuum-size:*)",
+        "Bash(journalctl --vacuum-files:*)",
+        "Bash(journalctl --rotate:*)",
+        "Bash(journalctl --flush:*)",
     ]
 )
 
