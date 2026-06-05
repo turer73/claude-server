@@ -34,7 +34,10 @@ send_telegram() {
 RESPONSE=$(curl -s --max-time 10 "$URL" 2>/dev/null)
 if [ -z "$RESPONSE" ]; then
     echo "[$TS] ERROR: VPS /api/health timeout/empty" >> "$LOG"
-    exit 1
+    # Geçici dış-bağımlılık (VPS panola-social erişilemedi) -> partial (warning),
+    # CRITICAL DEĞİL: bir sonraki saatlik run'da düzelir. (outcome-contract)
+    echo "OUTCOME: partial | VPS /api/health erişilemedi (geçici dış-bağımlılık; saatlik retry)"
+    exit 0
 fi
 
 BALANCE=$(echo "$RESPONSE" | python3 -c '
@@ -48,7 +51,10 @@ except Exception:
 
 if [ -z "$BALANCE" ] || [ "$BALANCE" = "-1" ]; then
     echo "[$TS] PARSE ERROR: renderhane_balance missing in: $RESPONSE" >> "$LOG"
-    exit 1
+    # Beklenmedik payload (alan eksik) -> partial (warning), CRITICAL değil; transient
+    # olabilir, kalıcıysa warning olarak yüzeyde kalır (outcome-contract).
+    echo "OUTCOME: partial | renderhane_balance alanı yanıtta yok (payload değişmiş olabilir)"
+    exit 0
 fi
 
 echo "[$TS] balance=$BALANCE threshold=$THRESHOLD" >> "$LOG"
@@ -71,3 +77,7 @@ Eşik: \`$THRESHOLD\`
         echo "[$TS] SKIP: cooldown active (${REMAIN}m kaldi)" >> "$LOG"
     fi
 fi
+
+# Bakiye okundu (alarm ayrı Telegram yoluyla zaten gönderildi); script sağlıklı çalıştı.
+# Düşük-bakiye = iş-durumu (kendi alarmı var), script-OUTCOME'u değil -> pass.
+echo "OUTCOME: pass | balance=${BALANCE} threshold=${THRESHOLD}"
