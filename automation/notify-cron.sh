@@ -68,7 +68,7 @@ suggest_action() {
         cpu)    echo "🔧 Öneri: yük-yapan süreci incele/sınırla. ⚠️ Risk: yok (sadece-inceleme, otomatik-aksiyon yok). 🔍 Bak: ps aux --sort=-%cpu | head; uptime" ;;
         temperature) echo "🔧 Öneri: yükü azalt / governor powersave. ⚠️ Risk: powersave = CPU yavaşlar (performans düşer). 🔍 Bak: sensors; cat /proc/linux_ai" ;;
         service) echo "🔧 Öneri: \`sudo systemctl restart ${name}\`. ⚠️ Risk: ${name} kısa kesinti (restart sırasında). 🔍 Bak: journalctl -u ${name} -n 50 --no-pager" ;;
-        docker)  echo "🔧 Öneri: \`docker start ${name}\`. ⚠️ Risk: düşük (container başlatma). 🔍 Bak: docker logs --tail 50 ${name}" ;;
+        docker)  echo "🔧 Öneri: \`docker restart ${name}\`. ⚠️ Risk: kısa kesinti (restart; durmuşsa başlatır, unhealthy'yi düzeltir). 🔍 Bak: docker logs --tail 50 ${name}" ;;
         cron)    echo "🔧 Öneri: log'u incele + işi elle çalıştır. ⚠️ Risk: işe-bağlı (önce log'a bak). 🔍 Bak: tail -40 /var/log/linux-ai-server/${name}.log" ;;
         escalation|remediation) echo "⛔ MANUEL MÜDAHALE GEREK: otonom düzeltme yetmedi/kapalı — '${name}' hâlâ kritik. ⚠️ Çözülene dek pinglenir. Kaynağı elle çöz." ;;
         *) echo "🔧 Öneri: detayı incele + ilgili log'a bak. ⚠️ Risk: bilinmiyor (önce incele). (kaynak: ${src})" ;;

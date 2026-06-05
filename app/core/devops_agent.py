@@ -76,7 +76,7 @@ PLAYBOOKS: dict[str, list[dict]] = {
         {"desc": "Restart service", "cmd": "systemctl restart {service}"},
     ],
     "docker_down": [
-        {"desc": "Start container", "cmd": "docker start {container}"},
+        {"desc": "Restart container", "cmd": "docker restart {container}"},
     ],
 }
 
@@ -637,7 +637,9 @@ class DevOpsAgent:
         if base == "service" and name:
             return [{"desc": f"Restart {name}", "cmd": f"systemctl restart {name}"}]
         if base == "docker" and name:
-            return [{"desc": f"Start {name}", "cmd": f"docker start {name}"}]
+            # restart: durmuş container'ı da başlatır, unhealthy'yi de düzeltir (Codex P2;
+            # 'docker start' çalışan-unhealthy'de no-op'tu).
+            return [{"desc": f"Restart {name}", "cmd": f"docker restart {name}"}]
         if base == "cpu":
             return None  # cpu_critical sadece-log -> çalıştırılacak düzeltme yok
         steps = PLAYBOOKS.get(f"{base}_critical")
@@ -923,8 +925,9 @@ class DevOpsAgent:
             return
         self._cooldowns[source] = now
 
-        # mode-gate (Codex P1): notify/dry_run'da docker start YÜRÜTÜLMEZ.
-        await self._apply_remediation(alert, source, f"Start {container}", f"docker start {container}", timeout=15)
+        # mode-gate (Codex P1): notify/dry_run'da YÜRÜTÜLMEZ. restart: durmuş+unhealthy
+        # ikisini de kapsar (Codex P2).
+        await self._apply_remediation(alert, source, f"Restart {container}", f"docker restart {container}", timeout=15)
         await self._send_webhook(alert)
         await self._verify_and_escalate(source, alert)
 
