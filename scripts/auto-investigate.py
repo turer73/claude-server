@@ -84,8 +84,10 @@ def investigate(source: str, recur: str) -> dict:
         return {"ok": False, "skipped": "rate-limited"}
     ikey = _envget("INTERNAL_API_KEY")
     mkey = _envget("MEMORY_API_KEY")
-    if not ikey:
-        return {"ok": False, "skipped": "no INTERNAL_API_KEY"}
+    # Codex P2: mkey YOKSA bulguyu kaydedemeyiz -> pahalı /claude run'ı BAŞLATMA (boşa
+    # harcama). Her ikisi de şart (claude-çağrısı = ikey, bulgu-kaydı = mkey).
+    if not ikey or not mkey:
+        return {"ok": False, "skipped": "no INTERNAL_API_KEY/MEMORY_API_KEY"}
     _mark(source)  # önce işaretle (eş-zamanlı 2. tetikleme tekrar başlatmasın)
     try:
         run = _post_json(

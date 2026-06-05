@@ -75,8 +75,18 @@ def test_no_internal_key_skips(ai, monkeypatch):
     called = []
     monkeypatch.setattr(ai, "_post_json", lambda *a, **k: called.append(1) or {})
     res = ai.investigate("cron:y", "3")
-    assert res["skipped"] == "no INTERNAL_API_KEY"
+    assert "skipped" in res
     assert called == []
+
+
+def test_missing_memory_key_skips_before_claude(ai, monkeypatch):
+    """Codex P2: mkey yoksa pahalı /claude run BAŞLATILMAZ (boşa harcama önlenir)."""
+    monkeypatch.setattr(ai, "_envget", lambda k: "ik" if k == "INTERNAL_API_KEY" else "")
+    called = []
+    monkeypatch.setattr(ai, "_post_json", lambda *a, **k: called.append(1) or {})
+    res = ai.investigate("cron:y", "3")
+    assert "skipped" in res
+    assert called == []  # claude HİÇ çağrılmadı
 
 
 def test_main_gated_off_by_default(ai, monkeypatch):
