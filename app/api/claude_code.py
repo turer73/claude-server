@@ -58,6 +58,10 @@ READ_ONLY_ALLOWED_TOOLS = " ".join(
         "Bash(wc:*)",
         "Bash(uname:*)",
         "Bash(sensors:*)",
+        # data-analist: engine-zorlamalı read-only SQL (db-query.sh -readonly; yazma motorda
+        # reddedilir, yalnız server/coverage alias). Ham sqlite3 HARİÇ kalır (DELETE riski).
+        "Bash(/opt/linux-ai-server/scripts/db-query.sh:*)",
+        "Bash(bash /opt/linux-ai-server/scripts/db-query.sh:*)",
     ]
 )
 
