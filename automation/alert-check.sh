@@ -26,6 +26,11 @@ fi
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 PREV_STATE=$(cat "$STATE_FILE" 2>/dev/null || echo "unknown")
 
+# HEARTBEAT (her run, koşulsuz): liveness.alerts_evaluator alerts.log mtime tazeliğini
+# alert-pipeline canlılığı sayar (>15dk=ölü). Konsolidasyon-sonrası eski "her run OK
+# yaz" davranışı korunmalı yoksa pipeline yanlış-ölü görünür (regresyon fix).
+echo "[$TIMESTAMP] alert-check run (heartbeat; metrik-alarm sahibi: devops_agent)" >> "$LOG" 2>/dev/null
+
 # /metrics auth ŞART (admin scope = INTERNAL_API_KEY). http!=200 -> pipeline KÖR.
 RESP=$(curl -s --max-time 10 -w "\n%{http_code}" -H "X-API-Key: ${INTERNAL_API_KEY}" "$API/api/v1/monitor/metrics")
 HTTP_CODE=$(printf '%s' "$RESP" | tail -n1)

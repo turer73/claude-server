@@ -111,6 +111,21 @@ def test_alert_check_metrics_up_no_event(tmp_path):
     assert _events(db) == []
 
 
+def test_alert_check_writes_heartbeat_to_log_every_run(tmp_path):
+    """Regresyon-guard: sağlıklı (200) run'da bile alerts.log'a heartbeat yazılır
+    (liveness.alerts_evaluator mtime tazeliğini izler -> yoksa pipeline yanlış-ölü)."""
+    db = tmp_path / "ev.db"
+    _mk_events_db(db)
+    state = tmp_path / "state"
+    log = tmp_path / "a.log"
+    _fake_curl(tmp_path / "bin", "200", '{"cpu_percent":10}')
+    env = _env(tmp_path, db, state)
+    env["ALERT_CHECK_LOG"] = str(log)
+    subprocess.run(["bash", str(ALERT_CHECK)], env=env, capture_output=True, text=True, timeout=15)
+    assert log.exists()
+    assert "heartbeat" in log.read_text()
+
+
 # ── health-check (app watchdog) ─────────────────────────────────
 
 
