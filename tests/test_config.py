@@ -37,7 +37,10 @@ def test_monitoring_defaults():
     s = Settings()
     assert s.monitor_poll_interval_sec == 5
     assert s.alert_cpu_percent == 85
-    assert s.alert_memory_percent == 85
+    # 2026-06-05 gerçek-veri tuning: mem 85->75, disk 90->85 (max gözlem 52.6/49.8, 0-FP).
+    assert s.alert_memory_percent == 75
+    assert s.alert_disk_percent == 85
+    assert s.alert_temperature_c == 80
 
 
 def test_monitor_watchlists_defaults():

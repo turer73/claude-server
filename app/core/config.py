@@ -186,9 +186,14 @@ class Settings(BaseSettings):
     # Monitoring
     monitor_poll_interval_sec: int = 5
     metrics_history_size: int = 1000
+    # Eşikler — 2026-06-05 gerçek-veri tuning (36g metrics_history, klipper'a-özel):
+    # cpu 85 KAL (p99=75, devops dedup spike'ı yutar); temp 80 KAL (p99=59, 85°C spike yakalar).
+    # mem 85->75: max gözlem 52.6, 85 ASLA tetiklemez; 75 hâlâ 0-FP (p99=33) ama leak'i erken
+    #   yakalar. disk 90->85: max 49.8, erken-uyarı + 0-FP. (RECUR/quiet-window: veri-seyrek,
+    #   default bırakıldı — haftalarca veri sonrası revize.)
     alert_cpu_percent: int = 85
-    alert_memory_percent: int = 85
-    alert_disk_percent: int = 90
+    alert_memory_percent: int = 75
+    alert_disk_percent: int = 85
     alert_temperature_c: int = 80
     # LIVESYS Faz 5 — otonom remediation kapısı. GÜVENLİ DEFAULT 'notify':
     # critical alert'te devops_agent playbook'u YÜRÜTMEZ (sadece alert + kalıcı
