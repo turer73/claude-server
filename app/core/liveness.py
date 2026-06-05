@@ -273,6 +273,9 @@ REGISTRY = [
     ci_liveness,
     lambda: cron_job_liveness("vps-backup-push", 16 * 3600, absent_status="dead"),  # günlük; 16h→dead@48h (~2g)
     lambda: cron_job_liveness("demo-reset-test", 28 * 3600),
+    # notify-cron = alarm TESLİM-yolu; ölürse HİÇBİR alarm gitmez (kör). */20 kadans ->
+    # >45dk=dead. Spine'ın kalbi; meta-monitor bunu DIRECT-Telegram ile de izler.
+    lambda: cron_job_liveness("notify-cron", 45 * 60, absent_status="dead"),
     notes_poller_liveness,
     alerts_evaluator_liveness,
     autonomy_liveness,
