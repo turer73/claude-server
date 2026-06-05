@@ -25,6 +25,13 @@ TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-$(_envget TELEGRAM_CHAT_ID)}"
 MEMORY_API_KEY="${MEMORY_API_KEY:-$(_envget MEMORY_API_KEY)}"
 API_BASE="${API_BASE:-http://localhost:8420}"
 LOG="${NOTIFY_CRON_LOG:-/var/log/linux-ai-server/notify-cron.log}"
+# Auto-bug yaşam-döngüsü: MEMORY_DB (discoveries), auto-resolve sessizlik-eşiği,
+# tekrar-deseni penceresi/eşiği. (Slice A: kaynak QUIET dk sessiz=düzeldi -> resolve.
+# Slice C: kaynağın son RECUR_DAYS'teki critical sayısı >= RECUR_THRESHOLD -> tekrarlayan.)
+MEMORY_DB="${MEMORY_DB:-/opt/linux-ai-server/data/claude_memory.db}"
+RESOLVE_QUIET_MIN="${RESOLVE_QUIET_MIN:-90}"
+RECUR_DAYS="${RECUR_DAYS:-7}"
+RECUR_THRESHOLD="${RECUR_THRESHOLD:-3}"
 
 mkdir -p "$(dirname "$LOG")" 2>/dev/null
 
@@ -87,6 +94,36 @@ print(json.dumps({
     [ "$http" = "200" ]
 }
 
+# Slice C: kaynağın son RECUR_DAYS gününde kaç critical event'i var (tekrar-deseni).
+recur_count() {
+    sqlite3 "$DB_PATH" \
+        "SELECT COUNT(*) FROM events WHERE source='${1//\'/}' AND severity='critical' AND timestamp > datetime('now','-${RECUR_DAYS} days');" \
+        2>/dev/null || echo 0
+}
+
+# Slice A: AUTO-alert discovery'lerini kaynak DÜZELDİYSE otomatik resolve et. Uniform
+# sinyal: kaynağın son critical event'i > RESOLVE_QUIET_MIN dk önce ise = sessiz = düzeldi
+# (sürekli arıza her run critical bastığından sessizlik gerçek-düzelme demek). Saf events
+# sorgusu; per-source-tip mantığı yok. Best-effort.
+reconcile_autobugs() {
+    [ -f "$MEMORY_DB" ] || return 0
+    sqlite3 "$MEMORY_DB" \
+        "SELECT id || '|' || substr(title,13) FROM discoveries WHERE type='bug' AND status='active' AND title LIKE 'AUTO-alert: %';" \
+        2>/dev/null | while IFS='|' read -r did dsrc; do
+        [ -z "$did" ] || [ -z "$dsrc" ] && continue
+        local recent
+        recent=$(sqlite3 "$DB_PATH" \
+            "SELECT COUNT(*) FROM events WHERE source='${dsrc//\'/}' AND severity='critical' AND timestamp > datetime('now','-${RESOLVE_QUIET_MIN} minutes');" \
+            2>/dev/null)
+        if [ "${recent:-1}" = "0" ]; then
+            sqlite3 "$MEMORY_DB" \
+                "UPDATE discoveries SET status='completed', resolved=1, rationale=COALESCE(rationale,'')||' [auto-resolved: kaynak ${RESOLVE_QUIET_MIN}dk sessiz=düzeldi]' WHERE id=${did} AND status='active';" \
+                2>>"$LOG" || true
+            echo "[$(date -Iseconds)] AUTO-RESOLVE id=${did} src=${dsrc} (${RESOLVE_QUIET_MIN}dk sessiz)" >> "$LOG" 2>/dev/null
+        fi
+    done
+}
+
 # Slice-2: bu kaynağa [🔧 Uygula] tek-tıkla-aksiyon butonu sunulabilir mi?
 # devops_agent._executable_playbook ile AYNI küme (memory/disk/temperature/service/
 # docker). cpu=sadece-inceleme, cron/diğer=playbook-yok -> sadece [✅ Gördüm].
@@ -112,7 +149,8 @@ if [ "$q_rc" -ne 0 ]; then
     echo "OUTCOME: fail | events okunamadi (sqlite rc=$q_rc)"
     exit 0
 fi
-[ -z "$IDS" ] && { echo "OUTCOME: pass | no-pending"; exit 0; }
+# Bekleyen event yok: yine de düzelen AUTO-alert bug'larını kapat (reconcile event-bağımsız).
+[ -z "$IDS" ] && { reconcile_autobugs; echo "OUTCOME: pass | no-pending"; exit 0; }
 
 echo "[$(date -Iseconds)] notify-cron: pending events — processing..." >> "$LOG"
 sent=0; failed=0
@@ -130,9 +168,20 @@ for id in $IDS; do
     SAFE_DETAIL=$(printf '%s' "$detail" | tr -d '<>&"' | tr '\n\r\t' '   ' | head -c 300)
     SAFE_SRC=$(printf '%s' "$src" | tr -d '<>&"' | head -c 80)
 
+    # Slice C: tekrar-deseni. critical + kaynağın son RECUR_DAYS'te >=RECUR_THRESHOLD
+    # critical'i varsa "🔁 TEKRARLAYAN (Nx)" satırı (aynı sorun tekrar ediyor -> kök-neden).
+    RECUR_LINE=""
+    if [ "$sev" = "critical" ]; then
+        RC=$(recur_count "$src")
+        if [ "${RC:-0}" -ge "$RECUR_THRESHOLD" ]; then
+            RECUR_LINE="🔁 TEKRARLAYAN (${RC}x / ${RECUR_DAYS}g) — kök-neden incelenmeli
+"
+        fi
+    fi
+
     MSG="${SEV_TAG} klipper
 src: ${SAFE_SRC}
-${SAFE_TITLE}"
+${RECUR_LINE}${SAFE_TITLE}"
     [ -n "$SAFE_DETAIL" ] && MSG="${MSG}
 ${SAFE_DETAIL}"
     SUGGEST=$(suggest_action "$src")
@@ -195,6 +244,9 @@ ${ts}"
     fi
     sleep 1
 done
+
+# Slice A: kaynağı düzelen AUTO-alert bug'larını otomatik kapat (lifecycle temizliği).
+reconcile_autobugs
 
 echo "[$(date -Iseconds)] notify-cron done: sent=${sent} failed=${failed}" >> "$LOG"
 
