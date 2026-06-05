@@ -17,6 +17,7 @@ Pure observer: hiçbir şeye yazmaz. status ∈ {alive, stale, dead, unknown}.
 from __future__ import annotations
 
 import datetime as dt
+import os
 import socket
 import sqlite3
 import urllib.error
@@ -188,7 +189,11 @@ def notes_poller_liveness(poll_interval_s: float = 30) -> dict:
 
 
 def _env_flag(key: str) -> str:
-    """.env'den tek flag oku (liveness enable-gate kontrolü için). Bulunamazsa ''."""
+    """Flag oku: os.environ ÖNCE (Codex P2: env-var override .env'i kazanır — notify-cron
+    script'iyle tutarlı), sonra .env dosyası. Bulunamazsa ''."""
+    v = os.environ.get(key)
+    if v:
+        return v
     try:
         with open(ENV_FILE) as fh:
             for line in fh:

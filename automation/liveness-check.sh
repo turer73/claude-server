@@ -70,13 +70,13 @@ fi
 "$EMIT" alert "meta-monitor" critical "Canlı-sistem bekçisi ÖLÜ: ${DEAD}" \
     "liveness.check_all dead component; DIRECT-Telegram ile uyarıldı." 2>/dev/null || true
 
-# State'i YALNIZ alarm başarıyla iletildiyse yaz (Codex P1). Aksi halde sonraki run
-# tekrar dener -> dead-man's switch kaybolmaz. Creds hiç yoksa direct-kanal mümkün
-# değil -> state yaz (spam önle, spine'a bırakıldı).
-if [ "$TG_OK" = "1" ] || [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+# State'i YALNIZ DIRECT alarm BAŞARIYLA iletildiyse yaz (Codex P1). Aksi halde (send-fail
+# VEYA creds-yok) state YAZMA -> sonraki run hem direct hem spine'ı tekrar dener; dead-man's
+# switch kaybolmaz. Degrade (creds-yok) bilinçle GÜRÜLTÜLÜ: ölü-bekçi sessizce yutulmasın.
+if [ "$TG_OK" = "1" ]; then
     echo "$DEAD" > "$STATE" 2>/dev/null
 else
-    echo "[$TS] DIRECT-Telegram BAŞARISIZ (http=${HTTP:-?}) -> state yazılmadı, sonraki run retry" >> "$LOG"
+    echo "[$TS] DIRECT-Telegram iletilmedi (http=${HTTP:-creds-yok}) -> state yazılmadı, retry" >> "$LOG"
 fi
 
 echo "OUTCOME: fail | dead bekçi: $DEAD (direct_tg=${TG_OK})"

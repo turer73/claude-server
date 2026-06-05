@@ -275,3 +275,11 @@ def test_notify_cron_liveness_enabled_checks_recency(monkeypatch, tmp_path):
     r = lv.notify_cron_liveness(45 * 60)
     assert r["source"] == "notify-cron"
     assert r["status"] == "alive"
+
+
+def test_env_flag_prefers_os_environ(monkeypatch):
+    """Codex P2: env-var override .env'i kazanır (notify-cron script'iyle tutarlı)."""
+    monkeypatch.setenv("NOTIFY_CRON_ENABLED", "true")
+    assert lv._env_flag("NOTIFY_CRON_ENABLED") == "true"
+    monkeypatch.setenv("NOTIFY_CRON_ENABLED", "false")
+    assert lv.notify_cron_liveness()["status"] == "dead"  # env override -> dead
