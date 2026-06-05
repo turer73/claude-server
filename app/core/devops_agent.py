@@ -774,14 +774,19 @@ class DevOpsAgent:
             try:
                 result = await self._executor.execute(f"docker ps --filter name={container} --format '{{{{.Status}}}}'", timeout=5)
                 status = result.get("stdout", "").strip()
-                if not status or "Up" not in status:
+                # Codex P2: 'Up (unhealthy)' de 'Up' içerir -> çalışıyor-ama-unhealthy kaçardı.
+                # Healthcheck'li container (n8n/qdrant) unhealthy = kritik outage -> yakala.
+                down = not status or "Up" not in status
+                unhealthy = "unhealthy" in status.lower()
+                if down or unhealthy:
                     source = f"docker:{container}"
                     if source not in self._active_alerts:
+                        msg = f"Container {container} is not running" if down else f"Container {container} UNHEALTHY ({status})"
                         alert = Alert(
                             id=f"{source}-{self._check_count}",
                             severity="critical",
                             source=source,
-                            message=f"Container {container} is not running",
+                            message=msg,
                             value=0,
                             threshold=1,
                             timestamp=now,
