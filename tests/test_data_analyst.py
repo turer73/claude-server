@@ -55,16 +55,22 @@ def test_run_short_circuits_without_keys(monkeypatch):
     assert "INTERNAL_API_KEY" in res["skipped"]
 
 
+_VALID_DISCOVERY_TYPES = {"bug", "fix", "learning", "config", "workaround", "architecture", "plan"}
+
+
 def test_run_writes_discovery_and_returns_ok(monkeypatch):
-    """Mutlu yol: /claude rapor döner → discovery POST edilir, telegram best-effort."""
+    """Mutlu yol: /claude rapor döner → discovery POST edilir (GEÇERLİ type), telegram best-effort."""
     keys = {"INTERNAL_API_KEY": "ik", "MEMORY_API_KEY": "mk"}
     monkeypatch.setattr(da, "_envget", lambda k: keys.get(k, ""))
     calls = []
+    disc_body = {}
 
     def _fake_post(url, body, headers, timeout):
         calls.append(url)
         if url.endswith("/claude/run"):
             return {"result": "BULGULAR: cpu ortalama %12. ÖNERİ: yok. GENEL: iyi."}
+        if url.endswith("/memory/discoveries"):
+            disc_body.update(body)
         return {"ok": True}
 
     monkeypatch.setattr(da, "_post_json", _fake_post)
@@ -72,9 +78,31 @@ def test_run_writes_discovery_and_returns_ok(monkeypatch):
     res = da.run()
     assert res["ok"] is True
     assert res["report_len"] > 0
+    assert res["discovery_err"] == ""  # başarılı yazım
     # hem claude hem discovery çağrıldı
     assert any("/claude/run" in c for c in calls)
     assert any("/memory/discoveries" in c for c in calls)
+    # Regresyon: discovery type API'nin kabul ettiği değerlerden olmalı ("note" REDDEDİLİR)
+    assert disc_body.get("type") in _VALID_DISCOVERY_TYPES
+
+
+def test_discovery_failure_is_visible_not_silent(monkeypatch, capsys):
+    """Discovery yazılamazsa OUTCOME: partial (sessiz yutulmaz) — sistem teması."""
+    keys = {"INTERNAL_API_KEY": "ik", "MEMORY_API_KEY": "mk", "DATA_ANALYST_ENABLED": "true"}
+    monkeypatch.setattr(da, "_envget", lambda k: keys.get(k, ""))
+
+    def _fake_post(url, body, headers, timeout):
+        if url.endswith("/claude/run"):
+            return {"result": "rapor"}
+        raise RuntimeError("422 geçersiz tip")  # discovery POST patlar
+
+    monkeypatch.setattr(da, "_post_json", _fake_post)
+    monkeypatch.setattr(da, "_send_telegram", lambda r: True)
+    rc = da.main()
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "OUTCOME: partial" in out
+    assert "DISCOVERY-FAIL" in out
 
 
 def test_run_empty_report_is_failure(monkeypatch):

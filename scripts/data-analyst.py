@@ -122,14 +122,17 @@ def run() -> dict:
     if not report:
         return {"ok": False, "error": "boş analiz"}
 
-    # 1) Discovery'e yaz (SessionStart görünürlüğü; dedup: aynı başlık → details güncellenir).
+    # 1) Discovery'e yaz (SessionStart görünürlüğü). type="learning" (analitik içgörü;
+    # geçerli tipler: bug/fix/learning/config/workaround/architecture/plan — "note" YOK).
+    # Hata SESSİZ yutulmaz: sonuçta görünür yapılır (bu sistemin teması = sessiz-arıza yok).
+    disc_err = ""
     try:
         _post_json(
             f"{API_BASE}/api/v1/memory/discoveries",
             {
                 "device_name": "klipper",
                 "project": "linux-ai-server",
-                "type": "note",
+                "type": "learning",
                 "title": "Haftalık veri analizi (data-analyst)",
                 "details": f"📊 Otonom haftalık analiz ({DAYS}g):\n{report[:3800]}",
                 "rationale": "data-analyst.py (zamanlanmış, salt-okunur /claude + db-query.sh).",
@@ -137,12 +140,12 @@ def run() -> dict:
             {"X-Memory-Key": mkey},
             15,
         )
-    except Exception:
-        pass
+    except Exception as e:
+        disc_err = str(e)[:150]
 
     # 2) Telegram özeti (best-effort; başarısız olsa da discovery kalır).
     tg = _send_telegram(report)
-    return {"ok": True, "report_len": len(report), "telegram": tg}
+    return {"ok": True, "report_len": len(report), "telegram": tg, "discovery_err": disc_err}
 
 
 def main() -> int:
@@ -153,7 +156,12 @@ def main() -> int:
         return 0  # opt-in kapı (default kapalı)
     res = run()
     if res.get("ok"):
-        print(f"OUTCOME: pass | analiz {res['report_len']} char, telegram={res['telegram']}")
+        d = res.get("discovery_err")
+        if d:
+            # /claude analizi başarılı ama discovery yazılamadı → partial (görünür, sessiz değil).
+            print(f"OUTCOME: partial | analiz {res['report_len']} char, telegram={res['telegram']}, DISCOVERY-FAIL: {d}")
+        else:
+            print(f"OUTCOME: pass | analiz {res['report_len']} char, telegram={res['telegram']}")
     else:
         # best-effort: hata/misconfig'te cron'u düşürme ama OUTCOME:fail ile görünür yap.
         print(f"OUTCOME: fail | {res.get('skipped') or res.get('error', 'bilinmeyen')}")
