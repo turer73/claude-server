@@ -1003,13 +1003,15 @@ class DevOpsAgent:
         if not self._db:
             return list(self._history)
         rows = await self._db.fetch_all(
-            # metrics_history.timestamp Python isoformat() ile yazılır: 'T'-ayraçlı
-            # (2026-..T21:..+00:00). datetime('now',?) ise BOŞLUK-ayraçlı üretir.
-            # Ham string-compare'de 'T'(0x54) > ' '(0x20) → aynı-gün TÜM satırlar eşiği
-            # geçer → `minutes` penceresi etkisiz olurdu. replace(...,' ','T') eşiği
-            # ISO-T'ye çevirir (doğru pencere) ve idx_metrics_timestamp index'i korunur.
+            # FORMAT-AGNOSTİK zaman filtresi (Codex P2). metrics_history.timestamp Python
+            # isoformat() ile ISO-T ('T'-ayraçlı, +00:00) yazılır; AMA schema DEFAULT'u
+            # (database.py) datetime('now') = BOŞLUK-ayraçlı → timestamp atlanırsa boşluk-
+            # satır oluşur. Ham string-compare iki formatı karıştırır ('T'(0x54) vs ' '(0x20))
+            # → yanlış pencere (ya hep-içeri ya boşluk-satırı-dışla). datetime(timestamp) HER
+            # İKİ formatı UTC'ye normalize eder → doğru, format-bağımsız pencere. Çağrı yalnız
+            # on-demand endpoint (hot-loop değil); 195k satırda ~26ms (index ORDER BY için).
             """SELECT * FROM metrics_history
-               WHERE timestamp > replace(datetime('now', ?), ' ', 'T')
+               WHERE datetime(timestamp) > datetime('now', ?)
                ORDER BY timestamp DESC LIMIT 500""",
             (f"-{minutes} minutes",),
         )
@@ -1019,9 +1021,9 @@ class DevOpsAgent:
         if not self._db:
             return []
         rows = await self._db.fetch_all(
-            # vps_metrics_history.timestamp da ISO-T ('T'-ayraçlı) — bkz get_metrics_history.
+            # Format-agnostik (ISO-T + boşluk-default) — bkz get_metrics_history (Codex P2).
             """SELECT * FROM vps_metrics_history
-               WHERE timestamp > replace(datetime('now', ?), ' ', 'T')
+               WHERE datetime(timestamp) > datetime('now', ?)
                ORDER BY timestamp DESC LIMIT 500""",
             (f"-{minutes} minutes",),
         )
