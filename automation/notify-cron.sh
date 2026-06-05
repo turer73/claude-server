@@ -24,7 +24,7 @@ TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-$(_envget TELEGRAM_BOT_TOKEN)}"
 TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-$(_envget TELEGRAM_CHAT_ID)}"
 MEMORY_API_KEY="${MEMORY_API_KEY:-$(_envget MEMORY_API_KEY)}"
 API_BASE="${API_BASE:-http://localhost:8420}"
-LOG="/var/log/linux-ai-server/notify-cron.log"
+LOG="${NOTIFY_CRON_LOG:-/var/log/linux-ai-server/notify-cron.log}"
 
 mkdir -p "$(dirname "$LOG")" 2>/dev/null
 
@@ -68,20 +68,23 @@ suggest_action() {
 # hata varsa" (yalnız critical). Stabil başlık (AUTO-alert: <source>) -> server-side
 # dedup (5dk + aktif-duplicate-title-update) tekrar eden aynı-hatayı TEK kayıtta tutar
 # (spam yok); kaynak çözülüp tekrar bozulursa regression=yeni-active. Best-effort.
+# Dönüş: 0 = discovery yazıldı (HTTP 200), 1 = yazılamadı. Memory-only modda notified
+# işaretlemesi buna bağlanır (Codex P2: yazım başarısızsa retry, kayıp yok).
 save_discovery() {
     local src="$1" title="$2" detail="$3" ts="$4"
-    [ -z "$MEMORY_API_KEY" ] && return 0
-    local body
+    [ -z "$MEMORY_API_KEY" ] && return 1
+    local body http
     body=$(TITLE="AUTO-alert: ${src}" DET="${title} | ${detail} (${ts})" python3 -c '
 import json, os
 print(json.dumps({
     "device_name": "klipper", "project": "linux-ai-server", "type": "bug",
     "title": os.environ["TITLE"][:120], "details": os.environ["DET"][:1000],
     "rationale": "notify-cron otomatik hata-hafızası (critical event).",
-}))' 2>/dev/null) || return 0
-    curl -s -o /dev/null --max-time 8 -X POST "${API_BASE}/api/v1/memory/discoveries" \
+}))' 2>/dev/null) || return 1
+    http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 -X POST "${API_BASE}/api/v1/memory/discoveries" \
         -H "Content-Type: application/json" -H "X-Memory-Key: ${MEMORY_API_KEY}" \
-        -d "$body" 2>/dev/null || true
+        -d "$body" 2>/dev/null)
+    [ "$http" = "200" ]
 }
 
 # Slice-2: bu kaynağa [🔧 Uygula] tek-tıkla-aksiyon butonu sunulabilir mi?
@@ -152,9 +155,10 @@ ${ts}"
     BODY="{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":${JSON_MSG},\"reply_markup\":${REPLY_MARKUP}}"
 
     # Hata-hafızası ÖNCE (Telegram'dan BAĞIMSIZ — Codex P2: TG down olsa bile SessionStart
-    # critical'ı görsün): yalnız critical -> otomatik discovery. Dedup server-side; best-effort.
+    # critical'ı görsün): yalnız critical -> otomatik discovery. Dedup server-side.
+    DISCOVERY_OK=0
     if [ "$sev" = "critical" ]; then
-        save_discovery "$SAFE_SRC" "$SAFE_TITLE" "$SAFE_DETAIL" "$ts"
+        save_discovery "$SAFE_SRC" "$SAFE_TITLE" "$SAFE_DETAIL" "$ts" && DISCOVERY_OK=1
     fi
 
     # Telegram gönderimi (yalnız TG_OK). Memory-only modda atlanır.
@@ -172,14 +176,14 @@ ${ts}"
         echo "[$(date -Iseconds)] SENT id=${id} src=${SAFE_SRC} sev=${sev}" >> "$LOG"
         sent=$((sent + 1))
     elif [ "$TG_OK" = "0" ]; then
-        # Memory-only: critical hafızaya yazıldı -> handled (reprocess'i önle). warn ise
-        # ertele (notified=0 kalır -> Telegram dönünce gönderilir; veri kaybı yok).
-        if [ "$sev" = "critical" ]; then
+        # Memory-only: critical hafızaya YAZILDIYSA handled (notified=1). Yazılamadıysa
+        # (Codex P2) notified=0 kalır -> sonraki run retry (kayıp yok). warn -> ertele.
+        if [ "$sev" = "critical" ] && [ "$DISCOVERY_OK" = "1" ]; then
             sqlite3 "$DB_PATH" "UPDATE events SET notified=1 WHERE id=${id};" 2>>"$LOG" || true
             echo "[$(date -Iseconds)] MEMORY-ONLY id=${id} src=${SAFE_SRC} critical->hafıza (Telegram yok)" >> "$LOG"
             sent=$((sent + 1))
         else
-            echo "[$(date -Iseconds)] DEFER id=${id} src=${SAFE_SRC} sev=${sev} (Telegram yok -> sonraki run)" >> "$LOG"
+            echo "[$(date -Iseconds)] DEFER id=${id} src=${SAFE_SRC} sev=${sev} discovery_ok=${DISCOVERY_OK} (retry sonraki run)" >> "$LOG"
         fi
     else
         echo "[$(date -Iseconds)] FAIL id=${id} src=${SAFE_SRC} sev=${sev} http=${HTTP} — retry next run" >> "$LOG"

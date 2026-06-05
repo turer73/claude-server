@@ -58,6 +58,7 @@ def _run(tmp_path: Path, severity: str) -> str:
             "TELEGRAM_BOT_TOKEN": "x",
             "TELEGRAM_CHAT_ID": "1",
             "MEMORY_API_KEY": "mk-test",
+            "NOTIFY_CRON_LOG": str(tmp_path / "notify.log"),
         },
         capture_output=True,
         text=True,
@@ -95,6 +96,7 @@ def test_memory_only_mode_records_critical_without_telegram(tmp_path):
             "DB_PATH": str(db),
             "API_BASE": "http://localhost:8420",
             "MEMORY_API_KEY": "mk-test",
+            "NOTIFY_CRON_LOG": str(tmp_path / "notify.log"),
             # TELEGRAM_* YOK -> memory-only mod
         },
         capture_output=True,
