@@ -50,6 +50,6 @@
 0 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh renderhane-balance /opt/linux-ai-server/automation/social-renderhane-balance-alert.sh
 # Haftalik VERI-ANALISTI (Pazartesi 08:00) — server.db + coverage.db trend, salt-okunur
 # /claude (Max-plan) + db-query.sh -> discovery + Telegram ozet. Multi-uzman vizyon: 1/4.
-# DISABLED-pilot: (1) .env'e DATA_ANALYST_ENABLED=true ekle, (2) bu satiri uncomment et,
-#                 (3) install-cron.sh calistir. Once manuel spot-check yapilmali.
-# 0 8 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh data-analyst /opt/linux-ai-server/automation/data-analyst.sh
+# ENABLED 2026-06-06 (spot-check x3 PASS: rapor+discovery id537+Telegram). Opt-in kapi
+# .env DATA_ANALYST_ENABLED=true; kapatmak icin flag=false (satir kalabilir, script no-op).
+0 8 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh data-analyst /opt/linux-ai-server/automation/data-analyst.sh
