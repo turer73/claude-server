@@ -80,6 +80,20 @@ fi
     sqlite3 "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title FROM discoveries WHERE type='bug' AND status='active' AND NOT (julianday('now') - julianday(created_at) > 30 AND read_count = 0) ORDER BY created_at DESC LIMIT 10;" 2>/dev/null
   fi
 
+  # ─── 🔁 Tekrarlayan hatalar (auto-bug + events recurrence, Slice C) ──
+  # AUTO-alert bug'lardan kaynağı son 7g'de >=3 critical basanlar = tekrar eden sorun
+  # ("bunu 3. kez görüyorum"). server.db ATTACH ile events sayımı. FAIL-SAFE: hata/eksik
+  # DB -> sessiz atla (oturum-start ASLA bozulmaz). Mevcut bug-sorguları DEĞİŞMEDİ.
+  SRV_DB="${HOOK_SERVER_DB:-/opt/linux-ai-server/data/server.db}"
+  if [ -r "$SRV_DB" ]; then
+    RECUR=$(sqlite3 "$DB" "ATTACH '${SRV_DB}' AS srv; SELECT '  #' || d.id || ' ' || d.title || ' (🔁' || (SELECT COUNT(*) FROM srv.events e WHERE e.source = substr(d.title,13) AND e.severity='critical' AND e.timestamp > datetime('now','-7 days')) || 'x/7g)' FROM discoveries d WHERE d.type='bug' AND d.status='active' AND d.title LIKE 'AUTO-alert: %' AND (SELECT COUNT(*) FROM srv.events e WHERE e.source = substr(d.title,13) AND e.severity='critical' AND e.timestamp > datetime('now','-7 days')) >= 3 ORDER BY d.created_at DESC LIMIT 5;" 2>/dev/null)
+    if [ -n "$RECUR" ]; then
+      echo ""
+      echo "🔁 Tekrarlayan Hatalar (kök-neden incele):"
+      echo "$RECUR"
+    fi
+  fi
+
   # ─── Aktif planlar — aynı project relevance ─────────────────────
   PLANS_TOTAL=$(sqlite3 "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='plan' AND status='active';" 2>/dev/null)
   if [ "${PLANS_TOTAL:-0}" -gt 0 ] && [ -n "$PROJECT_PREFIX" ]; then
