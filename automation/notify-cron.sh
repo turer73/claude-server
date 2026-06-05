@@ -22,6 +22,8 @@ NOTIFY_CRON_ENABLED="${NOTIFY_CRON_ENABLED:-$(_envget NOTIFY_CRON_ENABLED)}"
 DB_PATH="${DB_PATH:-$(_envget DB_PATH)}"; DB_PATH="${DB_PATH:-/opt/linux-ai-server/data/server.db}"
 TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-$(_envget TELEGRAM_BOT_TOKEN)}"
 TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-$(_envget TELEGRAM_CHAT_ID)}"
+MEMORY_API_KEY="${MEMORY_API_KEY:-$(_envget MEMORY_API_KEY)}"
+API_BASE="${API_BASE:-http://localhost:8420}"
 LOG="/var/log/linux-ai-server/notify-cron.log"
 
 mkdir -p "$(dirname "$LOG")" 2>/dev/null
@@ -54,6 +56,26 @@ suggest_action() {
         escalation|remediation) echo "⛔ MANUEL MÜDAHALE GEREK: otonom düzeltme yetmedi/kapalı — '${name}' hâlâ kritik. ⚠️ Çözülene dek pinglenir. Kaynağı elle çöz." ;;
         *) echo "🔧 Öneri: detayı incele + ilgili log'a bak. ⚠️ Risk: bilinmiyor (önce incele). (kaynak: ${src})" ;;
     esac
+}
+
+# Hata-hafızası: critical event'i otomatik discovery'e (type=bug) kaydet — "sadece
+# hata varsa" (yalnız critical). Stabil başlık (AUTO-alert: <source>) -> server-side
+# dedup (5dk + aktif-duplicate-title-update) tekrar eden aynı-hatayı TEK kayıtta tutar
+# (spam yok); kaynak çözülüp tekrar bozulursa regression=yeni-active. Best-effort.
+save_discovery() {
+    local src="$1" title="$2" detail="$3" ts="$4"
+    [ -z "$MEMORY_API_KEY" ] && return 0
+    local body
+    body=$(TITLE="AUTO-alert: ${src}" DET="${title} | ${detail} (${ts})" python3 -c '
+import json, os
+print(json.dumps({
+    "device_name": "klipper", "project": "linux-ai-server", "type": "bug",
+    "title": os.environ["TITLE"][:120], "details": os.environ["DET"][:1000],
+    "rationale": "notify-cron otomatik hata-hafızası (critical event).",
+}))' 2>/dev/null) || return 0
+    curl -s -o /dev/null --max-time 8 -X POST "${API_BASE}/api/v1/memory/discoveries" \
+        -H "Content-Type: application/json" -H "X-Memory-Key: ${MEMORY_API_KEY}" \
+        -d "$body" 2>/dev/null || true
 }
 
 # Slice-2: bu kaynağa [🔧 Uygula] tek-tıkla-aksiyon butonu sunulabilir mi?
@@ -127,6 +149,12 @@ ${ts}"
         -X POST "$TG_URL" \
         -H "Content-Type: application/json" \
         -d "$BODY" 2>/dev/null)
+
+    # Hata-hafızası: yalnız critical -> otomatik discovery (gönderim sonucundan bağımsız;
+    # hata gerçekleşti, kaydet). Dedup server-side; best-effort, akışı bozmaz.
+    if [ "$sev" = "critical" ]; then
+        save_discovery "$SAFE_SRC" "$SAFE_TITLE" "$SAFE_DETAIL" "$ts"
+    fi
 
     if [ "$HTTP" = "200" ]; then
         sqlite3 "$DB_PATH" "UPDATE events SET notified=1 WHERE id=${id};" 2>>"$LOG" || true
