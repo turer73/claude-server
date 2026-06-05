@@ -110,10 +110,7 @@ async def test_metrics_window_uses_expression_index(devops_client, app):
     # 1) expression index'ler schema'da mevcut
     idx = {
         r["name"]
-        for r in await db.fetch_all(
-            "SELECT name FROM sqlite_master WHERE type='index' AND name IN "
-            "('idx_metrics_dt','idx_vps_metrics_dt')"
-        )
+        for r in await db.fetch_all("SELECT name FROM sqlite_master WHERE type='index' AND name IN ('idx_metrics_dt','idx_vps_metrics_dt')")
     }
     assert idx == {"idx_metrics_dt", "idx_vps_metrics_dt"}, f"expression index eksik: {idx}"
 
