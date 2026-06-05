@@ -86,6 +86,8 @@ async def test_claude_run_read_only_uses_allowlist(client, auth_headers):
     assert "Bash(git log:*)" in tools
     assert "Read" in tools
     assert "git branch" not in tools  # P2: git branch mutasyon yapabilir, hariç
+    assert "git diff" not in tools  # P1: --output write-vektörü, hariç
+    assert "journalctl" not in tools  # P1: --vacuum/--rotate log siler, hariç
     assert "--dangerously-skip-permissions" not in argv
     # P1: disallowedTools mutasyonu KESİN engeller (settings'i ezer)
     assert "--disallowedTools" in argv

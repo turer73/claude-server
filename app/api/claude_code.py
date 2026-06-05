@@ -35,7 +35,10 @@ READ_ONLY_ALLOWED_TOOLS = " ".join(
         # -D/-m mutasyon). git status'ta --output yok (güvenli); git log en gerekli.
         "Bash(git log:*)",
         "Bash(git status:*)",
-        "Bash(journalctl:*)",
+        # NOT: `journalctl` HARİÇ (Codex P1) — --vacuum-*/--rotate/--flush log SİLER/döndürür
+        # ve prefix-disallow bunu güvenilir yakalayamaz (--vacuum-time=X / -u x --rotate
+        # formları eşleşmez). systemd-journal /claude'dan ERİŞİLEMEZ; log-DOSYALARI Read +
+        # `docker logs` (read-only) ile okunur. Yıkıcı-vektör güvenilir-kapatma > kapsam.
         "Bash(systemctl status:*)",
         "Bash(systemctl is-active:*)",
         "Bash(systemctl list-units:*)",
@@ -79,13 +82,9 @@ READ_ONLY_DISALLOWED_TOOLS = " ".join(
         "Bash(mkfs:*)",
         "Bash(kill:*)",
         "Bash(pkill:*)",
-        # journalctl YIKICI bayrakları (Codex P1: log siler/döndürür). Best-effort
-        # (prefix-eşleşme flag-konumuna duyarlı; owner-only + model read-only-niyet katmanlı).
-        "Bash(journalctl --vacuum-time:*)",
-        "Bash(journalctl --vacuum-size:*)",
-        "Bash(journalctl --vacuum-files:*)",
-        "Bash(journalctl --rotate:*)",
-        "Bash(journalctl --flush:*)",
+        # NOT: journalctl disallow-pattern'ları KALDIRILDI — prefix-eşleşme yıkıcı
+        # bayrakları güvenilir yakalayamadığı için (Codex P1) journalctl tamamen
+        # allowlist-DIŞI bırakıldı; sahte güvenlik vermesin.
     ]
 )
 
