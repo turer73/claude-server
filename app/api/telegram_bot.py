@@ -131,9 +131,10 @@ def _run_claude(prompt: str, session_id: str | None = None) -> dict:
     import os
 
     key = read_env_var("INTERNAL_API_KEY") or os.environ.get("INTERNAL_API_KEY", "")
-    # SALT-OKUNUR (read_only=plan modu): Telegram'dan tam-agent/skip-permissions AÇMA.
-    # Claude okur+analiz eder, komut icra etmez / dosya değiştirmez (güvenlik kararı).
-    body: dict = {"prompt": prompt, "max_turns": 40, "read_only": True}
+    # SALT-OKUNUR (read_only): Claude okur+analiz eder, mutasyon yapmaz. cwd=sunucu
+    # repo'su (git log/dosya soruları doğru bağlamda koşsun; default ~/ git-repo değil).
+    cwd = read_env_var("CLAUDE_TG_CWD") or os.environ.get("CLAUDE_TG_CWD") or "/opt/linux-ai-server"
+    body: dict = {"prompt": prompt, "max_turns": 40, "read_only": True, "cwd": cwd}
     if session_id:
         body["session_id"] = session_id
     try:
