@@ -579,7 +579,11 @@ class DevOpsAgent:
                 parts = r.get("stdout", "").strip().lower().split(";")
                 running = len(parts) >= 1 and parts[0] == "true"
                 health = parts[1] if len(parts) >= 2 else "none"
-                return running and health in ("healthy", "none")
+                if not running or health == "unhealthy":
+                    return False
+                if health == "starting":
+                    return None  # Codex P2: start_period geçici -> belirsiz, escalate ETME
+                return True  # healthy veya healthcheck'siz (none)
             # metrik playbook: yeniden örnekle. cpu_critical SADECE log -> verify yok.
             key = {"memory": "memory_percent", "disk": "disk_percent", "temperature": "temperature"}.get(base)
             if not key:

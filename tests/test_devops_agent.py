@@ -487,6 +487,7 @@ async def test_verify_remediation_docker_health_aware():
     assert await _inspect("true;none\n") is True  # healthcheck'siz -> Running yeter
     assert await _inspect("true;unhealthy\n") is False  # çalışıyor ama bozuk
     assert await _inspect("false;none\n") is False  # durmuş
+    assert await _inspect("true;starting\n") is None  # Codex P2: start_period -> belirsiz, escalate yok
 
 
 async def test_check_containers_up_healthy_no_alert():
