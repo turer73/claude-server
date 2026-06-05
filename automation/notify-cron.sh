@@ -183,7 +183,11 @@ ${ts}"
             echo "[$(date -Iseconds)] MEMORY-ONLY id=${id} src=${SAFE_SRC} critical->hafıza (Telegram yok)" >> "$LOG"
             sent=$((sent + 1))
         else
+            # Ertelendi (notified=0, retry bekliyor) -> failed say (Codex P2): yoksa OUTCOME
+            # 'pass | sent=0' der ve sağlık-izleme bekleyen-bildirimi göremez (creds-eksik
+            # fail-sinyali kaybolur). sent=0+failed>0 -> OUTCOME:fail; karışıksa partial.
             echo "[$(date -Iseconds)] DEFER id=${id} src=${SAFE_SRC} sev=${sev} discovery_ok=${DISCOVERY_OK} (retry sonraki run)" >> "$LOG"
+            failed=$((failed + 1))
         fi
     else
         echo "[$(date -Iseconds)] FAIL id=${id} src=${SAFE_SRC} sev=${sev} http=${HTTP} — retry next run" >> "$LOG"

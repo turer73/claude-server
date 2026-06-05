@@ -110,3 +110,32 @@ def test_memory_only_mode_records_critical_without_telegram(tmp_path):
     notified = con.execute("SELECT notified FROM events WHERE id=1").fetchone()[0]
     con.close()
     assert notified == 1  # memory-only'de critical handled -> reprocess yok
+
+
+def test_memory_only_deferred_warn_counts_as_failed(tmp_path):
+    """Codex P2: memory-only'de warn ertelenir (discovery yok) -> failed sayılır ->
+    OUTCOME:fail (sağlık-izleme bekleyen-bildirimi görür; sahte pass değil)."""
+    db = tmp_path / "ev.db"
+    _mk_db(db, "warn")
+    capture = tmp_path / "curl.log"
+    _fake_curl(tmp_path / "bin", capture)
+    r = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env={
+            "PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin",
+            "NOTIFY_CRON_ENABLED": "true",
+            "NOTIFY_ENV_FILE": "/dev/null",
+            "DB_PATH": str(db),
+            "API_BASE": "http://localhost:8420",
+            "MEMORY_API_KEY": "mk-test",
+            "NOTIFY_CRON_LOG": str(tmp_path / "notify.log"),
+        },
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert "OUTCOME: fail" in r.stdout  # deferred -> fail sinyali (pass değil)
+    con = sqlite3.connect(str(db))
+    notified = con.execute("SELECT notified FROM events WHERE id=1").fetchone()[0]
+    con.close()
+    assert notified == 0  # ertelendi -> sonraki run retry
