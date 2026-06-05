@@ -31,11 +31,17 @@ mkdir -p "$(dirname "$LOG")" 2>/dev/null
 # DB-yok = notify-cron calisamaz; SESSIZ-pass DEGIL (Codex #24): OUTCOME:fail emit.
 [ -f "$DB_PATH" ] || { echo "[$(date -Iseconds)] DB not found: $DB_PATH" >> "$LOG"; echo "OUTCOME: fail | DB yok: $DB_PATH"; exit 0; }
 
-if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-    echo "[$(date -Iseconds)] TELEGRAM creds eksik" >> "$LOG"
-    echo "OUTCOME: fail | TELEGRAM_BOT_TOKEN veya TELEGRAM_CHAT_ID eksik"
+# Telegram opsiyonel-bağımsız (Codex P2): creds eksik olsa bile hata-hafızası
+# (critical->discovery) yazılmalı ki SessionStart Telegram-down iken de açık-hatayı
+# görsün. TG_OK=0 ise gönderim atlanır ama memory-kaydı sürer. İkisi de yoksa -> çık.
+TG_OK=1
+[ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ] && TG_OK=0
+if [ "$TG_OK" = "0" ] && [ -z "$MEMORY_API_KEY" ]; then
+    echo "[$(date -Iseconds)] TELEGRAM creds + MEMORY_API_KEY eksik — yapılacak iş yok" >> "$LOG"
+    echo "OUTCOME: fail | TELEGRAM creds + MEMORY_API_KEY eksik"
     exit 0
 fi
+[ "$TG_OK" = "0" ] && echo "[$(date -Iseconds)] TELEGRAM creds eksik -> memory-only mod (discovery yazılır, Telegram atlanır)" >> "$LOG"
 
 TG_URL="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"
 
@@ -145,21 +151,36 @@ ${ts}"
     REPLY_MARKUP="{\"inline_keyboard\":[[${BTN_ROW}]]}"
     BODY="{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":${JSON_MSG},\"reply_markup\":${REPLY_MARKUP}}"
 
-    HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 \
-        -X POST "$TG_URL" \
-        -H "Content-Type: application/json" \
-        -d "$BODY" 2>/dev/null)
-
-    # Hata-hafızası: yalnız critical -> otomatik discovery (gönderim sonucundan bağımsız;
-    # hata gerçekleşti, kaydet). Dedup server-side; best-effort, akışı bozmaz.
+    # Hata-hafızası ÖNCE (Telegram'dan BAĞIMSIZ — Codex P2: TG down olsa bile SessionStart
+    # critical'ı görsün): yalnız critical -> otomatik discovery. Dedup server-side; best-effort.
     if [ "$sev" = "critical" ]; then
         save_discovery "$SAFE_SRC" "$SAFE_TITLE" "$SAFE_DETAIL" "$ts"
+    fi
+
+    # Telegram gönderimi (yalnız TG_OK). Memory-only modda atlanır.
+    if [ "$TG_OK" = "1" ]; then
+        HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 \
+            -X POST "$TG_URL" \
+            -H "Content-Type: application/json" \
+            -d "$BODY" 2>/dev/null)
+    else
+        HTTP="no-tg"
     fi
 
     if [ "$HTTP" = "200" ]; then
         sqlite3 "$DB_PATH" "UPDATE events SET notified=1 WHERE id=${id};" 2>>"$LOG" || true
         echo "[$(date -Iseconds)] SENT id=${id} src=${SAFE_SRC} sev=${sev}" >> "$LOG"
         sent=$((sent + 1))
+    elif [ "$TG_OK" = "0" ]; then
+        # Memory-only: critical hafızaya yazıldı -> handled (reprocess'i önle). warn ise
+        # ertele (notified=0 kalır -> Telegram dönünce gönderilir; veri kaybı yok).
+        if [ "$sev" = "critical" ]; then
+            sqlite3 "$DB_PATH" "UPDATE events SET notified=1 WHERE id=${id};" 2>>"$LOG" || true
+            echo "[$(date -Iseconds)] MEMORY-ONLY id=${id} src=${SAFE_SRC} critical->hafıza (Telegram yok)" >> "$LOG"
+            sent=$((sent + 1))
+        else
+            echo "[$(date -Iseconds)] DEFER id=${id} src=${SAFE_SRC} sev=${sev} (Telegram yok -> sonraki run)" >> "$LOG"
+        fi
     else
         echo "[$(date -Iseconds)] FAIL id=${id} src=${SAFE_SRC} sev=${sev} http=${HTTP} — retry next run" >> "$LOG"
         failed=$((failed + 1))

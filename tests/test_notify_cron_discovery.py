@@ -77,3 +77,34 @@ def test_warn_event_does_not_save_discovery(tmp_path):
     """'Sadece hata varsa' -> warn için discovery YAZILMAZ (yalnız Telegram)."""
     cap = _run(tmp_path, "warn")
     assert "/api/v1/memory/discoveries" not in cap
+
+
+def test_memory_only_mode_records_critical_without_telegram(tmp_path):
+    """Codex P2: Telegram creds YOK + MEMORY_API_KEY var -> critical yine hafızaya
+    (SessionStart Telegram-down iken de açık-hatayı görür) + event notified=1."""
+    db = tmp_path / "ev.db"
+    _mk_db(db, "critical")
+    capture = tmp_path / "curl.log"
+    _fake_curl(tmp_path / "bin", capture)
+    subprocess.run(
+        ["bash", str(SCRIPT)],
+        env={
+            "PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin",
+            "NOTIFY_CRON_ENABLED": "true",
+            "NOTIFY_ENV_FILE": "/dev/null",
+            "DB_PATH": str(db),
+            "API_BASE": "http://localhost:8420",
+            "MEMORY_API_KEY": "mk-test",
+            # TELEGRAM_* YOK -> memory-only mod
+        },
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    cap = capture.read_text() if capture.exists() else ""
+    assert "/api/v1/memory/discoveries" in cap  # hafızaya yazıldı
+    assert "sendMessage" not in cap  # Telegram denenmedi
+    con = sqlite3.connect(str(db))
+    notified = con.execute("SELECT notified FROM events WHERE id=1").fetchone()[0]
+    con.close()
+    assert notified == 1  # memory-only'de critical handled -> reprocess yok
