@@ -61,6 +61,38 @@ async def test_devops_metrics_buffer(devops_client, auth_headers):
     assert resp.json()["count"] == 0  # No ticks yet
 
 
+async def test_metrics_history_window_isot_format(devops_client, app):
+    """Regresyon: metrics_history.timestamp Python isoformat() ile ISO-T ('T'-ayraçlı,
+    +00:00). datetime('now',?) ise BOŞLUK-ayraçlı üretir. Ham string-compare'de
+    'T'(0x54) > ' '(0x20) → aynı UTC-günün ESKİ satırı yanlışça `minutes` penceresine
+    girerdi. Fix replace(' '->'T') ile eşik ISO-T'ye çevrilir → gerçek pencere.
+    Test bug'u fix'ten ayırt eder: aynı-gün/eski satır pencere DIŞINDA olmalı."""
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    # UTC gece-yarısı kenarı: 30dk-eski satır aynı UTC-günde kurulamaz → ayrımı atla
+    if now.hour == 0 and now.minute < 35:
+        pytest.skip("UTC gece-yarısı penceresi — aynı-gün eski-satır kurulamıyor")
+
+    db = app.state.db
+    recent = (now - timedelta(minutes=5)).isoformat()  # pencerede
+    # Aynı UTC-günün başı: kesinlikle >30dk eski ama datetime('now') ile AYNI tarih-öneki
+    old_sameday = now.replace(hour=0, minute=0, second=1, microsecond=0).isoformat()
+
+    for ts in (recent, old_sameday):
+        await db.execute(
+            "INSERT INTO metrics_history "
+            "(timestamp, cpu_usage, memory_usage, disk_usage, temperature, load_avg, network_io) "
+            "VALUES (?, 0, 0, 0, 0, '[]', '{}')",
+            (ts,),
+        )
+
+    agent = app.state.devops_agent
+    got = {r["timestamp"] for r in await agent.get_metrics_history(minutes=30)}
+    assert recent in got  # taze satır pencerede
+    assert old_sameday not in got  # BUG olsaydı ham-compare bunu yanlışça alırdı
+
+
 async def test_devops_remediation_log(devops_client, auth_headers):
     resp = await devops_client.get("/api/v1/devops/remediation/log", headers=auth_headers)
     assert resp.status_code == 200

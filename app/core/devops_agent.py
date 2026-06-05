@@ -1003,8 +1003,13 @@ class DevOpsAgent:
         if not self._db:
             return list(self._history)
         rows = await self._db.fetch_all(
+            # metrics_history.timestamp Python isoformat() ile yazılır: 'T'-ayraçlı
+            # (2026-..T21:..+00:00). datetime('now',?) ise BOŞLUK-ayraçlı üretir.
+            # Ham string-compare'de 'T'(0x54) > ' '(0x20) → aynı-gün TÜM satırlar eşiği
+            # geçer → `minutes` penceresi etkisiz olurdu. replace(...,' ','T') eşiği
+            # ISO-T'ye çevirir (doğru pencere) ve idx_metrics_timestamp index'i korunur.
             """SELECT * FROM metrics_history
-               WHERE timestamp > datetime('now', ?)
+               WHERE timestamp > replace(datetime('now', ?), ' ', 'T')
                ORDER BY timestamp DESC LIMIT 500""",
             (f"-{minutes} minutes",),
         )
@@ -1014,8 +1019,9 @@ class DevOpsAgent:
         if not self._db:
             return []
         rows = await self._db.fetch_all(
+            # vps_metrics_history.timestamp da ISO-T ('T'-ayraçlı) — bkz get_metrics_history.
             """SELECT * FROM vps_metrics_history
-               WHERE timestamp > datetime('now', ?)
+               WHERE timestamp > replace(datetime('now', ?), ' ', 'T')
                ORDER BY timestamp DESC LIMIT 500""",
             (f"-{minutes} minutes",),
         )
