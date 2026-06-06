@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from app.middleware.dependencies import require_auth
+from app.middleware.dependencies import require_admin, require_auth
 
 router = APIRouter(prefix="/api/v1/devops", tags=["devops"])
 
@@ -127,7 +127,7 @@ class ForceRemediateRequest(BaseModel):
 
 
 @router.post("/remediate/force")
-async def force_remediate(req: ForceRemediateRequest, request: Request, _: None = Depends(require_auth)) -> dict:
+async def force_remediate(req: ForceRemediateRequest, request: Request, _: None = Depends(require_admin)) -> dict:
     """Telegram [🔧 Uygula] -> playbook'u ELLE çalıştır (remediation_mode BYPASS;
     tıklama = açık insan-onayı). Auth: internal-key (admin scope) -> owner-chat
     kontrolü telegram_bot katmanında. event_id verilirse source DB'den çözülür."""
