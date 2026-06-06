@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+import os
+
 import aiosqlite
+
+logger = logging.getLogger(__name__)
 
 # DB path fallback'i için TEK kaynak. Production systemd DB_PATH set eder; bu
 # yalnızca env yokken devreye girer. main.py (schema init) ve events.py (emit/read)
@@ -162,8 +167,23 @@ class Database:
         self._conn: aiosqlite.Connection | None = None
 
     async def initialize(self) -> None:
+        # DB-sertleştirme (audit P1#7): prod'da DB_PATH set edilmezse /tmp fallback'e
+        # SESSİZCE düşmek = veri-kaybı (events başka path'e yazar, restart'ta /tmp uçar).
+        # pytest dışında /tmp-default tespit edilirse GÖRÜNÜR uyar (sessiz değil).
+        if self.db_path == DEFAULT_DB_PATH and not os.environ.get("PYTEST_CURRENT_TEST"):
+            logger.warning(
+                "DB /tmp fallback kullanılıyor (%s) — DB_PATH set edilmemiş! Prod'da "
+                "veri-kaybı riski (restart'ta /tmp uçabilir). systemd DB_PATH'i doğrula.",
+                self.db_path,
+            )
         self._conn = await aiosqlite.connect(self.db_path)
         self._conn.row_factory = aiosqlite.Row
+        # DB-sertleştirme (audit P1#6): WAL = eşzamanlı okuma+yazma (uvicorn 2-worker +
+        # events.py ikili-writer → #517 kilit-çekişmesinin kökü). busy_timeout = kilitliyse
+        # "database is locked" yerine N ms bekle (BUSY≠READONLY≠hata). journal_mode=WAL
+        # DB-düzeyinde kalıcı; busy_timeout bağlantı-başı → her worker initialize'da set eder.
+        await self._conn.execute("PRAGMA journal_mode=WAL")
+        await self._conn.execute("PRAGMA busy_timeout=10000")
         await self._conn.executescript(SCHEMA_V1)
         await self._migrate()
         await self._conn.commit()
