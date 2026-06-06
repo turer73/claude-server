@@ -69,15 +69,42 @@ def _status(url: str) -> int:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:  # noqa: S310
             return resp.status
     except urllib.error.HTTPError as e:
+        # Codex P2: sunucu HEAD'i reddedebilir (405/403/501) → GET ile yeniden dene,
+        # yoksa erişilebilir robots/sitemap'i "yok" sanarız (false-positive).
+        if e.code in (403, 405, 501):
+            return _fetch(url)[0]
         return e.code
     except Exception:
-        # bazı sunucu HEAD reddeder → GET dene
         return _fetch(url)[0]
 
 
 def _attr(html: str, pattern: str) -> str | None:
     m = re.search(pattern, html, re.I | re.S)
     return m.group(1).strip() if m else None
+
+
+def _tag_attrs(tag: str) -> dict[str, str]:
+    """Bir HTML tag'inin attribute'larını sıra-bağımsız dict'e çevir (küçük-harf key)."""
+    return {k.lower(): v for k, v in re.findall(r'([a-zA-Z:_-]+)\s*=\s*["\']([^"\']*)["\']', tag)}
+
+
+def _meta(html: str, key: str, value: str) -> str | None:
+    """<meta> tag'inde key(name/property)==value olanın content'ini döndür — ATTRIBUTE
+    SIRASINDAN BAĞIMSIZ (Codex P2: ters-sıralı <meta content=.. name=robots> kaçırılmasın)."""
+    for tag in re.findall(r"<meta\b[^>]*>", html, re.I):
+        a = _tag_attrs(tag)
+        if a.get(key, "").lower() == value.lower() and a.get("content"):
+            return a["content"].strip()
+    return None
+
+
+def _link_href(html: str, rel: str) -> str | None:
+    """<link rel=X href=...> href'i — sıra-bağımsız."""
+    for tag in re.findall(r"<link\b[^>]*>", html, re.I):
+        a = _tag_attrs(tag)
+        if a.get("rel", "").lower() == rel.lower() and a.get("href"):
+            return a["href"].strip()
+    return None
 
 
 def _visible_text_len(html: str) -> int:
@@ -101,14 +128,14 @@ def audit_domain(domain: str) -> dict:
         }
 
     title = _attr(html, r"<title[^>]*>(.*?)</title>")
-    desc = _attr(html, r'<meta[^>]+name=["\']description["\'][^>]+content=["\'](.*?)["\']')
-    canonical = _attr(html, r'rel=["\']canonical["\'][^>]+href=["\'](.*?)["\']')
-    viewport = bool(re.search(r'name=["\']viewport["\']', html, re.I))
+    desc = _meta(html, "name", "description")
+    canonical = _link_href(html, "canonical")
+    viewport = bool(_meta(html, "name", "viewport"))
     lang = _attr(html, r'<html[^>]*\blang=["\'](.*?)["\']')
-    og_title = _attr(html, r'property=["\']og:title["\'][^>]+content=["\'](.*?)["\']')
-    og_image = _attr(html, r'property=["\']og:image["\'][^>]+content=["\'](.*?)["\']')
-    tw_card = _attr(html, r'name=["\']twitter:card["\'][^>]+content=["\'](.*?)["\']')
-    robots_meta = _attr(html, r'name=["\']robots["\'][^>]+content=["\'](.*?)["\']')
+    og_title = _meta(html, "property", "og:title")
+    og_image = _meta(html, "property", "og:image")
+    tw_card = _meta(html, "name", "twitter:card")
+    robots_meta = _meta(html, "name", "robots")
     h1 = len(re.findall(r"<h1[\s>]", html, re.I))
     jsonld = len(re.findall(r'type=["\']application/ld\+json["\']', html, re.I))
     hreflang = len(re.findall(r"hreflang=", html, re.I))
