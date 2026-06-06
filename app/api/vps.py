@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shlex
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
@@ -27,8 +29,10 @@ async def vps_exec(req: VPSCommandRequest, _: None = Depends(require_admin)) -> 
     """Execute a command on the production VPS via SSH bridge."""
     settings = get_settings()
     executor = ShellExecutor(whitelist=settings.shell_whitelist)
-    # Wrap command in SSH
-    ssh_cmd = f"{_vps_ssh()} '{req.command}'"
+    # Wrap command in SSH. shlex.quote prevents single-quote breakout / shell
+    # injection on the remote VPS (admin-supplied req.command). The local shell
+    # passes the quoted token to ssh as one arg; the remote shell runs it intact.
+    ssh_cmd = f"{_vps_ssh()} {shlex.quote(req.command)}"
     result = await executor.execute(ssh_cmd, timeout=req.timeout)
     return result
 
