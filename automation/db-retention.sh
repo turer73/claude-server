@@ -21,6 +21,8 @@ ALERTS_KEEP_DAYS=${ALERTS_KEEP_DAYS:-30}
 AUDIT_KEEP_DAYS=${AUDIT_KEEP_DAYS:-90}
 CI_KEEP_DAYS=${CI_KEEP_DAYS:-90}
 CRON_OUTCOMES_KEEP_DAYS=${CRON_OUTCOMES_KEEP_DAYS:-90}  # LIVESYS Faz1 cron_outcomes
+EVENTS_KEEP_DAYS=${EVENTS_KEEP_DAYS:-60}               # audit P1#8 events-spine
+REMEDIATION_KEEP_DAYS=${REMEDIATION_KEEP_DAYS:-90}     # audit P1#8 FAZ5 ledger
 
 DRY_RUN=${DRY_RUN:-0}
 
@@ -65,6 +67,15 @@ else
     # cron_outcomes (LIVESYS Faz1) — older than CRON_OUTCOMES_KEEP_DAYS
     n=$(sqlite_exec "$SERVER_DB" "DELETE FROM cron_outcomes WHERE timestamp < datetime('now', '-${CRON_OUTCOMES_KEEP_DAYS} days')")
     log "  cron_outcomes pruned: $n rows (keep ${CRON_OUTCOMES_KEEP_DAYS}d)"
+
+    # events (audit P1#8) — retention yoktu, sınırsız büyürdü (notify-cron/spine ana tablo).
+    # datetime() format-agnostik (ISO-T + boşluk) — gün-granül, perf-önemsiz.
+    n=$(sqlite_exec "$SERVER_DB" "DELETE FROM events WHERE datetime(timestamp) < datetime('now', '-${EVENTS_KEEP_DAYS} days')")
+    log "  events pruned: $n rows (keep ${EVENTS_KEEP_DAYS}d)"
+
+    # remediation_log (audit P1#8) — retention yoktu, sınırsız büyürdü (FAZ5 ledger).
+    n=$(sqlite_exec "$SERVER_DB" "DELETE FROM remediation_log WHERE datetime(timestamp) < datetime('now', '-${REMEDIATION_KEEP_DAYS} days')")
+    log "  remediation_log pruned: $n rows (keep ${REMEDIATION_KEEP_DAYS}d)"
 fi
 
 if [ ! -f "$CI_DB" ]; then

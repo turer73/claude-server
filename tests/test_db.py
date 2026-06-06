@@ -23,6 +23,16 @@ async def test_database_creates_tables(db):
 
 
 @pytest.mark.anyio
+async def test_initialize_sets_wal_and_busy_timeout(db):
+    """DB-sertleştirme (audit P1#6): initialize WAL + busy_timeout kurar.
+    WAL = eşzamanlı R/W (#517 kilit-çekişmesi); busy_timeout = BUSY'de bekle, hata-verme."""
+    jm = await db.fetch_all("PRAGMA journal_mode")
+    assert jm[0]["journal_mode"].lower() == "wal"
+    bt = await db.fetch_all("PRAGMA busy_timeout")
+    assert bt[0]["timeout"] == 10000
+
+
+@pytest.mark.anyio
 async def test_migrate_adds_acked_to_existing_events(tmp_path):
     """Eski-şema (acked'siz) prod events tablosu -> initialize() ALTER ile acked ekler.
     CREATE TABLE IF NOT EXISTS mevcut tabloya kolon EKLEMEZ; _migrate ALTER yapar.
