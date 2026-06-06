@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from app.core.config import get_settings
+from app.core.config import get_settings, read_env_var
 from app.core.shell_executor import ShellExecutor
 from app.middleware.dependencies import require_admin
 
@@ -187,14 +187,17 @@ async def deploy_project(name: str, _: None = Depends(require_admin)) -> dict:
 
 @router.get("/memory/context")
 async def memory_context(request: Request) -> dict:
-    """Full session context - API key auth (no JWT needed)."""
-    api_key = request.headers.get("x-api-key", "")
-    expected = os.environ.get("API_KEY", "")
-    if api_key != expected:
-        from app.exceptions import AuthenticationError
+    """Full session context from memory DB for Claude hooks. API-key auth (no JWT)."""
+    from app.exceptions import AuthenticationError
 
-        raise AuthenticationError("Invalid API key")
-    """Full session context from memory DB for Claude hooks."""
+    api_key = request.headers.get("x-api-key", "")
+    # read_env_var: process env first, then /opt/.env fallback. settings.internal_api_key
+    # is env-only (YAML-excluded) -> in a .env-only deploy it would reject even the correct
+    # key (env-path split). Matches telegram_bot.py. Fail-closed: empty expected -> reject
+    # (old os.environ.get("API_KEY", "") default "" let an empty x-api-key header pass).
+    expected = read_env_var("INTERNAL_API_KEY")
+    if not expected or api_key != expected:
+        raise AuthenticationError("Invalid or missing API key")
     import sqlite3
 
     db = Path("/opt/linux-ai-server/data/claude_memory.db")
