@@ -182,8 +182,11 @@ class Database:
         # events.py ikili-writer → #517 kilit-çekişmesinin kökü). busy_timeout = kilitliyse
         # "database is locked" yerine N ms bekle (BUSY≠READONLY≠hata). journal_mode=WAL
         # DB-düzeyinde kalıcı; busy_timeout bağlantı-başı → her worker initialize'da set eder.
-        await self._conn.execute("PRAGMA journal_mode=WAL")
+        # Codex P2: busy_timeout WAL'DEN ÖNCE — DELETE→WAL geçişi kilit alır; başka writer
+        # (cron/worker) kilidi tutuyorsa WAL pragma'sı bekleyecek olan ilk işlem, timeout
+        # daha kurulmadan "database is locked" atabilir. Önce timeout, sonra kilit-alan WAL.
         await self._conn.execute("PRAGMA busy_timeout=10000")
+        await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.executescript(SCHEMA_V1)
         await self._migrate()
         await self._conn.commit()
