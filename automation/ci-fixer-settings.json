@@ -12,6 +12,13 @@
       "Write(//home/klipperos/work/**)",
       "Write(//tmp/**)",
 
+      "Read(//data/projects/**)",
+      "Edit(//data/projects/**)",
+      "Write(//data/projects/**)",
+      "Read(//opt/panola-rag/**)",
+      "Edit(//opt/panola-rag/**)",
+      "Write(//opt/panola-rag/**)",
+
       "Bash(git status*)",
       "Bash(git diff*)",
       "Bash(git log*)",
