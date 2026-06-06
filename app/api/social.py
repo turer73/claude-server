@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -36,7 +37,10 @@ async def _vps_run(command: str, timeout: int = 60) -> dict:
     """Run a command on VPS and return parsed output."""
     settings = get_settings()
     executor = ShellExecutor(whitelist=settings.shell_whitelist)
-    ssh_cmd = f"{VPS_SSH} '{command}'"
+    # shlex.quote: defence-in-depth local-shell-layer guard on top of _sanitize.
+    # Passes the whole remote command line to ssh as one safe token (transparent —
+    # the remote shell still receives + parses it intact, incl. _sanitize'd args).
+    ssh_cmd = f"{VPS_SSH} {shlex.quote(command)}"
     result = await executor.execute(ssh_cmd, timeout=timeout)
 
     # Try to parse JSON from output
