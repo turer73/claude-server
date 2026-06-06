@@ -29,6 +29,13 @@ logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
 
+# P1#5: restricted Claude Code settings (filesystem/tool scope) used instead of
+# --dangerously-skip-permissions. Repo-relative path; env-overridable.
+CI_FIXER_SETTINGS = os.environ.get(
+    "CI_FIXER_SETTINGS",
+    os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "automation", "ci-fixer-settings.json")),
+)
+
 # Per-lesson fix_diff preview length in the context-enriched prompt. Kept well
 # below app.core.ci_signal_dedup.FIX_DIFF_CAP (4096, the storage cap) so each
 # past lesson stays lean in the model's context window while the DB row retains
@@ -222,10 +229,17 @@ async def _call_claude_code(prompt: str, cwd: str) -> dict:
         prompt,
         "--output-format",
         "json",
-        "--dangerously-skip-permissions",
         "--max-turns",
         "5",
     ]
+    # P1#5: scope filesystem/tools via a restricted settings file instead of
+    # --dangerously-skip-permissions. The caller-supplied source_file in the
+    # prompt could otherwise steer edits/reads outside the project (e.g. .env);
+    # the settings deny-list blocks secrets + dangerous ops.
+    if os.path.exists(CI_FIXER_SETTINGS):
+        cmd += ["--settings", CI_FIXER_SETTINGS]
+    else:
+        logger.warning("CI_FIXER_SETTINGS missing (%s) — running without restricted settings", CI_FIXER_SETTINGS)
 
     logger.info("Calling Claude Code: cwd=%s", cwd)
 
