@@ -97,7 +97,8 @@ static int __init linux_ai_init(void)
 {
     proc_entry = proc_create("linux_ai", 0444, NULL, &linux_ai_ops);
     if (!proc_entry) return -ENOMEM;
-    proc_config = proc_create("linux_ai_config", 0644, NULL, &config_ops);
+    /* 0600: only root may read/write thresholds config (0644 let any local user change it) */
+    proc_config = proc_create("linux_ai_config", 0600, NULL, &config_ops);
     if (!proc_config) { proc_remove(proc_entry); return -ENOMEM; }
     pr_info("linux_ai: proc entries created\n");
     return 0;

@@ -133,7 +133,8 @@ static int __init nf_init(void)
 {
     int ret = nf_register_net_hook(&init_net, &nf_ops);
     if (ret) return ret;
-    fw_proc = proc_create("linux_ai_firewall", 0644, NULL, &fw_ops);
+    /* 0600: only root may read/write the firewall block-list (0644 let any local user modify IP blocks) */
+    fw_proc = proc_create("linux_ai_firewall", 0600, NULL, &fw_ops);
     if (!fw_proc) { nf_unregister_net_hook(&init_net, &nf_ops); return -ENOMEM; }
     pr_info("linux_ai_fw: loaded\n");
     return 0;

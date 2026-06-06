@@ -135,7 +135,8 @@ static struct proc_dir_entry *usb_proc;
 
 static int __init usb_init(void)
 {
-    usb_proc = proc_create("linux_ai_usb", 0644, NULL, &usb_ops);
+    /* 0600: only root may read/write the USB whitelist (0644 let any local user modify it) */
+    usb_proc = proc_create("linux_ai_usb", 0600, NULL, &usb_ops);
     if (!usb_proc) return -ENOMEM;
     usb_register_notify(&usb_nb);
     pr_info("linux_ai_usb: loaded\n");
