@@ -19,13 +19,11 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
 import sys
 import urllib.request
 
 API_BASE = os.environ.get("API_BASE", "http://localhost:8420")
 ENV_FILE = os.environ.get("NOTIFY_ENV_FILE", "/opt/linux-ai-server/.env")
-TG_HELPER = os.environ.get("SEO_TG_HELPER", "/opt/linux-ai-server/automation/telegram-alert.sh")
 TIMEOUT = int(os.environ.get("SEO_FETCH_TIMEOUT", "15"))
 UA = "Mozilla/5.0 (compatible; klipper-seo-audit/1.0)"
 
@@ -258,32 +256,24 @@ def _post_json(url: str, body: dict, headers: dict, timeout: int) -> dict:
         return json.loads(resp.read().decode() or "{}")
 
 
-def _send_telegram(report: str) -> bool:
-    if not os.path.exists(TG_HELPER):
-        return False
-    safe = report.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    text = "🔎 <b>SEO Denetimi</b>\n<pre>" + safe[:3500] + "</pre>"
-    try:
-        r = subprocess.run([TG_HELPER, "--kind", "generic", "--text", text], capture_output=True, text=True, timeout=60)
-        return r.returncode == 0
-    except Exception:
-        return False
-
-
-def _save_discovery(report: str, n: int) -> str:
+def _write_bug(domain: str, findings: list[tuple[str, str]]) -> str:
+    """Hata içeren domain → type=bug discovery (SessionStart 'açık bug'ta görünür → düzeltilir).
+    Telegram/mail YOK (kullanıcı kararı): hatalar ortak-hafızaya yazılır, açılan oturumda ele
+    alınır. Dedup: aynı başlık ('SEO: <domain>') → details güncellenir, çoğalmaz."""
     mkey = _envget("MEMORY_API_KEY")
     if not mkey:
         return "no MEMORY_API_KEY"
+    body = "🔎 Teknik-SEO hataları (seo-audit):\n" + "\n".join(f"[{s}] {m}" for s, m in findings)
     try:
         _post_json(
             f"{API_BASE}/api/v1/memory/discoveries",
             {
                 "device_name": "klipper",
                 "project": "linux-ai-server",
-                "type": "learning",
-                "title": "Teknik-SEO denetimi (seo-audit)",
-                "details": f"🔎 {n} domain denetlendi:\n{report[:3800]}",
-                "rationale": "seo-audit.py (on-demand, deterministik, salt-okunur).",
+                "type": "bug",
+                "title": f"SEO: {domain}",
+                "details": body[:3800],
+                "rationale": "seo-audit.py — Telegram yok; düzeltme açılan oturumda yapılır (ortak-hafıza).",
             },
             {"X-Memory-Key": mkey},
             15,
@@ -299,13 +289,20 @@ def main() -> int:
     report = build_report(results)
     print(report)
     print()
-    disc_err = _save_discovery(report, len(domains))
-    tg = _send_telegram(report)
+    # Hatalar (P1+P2) → ortak hafıza (type=bug → SessionStart'ta görünür → düzeltilir).
+    # MAIL/Telegram YOK (kullanıcı kararı). Temiz domain (P3-only/0) bug açmaz.
+    raised, errs = 0, []
+    for r in results:
+        actionable = [(s, m) for s, m in r["findings"] if s in ("P1", "P2")]
+        if actionable:
+            e = _write_bug(r["domain"], actionable)
+            errs.append(e) if e else None
+            raised += 0 if e else 1
     avg = sum(r["score"] for r in results) // max(1, len(results))
-    if disc_err:
-        print(f"OUTCOME: partial | {len(domains)} domain, ort-skor {avg}, telegram={tg}, DISCOVERY-FAIL: {disc_err}")
+    if errs:
+        print(f"OUTCOME: partial | {len(domains)} domain, ort-skor {avg}, {raised} bug→ortak-hafıza, MEMORY-FAIL: {errs[0]}")
     else:
-        print(f"OUTCOME: pass | {len(domains)} domain, ort-skor {avg}, telegram={tg}")
+        print(f"OUTCOME: pass | {len(domains)} domain, ort-skor {avg}, {raised} bug→ortak-hafıza (SessionStart, mail yok)")
     return 0
 
 
