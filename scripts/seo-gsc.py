@@ -26,13 +26,15 @@ import time
 import urllib.parse
 import urllib.request
 
-import jwt  # PyJWT
+from jose import jwt  # python-jose (pyproject'te DECLARED dep — fresh-install/CI'da mevcut; PyJWT eklemeye gerek yok)
 
 ENV_FILE = os.environ.get("NOTIFY_ENV_FILE", "/opt/linux-ai-server/.env")
 API_BASE = os.environ.get("API_BASE", "http://localhost:8420")
 TG_HELPER = os.environ.get("SEO_TG_HELPER", "/opt/linux-ai-server/automation/telegram-alert.sh")
 TOKEN_URI = "https://oauth2.googleapis.com/token"  # noqa: S105 (URL, parola değil)
 GSC_BASE = "https://searchconsole.googleapis.com/webmasters/v3"
+# Codex P2: URL Inspection webmasters/v3'te DEĞİL, v1 altında ayrı endpoint.
+URLINSPECT_URI = "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect"
 SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 DAYS = int(os.environ.get("GSC_DAYS", "28"))
 
@@ -172,7 +174,11 @@ def audit_property(token: str, prop: str, inspect_urls: list[str] | None = None)
     # URL Inspection (anahtar sayfalar, opsiyonel — rate-limit'li)
     for u in (inspect_urls or [])[:5]:
         try:
-            ins = _api(token, "urlInspection/index:inspect", {"inspectionUrl": u, "siteUrl": prop})
+            ins = _http(
+                URLINSPECT_URI,
+                data=json.dumps({"inspectionUrl": u, "siteUrl": prop}).encode(),
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            )
             findings += analyze_inspection(ins, u)
         except Exception:
             pass
