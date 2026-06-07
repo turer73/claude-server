@@ -48,7 +48,7 @@ _SHARED_PREFIX = "/opt/linux-ai-server"
 # worktree'ler bagimsiz HEAD'e sahip -> paylasilan ANA checkout collision'i degil
 _WORKTREES_PREFIX = "/opt/linux-ai-server/.claude/worktrees"
 _C_FLAG = re.compile(r"(?:^|\s)-C\s+(\S+)")
-_CD_CMD = re.compile(r"(?:^|[;&|])\s*cd\s+(\S+)")
+_CD_CMD = re.compile(r"(?:^|[;&|\n\r])\s*cd\s+(\S+)")  # newline de komut ayraci
 
 
 def _log(msg: str) -> None:

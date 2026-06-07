@@ -244,6 +244,20 @@ def test_guard_fires_on_git_c_into_opt(env, capsys):
     assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "ask"
 
 
+def test_guard_detects_cd_after_newline(env, capsys):
+    # cok-satirli komut: cd ayri satirda (newline ayraci) -> yine de tespit et
+    _add_session("other", "pts/1", OPT)
+    cs.cmd_guard(
+        {
+            "session_id": "me",
+            "cwd": "/tmp",
+            "tool_input": {"command": f"echo ok\ncd {OPT}\ngit pull"},
+        }
+    )
+    out = capsys.readouterr().out
+    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
 def test_guard_fires_on_git_pull(env, capsys):
     # git pull / pull --rebase de HEAD'i kaydirir -> paylasilan /opt'ta guard'lanmali
     _add_session("other", "pts/1", OPT)
