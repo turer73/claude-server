@@ -47,13 +47,18 @@ case "$ACTION" in
     echo "Hedef settings: $TARGET_FILE"
     echo ""
     echo "Hook scriptleri:"
-    for f in session-start.sh user-prompt-log.sh pre-bash-guard.sh post-bash-capture.sh stop-save-session.py; do
+    for f in session-start.sh user-prompt-log.sh pre-bash-guard.sh post-bash-capture.sh stop-save-session.py cosession.py; do
       if [ -x "$HOOKS_SRC/$f" ]; then
         echo "  [OK]   $f"
       else
         echo "  [EKSIK] $f"
       fi
     done
+    echo ""
+    # cosession CLI (hook degil, kullanici araci) — co-session koordinasyonu
+    if [ -x "$REPO_ROOT/scripts/claude-sessions.sh" ]; then
+      echo "  [OK]   ../claude-sessions.sh (CLI: live | msg [--urgent] [--to pts/N])"
+    fi
     echo ""
     if [ -f "$TARGET_FILE" ]; then
       echo "settings.json mevcut ($TARGET_FILE)"
