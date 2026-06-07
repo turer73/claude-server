@@ -19,6 +19,9 @@ def test_self_pentest_sources_outcome_and_emits():
     assert "exec-status.tsv" in SELF_PENTEST  # executed tracking
     assert "floor_from_status" in SELF_PENTEST  # sonda floor
     assert "emit_outcome" in SELF_PENTEST  # sonda OUTCOME
+    # Codex P2: calibration-geçti ama tüm-path-WAF-blok da KÖR sayılmalı
+    assert "WAF-BLOCK" in SELF_PENTEST  # per-path blok sayımı
+    assert "total_paths" in SELF_PENTEST
 
 
 def test_nuclei_sources_outcome_and_emits():
