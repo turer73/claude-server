@@ -149,8 +149,17 @@ INPUT='{"tool_input":{"command":"cd /data/projects/petvet\ngit checkout master\n
 run_hook "$INPUT"
 assert_eq "T8 multiline rc=0: npm bug auto-resolved (fix dogrulama)" "0" "$(count_active_bug npm)"
 
+# ========== TEST 9: word-adjacency koruma (Codex P2) ==========
+# 'echo npm\nrun build' duz-boslukla birlesirse 'echo npm run build' olup npm-trigger
+# eslerdi (sahte). ' ; ' ayraci word-adjacency'yi kirar -> trigger MISS -> command_log
+# ARTMAZ. Fix'ten once (duz-bosluk) bu assert FAIL ederdi (trigger HIT -> command_log +1).
+CMDLOG_BEFORE=$(count_cmdlog)
+INPUT='{"tool_input":{"command":"echo npm\nrun build"},"tool_response":{"stdout":"","exit_code":1}}'
+run_hook "$INPUT"
+assert_eq "T9 word-adjacency: trigger MISS (command_log artmadi)" "$CMDLOG_BEFORE" "$(count_cmdlog)"
+
 # ========== Final ==========
-printf '\n=== %d pass / %d fail (8 toplam) ===\n' "$PASS" "$FAIL"
+printf '\n=== %d pass / %d fail (9 toplam) ===\n' "$PASS" "$FAIL"
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"
 
 if [ "$FAIL" -gt 0 ]; then
