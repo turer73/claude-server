@@ -119,6 +119,7 @@ def _has_sitemap(base: str, robots_body: str) -> bool:
     """Sitemap var mı: robots.txt 'Sitemap:' direktifi VEYA /sitemap.xml VEYA
     /sitemap-index.xml (Astro/Next vb. -index kullanır). False-positive düzeltmesi:
     eski versiyon yalnız /sitemap.xml bakıp -index'li siteleri yanlış flag'liyordu."""
+
     # Codex P2: _status hata'da 0 döner → POZİTİF status şart (200-399), yoksa erişilemeyen
     # probe'u (0) "sitemap var" sayardık (false-positive'i ters yönde tekrarlardık).
     def _ok(code: int) -> bool:
