@@ -68,7 +68,7 @@ daily_count() {  # bugünkü spawn sayısı
   jq -r --arg d "$today" '.[$d] // 0' "$DAILY_FILE" 2>/dev/null || echo 0
 }
 daily_inc() {
-  local today; today=$(date -u +%Y-%m-%d) tmp; tmp=$(mktemp)
+  local today tmp; today=$(date -u +%Y-%m-%d); tmp=$(mktemp)
   [ -f "$DAILY_FILE" ] || echo '{}' > "$DAILY_FILE"
   jq --arg d "$today" '.[$d]=((.[$d]//0)+1) | with_entries(select(.key>=($d|sub("-[0-9]+$";""))))' "$DAILY_FILE" > "$tmp" 2>/dev/null && mv "$tmp" "$DAILY_FILE"
 }
