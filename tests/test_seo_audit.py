@@ -40,16 +40,18 @@ SPA_SHELL = (
 )
 
 
-def _patch(monkeypatch, html, robots=200, sitemap=200):
-    monkeypatch.setattr(seo, "_fetch", lambda url: (200, html))
+def _patch(monkeypatch, html, robots_status=200, robots_body="User-agent: *\n", sitemap_ok=True):
+    def _f(url):
+        if url.endswith("robots.txt"):
+            return (robots_status, robots_body)
+        return (200, html)
 
     def _st(url):
-        if url.endswith("robots.txt"):
-            return robots
-        if url.endswith("sitemap.xml"):
-            return sitemap
+        if "sitemap" in url:  # /sitemap.xml veya /sitemap-index.xml
+            return 200 if sitemap_ok else 404
         return 200
 
+    monkeypatch.setattr(seo, "_fetch", _f)
     monkeypatch.setattr(seo, "_status", _st)
 
 
@@ -110,11 +112,40 @@ def test_status_falls_back_to_get_on_head_405(monkeypatch):
 
 
 def test_missing_robots_sitemap(monkeypatch):
-    _patch(monkeypatch, GOOD, robots=404, sitemap=404)
+    _patch(monkeypatch, GOOD, robots_status=404, robots_body="", sitemap_ok=False)
     r = seo.audit_domain("en.bilgearena.com")
     msgs = " ".join(m for _, m in r["findings"])
     assert "robots.txt" in msgs
-    assert "sitemap.xml" in msgs
+    assert "sitemap" in msgs
+
+
+def test_sitemap_index_not_false_flagged(monkeypatch):
+    """False-positive fix: /sitemap.xml 404 ama /sitemap-index.xml 200 → sitemap VAR sayılmalı."""
+
+    def _st(url):
+        if url.endswith("sitemap.xml"):
+            return 404
+        if url.endswith("sitemap-index.xml"):
+            return 200
+        return 200
+
+    monkeypatch.setattr(seo, "_status", _st)
+    assert seo._has_sitemap("https://x.example", "User-agent: *\n") is True
+
+
+def test_sitemap_error_status_not_accepted(monkeypatch):
+    """Codex P2: _status hata'da 0 döner → 0 'sitemap var' SAYILMAMALI (pozitif-status şart)."""
+    monkeypatch.setattr(seo, "_status", lambda url: 0)
+    assert seo._has_sitemap("https://x.example", "User-agent: *\n") is False
+    # directive de 0 dönerse kabul etme
+    assert seo._has_sitemap("https://x.example", "Sitemap: https://x.example/s.xml\n") is False
+
+
+def test_sitemap_via_robots_directive(monkeypatch):
+    """robots.txt 'Sitemap:' direktifi reachable → sitemap VAR (path standart olmasa da)."""
+    monkeypatch.setattr(seo, "_status", lambda url: 200 if "custom-sitemap" in url else 404)
+    body = "User-agent: *\nSitemap: https://x.example/custom-sitemap.xml\n"
+    assert seo._has_sitemap("https://x.example", body) is True
 
 
 def test_unreachable_domain(monkeypatch):

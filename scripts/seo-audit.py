@@ -115,6 +115,24 @@ def _visible_text_len(html: str) -> int:
     return len(t)
 
 
+def _has_sitemap(base: str, robots_body: str) -> bool:
+    """Sitemap var mı: robots.txt 'Sitemap:' direktifi VEYA /sitemap.xml VEYA
+    /sitemap-index.xml (Astro/Next vb. -index kullanır). False-positive düzeltmesi:
+    eski versiyon yalnız /sitemap.xml bakıp -index'li siteleri yanlış flag'liyordu."""
+
+    # Codex P2: _status hata'da 0 döner → POZİTİF status şart (200-399), yoksa erişilemeyen
+    # probe'u (0) "sitemap var" sayardık (false-positive'i ters yönde tekrarlardık).
+    def _ok(code: int) -> bool:
+        return 200 <= code < 400
+
+    for line in robots_body.splitlines():
+        if line.lower().startswith("sitemap:"):
+            url = line.split(":", 1)[1].strip()
+            if url and _ok(_status(url)):
+                return True
+    return any(_ok(_status(f"{base}{p}")) for p in ("/sitemap.xml", "/sitemap-index.xml"))
+
+
 def audit_domain(domain: str) -> dict:
     base = f"https://{domain}"
     status, html = _fetch(base)
@@ -140,8 +158,8 @@ def audit_domain(domain: str) -> dict:
     jsonld = len(re.findall(r'type=["\']application/ld\+json["\']', html, re.I))
     hreflang = len(re.findall(r"hreflang=", html, re.I))
     vtext = _visible_text_len(html)
-    robots_txt = _status(f"{base}/robots.txt")
-    sitemap = _status(f"{base}/sitemap.xml")
+    robots_txt, robots_body = _fetch(f"{base}/robots.txt")
+    sitemap_ok = _has_sitemap(base, robots_body)
 
     score = 100
     f: list[tuple[str, str]] = []
@@ -179,9 +197,9 @@ def audit_domain(domain: str) -> dict:
     if not viewport:
         score -= 8
         f.append(("P2", "viewport meta yok (mobil)"))
-    if sitemap >= 400 or sitemap == 0:
+    if not sitemap_ok:
         score -= 5
-        f.append(("P2", f"sitemap.xml erişilemiyor (HTTP {sitemap})"))
+        f.append(("P2", "sitemap bulunamadı (/sitemap.xml, /sitemap-index.xml ve robots.txt Sitemap: yok)"))
     if robots_txt >= 400 or robots_txt == 0:
         score -= 5
         f.append(("P2", f"robots.txt erişilemiyor (HTTP {robots_txt})"))
