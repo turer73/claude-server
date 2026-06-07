@@ -1,0 +1,18 @@
+# cron-outcome-allowlist — OUTCOME-contract'a HENÜZ uymayan cron-wrap işleri (basename).
+# lint-cron-outcome.sh bunları "ALLOW" sayar (ihlal değil) → CI yeşil kalır, ama borç
+# burada GÖRÜNÜR. Bir script OUTCOME emit etmeye başlayınca bu listeden ÇIKAR.
+# Amaç: yeni sessiz-yeşil eklenmesini engellemek + mevcut borcu tek yerde izlemek.
+#
+# --- LIVESYS-SENSE kapsamında düzeltilecek (PR2'de çıkacak) ---
+self-pentest.sh
+nuclei-scan.sh
+#
+# --- Legacy rc-fallback işleri (SENSE-dışı; gelecek OUTCOME-migrasyon borcu) ---
+daily-backup.sh
+weekly-audit.sh
+digest-send.sh
+db-retention.sh
+claude-code-update.sh
+autonomous-daily-summary.sh
+autonomous-health-check.sh
+autonomous-spawn-retry.sh
