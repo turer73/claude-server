@@ -346,3 +346,13 @@ async def test_communicate_or_kill_fallback_when_killpg_fails(monkeypatch):
     with pytest.raises(TimeoutError):
         await ci_runner._communicate_or_kill(proc, 1)
     assert proc.returncode is not None  # proc.kill() fallback ile reaped (orphan yok)
+
+
+@pytest.mark.asyncio
+async def test_run_local_happy_path(tmp_path):
+    """_run_local gerçek subprocess (start_new_session dahil) -> stdout/rc döner."""
+    from app.core.ci_runner import _run_local
+
+    out, err, rc = await _run_local({"test_cmd": "echo hello-ci", "path": str(tmp_path)})
+    assert "hello-ci" in out
+    assert rc == 0
