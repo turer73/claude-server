@@ -336,6 +336,25 @@ async def run_project_tests(project: str) -> dict:
     return result
 
 
+async def _communicate_or_kill(proc: asyncio.subprocess.Process, timeout: int) -> tuple[bytes, bytes]:
+    """proc.communicate'i timeout ile bekle; timeout'ta alttaki subprocess'i OLDUR + reap.
+
+    asyncio.wait_for timeout'ta proc'u OLDURMEZ (surer P2): asili vitest/pytest/ssh
+    cocugu orphan kalir, CPU/RAM tutar. kill + wait ile reaped; sonra TimeoutError
+    re-raise -> ust katmandaki run() 'except Exception' (failure) yakalar, davranis korunur.
+    (shell_executor + ci_fixer zaten dogru yapiyor; bu modul unutmustu.)
+    """
+    try:
+        return await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass  # zaten bitmis
+        await proc.wait()  # zombie'yi reap et
+        raise
+
+
 async def _run_local(cfg: dict) -> tuple[str, str, int]:
     """Execute test command locally via asyncio subprocess."""
     cmd = cfg["test_cmd"]
@@ -348,7 +367,7 @@ async def _run_local(cfg: dict) -> tuple[str, str, int]:
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
     )
-    stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=300)
+    stdout_bytes, stderr_bytes = await _communicate_or_kill(proc, 300)
     return (
         stdout_bytes.decode(errors="replace"),
         stderr_bytes.decode(errors="replace"),
@@ -367,7 +386,7 @@ async def _run_ssh(cfg: dict) -> tuple[str, str, int]:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=120)
+    stdout_bytes, stderr_bytes = await _communicate_or_kill(proc, 120)
     return (
         stdout_bytes.decode(errors="replace"),
         stderr_bytes.decode(errors="replace"),
