@@ -47,12 +47,17 @@ DOCKER_RC=$?
 # JSON-degil olur. Eskiden python sessizce bos doner -> FAILED="" -> 0 -gt 0 FALSE ->
 # ELSE "Tumu Gecti" YESIL raporlanirdi (surer P1: tam-coku aninda sahte-yesil). Artik
 # runner cokmesi FAIL'dir; testler kosmadan "gecti" demeyiz.
-if [ "$DOCKER_RC" -ne 0 ] || ! python3 -c "import json; json.load(open('results.json'))" 2>/dev/null; then
-    echo "[$TS] E2E ABORT — docker_rc=$DOCKER_RC, results.json gecersiz/bos" >> "$LOG"
+#
+# Codex P2: SADECE results.json gecersiz/eksikse abort et — DOCKER_RC'ye BAKMA.
+# Playwright test-FAIL'de de exit!=0 doner AMA gecerli JSON yazar; rc'ye gore abort
+# edersek siradan test-fail'leri "CALISTIRILAMADI" sanip fail-listesini kaybederiz
+# (canary teshis sinyali yok olur). rc yalnizca log/teshis icin tasinir.
+if ! python3 -c "import json; json.load(open('results.json'))" 2>/dev/null; then
+    echo "[$TS] E2E ABORT — docker_rc=$DOCKER_RC, results.json gecersiz/bos (parse edilemez)" >> "$LOG"
     send_telegram "🔴 *E2E Live Test — ÇALIŞTIRILAMADI*
-docker/playwright fail (rc=${DOCKER_RC}) veya results.json geçersiz — testler KOŞMADI, sonuç güvenilmez.
+results.json geçersiz/eksik — testler KOŞMADI (docker/playwright çöküşü, rc=${DOCKER_RC}). Sonuç güvenilmez.
 🕐 \`$TS\`"
-    echo "OUTCOME: fail | e2e runner cokmesi (docker_rc=${DOCKER_RC} / results.json gecersiz-bos) — testler kosmadi"
+    echo "OUTCOME: fail | e2e runner cokmesi (results.json gecersiz-bos, parse edilemez; docker_rc=${DOCKER_RC}) — testler kosmadi"
     exit 1
 fi
 
