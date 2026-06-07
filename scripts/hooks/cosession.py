@@ -36,12 +36,19 @@ DB_PATH = os.environ.get("HOOK_DB", "/opt/linux-ai-server/data/claude_memory.db"
 LOG_DIR = os.environ.get("HOOK_LOG_DIR", "/opt/linux-ai-server/data/hook-logs")
 LIVE_WINDOW_MIN = int(os.environ.get("COSESSION_LIVE_MIN", "240"))  # heartbeat tazelik
 
-# /opt git-dal islemleri: HEAD'i kaydiran / calisma-agacini degistiren komutlar
+# /opt git-dal islemleri: HEAD'i kaydiran / calisma-agacini degistiren komutlar.
+# `git -C <dir>` / `git -c k=v` gibi onceki flag'lere izin ver (subkomut hemen
+# 'git'ten sonra gelmeyebilir).
 _GIT_BRANCH_OPS = re.compile(
-    r"git\s+(checkout|switch|reset(\s+--hard)?|rebase|merge|cherry-pick|"
+    r"\bgit\s+(?:-\S+(?:\s+\S+)?\s+)*"
+    r"(checkout|switch|reset(\s+--hard)?|rebase|merge|cherry-pick|"
     r"stash\s+(pop|apply|drop)|branch\s+-[a-zA-Z]*[Dd])",
 )
 _SHARED_PREFIX = "/opt/linux-ai-server"
+# worktree'ler bagimsiz HEAD'e sahip -> paylasilan ANA checkout collision'i degil
+_WORKTREES_PREFIX = "/opt/linux-ai-server/.claude/worktrees"
+_C_FLAG = re.compile(r"(?:^|\s)-C\s+(\S+)")
+_CD_CMD = re.compile(r"(?:^|[;&|])\s*cd\s+(\S+)")
 
 
 def _log(msg: str) -> None:
@@ -127,6 +134,25 @@ def _my_tty() -> str:
     return forced if forced else _tty(_find_claude_pid())
 
 
+def _is_shared_main(d: str) -> bool:
+    """Paylasilan ANA /opt checkout'u mu? worktree'ler (bagimsiz HEAD) haric."""
+    return bool(d) and d.startswith(_SHARED_PREFIX) and not d.startswith(_WORKTREES_PREFIX)
+
+
+def _effective_git_dir(cmd: str, actor_cwd: str) -> str:
+    """git-dal komutunun fiilen etkiledigi dizin: 'git -C <dir>' > 'cd <dir>' > cwd."""
+    m = _C_FLAG.search(cmd)
+    if m:
+        d = m.group(1)
+    else:
+        m2 = _CD_CMD.search(cmd)
+        d = m2.group(1) if m2 else actor_cwd
+    d = d.strip("'\"")
+    if not d.startswith("/"):
+        d = os.path.normpath(os.path.join(actor_cwd or "/", d))
+    return d
+
+
 def _git_branch(cwd: str) -> str:
     if not cwd or not os.path.isdir(cwd):
         return ""
@@ -172,18 +198,24 @@ def _db() -> sqlite3.Connection:
         );
         """
     )
-    # Eski sema (delivered_passive/processed bool) -> yeni tty-listesi migrasyonu
+    # Eski sema (delivered_passive/processed bool) -> yeni tty-listesi migrasyonu.
+    # Eski bool GLOBAL idi; hangi tty tukettigi bilinemez -> '*' sentineli ("herkes")
+    # ile geri-doldur ki onceden islenmis mesajlar tekrar enjekte/block edilmesin.
     cols = {r[1] for r in con.execute("PRAGMA table_info(session_messages)")}
     if "delivered_to" not in cols:
         con.execute("ALTER TABLE session_messages ADD COLUMN delivered_to TEXT DEFAULT ''")
     if "processed_by" not in cols:
         con.execute("ALTER TABLE session_messages ADD COLUMN processed_by TEXT DEFAULT ''")
+    if "delivered_passive" in cols:  # eski sema vardi -> backfill
+        con.execute("UPDATE session_messages SET delivered_to='*' WHERE delivered_passive=1 AND COALESCE(delivered_to,'')=''")
+        con.execute("UPDATE session_messages SET processed_by='*' WHERE processed=1 AND COALESCE(processed_by,'')=''")
     con.commit()
     return con
 
 
 def _consumed(csv: str, tty: str) -> bool:
-    return tty in (csv or "").split(",")
+    parts = (csv or "").split(",")
+    return tty in parts or "*" in parts  # '*' = migrasyon "herkes tuketti" sentineli
 
 
 def _mark(csv: str, tty: str) -> str:
@@ -308,8 +340,11 @@ def cmd_banner(data: dict) -> int:
 def cmd_prompt_inject(data: dict) -> int:
     try:
         con = _db()
-        _heartbeat(con, data, "UserPromptSubmit")
+        _heartbeat(con, data, "UserPromptSubmit")  # kendi commit'i var
         mytty = _my_tty()
+        # BEGIN IMMEDIATE: read-modify-write'i atomik yap — eszamanli teslimde
+        # iki alicinin birbirinin tty-isaretini ezmesini engeller (Codex P2)
+        con.execute("BEGIN IMMEDIATE")
         cand = con.execute(
             "SELECT id, from_sid, urgent, content, created_at, delivered_to "
             "FROM session_messages WHERE (to_sid=? OR to_sid='all') AND from_sid!=? "
@@ -323,8 +358,7 @@ def cmd_prompt_inject(data: dict) -> int:
                 "UPDATE session_messages SET delivered_to=? WHERE id=?",
                 (_mark(dv, mytty), mid),
             )
-        if rows:
-            con.commit()
+        con.commit()
         con.close()
     except Exception as e:
         _log(f"prompt-inject error: {e}")
@@ -349,8 +383,10 @@ def cmd_stop_check(data: dict) -> int:
         return 0
     try:
         con = _db()
-        _heartbeat(con, data, "Stop")
+        _heartbeat(con, data, "Stop")  # kendi commit'i var
         mytty = _my_tty()
+        # BEGIN IMMEDIATE: eszamanli Stop'larda processed_by ezilmesini engelle (Codex P2)
+        con.execute("BEGIN IMMEDIATE")
         cand = con.execute(
             "SELECT id, from_sid, content, created_at, processed_by FROM session_messages "
             "WHERE (to_sid=? OR to_sid='all') AND from_sid!=? AND urgent=1 ORDER BY id",
@@ -363,8 +399,7 @@ def cmd_stop_check(data: dict) -> int:
                 "UPDATE session_messages SET processed_by=? WHERE id=?",
                 (_mark(pb, mytty), mid),
             )
-        if rows:
-            con.commit()
+        con.commit()
         con.close()
     except Exception as e:
         _log(f"stop-check error: {e}")
@@ -392,16 +427,16 @@ def cmd_guard(data: dict) -> int:
     cmd = (data.get("tool_input") or {}).get("command", "")
     if not cmd or not _GIT_BRANCH_OPS.search(cmd):
         return 0
-    # Sadece komut PAYLASILAN /opt deposunda calisiyorsa anlamli (baska repodaki
-    # git-dal islemi /opt landmine'ini etkilemez). Aktor cwd /opt'ta degilse cik.
+    # Komutun FIILEN etkiledigi git dizini (git -C / cd / cwd) paylasilan ANA
+    # /opt checkout'u mu? Degilse (baska repo VEYA worktree) landmine yok -> cik.
     actor_cwd = data.get("cwd") or ""
-    if not actor_cwd.startswith(_SHARED_PREFIX):
+    if not _is_shared_main(_effective_git_dir(cmd, actor_cwd)):
         return 0
     try:
         con = _db()
         sid = _heartbeat(con, data, "PreToolUse")
         _prune(con)
-        others = [r for r in _live_others(con, sid) if (r[3] or "").startswith(_SHARED_PREFIX)]
+        others = [r for r in _live_others(con, sid) if _is_shared_main(r[3] or "")]
         con.close()
     except Exception as e:
         _log(f"guard error: {e}")

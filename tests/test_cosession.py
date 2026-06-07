@@ -189,3 +189,64 @@ def test_broadcast_urgent_blocks_every_recipient(env, capsys, monkeypatch):
     rc = cs.cmd_stop_check({"session_id": "s1", "stop_hook_active": False})
     assert rc == 0
     assert capsys.readouterr().out.strip() == ""
+
+
+# ───────── migrasyon: eski bool durumunu koru (Codex P2) ─────────
+def test_migration_preserves_consumed_state(env, capsys, monkeypatch):
+    import sqlite3
+
+    # Eski sema + zaten islenmis (processed=1) urgent mesaj
+    con = sqlite3.connect(cs.DB_PATH)
+    con.execute(
+        "CREATE TABLE session_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "from_sid TEXT, to_sid TEXT, urgent INTEGER DEFAULT 0, content TEXT, "
+        "created_at TEXT, delivered_passive INTEGER DEFAULT 0, processed INTEGER DEFAULT 0)"
+    )
+    con.execute(
+        "INSERT INTO session_messages (from_sid,to_sid,urgent,content,created_at,"
+        "delivered_passive,processed) VALUES ('pts/0','all',1,'eski',?,0,1)",
+        (cs._now(),),
+    )
+    con.commit()
+    con.close()
+
+    # cmd_stop_check -> _db() migrasyonu calistirir; backfill processed_by='*'
+    monkeypatch.setattr(cs, "_my_tty", lambda: "pts/1")
+    rc = cs.cmd_stop_check({"session_id": "s1", "stop_hook_active": False})
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == ""  # tekrar block ETMEZ
+
+
+# ───────── guard: fiili git dizini (cd / git -C) + worktree muafiyeti (Codex P2) ─────────
+def test_guard_fires_on_cd_into_opt(env, capsys):
+    _add_session("other", "pts/1", OPT)
+    cs.cmd_guard(
+        {
+            "session_id": "me",
+            "cwd": "/data/projects/kuafor",
+            "tool_input": {"command": f"cd {OPT} && git switch foo"},
+        }
+    )
+    out = capsys.readouterr().out
+    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+def test_guard_fires_on_git_c_into_opt(env, capsys):
+    _add_session("other", "pts/1", OPT)
+    cs.cmd_guard(
+        {
+            "session_id": "me",
+            "cwd": "/tmp",
+            "tool_input": {"command": f"git -C {OPT} switch foo"},
+        }
+    )
+    out = capsys.readouterr().out
+    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+def test_guard_silent_in_worktree(env, capsys):
+    # worktree bagimsiz HEAD -> paylasilan ANA checkout collision'i degil
+    wt = cs._WORKTREES_PREFIX + "/feat-x"
+    _add_session("other", "pts/1", OPT)
+    cs.cmd_guard({"session_id": "me", "cwd": wt, "tool_input": {"command": "git switch foo"}})
+    assert capsys.readouterr().out.strip() == ""
