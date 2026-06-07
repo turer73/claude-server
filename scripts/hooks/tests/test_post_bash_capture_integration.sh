@@ -138,8 +138,28 @@ run_hook "$INPUT"
 assert_eq "T7 echo Test: command_log row=6" "6" "$(count_cmdlog)"
 assert_eq "T7 echo Test: active vitest bug korunmali (SKIP_BUG)" "1" "$(count_active_bug vitest)"
 
+# ========== TEST 8: cok-satir (composite) BASARILI komut -> auto-resolve (regresyon) ==========
+# Kok neden: cmd newline icerirse TSV bozulur, cut -f3 ilk satiri rc sanar (!=0) ->
+# rc=0 okunamaz -> (a) sahte test-fail bug, (b) auto-resolve tetiklenmez. Fix: cmd/desc
+# tek-satira indirilir (oneline). Gozlem: cok-satir rc=0 npm build -> aktif npm bug
+# auto-resolve olmali. Fix'ten ONCE bu assert FAIL ederdi (rc yanlis okunup auto-resolve atlanir).
+sqlite3 "$DB" "INSERT INTO discoveries (project, type, title, status) VALUES ('linux-ai-server', 'bug', 'test-fail [npm]: sahte-multiline', 'active')"
+assert_eq "T8 setup: 1 active npm bug" "1" "$(count_active_bug npm)"
+INPUT='{"tool_input":{"command":"cd /data/projects/petvet\ngit checkout master\ncd web && npm run build > /tmp/x.log 2>&1 && echo build OK"},"tool_response":{"stdout":"build OK","exit_code":0}}'
+run_hook "$INPUT"
+assert_eq "T8 multiline rc=0: npm bug auto-resolved (fix dogrulama)" "0" "$(count_active_bug npm)"
+
+# ========== TEST 9: word-adjacency koruma (Codex P2) ==========
+# 'echo npm\nrun build' duz-boslukla birlesirse 'echo npm run build' olup npm-trigger
+# eslerdi (sahte). ' ; ' ayraci word-adjacency'yi kirar -> trigger MISS -> command_log
+# ARTMAZ. Fix'ten once (duz-bosluk) bu assert FAIL ederdi (trigger HIT -> command_log +1).
+CMDLOG_BEFORE=$(count_cmdlog)
+INPUT='{"tool_input":{"command":"echo npm\nrun build"},"tool_response":{"stdout":"","exit_code":1}}'
+run_hook "$INPUT"
+assert_eq "T9 word-adjacency: trigger MISS (command_log artmadi)" "$CMDLOG_BEFORE" "$(count_cmdlog)"
+
 # ========== Final ==========
-printf '\n=== %d pass / %d fail (7 toplam) ===\n' "$PASS" "$FAIL"
+printf '\n=== %d pass / %d fail (9 toplam) ===\n' "$PASS" "$FAIL"
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"
 
 if [ "$FAIL" -gt 0 ]; then
