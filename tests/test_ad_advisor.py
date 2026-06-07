@@ -21,6 +21,18 @@ def test_brand_token_from_sc_domain():
     assert ad._brand_token("https://kuafor.panola.app/") == "kuafor"  # URL-prefix biçimi
 
 
+def test_brand_token_hyphenated_normalized():
+    # Codex P2: ayraçlı domain etiketi → ayraçsız normalize ('3d-labx' → '3dlabx')
+    assert ad._brand_token("sc-domain:3d-labx.com") == "3dlabx"
+
+
+def test_classify_brand_defense_hyphenated_match():
+    # '3d labx' sorgusu, marka '3dlabx' → normalize sayesinde savunma kovasına düşer (Codex P2)
+    rows = [{"keys": ["3d labx"], "impressions": 30, "ctr": 0.02, "position": 7.0}]
+    b = ad.classify(rows, "3dlabx")
+    assert len(b["brand_defense"]) == 1
+
+
 def test_classify_brand_defense():
     # marka sorgusu, poz>3 → savunma
     rows = [{"keys": ["panola"], "impressions": 53, "ctr": 0.019, "position": 6.9}]

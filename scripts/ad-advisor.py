@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import sys
 import urllib.parse
 from datetime import UTC, datetime, timedelta
@@ -43,13 +44,19 @@ MIN_IMP_LOWCTR = int(os.environ.get("AD_MIN_IMP_LOWCTR", "50"))
 LOWCTR_MAX = float(os.environ.get("AD_LOWCTR_MAX", "0.03"))
 
 
+def _normalize(s: str) -> str:
+    """lowercase + alfanumerik-dışı sil → marka/sorgu eşleştirme tutarlı (ayraç-bağımsız).
+    '3d-labx' ve '3d labx'/'3dlabx' aynı '3dlabx'e iner (Codex P2)."""
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
 def _brand_token(prop: str) -> str:
-    """'sc-domain:panola.app' veya 'https://kuafor.panola.app/' → ana etiket (marka-savunma).
-    sc-domain ve URL-prefix property biçimlerinin ikisini de işler."""
+    """'sc-domain:panola.app' veya 'https://kuafor.panola.app/' → normalize ana-etiket
+    (marka-savunma). sc-domain ve URL-prefix biçimlerini işler; ayraçlar atılır."""
     host = prop.split("://", 1)[-1]  # URL-prefix ise şemayı at
     host = host.split(":", 1)[-1]  # 'sc-domain:' önekini at
     host = host.strip("/").split("/")[0]  # yalnız host
-    return host.split(".")[0].lower()
+    return _normalize(host.split(".")[0])  # '3d-labx' → '3dlabx'
 
 
 def classify(rows: list[dict], brand: str) -> dict[str, list[dict]]:
@@ -65,7 +72,7 @@ def classify(rows: list[dict], brand: str) -> dict[str, list[dict]]:
         imp = r.get("impressions", 0)
         pos = r.get("position", 0)
         ctr = r.get("ctr", 0)
-        if brand and brand in q.replace(" ", "") and pos > 3 and imp >= 5:
+        if brand and brand in _normalize(q) and pos > 3 and imp >= 5:
             buckets["brand_defense"].append({"q": q, "imp": imp, "pos": pos, "ctr": ctr})
         elif 5 <= pos <= 15 and imp >= MIN_IMP_STRIKING:
             buckets["striking"].append({"q": q, "imp": imp, "pos": pos, "ctr": ctr})
