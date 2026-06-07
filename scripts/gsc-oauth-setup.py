@@ -86,6 +86,10 @@ def main() -> int:
         print("(prompt=consent olduğundan gelmeli; code süresi geçtiyse 1-3 tekrarla.)")
         return 1
 
+    # Codex P2: parent-dizin yoksa (fresh install) yazma patlar → önce oluştur.
+    parent = os.path.dirname(out_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     with open(out_path, "w") as fh:
         json.dump({"refresh_token": rt}, fh)
     os.chmod(out_path, 0o600)
