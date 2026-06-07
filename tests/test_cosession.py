@@ -147,3 +147,45 @@ def test_urgent_respects_stop_hook_active(env, capsys, monkeypatch):
     rc = cs.cmd_stop_check({"session_id": "s1", "stop_hook_active": True})
     assert rc == 0
     assert capsys.readouterr().out.strip() == ""
+
+
+# ───────── broadcast: 3+ alici BAGIMSIZ tuketmeli (Codex P2 regresyon) ─────────
+def test_broadcast_passive_reaches_every_recipient(env, capsys, monkeypatch):
+    cs.cmd_send(["--from", "pts/0", "--to", "all", "duyuru"])
+    capsys.readouterr()
+
+    # pts/1 gorur
+    monkeypatch.setattr(cs, "_my_tty", lambda: "pts/1")
+    cs.cmd_prompt_inject({"session_id": "s1", "cwd": OPT})
+    assert "duyuru" in capsys.readouterr().out
+
+    # pts/2 DE gorur (ilk alici global tuketmedi)
+    monkeypatch.setattr(cs, "_my_tty", lambda: "pts/2")
+    cs.cmd_prompt_inject({"session_id": "s2", "cwd": OPT})
+    assert "duyuru" in capsys.readouterr().out
+
+    # pts/1 TEKRAR gormez (alici-bazli idempotent)
+    monkeypatch.setattr(cs, "_my_tty", lambda: "pts/1")
+    cs.cmd_prompt_inject({"session_id": "s1", "cwd": OPT})
+    assert capsys.readouterr().out.strip() == ""
+
+
+def test_broadcast_urgent_blocks_every_recipient(env, capsys, monkeypatch):
+    cs.cmd_send(["--from", "pts/0", "--to", "all", "--urgent", "acil-duyuru"])
+    capsys.readouterr()
+
+    # pts/1 block
+    monkeypatch.setattr(cs, "_my_tty", lambda: "pts/1")
+    cs.cmd_stop_check({"session_id": "s1", "stop_hook_active": False})
+    assert json.loads(capsys.readouterr().out)["decision"] == "block"
+
+    # pts/2 DE block (ilk alici global processed yapmadi)
+    monkeypatch.setattr(cs, "_my_tty", lambda: "pts/2")
+    cs.cmd_stop_check({"session_id": "s2", "stop_hook_active": False})
+    assert json.loads(capsys.readouterr().out)["decision"] == "block"
+
+    # pts/1 TEKRAR block etmez (zaten isledi)
+    monkeypatch.setattr(cs, "_my_tty", lambda: "pts/1")
+    rc = cs.cmd_stop_check({"session_id": "s1", "stop_hook_active": False})
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == ""

@@ -160,18 +160,37 @@ def _db() -> sqlite3.Connection:
           status      TEXT DEFAULT 'active'
         );
         CREATE TABLE IF NOT EXISTS session_messages (
-          id                INTEGER PRIMARY KEY AUTOINCREMENT,
-          from_sid          TEXT,
-          to_sid            TEXT,            -- belirli session_id VEYA 'all'
-          urgent            INTEGER DEFAULT 0,
-          content           TEXT,
-          created_at        TEXT,
-          delivered_passive INTEGER DEFAULT 0,
-          processed         INTEGER DEFAULT 0
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          from_sid      TEXT,
+          to_sid        TEXT,            -- belirli tty VEYA 'all' (broadcast)
+          urgent        INTEGER DEFAULT 0,
+          content       TEXT,
+          created_at    TEXT,
+          -- broadcast'ta her alici BAGIMSIZ tuketir: tek-bool yerine tty-listesi
+          delivered_to  TEXT DEFAULT '',  -- pasif gosterilen tty'ler (CSV)
+          processed_by  TEXT DEFAULT ''   -- urgent islenen tty'ler (CSV)
         );
         """
     )
+    # Eski sema (delivered_passive/processed bool) -> yeni tty-listesi migrasyonu
+    cols = {r[1] for r in con.execute("PRAGMA table_info(session_messages)")}
+    if "delivered_to" not in cols:
+        con.execute("ALTER TABLE session_messages ADD COLUMN delivered_to TEXT DEFAULT ''")
+    if "processed_by" not in cols:
+        con.execute("ALTER TABLE session_messages ADD COLUMN processed_by TEXT DEFAULT ''")
+    con.commit()
     return con
+
+
+def _consumed(csv: str, tty: str) -> bool:
+    return tty in (csv or "").split(",")
+
+
+def _mark(csv: str, tty: str) -> str:
+    parts = [x for x in (csv or "").split(",") if x]
+    if tty not in parts:
+        parts.append(tty)
+    return ",".join(parts)
 
 
 def _heartbeat(con: sqlite3.Connection, data: dict, event: str) -> str:
@@ -255,10 +274,12 @@ def cmd_banner(data: dict) -> int:
         _prune(con)
         others = _live_others(con, sid)
         mytty = _my_tty()
-        msgs = con.execute(
-            "SELECT COUNT(*) FROM session_messages WHERE (to_sid=? OR to_sid='all') AND from_sid!=? AND processed=0",
+        cand = con.execute(
+            "SELECT delivered_to, processed_by FROM session_messages WHERE (to_sid=? OR to_sid='all') AND from_sid!=?",
             (mytty, mytty),
-        ).fetchone()[0]
+        ).fetchall()
+        # benim tarafimdan henuz tuketilmemis (ne pasif gosterilmis ne islenmis)
+        msgs = sum(1 for dv, pr in cand if not _consumed(dv, mytty) and not _consumed(pr, mytty))
         con.close()
     except Exception as e:
         _log(f"banner error: {e}")
@@ -289,18 +310,20 @@ def cmd_prompt_inject(data: dict) -> int:
         con = _db()
         _heartbeat(con, data, "UserPromptSubmit")
         mytty = _my_tty()
-        rows = con.execute(
-            "SELECT id, from_sid, urgent, content, created_at FROM session_messages "
-            "WHERE (to_sid=? OR to_sid='all') AND from_sid!=? "
-            "AND delivered_passive=0 AND processed=0 ORDER BY id LIMIT 8",
+        cand = con.execute(
+            "SELECT id, from_sid, urgent, content, created_at, delivered_to "
+            "FROM session_messages WHERE (to_sid=? OR to_sid='all') AND from_sid!=? "
+            "ORDER BY id LIMIT 30",
             (mytty, mytty),
         ).fetchall()
-        if rows:
-            ids = [r[0] for r in rows]
+        # broadcast: her alici BAGIMSIZ — yalniz BENIM tty pasif-gormediyse goster
+        rows = [r for r in cand if not _consumed(r[5], mytty)][:8]
+        for mid, _frm, _urg, _content, _ts, dv in rows:
             con.execute(
-                f"UPDATE session_messages SET delivered_passive=1 WHERE id IN ({','.join('?' * len(ids))})",
-                ids,
+                "UPDATE session_messages SET delivered_to=? WHERE id=?",
+                (_mark(dv, mytty), mid),
             )
+        if rows:
             con.commit()
         con.close()
     except Exception as e:
@@ -310,7 +333,7 @@ def cmd_prompt_inject(data: dict) -> int:
     if not rows:
         return 0
     out = ["=== COSESSION — Diger Oturumdan Mesaj ==="]
-    for mid, frm, urg, content, ts in rows:
+    for mid, frm, urg, content, ts, _dv in rows:
         tag = "🔴ACIL " if urg else ""
         out.append(f"[#{mid} | {ts}] {tag}{frm}:")
         out.append(f"  {(content or '').strip()[:500]}")
@@ -328,18 +351,19 @@ def cmd_stop_check(data: dict) -> int:
         con = _db()
         _heartbeat(con, data, "Stop")
         mytty = _my_tty()
-        rows = con.execute(
-            "SELECT id, from_sid, content, created_at FROM session_messages "
-            "WHERE (to_sid=? OR to_sid='all') AND from_sid!=? "
-            "AND urgent=1 AND processed=0 ORDER BY id",
+        cand = con.execute(
+            "SELECT id, from_sid, content, created_at, processed_by FROM session_messages "
+            "WHERE (to_sid=? OR to_sid='all') AND from_sid!=? AND urgent=1 ORDER BY id",
             (mytty, mytty),
         ).fetchall()
-        if rows:
-            ids = [r[0] for r in rows]
+        # broadcast urgent: her alici BAGIMSIZ isler — yalniz BENIM tty islemediyse
+        rows = [r for r in cand if not _consumed(r[4], mytty)]
+        for mid, _frm, _content, _ts, pb in rows:
             con.execute(
-                f"UPDATE session_messages SET processed=1 WHERE id IN ({','.join('?' * len(ids))})",
-                ids,
+                "UPDATE session_messages SET processed_by=? WHERE id=?",
+                (_mark(pb, mytty), mid),
             )
+        if rows:
             con.commit()
         con.close()
     except Exception as e:
@@ -354,7 +378,7 @@ def cmd_stop_check(data: dict) -> int:
         "Turn'unu kapatmadan once degerlendir (otonom; kullanici prompt'u gerekmez):",
         "",
     ]
-    for mid, frm, content, ts in rows:
+    for mid, frm, content, ts, _pb in rows:
         lines.append(f"[#{mid} | {ts}] {frm}: {(content or '').strip()[:400]}")
     lines.append("")
     lines.append('Yanitlamak icin: bash /opt/linux-ai-server/scripts/claude-sessions.sh msg "..."')
@@ -445,8 +469,8 @@ def cmd_list(_data: dict) -> int:
         ).fetchall()
         pend = con.execute(
             "SELECT id, from_sid, to_sid, urgent, content, created_at, "
-            "delivered_passive, processed FROM session_messages "
-            "WHERE processed=0 ORDER BY id DESC LIMIT 15"
+            "delivered_to, processed_by FROM session_messages "
+            "ORDER BY id DESC LIMIT 15"
         ).fetchall()
         con.close()
     except Exception as e:
@@ -460,10 +484,11 @@ def cmd_list(_data: dict) -> int:
         print(f"{flag} {tty:8} pid={pid} branch={br or '?':22} cwd={cwd or '?'}")
         print(f"     son: {_ago(seen)} ({ev})  sid={s[:18]}  durum={'canli' if alive else st}")
     if pend:
-        print(f"\n=== BEKLEYEN OTURUM-MESAJLARI ({len(pend)}) ===")
-        for mid, frm, to, urg, content, ts, dp, pr in pend:
+        print(f"\n=== SON OTURUM-MESAJLARI ({len(pend)}) ===")
+        for mid, frm, to, urg, content, ts, dv, pb in pend:
             tag = "🔴ACIL" if urg else "pasif"
-            print(f"#{mid} [{tag}] {frm[:12]}->{to[:12]} ({ts}): {(content or '')[:60]}")
+            seen = (dv or "") + ("|" + pb if pb else "")
+            print(f"#{mid} [{tag}] {frm[:10]}->{to[:10]} tuketen=[{seen}]: {(content or '')[:50]}")
     return 0
 
 
