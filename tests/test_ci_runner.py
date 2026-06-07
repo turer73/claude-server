@@ -287,3 +287,36 @@ class TestRunProjectTests:
         result = await run_project_tests("_synthetic_remote")
         required = {"project", "total", "passed", "failed", "duration_s", "failures", "skipped", "skip_reason"}
         assert required.issubset(set(result.keys()))
+
+
+# ---------------------------------------------------------------------------
+# Timeout -> process-group kill (surer P2 + Codex P1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_communicate_or_kill_kills_group_on_timeout():
+    """Timeout'ta TUM process-grubu (shell + cocuklar) SIGKILL + reap, orphan yok.
+
+    surer P2: wait_for timeout proc'u oldurmez. Codex P1: create_subprocess_shell
+    ara-shell calistirir, proc.kill() yalniz onu oldurur -> start_new_session + killpg
+    ile cocuklar da olur. Burada shell 2 cocuk sleep spawn eder; grup-kill hepsini alir.
+    """
+    import asyncio
+    import os
+
+    from app.core.ci_runner import _communicate_or_kill
+
+    proc = await asyncio.create_subprocess_shell(
+        "sleep 30 & sleep 30",  # shell + 2 cocuk -> grup-kill testi
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
+    )
+    pgid = os.getpgid(proc.pid)
+    with pytest.raises(TimeoutError):
+        await _communicate_or_kill(proc, 1)  # 1sn timeout, sleep 30 -> timeout
+    assert proc.returncode is not None  # reaped (zombie kalmadi)
+    await asyncio.sleep(0.2)  # kernel grubu temizlesin
+    with pytest.raises(ProcessLookupError):
+        os.killpg(pgid, 0)  # grup tamamen oldu (hicbir uye kalmadi)

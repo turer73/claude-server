@@ -9,7 +9,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
+import signal
 import time
 
 logger = logging.getLogger(__name__)
@@ -337,20 +339,29 @@ async def run_project_tests(project: str) -> dict:
 
 
 async def _communicate_or_kill(proc: asyncio.subprocess.Process, timeout: int) -> tuple[bytes, bytes]:
-    """proc.communicate'i timeout ile bekle; timeout'ta alttaki subprocess'i OLDUR + reap.
+    """proc.communicate'i timeout ile bekle; timeout'ta TUM process-grubunu OLDUR + reap.
 
     asyncio.wait_for timeout'ta proc'u OLDURMEZ (surer P2): asili vitest/pytest/ssh
-    cocugu orphan kalir, CPU/RAM tutar. kill + wait ile reaped; sonra TimeoutError
-    re-raise -> ust katmandaki run() 'except Exception' (failure) yakalar, davranis korunur.
+    cocugu orphan kalir, CPU/RAM tutar.
+
+    Codex P1: create_subprocess_shell ara-shell (/bin/sh -c) calistirir; proc.kill()
+    YALNIZ shell'i oldurur, onun spawn ettigi GERCEK cocugu (npx vitest, pytest, ssh)
+    DEGIL — cocuk pipe'lari acik tutarsa communicate hala asili kalir + gercek orphan
+    surer. Cozum: cagiranlar start_new_session=True ile yeni process-grubu acar; burada
+    os.killpg ile TUM grubu (shell + cocuklari) SIGKILL'leriz. setsid yoksa proc.kill
+    fallback. Sonra TimeoutError re-raise -> run() 'except Exception' (failure), davranis korunur.
     (shell_executor + ci_fixer zaten dogru yapiyor; bu modul unutmustu.)
     """
     try:
         return await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except TimeoutError:
         try:
-            proc.kill()
-        except ProcessLookupError:
-            pass  # zaten bitmis
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)  # tum grup (shell + cocuklar)
+        except (ProcessLookupError, PermissionError):
+            try:
+                proc.kill()  # grup-kill olmadiysa en azindan shell'i oldur
+            except ProcessLookupError:
+                pass  # zaten bitmis
         await proc.wait()  # zombie'yi reap et
         raise
 
@@ -366,6 +377,7 @@ async def _run_local(cfg: dict) -> tuple[str, str, int]:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
+        start_new_session=True,  # yeni process-grubu -> timeout'ta killpg ile cocuklar da olur (Codex P1)
     )
     stdout_bytes, stderr_bytes = await _communicate_or_kill(proc, 300)
     return (
@@ -385,6 +397,7 @@ async def _run_ssh(cfg: dict) -> tuple[str, str, int]:
         ssh_cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,  # yeni process-grubu -> timeout'ta killpg ile ssh-cocugu da olur (Codex P1)
     )
     stdout_bytes, stderr_bytes = await _communicate_or_kill(proc, 120)
     return (
