@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 
 from app.core.kernel_bridge import KernelBridge
 from app.core.log_manager import LogManager
@@ -815,6 +814,8 @@ def execute_tool(name: str, arguments: dict) -> str:
 
         # ── Workspace Tools ──
         elif name == "workspace_note_save":
+            import os
+
             workspace = "/data/claude/workspace"
             os.makedirs(workspace, exist_ok=True)
             path = os.path.join(workspace, arguments["name"])
@@ -832,6 +833,8 @@ def execute_tool(name: str, arguments: dict) -> str:
                 return json.dumps({"error": f"Note {arguments['name']} not found"})
 
         elif name == "workspace_note_list":
+            import os
+
             workspace = "/data/claude/workspace"
             notes = []
             if os.path.isdir(workspace):
