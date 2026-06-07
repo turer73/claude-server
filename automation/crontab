@@ -16,7 +16,8 @@
 # Cross-project PR-review poller — her 2 saat, ENABLED 2026-06-04 (spawn+post ACIK; pilot=claude-server; cap 5-run+10-gun; Codex-once-force). Rollback: env-prefix kaldir.
 0 */2 * * * DRY_RUN=0 PR_REVIEW_ENABLED=1 SPAWN_ENABLED=1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh pr-review-poll /opt/linux-ai-server/automation/pr-review-poller.sh
 # Klipper HDD backup — VPS Dokploy + volumes (7 gun retention)
-0 4 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh pull-vps-backup /opt/linux-ai-server/automation/pull-vps-backup.sh
+# 04:20 (stagger): demo-reset-test 04:00 + nuclei-scan 04:40 ile CPU spike yigilmasin
+20 4 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh pull-vps-backup /opt/linux-ai-server/automation/pull-vps-backup.sh
 # One-shot: gozlem haftasi sonu hatirlatma (2026-05-21, self-cleaning)
 0 9 21 5 * /opt/linux-ai-server/scripts/observation-week-end-reminder.sh > /var/log/linux-ai-server/observation-reminder.log 2>&1
 # Bilge Arena failover — Dokploy down ise Vercel e gecis (3dk kontrol)
@@ -28,7 +29,8 @@
 30 3 * * * /opt/linux-ai-server/venv/bin/python3 /opt/linux-ai-server/scripts/memory-triage-llm.py
 # Haftalık self-pentest — sahip olduğumuz tüm domain'leri tara (Pazar 03:30)
 30 3 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh self-pentest /opt/linux-ai-server/automation/self-pentest.sh
-0 4 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh nuclei-scan /opt/linux-ai-server/automation/nuclei-scan.sh
+# 04:40 (stagger): agir Docker guvenlik taramasi — demo-reset 04:00 + pull-vps 04:20 sonrasi
+40 4 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh nuclei-scan /opt/linux-ai-server/automation/nuclei-scan.sh
 # DB retention — server.db + ci_tests.db (haftalik Pazar 02:00)
 0 2 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh db-retention /opt/linux-ai-server/automation/db-retention.sh
 # Claude Code global npm guncelleme (haftalik Pazar 05:00)
