@@ -20,6 +20,11 @@
             "type": "command",
             "command": "/opt/linux-ai-server/scripts/hooks/session-start.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 /opt/linux-ai-server/scripts/hooks/cosession.py banner",
+            "timeout": 8
           }
         ]
       }
@@ -32,6 +37,11 @@
             "type": "command",
             "command": "/opt/linux-ai-server/scripts/hooks/user-prompt-log.sh",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 /opt/linux-ai-server/scripts/hooks/cosession.py prompt-inject",
+            "timeout": 8
           }
         ]
       }
@@ -45,6 +55,11 @@
             "type": "command",
             "command": "/opt/linux-ai-server/scripts/hooks/pre-bash-guard.sh",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 /opt/linux-ai-server/scripts/hooks/cosession.py guard",
+            "timeout": 8
           }
         ]
       }
@@ -58,6 +73,11 @@
             "type": "command",
             "command": "/opt/linux-ai-server/scripts/hooks/post-bash-capture.sh",
             "timeout": 8
+          },
+          {
+            "type": "command",
+            "command": "python3 /opt/linux-ai-server/scripts/hooks/cosession.py heartbeat",
+            "timeout": 8
           }
         ]
       }
@@ -70,6 +90,23 @@
             "type": "command",
             "command": "python3 /opt/linux-ai-server/scripts/hooks/stop-save-session.py",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "python3 /opt/linux-ai-server/scripts/hooks/cosession.py stop-check",
+            "timeout": 8
+          }
+        ]
+      }
+    ],
+
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /opt/linux-ai-server/scripts/hooks/cosession.py end",
+            "timeout": 5
           }
         ]
       }
