@@ -82,6 +82,23 @@ def get_access_token(sa: dict) -> str:
     return resp["access_token"]
 
 
+def get_access_token_oauth(client: dict, refresh_token: str) -> str:
+    """OAuth refresh_token → access_token (kullanıcı-delege; GSC UI service-account'u kabul
+    etmediği için bu yol kullanılır — kullanıcı tüm property'lerin sahibi). gsc-oauth-setup.py
+    ile bir kez alınan refresh_token'dan her çağrıda taze access_token üretir."""
+    c = client.get("installed") or client.get("web") or client
+    body = urllib.parse.urlencode(
+        {
+            "client_id": c["client_id"],
+            "client_secret": c["client_secret"],
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        }
+    ).encode()
+    resp = _http(TOKEN_URI, data=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
+    return resp["access_token"]
+
+
 def _api(token: str, path: str, body: dict | None = None) -> dict:
     url = f"{GSC_BASE}/{path}"
     headers = {"Authorization": f"Bearer {token}"}
@@ -231,17 +248,34 @@ def _write_bug(prop: str, findings: list[tuple[str, str]]) -> str:
         return str(e)[:150]
 
 
+def _acquire_token() -> tuple[str, str]:
+    """(token, err). OAuth (kullanıcı-delege) ÖNCELİKLİ — GSC UI service-account'u kabul
+    etmediği için. OAuth yoksa SA-key'e düşer."""
+    oc = _envget("GSC_OAUTH_CLIENT")
+    ot = _envget("GSC_OAUTH_TOKEN")
+    if oc and ot and os.path.exists(oc) and os.path.exists(ot):
+        try:
+            with open(oc) as fh:
+                client = json.load(fh)
+            with open(ot) as fh:
+                refresh = json.load(fh)["refresh_token"]
+            return get_access_token_oauth(client, refresh), ""
+        except Exception as e:
+            return "", f"OAuth auth hatası: {str(e)[:120]}"
+    sa_path = _envget("GSC_SA_KEY_PATH")
+    if sa_path and os.path.exists(sa_path):
+        try:
+            with open(sa_path) as fh:
+                return get_access_token(json.load(fh)), ""
+        except Exception as e:
+            return "", f"SA auth hatası: {str(e)[:120]}"
+    return "", "Kimlik yok: GSC_OAUTH_CLIENT+GSC_OAUTH_TOKEN veya GSC_SA_KEY_PATH gerekli"
+
+
 def main() -> int:
-    key_path = _envget("GSC_SA_KEY_PATH")
-    if not key_path or not os.path.exists(key_path):
-        print("OUTCOME: fail | GSC_SA_KEY_PATH yok/bulunamadı (service-account kurulumu gerekli)")
-        return 0
-    try:
-        with open(key_path) as fh:
-            sa = json.load(fh)
-        token = get_access_token(sa)
-    except Exception as e:
-        print(f"OUTCOME: fail | GSC auth hatası: {str(e)[:120]}")
+    token, err = _acquire_token()
+    if err:
+        print(f"OUTCOME: fail | {err}")
         return 0
 
     props = sys.argv[1:] or (_envget("GSC_PROPERTIES").split(",") if _envget("GSC_PROPERTIES") else DEFAULT_PROPERTIES)

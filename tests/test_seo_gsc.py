@@ -74,6 +74,35 @@ def test_write_bug_posts_bug(monkeypatch):
     assert cap["title"] == "GSC: sc-domain:panola.app"
 
 
+def test_oauth_refresh_token_exchange(monkeypatch):
+    """get_access_token_oauth: refresh_token → access_token (client.installed yapısı)."""
+    monkeypatch.setattr(gsc, "_http", lambda url, data=None, headers=None, timeout=30: {"access_token": "AT123"})
+    client = {"installed": {"client_id": "cid", "client_secret": "sec"}}
+    assert gsc.get_access_token_oauth(client, "RT") == "AT123"
+
+
+def test_acquire_token_prefers_oauth(monkeypatch, tmp_path):
+    """OAuth client+token varsa SA yerine OAuth kullanılır."""
+    cj = tmp_path / "client.json"
+    cj.write_text('{"installed":{"client_id":"c","client_secret":"s"}}')
+    tj = tmp_path / "token.json"
+    tj.write_text('{"refresh_token":"RT"}')
+    env = {"GSC_OAUTH_CLIENT": str(cj), "GSC_OAUTH_TOKEN": str(tj)}
+    monkeypatch.setattr(gsc, "_envget", lambda k: env.get(k, ""))
+    monkeypatch.setattr(gsc, "get_access_token_oauth", lambda c, r: "OAUTH_AT")
+    monkeypatch.setattr(gsc, "get_access_token", lambda sa: "SA_AT")  # çağrılmamalı
+    token, err = gsc._acquire_token()
+    assert err == ""
+    assert token == "OAUTH_AT"
+
+
+def test_acquire_token_none_configured(monkeypatch):
+    monkeypatch.setattr(gsc, "_envget", lambda k: "")
+    token, err = gsc._acquire_token()
+    assert token == ""
+    assert "Kimlik yok" in err
+
+
 def test_main_no_key_short_circuits(monkeypatch, capsys):
     monkeypatch.setattr(gsc, "_envget", lambda k: "")
     rc = gsc.main()
