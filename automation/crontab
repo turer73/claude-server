@@ -53,3 +53,9 @@
 # ENABLED 2026-06-06 (spot-check x3 PASS: rapor+discovery id537+Telegram). Opt-in kapi
 # .env DATA_ANALYST_ENABLED=true; kapatmak icin flag=false (satir kalabilir, script no-op).
 0 8 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh data-analyst /opt/linux-ai-server/automation/data-analyst.sh
+# Haftalik SEO denetimi (Pazartesi) — multi-uzman vizyon 3/4. Deterministik salt-okunur;
+# bulgular ortak-hafizaya (type=bug -> SessionStart), Telegram yok.
+# seo-gsc haftalik calismasi AYNI ZAMANDA OAuth refresh_token'i sicak tutar (6-ay-revoke onler)
+# + token olurse OUTCOME:fail -> alert => ayri liveness-check gereksiz. ENABLED 2026-06-07.
+15 8 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh seo-audit /opt/linux-ai-server/automation/seo-audit.sh
+30 8 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh seo-gsc /opt/linux-ai-server/automation/seo-gsc.sh
