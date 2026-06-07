@@ -111,6 +111,29 @@ def test_guard_skips_own_tooling(env, capsys):
     assert capsys.readouterr().err.strip() == ""
 
 
+def test_guard_no_fp_git_keyword_in_payload(env, capsys):
+    # pts/1 bulgusu: git-kelimesi TIRNAK/payload icinde -> komut-basi degil -> blok YOK
+    _add_session("other", "pts/1", OPT)
+    for cmd in (
+        'curl -s -X POST http://x/discoveries -d \'{"err":"git checkout failed"}\'',
+        'gh pr comment --body "fixed the git rebase issue"',
+        'echo "remember to git switch later"',
+    ):
+        rc = cs.cmd_guard({"session_id": "me", "cwd": OPT, "tool_input": {"command": cmd}})
+        err = capsys.readouterr().err
+        assert rc == 0, f"FP blok: {cmd!r}"
+        assert err.strip() == ""
+
+
+def test_guard_still_matches_real_ops_after_anchor(env, capsys):
+    # Ankorlama gercek komut-basi dal-op'lari KACIRMAMALI
+    _add_session("other", "pts/1", OPT)
+    for cmd in ("git switch foo", "git checkout -b x", "ls && git rebase main"):
+        rc = cs.cmd_guard({"session_id": "me", "cwd": OPT, "tool_input": {"command": cmd}})
+        capsys.readouterr()
+        assert rc == 2, f"gercek dal-op kacti: {cmd!r}"
+
+
 def test_guard_silent_outside_opt(env, capsys):
     # Aktor /opt DISINDA — baska repodaki git-dal islemi /opt landmine'ini etkilemez
     _add_session("other", "pts/1", OPT)

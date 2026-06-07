@@ -37,10 +37,13 @@ LOG_DIR = os.environ.get("HOOK_LOG_DIR", "/opt/linux-ai-server/data/hook-logs")
 LIVE_WINDOW_MIN = int(os.environ.get("COSESSION_LIVE_MIN", "240"))  # heartbeat tazelik
 
 # /opt git-dal islemleri: HEAD'i kaydiran / calisma-agacini degistiren komutlar.
-# `git -C <dir>` / `git -c k=v` gibi onceki flag'lere izin ver (subkomut hemen
-# 'git'ten sonra gelmeyebilir).
+# KOMUT-BASINA ANKORLU (^ veya ;|&|`||(\n) ardindan) -> string-literal/payload
+# icindeki git-kelimeleri YANLIS-POZITIF eslemez (pts/1 bulgusu: `curl -d "{git
+# checkout ...}"` veya `gh pr comment --body "...git rebase..."` bloklanmamali).
+# `git -C <dir>` / `git -c k=v` gibi onceki flag'lere izin ver.
 _GIT_BRANCH_OPS = re.compile(
-    r"\bgit\s+(?:-\S+(?:\s+\S+)?\s+)*"
+    r"(?:^|[;&|`\n\r(])\s*"
+    r"git\s+(?:-\S+(?:\s+\S+)?\s+)*"
     r"(checkout|switch|pull|reset(\s+--hard)?|rebase|merge|cherry-pick|"
     r"stash\s+(pop|apply|drop)|branch\s+-[a-zA-Z]*[Dd])",
 )
