@@ -27,7 +27,13 @@ def clip(s, n):
     s = (s or "").replace("\t"," ").replace("\r"," ")
     if len(s) > n: s = s[-n:]
     return s.replace("\n"," | ")
-print(f"{cmd[:200]}\t{desc[:80]}\t{rc}\t{clip(stderr,300) or clip(stdout,300)}")
+def oneline(s, n):
+    # cmd/desc TEK fiziksel satira indir: newline/tab birakirsak TSV kaydi cok-satir
+    # olur, cut -fN satir-yonelimli oldugu icin rc alanini yanlis okur (composite/
+    # multi-line komutta ilk satiri rc saniyor -> sahte test-fail bug + auto-resolve
+    # de bozulur). leading field oldugu icin ILK n karakter (clip son-n aliyor).
+    return (s or "").replace("\t"," ").replace("\r"," ").replace("\n"," ")[:n]
+print(f"{oneline(cmd,200)}\t{oneline(desc,80)}\t{rc}\t{clip(stderr,300) or clip(stdout,300)}")
 ' 2>/dev/null)
 
 [ -z "$EXTRACT" ] && exit 0
