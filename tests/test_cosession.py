@@ -71,13 +71,67 @@ def test_prune_marks_dead(env, monkeypatch):
 
 
 # ─────────────────────────── collision guard ───────────────────────────
-def test_guard_asks_on_shared_opt(env, capsys):
+# NOT: guard exit-2 ile BLOKLAR (skipAutoPermissionPrompt=True ortaminda
+# permissionDecision:'ask' enforce edilmez); uyari stderr'e gider.
+def test_guard_blocks_on_shared_opt(env, capsys):
     _add_session("other", "pts/1", OPT)
     rc = cs.cmd_guard({"session_id": "me", "cwd": OPT, "tool_input": {"command": "git switch foo"}})
-    out = capsys.readouterr().out
+    err = capsys.readouterr().err
+    assert rc == 2  # exit-2 = ENFORCE edilen blok
+    assert "BLOKLANDI" in err
+    assert "HOOK_COSESSION_ACK=1" in err
+
+
+def test_guard_ack_prefix_bypasses(env, capsys):
+    # Bilincli onay: HOOK_COSESSION_ACK=1 prefix -> blok yok
+    _add_session("other", "pts/1", OPT)
+    rc = cs.cmd_guard(
+        {
+            "session_id": "me",
+            "cwd": OPT,
+            "tool_input": {"command": "HOOK_COSESSION_ACK=1 git switch foo"},
+        }
+    )
     assert rc == 0
-    decision = json.loads(out)["hookSpecificOutput"]["permissionDecision"]
-    assert decision == "ask"
+    assert capsys.readouterr().err.strip() == ""
+
+
+def test_guard_skips_own_tooling(env, capsys):
+    # `claude-sessions.sh msg "...git checkout..."` -> payload'daki git-keyword
+    # yanlis-pozitif olmamali
+    _add_session("other", "pts/1", OPT)
+    rc = cs.cmd_guard(
+        {
+            "session_id": "me",
+            "cwd": OPT,
+            "tool_input": {"command": 'bash scripts/claude-sessions.sh msg "git checkout yapma"'},
+        }
+    )
+    assert rc == 0
+    assert capsys.readouterr().err.strip() == ""
+
+
+def test_guard_no_fp_git_keyword_in_payload(env, capsys):
+    # pts/1 bulgusu: git-kelimesi TIRNAK/payload icinde -> komut-basi degil -> blok YOK
+    _add_session("other", "pts/1", OPT)
+    for cmd in (
+        'curl -s -X POST http://x/discoveries -d \'{"err":"git checkout failed"}\'',
+        'gh pr comment --body "fixed the git rebase issue"',
+        'echo "remember to git switch later"',
+    ):
+        rc = cs.cmd_guard({"session_id": "me", "cwd": OPT, "tool_input": {"command": cmd}})
+        err = capsys.readouterr().err
+        assert rc == 0, f"FP blok: {cmd!r}"
+        assert err.strip() == ""
+
+
+def test_guard_still_matches_real_ops_after_anchor(env, capsys):
+    # Ankorlama gercek komut-basi dal-op'lari KACIRMAMALI
+    _add_session("other", "pts/1", OPT)
+    for cmd in ("git switch foo", "git checkout -b x", "ls && git rebase main"):
+        rc = cs.cmd_guard({"session_id": "me", "cwd": OPT, "tool_input": {"command": cmd}})
+        capsys.readouterr()
+        assert rc == 2, f"gercek dal-op kacti: {cmd!r}"
 
 
 def test_guard_silent_outside_opt(env, capsys):
@@ -220,50 +274,54 @@ def test_migration_preserves_consumed_state(env, capsys, monkeypatch):
 # ───────── guard: fiili git dizini (cd / git -C) + worktree muafiyeti (Codex P2) ─────────
 def test_guard_fires_on_cd_into_opt(env, capsys):
     _add_session("other", "pts/1", OPT)
-    cs.cmd_guard(
+    rc = cs.cmd_guard(
         {
             "session_id": "me",
             "cwd": "/data/projects/kuafor",
             "tool_input": {"command": f"cd {OPT} && git switch foo"},
         }
     )
-    out = capsys.readouterr().out
-    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "ask"
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "BLOKLANDI" in err
 
 
 def test_guard_fires_on_git_c_into_opt(env, capsys):
     _add_session("other", "pts/1", OPT)
-    cs.cmd_guard(
+    rc = cs.cmd_guard(
         {
             "session_id": "me",
             "cwd": "/tmp",
             "tool_input": {"command": f"git -C {OPT} switch foo"},
         }
     )
-    out = capsys.readouterr().out
-    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "ask"
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "BLOKLANDI" in err
 
 
 def test_guard_detects_cd_after_newline(env, capsys):
     # cok-satirli komut: cd ayri satirda (newline ayraci) -> yine de tespit et
     _add_session("other", "pts/1", OPT)
-    cs.cmd_guard(
+    rc = cs.cmd_guard(
         {
             "session_id": "me",
             "cwd": "/tmp",
             "tool_input": {"command": f"echo ok\ncd {OPT}\ngit pull"},
         }
     )
-    out = capsys.readouterr().out
-    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "ask"
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "BLOKLANDI" in err
 
 
 def test_guard_fires_on_git_pull(env, capsys):
     # git pull / pull --rebase de HEAD'i kaydirir -> paylasilan /opt'ta guard'lanmali
     _add_session("other", "pts/1", OPT)
-    cs.cmd_guard({"session_id": "me", "cwd": OPT, "tool_input": {"command": "git pull --rebase"}})
-    out = capsys.readouterr().out
-    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "ask"
+    rc = cs.cmd_guard({"session_id": "me", "cwd": OPT, "tool_input": {"command": "git pull --rebase"}})
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "BLOKLANDI" in err
 
 
 def test_guard_silent_in_worktree(env, capsys):

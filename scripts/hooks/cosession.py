@@ -37,10 +37,13 @@ LOG_DIR = os.environ.get("HOOK_LOG_DIR", "/opt/linux-ai-server/data/hook-logs")
 LIVE_WINDOW_MIN = int(os.environ.get("COSESSION_LIVE_MIN", "240"))  # heartbeat tazelik
 
 # /opt git-dal islemleri: HEAD'i kaydiran / calisma-agacini degistiren komutlar.
-# `git -C <dir>` / `git -c k=v` gibi onceki flag'lere izin ver (subkomut hemen
-# 'git'ten sonra gelmeyebilir).
+# KOMUT-BASINA ANKORLU (^ veya ;|&|`||(\n) ardindan) -> string-literal/payload
+# icindeki git-kelimeleri YANLIS-POZITIF eslemez (pts/1 bulgusu: `curl -d "{git
+# checkout ...}"` veya `gh pr comment --body "...git rebase..."` bloklanmamali).
+# `git -C <dir>` / `git -c k=v` gibi onceki flag'lere izin ver.
 _GIT_BRANCH_OPS = re.compile(
-    r"\bgit\s+(?:-\S+(?:\s+\S+)?\s+)*"
+    r"(?:^|[;&|`\n\r(])\s*"
+    r"git\s+(?:-\S+(?:\s+\S+)?\s+)*"
     r"(checkout|switch|pull|reset(\s+--hard)?|rebase|merge|cherry-pick|"
     r"stash\s+(pop|apply|drop)|branch\s+-[a-zA-Z]*[Dd])",
 )
@@ -49,6 +52,8 @@ _SHARED_PREFIX = "/opt/linux-ai-server"
 _WORKTREES_PREFIX = "/opt/linux-ai-server/.claude/worktrees"
 _C_FLAG = re.compile(r"(?:^|\s)-C\s+(\S+)")
 _CD_CMD = re.compile(r"(?:^|[;&|\n\r])\s*cd\s+(\S+)")  # newline de komut ayraci
+# bilincli carpisma-onayi prefix'i (pre-bash-guard HOOK_DESTRUCTIVE_ACK deseni)
+_ACK_RE = re.compile(r"(?:^|[\s;&|])HOOK_COSESSION_ACK=1(?:[\s;&|]|$)")
 
 
 def _log(msg: str) -> None:
@@ -423,9 +428,22 @@ def cmd_stop_check(data: dict) -> int:
 
 
 def cmd_guard(data: dict) -> int:
-    """PreToolUse(Bash): /opt git-dal islemi + baska canli oturum /opt'ta -> 'ask'."""
+    """PreToolUse(Bash): /opt git-dal islemi + baska canli oturum /opt'ta -> BLOK (exit 2).
+
+    NEDEN exit-2: ortamda settings.json skipAutoPermissionPrompt=True →
+    hookSpecificOutput.permissionDecision:'ask' ENFORCE EDILMEZ (prompt
+    gosterilemez, allow'a duser). exit-2 ise her durumda bloklar — pre-bash-guard
+    ile ayni, kanitlanmis mekanizma. Onay: komuta `HOOK_COSESSION_ACK=1` prefix'i
+    ekleyerek bilincli gec (worktree tercih edilir; /opt daima master kalmali)."""
     cmd = (data.get("tool_input") or {}).get("command", "")
     if not cmd or not _GIT_BRANCH_OPS.search(cmd):
+        return 0
+    # Kendi tooling'imiz: `claude-sessions.sh msg "...git checkout..."` gibi
+    # payload'larda git-keyword'u yanlis-pozitif eslesir -> guard'lama.
+    if "claude-sessions.sh" in cmd or "cosession.py" in cmd:
+        return 0
+    # Bilincli onay (HOOK_COSESSION_ACK=1 prefix) -> serbest.
+    if _ACK_RE.search(cmd):
         return 0
     # Komutun FIILEN etkiledigi git dizini (git -C / cd / cwd) paylasilan ANA
     # /opt checkout'u mu? Degilse (baska repo VEYA worktree) landmine yok -> cik.
@@ -445,27 +463,19 @@ def cmd_guard(data: dict) -> int:
         return 0  # tek basina /opt'ta -> serbest
 
     who = "; ".join(f"{r[2]}[pid {r[1]}] branch={r[4] or '?'} (aktif {_ago(r[5])})" for r in others)
-    reason = (
-        f"COSESSION CARPISMA RISKI: {len(others)} baska canli oturum da "
-        f"/opt/linux-ai-server'da calisiyor ({who}). Bu komut HEAD'i/calisma-agacini "
-        f"kaydirir ve diger oturum(lar)i bozabilir (detached-HEAD + servis "
-        f"restart-landmine). Devam etmeden once kullaniciyla teyit et; gerekiyorsa "
-        f"branch isini worktree'de yap (/opt daima master kalmali)."
+    msg = (
+        f"COSESSION CARPISMA RISKI — KOMUT BLOKLANDI.\n"
+        f"{len(others)} baska canli oturum da /opt/linux-ai-server'da calisiyor ({who}).\n"
+        f"Bu git-dal komutu paylasilan ANA checkout'un HEAD'ini/calisma-agacini "
+        f"kaydirir ve diger oturum(lar)i bozabilir (detached-HEAD + servis restart-landmine).\n"
+        f"Karar:\n"
+        f"  - TERCIH: branch isini worktree'de yap (/opt daima master kalmali).\n"
+        f"  - Gercekten gerekliyse komutun basina HOOK_COSESSION_ACK=1 ekleyip bilincli onayla:\n"
+        f"    HOOK_COSESSION_ACK=1 {cmd[:80]}"
     )
-    print(
-        json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "ask",
-                    "permissionDecisionReason": reason,
-                }
-            },
-            ensure_ascii=False,
-        )
-    )
-    _log(f"guard ASK: sid={sid} cmd={cmd[:80]!r} others={[r[0] for r in others]}")
-    return 0
+    print(msg, file=sys.stderr)
+    _log(f"guard BLOCK(exit2): sid={sid} cmd={cmd[:80]!r} others={[r[0] for r in others]}")
+    return 2
 
 
 def cmd_end(data: dict) -> int:
