@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 from app.core.kernel_bridge import KernelBridge
 from app.core.log_manager import LogManager
@@ -814,8 +815,6 @@ def execute_tool(name: str, arguments: dict) -> str:
 
         # ── Workspace Tools ──
         elif name == "workspace_note_save":
-            import os
-
             workspace = "/data/claude/workspace"
             os.makedirs(workspace, exist_ok=True)
             path = os.path.join(workspace, arguments["name"])
@@ -833,8 +832,6 @@ def execute_tool(name: str, arguments: dict) -> str:
                 return json.dumps({"error": f"Note {arguments['name']} not found"})
 
         elif name == "workspace_note_list":
-            import os
-
             workspace = "/data/claude/workspace"
             notes = []
             if os.path.isdir(workspace):
@@ -992,12 +989,22 @@ def execute_tool(name: str, arguments: dict) -> str:
 
         # ── VPS Bridge Tools ──
         elif name == "vps_exec":
+            import shlex
+
             from app.core.config import get_settings
             from app.core.shell_executor import ShellExecutor
 
             settings = get_settings()
             executor = ShellExecutor(whitelist=settings.shell_whitelist)
-            cmd = "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 " + os.environ.get("VPS_HOST", "") + " '{arguments['command']}'"
+            # Onceki kod normal-string'di (f-string DEGIL) -> literal "{arguments['command']}"
+            # metni SSH'a gidiyordu, komut HIC calismiyordu (surer P1). shlex.quote ile
+            # remote'a tek-arg + injection-guard (app/api/vps.py:35 sağlam deseni birebir).
+            cmd = (
+                "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "
+                + os.environ.get("VPS_HOST", "")
+                + " "
+                + shlex.quote(arguments["command"])
+            )
             result = _run_async(executor.execute(cmd, timeout=arguments.get("timeout", 30)))
             return json.dumps(result)
 
@@ -1021,7 +1028,14 @@ def execute_tool(name: str, arguments: dict) -> str:
 
             settings = get_settings()
             executor = ShellExecutor(whitelist=settings.shell_whitelist)
-            cmd = """ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 " + os.environ.get("VPS_HOST", "") + " 'for u in https://coolify.panola.app https://uptime.panola.app https://n8n.panola.app https://analytics.panola.app; do echo "$u $(curl -s -o /dev/null -w %{http_code} $u)"; done'"""
+            # Onceki kod triple-quote'tu -> '" + os.environ.get(...) + "' concatenation
+            # DEGIL, literal metin olarak komuta gomuluyordu (surer P1: komut bozuk).
+            # Gercek concatenation'a cevrildi (vps_status:1010 sağlam deseni).
+            cmd = (
+                "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "
+                + os.environ.get("VPS_HOST", "")
+                + " 'for u in https://coolify.panola.app https://uptime.panola.app https://n8n.panola.app https://analytics.panola.app; do echo \"$u $(curl -s -o /dev/null -w %{http_code} $u)\"; done'"
+            )
             result = _run_async(executor.execute(cmd, timeout=20))
             return json.dumps(result)
 
