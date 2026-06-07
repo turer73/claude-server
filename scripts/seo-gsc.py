@@ -5,22 +5,22 @@ seo-audit.py teknik-denetim YAPAR (HTML sinyalleri); bu script GERÇEK GSC veris
 Search Analytics (sorgu/sayfa/CTR/pozisyon), Sitemaps (gönderim/hata), URL Inspection
 (index/coverage). Bulguları önceliklendirir + somut düzeltme önerisi verir.
 
-AUTH: service account (sunucu-sunucu, interaktif-OAuth yok → cron-dostu). PyJWT RS256 ile
-SA-JWT imzala → Google token endpoint → access_token → GSC REST API. google-* kütüphanesi
-GEREKMEZ (PyJWT + requests). SA-key .env'den GSC_SA_KEY_PATH (secret, commit'siz).
+AUTH: service account (sunucu-sunucu, interaktif-OAuth yok → cron-dostu). python-jose (declared
+dep) RS256 ile SA-JWT imzala → Google token endpoint → access_token → GSC REST API (urllib).
+google-* kütüphanesi GEREKMEZ. SA-key .env'den GSC_SA_KEY_PATH (secret, commit'siz).
 
 KURULUM (kullanıcı, Google-tarafı): (1) GCP'de Search Console API etkinleştir, (2) service
 account + JSON key, (3) her GSC property'sinde Settings→Users'a SA e-postasını ekle.
 
 Kullanım: seo-gsc.py [property...]   (default GSC_PROPERTIES; ör. 'sc-domain:panola.app')
-Salt-okunur (webmasters.readonly) — GSC'de değişiklik yapmaz.
+Salt-okunur (webmasters.readonly). HATALAR Telegram YERİNE ortak-hafızaya (type=bug →
+SessionStart'ta görünür → açılan oturumda düzeltilir) yazılır — mail/Telegram yok.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 import time
 import urllib.parse
@@ -30,7 +30,6 @@ from jose import jwt  # python-jose (pyproject'te DECLARED dep — fresh-install
 
 ENV_FILE = os.environ.get("NOTIFY_ENV_FILE", "/opt/linux-ai-server/.env")
 API_BASE = os.environ.get("API_BASE", "http://localhost:8420")
-TG_HELPER = os.environ.get("SEO_TG_HELPER", "/opt/linux-ai-server/automation/telegram-alert.sh")
 TOKEN_URI = "https://oauth2.googleapis.com/token"  # noqa: S105 (URL, parola değil)
 GSC_BASE = "https://searchconsole.googleapis.com/webmasters/v3"
 # Codex P2: URL Inspection webmasters/v3'te DEĞİL, v1 altında ayrı endpoint.
@@ -68,7 +67,7 @@ def _http(url: str, data: bytes | None = None, headers: dict | None = None, time
 
 
 def get_access_token(sa: dict) -> str:
-    """Service-account JSON → imzalı JWT → access_token. PyJWT RS256."""
+    """Service-account JSON → imzalı JWT → access_token. python-jose RS256."""
     now = int(time.time())
     claim = {
         "iss": sa["client_email"],
@@ -206,20 +205,30 @@ def _post_json(url: str, body: dict, headers: dict, timeout: int) -> dict:
         return json.loads(resp.read().decode() or "{}")
 
 
-def _send_telegram(report: str) -> bool:
-    if not os.path.exists(TG_HELPER):
-        return False
-    safe = report.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+def _write_bug(prop: str, findings: list[tuple[str, str]]) -> str:
+    """Hata içeren property → type=bug discovery (SessionStart-görünür → düzeltilir).
+    Telegram/mail YOK (kullanıcı kararı). Dedup: 'GSC: <property>' başlığı."""
+    mkey = _envget("MEMORY_API_KEY")
+    if not mkey:
+        return "no MEMORY_API_KEY"
+    body = "🔍 Search Console hataları (seo-gsc):\n" + "\n".join(f"[{s}] {m}" for s, m in findings)
     try:
-        r = subprocess.run(
-            [TG_HELPER, "--kind", "generic", "--text", "🔍 <b>GSC Denetimi</b>\n<pre>" + safe[:3500] + "</pre>"],
-            capture_output=True,
-            text=True,
-            timeout=60,
+        _post_json(
+            f"{API_BASE}/api/v1/memory/discoveries",
+            {
+                "device_name": "klipper",
+                "project": "linux-ai-server",
+                "type": "bug",
+                "title": f"GSC: {prop}",
+                "details": body[:3800],
+                "rationale": "seo-gsc.py — Telegram yok; düzeltme açılan oturumda (ortak-hafıza).",
+            },
+            {"X-Memory-Key": mkey},
+            15,
         )
-        return r.returncode == 0
-    except Exception:
-        return False
+        return ""
+    except Exception as e:
+        return str(e)[:150]
 
 
 def main() -> int:
@@ -241,30 +250,18 @@ def main() -> int:
     report = build_report(results)
     print(report)
 
-    mkey = _envget("MEMORY_API_KEY")
-    disc_err = ""
-    if mkey:
-        try:
-            _post_json(
-                f"{API_BASE}/api/v1/memory/discoveries",
-                {
-                    "device_name": "klipper",
-                    "project": "linux-ai-server",
-                    "type": "learning",
-                    "title": "Search Console denetimi (seo-gsc)",
-                    "details": f"🔍 {len(props)} property GSC:\n{report[:3800]}",
-                    "rationale": "seo-gsc.py (service-account, salt-okunur GSC API).",
-                },
-                {"X-Memory-Key": mkey},
-                15,
-            )
-        except Exception as e:
-            disc_err = str(e)[:120]
-    tg = _send_telegram(report)
-    print(
-        f"\nOUTCOME: {'partial' if disc_err else 'pass'} | {len(props)} property, telegram={tg}"
-        + (f", DISCOVERY-FAIL: {disc_err}" if disc_err else "")
-    )
+    # Hatalar (P1+P2) → ortak hafıza (type=bug → SessionStart). MAIL/Telegram YOK.
+    raised, errs = 0, []
+    for r in results:
+        actionable = [(s, m) for s, m in r["findings"] if s in ("P1", "P2")]
+        if actionable:
+            e = _write_bug(r["property"], actionable)
+            errs.append(e) if e else None
+            raised += 0 if e else 1
+    if errs:
+        print(f"\nOUTCOME: partial | {len(props)} property, {raised} bug→ortak-hafıza, MEMORY-FAIL: {errs[0]}")
+    else:
+        print(f"\nOUTCOME: pass | {len(props)} property, {raised} bug→ortak-hafıza (SessionStart, mail yok)")
     return 0
 
 

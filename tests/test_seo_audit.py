@@ -156,6 +156,50 @@ def test_unreachable_domain(monkeypatch):
     assert r["findings"][0][0] == "P1"
 
 
+def test_write_bug_is_type_bug_dedup_title(monkeypatch):
+    """Hatalar Telegram yerine ortak-hafızaya type=bug (SessionStart-görünür); başlık dedup-stabil."""
+    monkeypatch.setattr(seo, "_envget", lambda k: "mk" if k == "MEMORY_API_KEY" else "")
+    captured = {}
+
+    def _fake(url, body, headers, timeout):
+        captured.update(body)
+        return {"ok": True}
+
+    monkeypatch.setattr(seo, "_post_json", _fake)
+    err = seo._write_bug("panola.app", [("P1", "SPA-kabuğu"), ("P2", "H1 yok")])
+    assert err == ""
+    assert captured["type"] == "bug"  # SessionStart 'açık bug' bunu gösterir
+    assert captured["title"] == "SEO: panola.app"  # dedup-stabil başlık (çoğalmaz)
+    assert "SPA-kabuğu" in captured["details"]
+
+
+def test_main_no_telegram_only_memory(monkeypatch, capsys):
+    """main: Telegram fonksiyonu YOK; sadece hata-domainlerine bug yazar."""
+    assert not hasattr(seo, "_send_telegram")  # mail yolu kaldırıldı
+    monkeypatch.setattr(
+        seo,
+        "audit_domain",
+        lambda d: {
+            "domain": d,
+            "ok": True,
+            "status": 200,
+            "score": 60,
+            "vtext": 30,
+            "h1": 0,
+            "jsonld": 0,
+            "findings": [("P1", "SPA-kabuğu")],
+        },
+    )
+    monkeypatch.setattr(seo, "_envget", lambda k: "mk" if k == "MEMORY_API_KEY" else "")
+    posts = []
+    monkeypatch.setattr(seo, "_post_json", lambda url, body, h, t: posts.append(body) or {"ok": True})
+    monkeypatch.setattr(seo.sys, "argv", ["seo-audit.py", "panola.app"])
+    seo.main()
+    out = capsys.readouterr().out
+    assert "ortak-hafıza" in out
+    assert any(p.get("type") == "bug" for p in posts)
+
+
 def test_report_orders_worst_first(monkeypatch):
     results = [
         {"domain": "good.com", "ok": True, "status": 200, "score": 92, "vtext": 5000, "h1": 1, "jsonld": 2, "findings": []},

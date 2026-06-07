@@ -60,6 +60,20 @@ def test_build_report_orders_and_marks():
     assert "🔴" in rep
 
 
+def test_write_bug_type_bug_dedup_and_no_telegram():
+    """Hatalar Telegram yerine type=bug discovery (SessionStart); _send_telegram kaldırıldı."""
+    assert not hasattr(gsc, "_send_telegram")
+
+
+def test_write_bug_posts_bug(monkeypatch):
+    monkeypatch.setattr(gsc, "_envget", lambda k: "mk" if k == "MEMORY_API_KEY" else "")
+    cap = {}
+    monkeypatch.setattr(gsc, "_post_json", lambda url, body, h, t: cap.update(body) or {})
+    assert gsc._write_bug("sc-domain:panola.app", [("P1", "sitemap hata")]) == ""
+    assert cap["type"] == "bug"
+    assert cap["title"] == "GSC: sc-domain:panola.app"
+
+
 def test_main_no_key_short_circuits(monkeypatch, capsys):
     monkeypatch.setattr(gsc, "_envget", lambda k: "")
     rc = gsc.main()
