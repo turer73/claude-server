@@ -34,7 +34,9 @@ numeric_floor() {
     # sayı-olmayan/boş → 0 (güvenli yön: fail). case-glob non-digit veya boşu yakalar.
     case "$executed" in '' | *[!0-9]*) executed=0 ;; esac
     case "$total" in '' | *[!0-9]*) total=0 ;; esac
-    if [ "$executed" -le 0 ]; then
+    # executed<=0 (hiç çalışmadı) VEYA total<=0 (toplam belirlenemedi/eksik-parse) → fail.
+    # total geçersizken executed>0 olsa bile pass DEME (safe-fail; Codex P2).
+    if [ "$executed" -le 0 ] || [ "$total" -le 0 ]; then
         printf 'fail'
     elif [ "$executed" -lt "$total" ]; then
         printf 'partial'

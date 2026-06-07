@@ -27,14 +27,16 @@ allowed() {
 has_outcome() {
     local rel="$1" abs="$ROOT/$1"
     [ -f "$abs" ] || return 1
-    grep -qE 'OUTCOME:|emit_outcome|outcome\.sh' "$abs" && return 0
+    # YORUM satırlarını (^\s*#) HARİÇ tut: '# TODO OUTCOME:' gerçek emit DEĞİL, lint'i
+    # geçirmemeli (Codex P2 — yoksa engellemesi gereken sessiz-green'i geçer).
+    grep -vE '^[[:space:]]*#' "$abs" | grep -qE 'OUTCOME:|emit_outcome|outcome\.sh' && return 0
     # exec/python/bash ile çağrılan repo-içi script'leri takip et (1 seviye)
     local sub
     for sub in $(grep -oE '[A-Za-z0-9_./-]+\.(py|sh)' "$abs" | sort -u); do
         local subrel="${sub#"$PREFIX"}"
         subrel="${subrel#./}"
         [ "$subrel" = "$rel" ] && continue
-        [ -f "$ROOT/$subrel" ] && grep -qE 'OUTCOME:|emit_outcome' "$ROOT/$subrel" && return 0
+        [ -f "$ROOT/$subrel" ] && grep -vE '^[[:space:]]*#' "$ROOT/$subrel" | grep -qE 'OUTCOME:|emit_outcome' && return 0
     done
     return 1
 }

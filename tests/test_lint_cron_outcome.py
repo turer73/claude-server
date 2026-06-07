@@ -60,3 +60,11 @@ def test_lint_passes_when_script_emits_outcome(tmp_path):
     env = _fixture(tmp_path, '#!/bin/bash\necho "OUTCOME: pass | tamam"\n')
     r = _run(env)
     assert r.returncode == 0
+
+
+def test_lint_flags_comment_only_outcome(tmp_path):
+    # Codex P2: '# TODO OUTCOME:' gerçek emit DEĞİL → lint geçirmemeli (sessiz-green engeli).
+    env = _fixture(tmp_path, "#!/bin/bash\n# TODO OUTCOME: ekle\necho merhaba\n")
+    r = _run(env)
+    assert r.returncode == 1
+    assert "OUTCOME marker yok" in r.stderr
