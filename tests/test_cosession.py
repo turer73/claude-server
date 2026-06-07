@@ -244,6 +244,16 @@ def test_guard_fires_on_git_c_into_opt(env, capsys):
     assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "ask"
 
 
+def test_guard_fires_on_git_pull(env, capsys):
+    # git pull / pull --rebase de HEAD'i kaydirir -> paylasilan /opt'ta guard'lanmali
+    _add_session("other", "pts/1", OPT)
+    cs.cmd_guard(
+        {"session_id": "me", "cwd": OPT, "tool_input": {"command": "git pull --rebase"}}
+    )
+    out = capsys.readouterr().out
+    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
 def test_guard_silent_in_worktree(env, capsys):
     # worktree bagimsiz HEAD -> paylasilan ANA checkout collision'i degil
     wt = cs._WORKTREES_PREFIX + "/feat-x"

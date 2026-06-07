@@ -41,7 +41,7 @@ LIVE_WINDOW_MIN = int(os.environ.get("COSESSION_LIVE_MIN", "240"))  # heartbeat 
 # 'git'ten sonra gelmeyebilir).
 _GIT_BRANCH_OPS = re.compile(
     r"\bgit\s+(?:-\S+(?:\s+\S+)?\s+)*"
-    r"(checkout|switch|reset(\s+--hard)?|rebase|merge|cherry-pick|"
+    r"(checkout|switch|pull|reset(\s+--hard)?|rebase|merge|cherry-pick|"
     r"stash\s+(pop|apply|drop)|branch\s+-[a-zA-Z]*[Dd])",
 )
 _SHARED_PREFIX = "/opt/linux-ai-server"
