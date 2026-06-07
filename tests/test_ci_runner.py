@@ -320,3 +320,29 @@ async def test_communicate_or_kill_kills_group_on_timeout():
     await asyncio.sleep(0.2)  # kernel grubu temizlesin
     with pytest.raises(ProcessLookupError):
         os.killpg(pgid, 0)  # grup tamamen oldu (hicbir uye kalmadi)
+
+
+@pytest.mark.asyncio
+async def test_communicate_or_kill_fallback_when_killpg_fails(monkeypatch):
+    """killpg basarisizsa (setsid yok / izin) proc.kill() fallback'i devreye girer (Codex P1 dal)."""
+    import asyncio
+
+    from app.core import ci_runner
+
+    # 'exec sleep' -> shell sleep'e DONUSUR (fork yok) -> proc.kill() dogrudan onu oldurur,
+    # orphan-cocuk + acik-pipe kalmaz (aksi halde transport cleanup 30sn bloklardi). Bu test
+    # yalnizca fallback DALINI (killpg-fail -> proc.kill) kapsar; grup-kill testi ayri.
+    proc = await asyncio.create_subprocess_shell(
+        "exec sleep 30",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
+    )
+
+    def _boom(*_a, **_k):
+        raise ProcessLookupError  # grup-kill yok -> fallback yolu
+
+    monkeypatch.setattr(ci_runner.os, "killpg", _boom)
+    with pytest.raises(TimeoutError):
+        await ci_runner._communicate_or_kill(proc, 1)
+    assert proc.returncode is not None  # proc.kill() fallback ile reaped (orphan yok)
