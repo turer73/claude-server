@@ -133,6 +133,14 @@ def test_sitemap_index_not_false_flagged(monkeypatch):
     assert seo._has_sitemap("https://x.example", "User-agent: *\n") is True
 
 
+def test_sitemap_error_status_not_accepted(monkeypatch):
+    """Codex P2: _status hata'da 0 döner → 0 'sitemap var' SAYILMAMALI (pozitif-status şart)."""
+    monkeypatch.setattr(seo, "_status", lambda url: 0)
+    assert seo._has_sitemap("https://x.example", "User-agent: *\n") is False
+    # directive de 0 dönerse kabul etme
+    assert seo._has_sitemap("https://x.example", "Sitemap: https://x.example/s.xml\n") is False
+
+
 def test_sitemap_via_robots_directive(monkeypatch):
     """robots.txt 'Sitemap:' direktifi reachable → sitemap VAR (path standart olmasa da)."""
     monkeypatch.setattr(seo, "_status", lambda url: 200 if "custom-sitemap" in url else 404)
