@@ -60,6 +60,45 @@ from app.ws.terminal import router as ws_terminal_router
 security_scheme = HTTPBearer()
 
 
+# ── Deploy-SHA görünürlüğü (P0-a, surer): merged≠deployed + deployed≠running körlüğünü kapat ──
+# _DEPLOYED_SHA = import-anında SABİT = ÇALIŞAN kodun SHA'sı. _current_disk_sha = disk-HEAD
+# (pull sonrası değişir). İkisi farklıysa servis ESKİ kod çalıştırıyor (restart gerekli) =
+# 'deployed≠running' drift (bu oturumda cosession-drift olarak yaşandı). 30sn cache.
+def _read_deployed_sha() -> str:
+    import os
+    import subprocess
+
+    try:
+        return (
+            subprocess.check_output(
+                ["git", "-C", str(Path(__file__).parent.parent), "rev-parse", "HEAD"],
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+            )
+            .decode()
+            .strip()[:12]
+        )
+    except Exception:
+        # Codex P2: installer-kurulumda (.git YOK) git patlar. Build/deploy-zamanı SHA
+        # env-var'ı (DEPLOYED_SHA) fallback → installer-install'da da sinyal verilebilir.
+        return (os.environ.get("DEPLOYED_SHA") or "").strip()[:12]
+
+
+_DEPLOYED_SHA: str = _read_deployed_sha()
+_disk_sha_cache: dict = {"sha": "", "ts": 0.0}
+
+
+def _current_disk_sha() -> str:
+    import time as _t
+
+    now = _t.monotonic()
+    if _disk_sha_cache["sha"] and now - _disk_sha_cache["ts"] < 30:
+        return _disk_sha_cache["sha"]
+    _disk_sha_cache["sha"] = _read_deployed_sha()
+    _disk_sha_cache["ts"] = now
+    return _disk_sha_cache["sha"]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     import os
@@ -201,7 +240,18 @@ def create_app() -> FastAPI:
     @app.get("/health")
     @app.get("/api/v1/health")
     async def health():
-        return {"status": "healthy", "service": "linux-ai-server", "version": __version__}
+        disk = _current_disk_sha()
+        # Codex P2: SHA belirlenemezse (git-yok + env-yok) stale SESSİZCE False olmasın —
+        # None döndür ('belirlenemez'), yanlış 'drift-yok' güvencesi verme (silent-no-signal).
+        stale = (disk != _DEPLOYED_SHA) if (_DEPLOYED_SHA and disk) else None
+        return {
+            "status": "healthy",
+            "service": "linux-ai-server",
+            "version": __version__,
+            "sha": _DEPLOYED_SHA,  # ÇALIŞAN kod (startup'ta sabitlendi)
+            "disk_sha": disk,  # disk-HEAD (canlı)
+            "stale": stale,  # True=restart gerekli (deployed≠running) · None=belirlenemez
+        }
 
     # ---- Routes ----
     app.include_router(auth_router)
