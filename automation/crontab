@@ -65,3 +65,6 @@
 # cron_outcomes'ta beklenen satiri dogrular; alarm-pipeline bozuksa OUTCOME:fail.
 # Sentetik enjeksiyonlar CANARY_SUPPRESS_ALERT ile sessiz; kendi sonucu normal akar.
 30 5 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh livesys-canary /opt/linux-ai-server/automation/livesys-canary.sh
+# LIVESYS-INTRO öz-introspeksiyon (haftalik Pazartesi 09:15) — deklarasyon↔gercek boslugu
+# (olu-refleks/orphan-cron/dead-infra/stale-flag). SALT-OKUNUR; bulgu→event/discovery.
+15 9 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh intent-liveness /opt/linux-ai-server/automation/intent-liveness-audit.sh
