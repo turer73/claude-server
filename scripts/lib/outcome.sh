@@ -53,3 +53,19 @@ json_floor() {
     [ -n "$f" ] && [ -s "$f" ] || return 1
     python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f" 2>/dev/null
 }
+
+# floor_from_status <status_file>
+#   Status dosyası: her satır "<ad><TAB><0|1>" (1=çalıştırıldı/executed, 0=atlandı/blok).
+#   executed = 1-sayan satır, total = satır-sayısı → numeric_floor sonucunu echo'lar
+#   (executed==0 VEYA total==0 → fail; <total → partial; else → pass). Dosya yok/boş →
+#   fail (hiç iş kaydı yok = güvenli-fail). self-pentest/nuclei executed-floor için.
+floor_from_status() {
+    local f="${1:-}" executed total
+    [ -n "$f" ] && [ -s "$f" ] || {
+        printf 'fail'
+        return
+    }
+    executed=$(awk -F'\t' '$2==1{c++} END{print c+0}' "$f")
+    total=$(awk 'END{print NR+0}' "$f")
+    numeric_floor "$executed" "$total"
+}

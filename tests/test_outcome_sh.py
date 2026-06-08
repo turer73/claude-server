@@ -52,3 +52,18 @@ def test_json_floor(tmp_path):
     assert _sh(f"json_floor {bad} && echo OK || echo NO") == "NO"
     assert _sh(f"json_floor {empty} && echo OK || echo NO") == "NO"
     assert _sh(f"json_floor {tmp_path}/yok.json && echo OK || echo NO") == "NO"
+
+
+def test_floor_from_status(tmp_path):
+    # executed-floor: status dosyası domain\t<0|1> → numeric_floor
+    allf = tmp_path / "all.tsv"
+    allf.write_text("a\t1\nb\t1\n")
+    mix = tmp_path / "mix.tsv"
+    mix.write_text("a\t1\nb\t0\n")
+    blk = tmp_path / "blk.tsv"
+    blk.write_text("a\t0\nb\t0\n")
+    assert _sh(f"floor_from_status {allf}") == "pass"
+    assert _sh(f"floor_from_status {mix}") == "partial"
+    assert _sh(f"floor_from_status {blk}") == "fail"
+    # eksik/boş dosya → fail (hiç iş kaydı yok = güvenli-fail)
+    assert _sh(f"floor_from_status {tmp_path}/yok.tsv") == "fail"

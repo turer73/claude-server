@@ -3,9 +3,7 @@
 # burada GÖRÜNÜR. Bir script OUTCOME emit etmeye başlayınca bu listeden ÇIKAR.
 # Amaç: yeni sessiz-yeşil eklenmesini engellemek + mevcut borcu tek yerde izlemek.
 #
-# --- LIVESYS-SENSE kapsamında düzeltilecek (PR2'de çıkacak) ---
-self-pentest.sh
-nuclei-scan.sh
+# (self-pentest.sh + nuclei-scan.sh → SENSE PR2'de OUTCOME-emit eklendi, listeden ÇIKARILDI)
 #
 # --- Legacy rc-fallback işleri (SENSE-dışı; gelecek OUTCOME-migrasyon borcu) ---
 daily-backup.sh

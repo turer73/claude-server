@@ -12,6 +12,8 @@
 set -uo pipefail
 
 ROOT="/opt/linux-ai-server"
+# OUTCOME-contract helper'ları (LIVESYS-SENSE): docker/erişim çöküşü ≠ "0 bulgu = temiz".
+. "$ROOT/scripts/lib/outcome.sh"
 DOMAINS_FILE="$ROOT/automation/self-pentest.domains"
 # 2026-05-26: /var/log/nuclei -> logs/nuclei (self-pentest pattern, no sudo).
 LOG_ROOT="$ROOT/logs/nuclei"
@@ -21,6 +23,7 @@ NUCLEI_CACHE="$ROOT/data/nuclei-cache"
 TODAY="$(date +%Y-%m-%d)"
 RUN_DIR="$LOG_ROOT/$TODAY"
 mkdir -p "$RUN_DIR" "$NUCLEI_CACHE" || { echo "FATAL: cannot create dirs" >&2; exit 1; }
+: > "$RUN_DIR/exec-status.tsv"  # executed-floor (LIVESYS-SENSE): domain\t<1=tarandı|0=taranamadı>
 
 # Docker image preflight: gercek kosumda sessiz fail demek 0 finding demek,
 # silent-fail bug donerdi (eski "bulgu yok" cikti binary yokken).
@@ -72,7 +75,16 @@ scan_domain() {
     -header "$SCAN_HEADER" \
     -H "User-Agent: $USER_AGENT" \
     -jsonl -o "/output/${safe}.jsonl" \
-    -silent -duc -nm 2>"$errfile" || log "$domain: docker exit nonzero (errfile: $errfile)"
+    -silent -duc -nm 2>"$errfile"
+  local drc=$?
+  [ "$drc" -ne 0 ] && log "$domain: docker exit nonzero rc=$drc (errfile: $errfile)"
+  # executed-floor (LIVESYS-SENSE): docker rc==0 VEYA jsonl üretildi → GERÇEKTEN tarandı;
+  # aksi (docker-fail + çıktı-yok) → taranamadı. Sonda hiçbiri taranmadıysa OUTCOME:fail.
+  if [ "$drc" -eq 0 ] || [ -s "$outfile" ]; then
+    printf '%s\t1\n' "$domain" >> "$RUN_DIR/exec-status.tsv"
+  else
+    printf '%s\t0\n' "$domain" >> "$RUN_DIR/exec-status.tsv"
+  fi
 
   [ -s "$outfile" ] || { log "$domain: bulgu yok"; return 0; }
 
@@ -115,3 +127,11 @@ log "Toplam: $total"
 if [ "${total:-0}" -gt 0 ]; then
   send_telegram "Nuclei scan: $total finding $(date '+%Y-%m-%d')"
 fi
+
+# OUTCOME-contract (LIVESYS-SENSE): kaç domain GERÇEKTEN tarandı (docker/erişim çöküşü
+# = taranamadı). Hiçbiri taranamadıysa fail ("0 bulgu = temiz" yalanını önle); kısmî→partial.
+EXECUTED="$(awk -F'\t' '$2==1{c++} END{print c+0}' "$RUN_DIR/exec-status.tsv" 2>/dev/null)"
+DOMAINS_TOTAL="$(awk 'END{print NR+0}' "$RUN_DIR/exec-status.tsv" 2>/dev/null)"
+emit_outcome "$(floor_from_status "$RUN_DIR/exec-status.tsv")" \
+  "nuclei: ${EXECUTED:-0}/${DOMAINS_TOTAL:-0} domain tarandı, ${total:-0} bulgu"
+exit 0
