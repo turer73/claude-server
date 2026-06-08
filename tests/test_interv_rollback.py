@@ -87,6 +87,9 @@ async def test_rollback_runs_on_verify_fail():
 
     async def mock_exec(cmd, timeout=30):
         captured.append(cmd)
+        # re-read (cat scaling_governor) -> hedef governor döndü (rollback DOĞRULANDI)
+        if cmd.strip().startswith("cat "):
+            return {"stdout": "schedutil\n", "exit_code": 0}
         return {"stdout": "ok", "exit_code": 0}
 
     with (
@@ -98,7 +101,35 @@ async def test_rollback_runs_on_verify_fail():
 
     assert any("schedutil" in c for c in captured)  # önceki governor'a dönüldü
     assert "temperature" not in agent._rollback_state  # state tüketildi
-    assert agent._last_rollback.get("temperature") is not None
+    assert agent._last_rollback.get("temperature") is not None  # doğrulanmış rollback -> cooldown
+
+
+async def test_rollback_not_reported_when_governor_unchanged():
+    # Codex P2: rollback komutu çalışsa da governor GERİ DÖNMEDİYSE (whitelist-eksik/|| true
+    # maskeleme) rolled_back=False olmalı + cooldown başlamamalı (yalan-rollback yok).
+    agent = DevOpsAgent(db=None, interval=60)
+    agent._rollback_state["temperature"] = {"kind": "governor", "state": "schedutil", "command": "x"}
+
+    async def mock_exec(cmd, timeout=30):
+        if cmd.strip().startswith("cat "):
+            return {"stdout": "powersave\n", "exit_code": 0}  # HÂLÂ powersave -> geri DÖNMEDİ
+        return {"stdout": "", "exit_code": 0}
+
+    with patch.object(agent._executor, "execute", new_callable=AsyncMock, side_effect=mock_exec):
+        rolled, res = await agent._attempt_rollback("temperature")
+    assert rolled is False  # doğrulanamadı -> rolled_back RAPORLAMA
+    assert "DOĞRULANAMADI" in res
+    assert agent._last_rollback.get("temperature") is None  # cooldown başlamadı
+
+
+async def test_rollback_false_on_executor_exception():
+    # cpufreq-set whitelist'te değilse executor RAISE -> rolled_back=False (Codex P2)
+    agent = DevOpsAgent(db=None, interval=60)
+    agent._rollback_state["temperature"] = {"kind": "governor", "state": "schedutil", "command": "x"}
+    with patch.object(agent._executor, "execute", new_callable=AsyncMock, side_effect=RuntimeError("not whitelisted")):
+        rolled, res = await agent._attempt_rollback("temperature")
+    assert rolled is False
+    assert agent._last_rollback.get("temperature") is None
 
 
 async def test_no_rollback_on_verify_pass():

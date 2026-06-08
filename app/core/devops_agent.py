@@ -529,13 +529,23 @@ class DevOpsAgent:
             return False, "skipped: invalid-governor"
         q = shlex.quote(gov)
         cmd = f"cpufreq-set -g {q} 2>/dev/null || echo {q} | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true"
+        # Codex P2: '|| true' + olası whitelist-eksikliği başarısızlığı maskeler → komut
+        # exit_code'una GÜVENME. Rollback'i governor'ı RE-READ ederek DOĞRULA; gerçekten
+        # geri dönmediyse rolled_back=False (gerçekleşmeyen rollback'i 'oldu' RAPORLAMA).
         try:
-            r = await self._executor.execute(cmd, timeout=30)
-            res = (r.get("stdout", "") or "")[:300] or f"governor->{gov}"
+            await self._executor.execute(cmd, timeout=30)
+            chk = await self._executor.execute("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", timeout=10)
+            lines = (chk.get("stdout", "") or "").strip().splitlines()
+            now_gov = lines[0].strip() if lines else ""
+            ok = now_gov == gov
+            res = f"governor={now_gov or '?'} (hedef {gov})"
         except Exception as e:
+            ok = False
             res = f"rollback-error: {str(e)[:200]}"
-        self._last_rollback[source] = time.monotonic()
-        return True, res
+        if ok:
+            self._last_rollback[source] = time.monotonic()  # cooldown YALNIZ doğrulanmış rollback'te
+            return True, res
+        return False, f"rollback-DOĞRULANAMADI: {res}"
 
     async def _persist_remediation_row(
         self,
