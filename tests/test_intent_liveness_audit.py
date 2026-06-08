@@ -56,10 +56,19 @@ def test_social_is_vps_verify(tmp_path):
 
 
 def test_dead_infra_is_critical(tmp_path):
-    _script(tmp_path, "bilge-arena-failover.sh", "# Klipper cron: */3 * * * *", body='URL="http://194.163.134.239:3000"')
+    # coolify.panola.app GERÇEK-ölü (Coolify decommission); 194.163.134.239 ARTIK YOK (canlı-VPS, surer F3)
+    _script(tmp_path, "old-failover.sh", "# Klipper cron: */3 * * * *", body='URL="https://coolify.panola.app/health"')
     findings = ila.audit(str(tmp_path), crontab_text="")
-    sev = [s for s, subj, _ in findings if subj == "intent:bilge-arena-failover.sh" and s == "critical"]
-    assert sev  # decommissioned-IP → critical
+    sev = [s for s, subj, _ in findings if subj == "intent:old-failover.sh" and s == "critical"]
+    assert sev  # decommissioned hedef → critical
+
+
+def test_live_vps_ip_not_flagged_dead(tmp_path):
+    # surer F3 regresyon: CANLI production VPS IP'sini hedefleyen script dead-infra DEĞİL
+    _script(tmp_path, "vps-backup.sh", "# Cron: 0 3 * * *", body='HOST="194.163.134.239"')
+    findings = ila.audit(str(tmp_path), crontab_text="")
+    dead = [d for s, subj, d in findings if subj == "intent:vps-backup.sh" and "dead-infra" in d]
+    assert not dead  # canlı-VPS IP'si ölü-flag'lenmemeli
 
 
 def test_missing_file_in_crontab(tmp_path):

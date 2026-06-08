@@ -482,7 +482,7 @@ class DevOpsAgent:
             out,
             success,
             verify_status=None if executed else "skipped",
-            provenance=provenance_json(alert, mode),
+            provenance=provenance_json(alert, mode, detected_at=getattr(alert, "timestamp", None) or None),
         )
         alert.remediation = f"[{mode}] {action}"
 
@@ -697,6 +697,10 @@ class DevOpsAgent:
         rb_result = ""
         if escalated:
             rolled_back, rb_result = await self._attempt_rollback(source)
+        else:
+            # surer F1: verify-PASS'te de yakalı state'i TEMİZLE — yoksa bayat governor-state
+            # sonraki (olası irreversible) aksiyonun verify-fail'inde yanıltıcı rollback tetikler.
+            self._rollback_state.pop(source, None)
         if self._db:
             try:
                 await self._db.execute(
