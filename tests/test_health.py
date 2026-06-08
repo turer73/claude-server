@@ -31,3 +31,32 @@ async def test_server_error_handler(client):
     # This endpoint doesn't exist, should return 404 from FastAPI
     resp = await client.get("/nonexistent")
     assert resp.status_code in (404, 405)
+
+
+async def test_health_exposes_sha_and_stale(client):
+    # P0-a: /health çalışan-SHA + disk-SHA + stale (deployed≠running drift göstergesi)
+    resp = await client.get("/health")
+    data = resp.json()
+    assert "sha" in data
+    assert "disk_sha" in data
+    assert "stale" in data
+    assert isinstance(data["stale"], bool)
+
+
+async def test_health_stale_true_when_running_differs_from_disk(client, monkeypatch):
+    # çalışan-SHA (sabit) ile disk-HEAD farklıysa stale=True (restart gerekli sinyali)
+    from app import main as m
+
+    monkeypatch.setattr(m, "_DEPLOYED_SHA", "aaaaaaaaaaaa")
+    monkeypatch.setattr(m, "_current_disk_sha", lambda: "bbbbbbbbbbbb")
+    resp = await client.get("/health")
+    assert resp.json()["stale"] is True
+
+
+async def test_health_stale_false_when_match(client, monkeypatch):
+    from app import main as m
+
+    monkeypatch.setattr(m, "_DEPLOYED_SHA", "cccccccccccc")
+    monkeypatch.setattr(m, "_current_disk_sha", lambda: "cccccccccccc")
+    resp = await client.get("/health")
+    assert resp.json()["stale"] is False
