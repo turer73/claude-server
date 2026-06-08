@@ -798,3 +798,18 @@ async def test_memory_surface_excludes_merged(client, memory_db):
     assert wm["synthesized"] is True
     assert wm["merged_archived"] == 1
     assert wm["surface_total"] == 1
+
+
+async def test_memory_surface_type_filter(client, memory_db):
+    # P0-c coverage: type filtresi + boş-sonuç (type dalı + total kıyas)
+    con = sqlite3.connect(memory_db)
+    con.execute("INSERT INTO memories (type,name,description,content) VALUES ('project','p','d','c')")
+    con.execute("INSERT INTO memories (type,name,description,content) VALUES ('feedback','f','d','c')")
+    con.commit()
+    con.close()
+    r = (await client.get("/api/v1/memory/surface?type=project")).json()
+    assert r["total"] == 1
+    assert r["items"][0]["type"] == "project"
+    empty = (await client.get("/api/v1/memory/surface?type=user")).json()
+    assert empty["total"] == 0
+    assert empty["items"] == []
