@@ -81,8 +81,10 @@ def test_dry_run_writes_nothing(tmp_path, monkeypatch):
     assert res["archived"] == 0  # DRY_RUN: yazma yok
     con = sqlite3.connect(db)
     active = con.execute("SELECT COUNT(*) FROM memories WHERE active=1").fetchone()[0]
+    cols = [r[1] for r in con.execute("PRAGMA table_info(memories)").fetchall()]
     con.close()
     assert active == 3  # hiçbiri arşivlenmedi
+    assert "merged_into" not in cols  # Codex P2: DRY_RUN ŞEMAYI da MUTATE ETMEZ
 
 
 def test_apply_archives_but_no_delete(tmp_path, monkeypatch):

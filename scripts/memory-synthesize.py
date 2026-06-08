@@ -107,14 +107,24 @@ def _backup_db() -> str:
     return dst
 
 
+def _has_merged_into(con: sqlite3.Connection) -> bool:
+    return "merged_into" in [r[1] for r in con.execute("PRAGMA table_info(memories)").fetchall()]
+
+
 def synthesize() -> dict:
-    """Kümele + (APPLY ise) arşivle. Özet döndürür. SALT-OKUNUR if not APPLY."""
+    """Kümele + (APPLY ise) arşivle. Özet döndürür. DRY_RUN'da DB'yi MUTATE ETMEZ (Codex P2)."""
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
-    _ensure_schema(con)
-    rows = con.execute(
-        "SELECT id, type, name, description, content, read_count FROM memories WHERE active=1 AND (merged_into IS NULL)"
-    ).fetchall()
+    has_mi = _has_merged_into(con)
+    # Şema migration YALNIZ APPLY'da (backup main()'de alındıktan sonra). DRY_RUN'da ALTER
+    # ÇALIŞMAZ → prod-DB dokunulmaz, read-only DB'de patlamaz, /world-model yanlış 'synthesized' demez.
+    if APPLY and not has_mi:
+        _ensure_schema(con)
+        has_mi = True
+    sel = "SELECT id, type, name, description, content, read_count FROM memories WHERE active=1"
+    if has_mi:
+        sel += " AND merged_into IS NULL"
+    rows = con.execute(sel).fetchall()
     items = [dict(r) for r in rows]
     by_id = {m["id"]: m for m in items}
     if len(items) < 2:
