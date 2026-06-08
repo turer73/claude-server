@@ -25,6 +25,7 @@ import shutil
 import sqlite3
 import sys
 import urllib.request
+from typing import Any
 
 ROOT = os.environ.get("LIVESYS_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.environ.get("MEMORY_DB", os.path.join(ROOT, "data", "claude_memory.db"))
@@ -48,7 +49,8 @@ def embed(texts: list[str]) -> list[list[float]]:
         headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310
-        return json.loads(resp.read()).get("embeddings", [])
+        embeddings: list[list[float]] = json.loads(resp.read()).get("embeddings", [])
+        return embeddings
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -89,10 +91,10 @@ def cluster(ids: list[int], vectors: list[list[float]], threshold: float = THRES
     return [sorted(g) for g in groups.values() if len(g) >= 2]
 
 
-def pick_canonical(members: list[dict]) -> int:
+def pick_canonical(members: list[dict[str, Any]]) -> int:
     """Kümede canonical id: en uzun içerik, eşitlikte en çok okunan, eşitlikte en küçük id (kararlı)."""
     best = max(members, key=lambda m: (len(m.get("content") or ""), m.get("read_count") or 0, -m["id"]))
-    return best["id"]
+    return int(best["id"])
 
 
 def _ensure_schema(con: sqlite3.Connection) -> None:
@@ -115,7 +117,7 @@ def _has_merged_into(con: sqlite3.Connection) -> bool:
     return "merged_into" in [r[1] for r in con.execute("PRAGMA table_info(memories)").fetchall()]
 
 
-def synthesize() -> dict:
+def synthesize() -> dict[str, Any]:
     """Kümele + (APPLY ise) arşivle. Özet döndürür. DRY_RUN'da DB'yi MUTATE ETMEZ (Codex P2)."""
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
