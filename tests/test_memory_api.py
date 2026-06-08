@@ -758,10 +758,29 @@ async def test_memory_surface_tolerates_no_merged_column(client, memory_db):
     con.close()
     r = await client.get("/api/v1/memory/surface")
     assert r.status_code == 200
-    assert len(r.json()) == 2
+    body = r.json()
+    assert body["total"] == 2  # P0-c: {total,count,limit,offset,items}
+    assert len(body["items"]) == 2
     wm = (await client.get("/api/v1/memory/world-model")).json()
     assert wm["surface_total"] == 2
     assert wm["synthesized"] is False
+
+
+async def test_memory_surface_limit_and_offset(client, memory_db):
+    # P0-c: limit korpus-bombasını sınırlar; total tam-sayı verir; offset sayfalar
+    con = sqlite3.connect(memory_db)
+    for i in range(5):
+        con.execute("INSERT INTO memories (type,name,description,content) VALUES ('project',?,?,?)", (f"m{i}", "d", "c"))
+    con.commit()
+    con.close()
+    r = (await client.get("/api/v1/memory/surface?limit=2")).json()
+    assert r["total"] == 5  # tam-sayı (limit'ten bağımsız)
+    assert r["count"] == 2  # yalnız 2 döndü (token-limit)
+    assert len(r["items"]) == 2
+    r2 = (await client.get("/api/v1/memory/surface?limit=2&offset=4")).json()
+    assert r2["count"] == 1  # son sayfa
+    # limit sınırı: max 500 (validation)
+    assert (await client.get("/api/v1/memory/surface?limit=999")).status_code == 422
 
 
 async def test_memory_surface_excludes_merged(client, memory_db):
@@ -772,7 +791,7 @@ async def test_memory_surface_excludes_merged(client, memory_db):
     con.execute("INSERT INTO memories (id,type,name,description,content,active,merged_into) VALUES (2,'project','dup','d','c',0,1)")
     con.commit()
     con.close()
-    names = [m["name"] for m in (await client.get("/api/v1/memory/surface")).json()]
+    names = [m["name"] for m in (await client.get("/api/v1/memory/surface")).json()["items"]]
     assert "canon" in names
     assert "dup" not in names
     wm = (await client.get("/api/v1/memory/world-model")).json()
