@@ -8,24 +8,14 @@ Gerçek klipper-cron-wrap kullanılır (CANARY_SUPPRESS_ALERT=1 → alarm tetikl
 from __future__ import annotations
 
 import os
-import shutil
 import sqlite3
 import stat
 import subprocess
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parent.parent
 CANARY = ROOT / "automation" / "livesys-canary.sh"
 WRAP = ROOT / "scripts" / "klipper-cron-wrap.sh"
-
-# healthy-path GERÇEK wrapper'ı çalıştırır → wrapper cron_outcomes'a sqlite3 CLI ile yazar.
-# GitHub runner'da sqlite3 CLI-binary olmayabilir (python modülü ≠ CLI) → integration atlanır
-# (prod klipper'da sqlite3 CLI var, canary çalışır). Diğer testler CLI gerektirmez.
-_NEEDS_SQLITE3_CLI = pytest.mark.skipif(
-    shutil.which("sqlite3") is None, reason="sqlite3 CLI yok (wrapper cron_outcomes yazımı için gerekli)"
-)
 
 
 def _mkdb(tmp_path) -> Path:
@@ -54,7 +44,6 @@ def _outcome(stdout: str) -> str:
     return ""
 
 
-@_NEEDS_SQLITE3_CLI
 def test_canary_pass_on_healthy_pipeline(tmp_path):
     db = _mkdb(tmp_path)
     out = _outcome(_run(db, WRAP))
@@ -95,3 +84,25 @@ def test_canary_source_guard_fails_loud_when_lib_missing(tmp_path):
     r = subprocess.run(["bash", str(CANARY)], capture_output=True, text=True, env=env)
     assert "OUTCOME: fail" in r.stdout
     assert "source-fail" in r.stdout
+
+
+def test_wrapper_writes_cron_outcomes_when_logdir_uncreatable(tmp_path):
+    # SENSE-fix: LOG_DIR oluşturulamasa bile (perm/CI) cron_outcomes YAZILIR (yoksa
+    # 'sqlite3 2>>$LOG' redirect-fail → INSERT sessizce atlanır = silent-failure).
+    db = _mkdb(tmp_path)
+    env = {
+        **os.environ,
+        "DB_PATH": str(db),
+        "LOG_DIR": "/proc/1/cannot-create-here",  # oluşturulamaz
+        "CANARY_SUPPRESS_ALERT": "1",
+    }
+    subprocess.run(
+        ["bash", str(WRAP), "logdir-test", "bash", "-c", "echo 'OUTCOME: pass | x'"],
+        capture_output=True,
+        env=env,
+    )
+    con = sqlite3.connect(db)
+    row = con.execute("SELECT result FROM cron_outcomes WHERE job='logdir-test'").fetchone()
+    con.close()
+    assert row is not None  # log-dizini yok ama INSERT oldu (silent-failure yok)
+    assert row[0] == "pass"

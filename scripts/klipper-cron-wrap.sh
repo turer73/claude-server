@@ -11,9 +11,13 @@ set +e
 NAME="${1:-unknown-cron}"
 shift
 
-LOG_DIR="/var/log/linux-ai-server"
+# LOG_DIR env-override edilebilir (test). Oluşturulamazsa (perm/CI) TEMP'e düş — yoksa
+# alttaki 'sqlite3 ... 2>>$LOG' redirect-hedefi olmadığından sqlite3 HİÇ çalışmaz ve
+# cron_outcomes INSERT SESSİZCE atlanır (gerçek SENSE-riski: /var/log dolarsa/yazılamazsa
+# outcome-kaydı durur). Fallback ile cron_outcomes yazımı log-dizinine bağımlı olmaz.
+LOG_DIR="${LOG_DIR:-/var/log/linux-ai-server}"
+mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR="$(mktemp -d 2>/dev/null || echo /tmp)"
 LOG="${LOG_DIR}/${NAME}.log"
-mkdir -p "$LOG_DIR" 2>/dev/null
 
 if [ $# -eq 0 ]; then
     /opt/linux-ai-server/scripts/klipper-event.sh "cron-${NAME}" "MISSING-COMMAND"
