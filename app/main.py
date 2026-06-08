@@ -65,6 +65,7 @@ security_scheme = HTTPBearer()
 # (pull sonrası değişir). İkisi farklıysa servis ESKİ kod çalıştırıyor (restart gerekli) =
 # 'deployed≠running' drift (bu oturumda cosession-drift olarak yaşandı). 30sn cache.
 def _read_deployed_sha() -> str:
+    import os
     import subprocess
 
     try:
@@ -78,7 +79,9 @@ def _read_deployed_sha() -> str:
             .strip()[:12]
         )
     except Exception:
-        return ""
+        # Codex P2: installer-kurulumda (.git YOK) git patlar. Build/deploy-zamanı SHA
+        # env-var'ı (DEPLOYED_SHA) fallback → installer-install'da da sinyal verilebilir.
+        return (os.environ.get("DEPLOYED_SHA") or "").strip()[:12]
 
 
 _DEPLOYED_SHA: str = _read_deployed_sha()
@@ -238,13 +241,16 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/health")
     async def health():
         disk = _current_disk_sha()
+        # Codex P2: SHA belirlenemezse (git-yok + env-yok) stale SESSİZCE False olmasın —
+        # None döndür ('belirlenemez'), yanlış 'drift-yok' güvencesi verme (silent-no-signal).
+        stale = (disk != _DEPLOYED_SHA) if (_DEPLOYED_SHA and disk) else None
         return {
             "status": "healthy",
             "service": "linux-ai-server",
             "version": __version__,
             "sha": _DEPLOYED_SHA,  # ÇALIŞAN kod (startup'ta sabitlendi)
             "disk_sha": disk,  # disk-HEAD (canlı)
-            "stale": bool(_DEPLOYED_SHA and disk and disk != _DEPLOYED_SHA),  # True = restart gerekli (deployed≠running)
+            "stale": stale,  # True=restart gerekli (deployed≠running) · None=belirlenemez
         }
 
     # ---- Routes ----

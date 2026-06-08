@@ -40,7 +40,17 @@ async def test_health_exposes_sha_and_stale(client):
     assert "sha" in data
     assert "disk_sha" in data
     assert "stale" in data
-    assert isinstance(data["stale"], bool)
+    assert data["stale"] in (True, False, None)
+
+
+async def test_health_stale_none_when_sha_unavailable(client, monkeypatch):
+    # Codex P2: SHA belirlenemezse (installer-install, .git+env yok) stale=None (sessiz-False değil)
+    from app import main as m
+
+    monkeypatch.setattr(m, "_DEPLOYED_SHA", "")
+    monkeypatch.setattr(m, "_current_disk_sha", lambda: "")
+    resp = await client.get("/health")
+    assert resp.json()["stale"] is None
 
 
 async def test_health_stale_true_when_running_differs_from_disk(client, monkeypatch):
