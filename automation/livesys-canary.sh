@@ -15,21 +15,27 @@
 # yalnız canary'nin kendi sonucu (pipeline-bozuk) alarm üretebilir.
 set -uo pipefail
 
-ROOT="/opt/linux-ai-server"
-# outcome.sh'i ÖNCE script-konumuna göre bul (CI/test: repo /opt'ta değil), yoksa /opt
-# fallback. Hardcoded /opt source CI'da fail edip emit_outcome'u tanımsız bırakıyordu.
-_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/scripts/lib/outcome.sh"
-[ -f "$_LIB" ] || _LIB="$ROOT/scripts/lib/outcome.sh"
-. "$_LIB"
+# ROOT'u SCRIPT-konumundan türet (kardeş lint-cron-outcome.sh deseni) — hardcoded /opt
+# CI/test/normal-checkout'ta source-fail ediyordu (B1). LIVESYS_ROOT ile override edilebilir.
+ROOT="${LIVESYS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# KEMER-KAYIŞ: outcome.sh source edilemezse (eksik/taşınmış) canary'nin KENDİSİ silent-green
+# olmasın → açıkça OUTCOME:fail emit edip çık (sensory-honesty ironisini kapat).
+. "$ROOT/scripts/lib/outcome.sh" 2>/dev/null || {
+    echo "OUTCOME: fail | outcome.sh source-fail ($ROOT/scripts/lib/outcome.sh yok) — canary çalışamadı"
+    exit 0
+}
 DB_PATH="${DB_PATH:-$ROOT/data/server.db}"
 WRAP="${WRAP:-$ROOT/scripts/klipper-cron-wrap.sh}"  # test fixture için override edilebilir
 OK_JOB="livesys-canary-ok-$$"
 BAD_JOB="livesys-canary-bad-$$"
 
-# Test-satırlarını her durumda temizle (prod cron_outcomes'u kirletme).
+# Test-artıklarını her durumda temizle: cron_outcomes test-satırları + wrapper'ın yazdığı
+# PID-scoped per-run LOG dosyaları (R1: yoksa /var/log'da günlük 2 dosya birikir, rotate-yok).
+CRON_LOG_DIR="${CRON_LOG_DIR:-/var/log/linux-ai-server}"
 cleanup() {
     [ -f "$DB_PATH" ] && sqlite3 -cmd ".timeout 10000" "$DB_PATH" \
         "DELETE FROM cron_outcomes WHERE job IN ('$OK_JOB','$BAD_JOB');" 2>/dev/null || true
+    rm -f "$CRON_LOG_DIR/${OK_JOB}.log" "$CRON_LOG_DIR/${BAD_JOB}.log" 2>/dev/null || true
 }
 trap cleanup EXIT
 

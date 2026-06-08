@@ -74,3 +74,13 @@ def test_canary_fail_on_broken_pipeline(tmp_path):
 def test_wrapper_has_canary_suppress_guard():
     # PR3: wrapper CANARY_SUPPRESS_ALERT=1'de alert/event atlar (cron_outcomes yazılır)
     assert "CANARY_SUPPRESS_ALERT" in WRAP.read_text()
+
+
+def test_canary_source_guard_fails_loud_when_lib_missing(tmp_path):
+    # surer kemer-kayış: outcome.sh bulunamazsa canary SILENT-GREEN olmaz → OUTCOME: fail
+    empty = tmp_path / "noroot"
+    empty.mkdir()
+    env = {**os.environ, "LIVESYS_ROOT": str(empty)}
+    r = subprocess.run(["bash", str(CANARY)], capture_output=True, text=True, env=env)
+    assert "OUTCOME: fail" in r.stdout
+    assert "source-fail" in r.stdout
