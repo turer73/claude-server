@@ -31,7 +31,10 @@ CRONTAB_FILE = os.path.join(AUTOMATION, "crontab")
 API_BASE = os.environ.get("API_BASE", "http://localhost:8420")
 
 # K3: decommissioned / dead-infra işaretleri (hedef bunları içeriyorsa ölü-refleks).
-DEAD_INFRA = ["194.163.134.239", "coolify.panola.app"]
+# DİKKAT: yalnız GERÇEKTEN ölü hedefler. 194.163.134.239 BURADA DEĞİL — o CANLI production
+# VPS (Contabo/Dokploy, .env N8N_WEBHOOK_URL aktif); Coolify VPS'ten kaldırıldı (2026-04-07)
+# ama VPS yaşıyor → IP'yi dead sayma (surer F3: canlı-IP false-positive kaynağıydı).
+DEAD_INFRA = ["coolify.panola.app"]
 # systemd-timer ile çalışan (cron'da OLMAMASI normal) — orphan deme, host-verify iste.
 SYSTEMD_HINT = re.compile(r"systemd\s*timer", re.I)
 # header cron beyanı: 'Cron: <5-alan>' veya 'cron <5-alan>'

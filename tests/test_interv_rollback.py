@@ -147,8 +147,8 @@ async def test_no_rollback_on_verify_pass():
         patch("app.core.devops_agent.emit_event"),
     ):
         await agent._verify_and_escalate("temperature", _alert())
-    # verify pass -> escalate yok -> rollback denenmez (state korunur)
-    assert "temperature" in agent._rollback_state
+    # verify PASS -> rollback denenmez AMA state TEMİZLENİR (surer F1: bayat-state bırakma)
+    assert "temperature" not in agent._rollback_state
 
 
 async def test_rollback_anti_flapping():
@@ -187,3 +187,11 @@ async def test_remediation_log_migration_idempotent(tmp_path):
     cols = {r[1] for r in await cur.fetchall()}
     await db.close()
     assert {"rolled_back", "rollback_result", "provenance"} <= cols
+
+
+def test_provenance_uses_alert_timestamp():
+    # surer F2: detected_at alert.timestamp olmalı (build-time datetime.now değil)
+    a = _alert()
+    a.timestamp = "2026-06-08T12:00:00+00:00"
+    p = build_provenance(a, "auto", detected_at=a.timestamp)
+    assert p["detected_at"] == "2026-06-08T12:00:00+00:00"
