@@ -16,7 +16,11 @@
 set -uo pipefail
 
 ROOT="/opt/linux-ai-server"
-. "$ROOT/scripts/lib/outcome.sh"
+# outcome.sh'i ÖNCE script-konumuna göre bul (CI/test: repo /opt'ta değil), yoksa /opt
+# fallback. Hardcoded /opt source CI'da fail edip emit_outcome'u tanımsız bırakıyordu.
+_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/scripts/lib/outcome.sh"
+[ -f "$_LIB" ] || _LIB="$ROOT/scripts/lib/outcome.sh"
+. "$_LIB"
 DB_PATH="${DB_PATH:-$ROOT/data/server.db}"
 WRAP="${WRAP:-$ROOT/scripts/klipper-cron-wrap.sh}"  # test fixture için override edilebilir
 OK_JOB="livesys-canary-ok-$$"
