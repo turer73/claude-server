@@ -742,3 +742,40 @@ async def test_onboard_endpoints_require_key_when_set(client, memory_db, monkeyp
         assert resp.status_code == 401, f"{path} must reject wrong key"
         resp = await client.get(path, headers={"X-Memory-Key": "secret-key"})
         assert resp.status_code == 200, f"{path} must accept correct key"
+
+
+# ---------------------------------------------------------------------------
+# LIVESYS-MEMSYN: surface + world-model
+# ---------------------------------------------------------------------------
+
+
+async def test_memory_surface_tolerates_no_merged_column(client, memory_db):
+    # merged_into kolonu YOK (sentez henüz çalışmadı) → tüm aktifler yüzey
+    con = sqlite3.connect(memory_db)
+    con.execute("INSERT INTO memories (type,name,description,content) VALUES ('project','a','d','c')")
+    con.execute("INSERT INTO memories (type,name,description,content) VALUES ('feedback','b','d','c')")
+    con.commit()
+    con.close()
+    r = await client.get("/api/v1/memory/surface")
+    assert r.status_code == 200
+    assert len(r.json()) == 2
+    wm = (await client.get("/api/v1/memory/world-model")).json()
+    assert wm["surface_total"] == 2
+    assert wm["synthesized"] is False
+
+
+async def test_memory_surface_excludes_merged(client, memory_db):
+    # merged_into uygulanmış: canonical yüzeyde, merged-dup yüzeyde DEĞİL
+    con = sqlite3.connect(memory_db)
+    con.execute("ALTER TABLE memories ADD COLUMN merged_into INTEGER")
+    con.execute("INSERT INTO memories (id,type,name,description,content,active) VALUES (1,'project','canon','d','c',1)")
+    con.execute("INSERT INTO memories (id,type,name,description,content,active,merged_into) VALUES (2,'project','dup','d','c',0,1)")
+    con.commit()
+    con.close()
+    names = [m["name"] for m in (await client.get("/api/v1/memory/surface")).json()]
+    assert "canon" in names
+    assert "dup" not in names
+    wm = (await client.get("/api/v1/memory/world-model")).json()
+    assert wm["synthesized"] is True
+    assert wm["merged_archived"] == 1
+    assert wm["surface_total"] == 1
