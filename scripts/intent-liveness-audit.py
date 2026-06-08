@@ -69,14 +69,16 @@ def crontab_basenames(crontab_text: str) -> set[str]:
 
 
 def crontab_script_paths(crontab_text: str) -> list[str]:
-    """Crontab'taki cron-wrap SONRASI sarılan script tam-yolları (K2 için)."""
+    """Crontab'taki HEDEF script tam-yolları (K2). Hem cron-wrap'li hem DOĞRUDAN entry'ler
+    (Codex P2): wrap'li satırda wrapper-sonrası hedefi, doğrudan satırda ilk mutlak .sh/.py."""
     paths: list[str] = []
     for line in crontab_text.splitlines():
         s = line.strip()
-        if not s or s.startswith("#") or "klipper-cron-wrap.sh" not in s:
+        if not s or s.startswith("#"):
             continue
-        rest = s.split("klipper-cron-wrap.sh", 1)[1]
-        m = re.search(r"(/[A-Za-z0-9_./\-]+\.(?:sh|py))", rest)
+        # cron-wrap'li ise wrapper'ın KENDİSİNİ değil, sardığı hedefi al
+        scope = s.split("klipper-cron-wrap.sh", 1)[1] if "klipper-cron-wrap.sh" in s else s
+        m = re.search(r"(/[A-Za-z0-9_./\-]+\.(?:sh|py))", scope)
         if m:
             paths.append(m.group(1))
     return paths
@@ -139,12 +141,20 @@ def audit(automation_dir: str, crontab_text: str, live_crontab: str = "") -> lis
                 )
                 break
 
-    # K2: crontab'taki script dosyası var mı (automation_dir + ROOT-relative + mutlak dene)
-    for p in crontab_script_paths(crontab_text):
-        rel = p.replace("/opt/linux-ai-server/", "")
-        cands = [p, os.path.join(automation_dir, os.path.basename(p)), os.path.join(ROOT, rel)]
-        if not any(os.path.isfile(c) for c in cands):
-            findings.append(("critical", f"intent:{os.path.basename(p)}", f"crontab'da scheduled ama dosya YOK: {p} → kırık cron-entry"))
+    # K2: scheduled script dosyası var mı — HEM repo crontab HEM canlı crontab (Codex P2:
+    # host-drift'te canlı entry silinmiş script'e işaret edebilir, repo'da olmasa bile yakala).
+    seen_paths: set[str] = set()
+    for src in (crontab_text, live_crontab):
+        for p in crontab_script_paths(src):
+            if p in seen_paths:
+                continue
+            seen_paths.add(p)
+            rel = p.replace("/opt/linux-ai-server/", "")
+            cands = [p, os.path.join(automation_dir, os.path.basename(p)), os.path.join(ROOT, rel)]
+            if not any(os.path.isfile(c) for c in cands):
+                findings.append(
+                    ("critical", f"intent:{os.path.basename(p)}", f"crontab'da scheduled ama dosya YOK: {p} → kırık cron-entry")
+                )
 
     # K4: 'DISABLED'/stale yorum var ama bir sonraki satır aktif (uncommented)
     lines = crontab_text.splitlines()

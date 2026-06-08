@@ -83,3 +83,17 @@ def test_clean_repo_no_findings(tmp_path):
         cron_lines.append(f"0 1 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh {n} /opt/linux-ai-server/automation/{n}.sh")
     findings = ila.audit(str(tmp_path), crontab_text="\n".join(cron_lines))
     assert findings == []
+
+
+def test_k2_catches_direct_unwrapped_missing(tmp_path):
+    # Codex P2: cron-wrap'siz DOĞRUDAN entry, dosya yok → critical
+    cron = "0 3 * * * /opt/linux-ai-server/automation/direct-gone.sh\n"
+    findings = ila.audit(str(tmp_path), crontab_text=cron)
+    assert any(s == "critical" and "direct-gone.sh" in subj for s, subj, _ in findings)
+
+
+def test_k2_catches_live_crontab_drift(tmp_path):
+    # Codex P2: repo-crontab'da YOK ama canlı-crontab'da silinmiş script → critical (host-drift)
+    live = "0 2 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh drift /opt/linux-ai-server/automation/drift-gone.sh\n"
+    findings = ila.audit(str(tmp_path), crontab_text="", live_crontab=live)
+    assert any(s == "critical" and "drift-gone.sh" in subj for s, subj, _ in findings)
