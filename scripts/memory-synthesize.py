@@ -193,8 +193,14 @@ def main() -> int:
         return 0
 
     mode = "APPLY" if res["applied"] else "DRY_RUN"
+    min_c = res.get("min_cluster", 2)
     for m in res["merges"]:
-        print(f"[{mode}] küme→canonical#{m['canonical']} arşiv:{m['merged']} ({', '.join(m['names'][:3])})")
+        # Codex P2: APPLY'da MIN_CLUSTER altı kümeler ATLANIR — onları 'arşiv' diye loglama
+        # (yanıltıcı). Skip'leri ayrı etiketle.
+        if res["applied"] and m.get("size", 2) < min_c:
+            print(f"[SKIP<{min_c}ü] küme→canonical#{m['canonical']} atlandı:{m['merged']} ({', '.join(m['names'][:3])})")
+        else:
+            print(f"[{mode}] küme→canonical#{m['canonical']} arşiv:{m['merged']} ({', '.join(m['names'][:3])})")
     if backup:
         print(f"[backup] {backup}")
 
