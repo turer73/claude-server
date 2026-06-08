@@ -67,7 +67,12 @@ if [ -f "$DB_PATH" ]; then
 fi
 
 # ── Alert: gercek RESULT'a gore (sadece rc!=0 degil) — partial de yuzeye cikar. ──
-if [ "$RESULT" = "pass" ]; then
+# CANARY_SUPPRESS_ALERT=1 (livesys-canary.sh): cron_outcomes ZATEN yazildi (yukarida);
+# burada alert/event/notify ATLANIR — canary alarm-yolunu test ederken GERCEK alarm
+# tetiklemez (sentetik known-bad spam yapmasin). Default 0 → davranis degismez.
+if [ "${CANARY_SUPPRESS_ALERT:-0}" = "1" ]; then
+    : # canary: cron_outcomes yeterli, alert/event yok
+elif [ "$RESULT" = "pass" ]; then
     /opt/linux-ai-server/scripts/klipper-event.sh "cron-${NAME}" "OK"
 else
     SEV="critical"; [ "$RESULT" = "partial" ] && SEV="warning"
