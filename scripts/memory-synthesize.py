@@ -32,6 +32,10 @@ OLLAMA = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "bge-m3")
 THRESHOLD = float(os.environ.get("MEMSYN_THRESHOLD", "0.86"))
 APPLY = os.environ.get("MEMSYN_APPLY") == "1"  # default: DRY_RUN
+# Staged-apply (surer): APPLY'da YALNIZ ≥MIN_CLUSTER üyeli kümeleri arşivle. Varsayılan 2
+# (tüm kümeler). 3 = yalnız büyük-küme (autonomous-log gürültüsü) güvenli-apply; 2-üyeli
+# bilgi-çiftleri (FP-riski) review-sonrası ayrıca. DRY_RUN raporu yine TÜM kümeleri gösterir.
+MIN_CLUSTER = int(os.environ.get("MEMSYN_MIN_CLUSTER", "2"))
 
 
 def embed(texts: list[str]) -> list[list[float]]:
@@ -140,11 +144,16 @@ def synthesize() -> dict:
     clusters = cluster([m["id"] for m in items], vectors, THRESHOLD)
     merges = []
     archived = 0
+    skipped_small = 0  # MIN_CLUSTER altındaki kümeler (APPLY'da atlandı, raporda görünür)
     for grp in clusters:
         members = [by_id[i] for i in grp]
         canon = pick_canonical(members)
         losers = [i for i in grp if i != canon]
-        merges.append({"canonical": canon, "merged": losers, "names": [by_id[i]["name"] for i in grp]})
+        applies = len(grp) >= MIN_CLUSTER
+        merges.append({"canonical": canon, "merged": losers, "names": [by_id[i]["name"] for i in grp], "size": len(grp)})
+        if APPLY and not applies:
+            skipped_small += 1
+            continue
         if APPLY:
             for lid in losers:
                 con.execute(
@@ -155,7 +164,15 @@ def synthesize() -> dict:
     if APPLY:
         con.commit()
     con.close()
-    return {"total": len(items), "clusters": len(clusters), "archived": archived, "applied": APPLY, "merges": merges}
+    return {
+        "total": len(items),
+        "clusters": len(clusters),
+        "archived": archived,
+        "skipped_small": skipped_small,
+        "min_cluster": MIN_CLUSTER,
+        "applied": APPLY,
+        "merges": merges,
+    }
 
 
 def main() -> int:
@@ -184,7 +201,11 @@ def main() -> int:
     if res["clusters"] == 0:
         print(f"OUTCOME: pass | memory-synth: {res['total']} aktif, sentezlenecek küme yok")
     elif res["applied"]:
-        print(f"OUTCOME: pass | memory-synth APPLY: {res['clusters']} küme, {res['archived']} arşivlendi (NO-DELETE)")
+        sk = f", {res['skipped_small']} küme <{res['min_cluster']}üye atlandı" if res.get("skipped_small") else ""
+        print(
+            f"OUTCOME: pass | memory-synth APPLY(min={res['min_cluster']}): {res['clusters']} küme, "
+            f"{res['archived']} arşivlendi (NO-DELETE){sk}"
+        )
     else:
         print(f"OUTCOME: partial | memory-synth DRY_RUN: {res['clusters']} küme önerisi (APPLY=1 ile uygula)")
     return 0

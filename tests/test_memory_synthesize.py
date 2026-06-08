@@ -114,3 +114,27 @@ def test_apply_is_idempotent_second_run_noop(tmp_path, monkeypatch):
     # ikinci koşu: arşivlenen (active=0+merged_into) dışlanır → kalan canonical+#3 farklı → yeni arşiv yok
     res2 = memsyn.synthesize()
     assert res2["archived"] == 0
+
+
+def test_min_cluster_skips_small_on_apply(tmp_path, monkeypatch):
+    # MEMSYN_MIN_CLUSTER=3 → yalnız ≥3-üye kümeler APPLY; 2-üye küme atlanır (surer staged-apply)
+    rows = [
+        (1, "project", "a", "d", "x"),
+        (2, "project", "b", "d", "x"),
+        (3, "project", "c", "d", "x"),  # 3-üye küme (vektör A)
+        (4, "project", "d", "d", "y"),
+        (5, "project", "e", "d", "y"),  # 2-üye küme (vektör B)
+    ]
+    db = _mkdb(tmp_path, rows)
+    monkeypatch.setattr(memsyn, "DB_PATH", str(db))
+    monkeypatch.setattr(memsyn, "APPLY", True)
+    monkeypatch.setattr(memsyn, "MIN_CLUSTER", 3)
+    monkeypatch.setattr(memsyn, "embed", lambda texts: [[1.0, 0.0]] * 3 + [[0.0, 1.0]] * 2)
+    res = memsyn.synthesize()
+    assert res["clusters"] == 2
+    assert res["archived"] == 2  # yalnız 3-üye kümeden 2 arşiv
+    assert res["skipped_small"] == 1  # 2-üye küme atlandı
+    con = sqlite3.connect(db)
+    active45 = con.execute("SELECT COUNT(*) FROM memories WHERE id IN (4,5) AND active=1").fetchone()[0]
+    con.close()
+    assert active45 == 2  # 2-üye küme dokunulmadı
