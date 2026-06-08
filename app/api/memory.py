@@ -324,6 +324,53 @@ async def list_memories(type: str | None = None, active: int = 1, search: str | 
         db.close()
 
 
+def _has_merged_into(db) -> bool:
+    """merged_into kolonu var mı (LIVESYS-MEMSYN migration uygulanmış mı)."""
+    return "merged_into" in [r[1] for r in db.execute("PRAGMA table_info(memories)").fetchall()]
+
+
+@router.get("/surface")
+async def memory_surface(type: str | None = None):
+    """Sentez-sonrası YÜZEY: aktif + canonical (merged olmayan) memory'ler (LIVESYS-MEMSYN).
+    merged_into kolonu yoksa (sentez henüz çalışmadı) tüm aktifler yüzeydir."""
+    db = get_db()
+    try:
+        cond = "active=1" + (" AND merged_into IS NULL" if _has_merged_into(db) else "")
+        q = f"SELECT id, type, name, description, read_count, date(updated_at) AS updated FROM memories WHERE {cond}"
+        params: list = []
+        if type:
+            q += " AND type=?"
+            params.append(type)
+        q += " ORDER BY type, updated_at DESC"
+        return [dict(r) for r in db.execute(q, params).fetchall()]
+    finally:
+        db.close()
+
+
+@router.get("/world-model")
+async def memory_world_model():
+    """Sentezlenmiş DÜNYA-MODELİ özeti: tür-bazlı yüzey sayımı + arşiv istatistiği (LIVESYS-MEMSYN)."""
+    db = get_db()
+    try:
+        has_mi = _has_merged_into(db)
+        surface_cond = "active=1" + (" AND merged_into IS NULL" if has_mi else "")
+        by_type = {
+            r["type"]: r["n"] for r in db.execute(f"SELECT type, COUNT(*) AS n FROM memories WHERE {surface_cond} GROUP BY type").fetchall()
+        }
+        surface = db.execute(f"SELECT COUNT(*) FROM memories WHERE {surface_cond}").fetchone()[0]
+        active_total = db.execute("SELECT COUNT(*) FROM memories WHERE active=1").fetchone()[0]
+        archived = db.execute("SELECT COUNT(*) FROM memories WHERE merged_into IS NOT NULL").fetchone()[0] if has_mi else 0
+        return {
+            "surface_by_type": by_type,
+            "surface_total": surface,
+            "active_total": active_total,
+            "merged_archived": archived,
+            "synthesized": has_mi,
+        }
+    finally:
+        db.close()
+
+
 @router.get("/memories/{memory_id}")
 async def get_memory(memory_id: int):
     db = get_db()

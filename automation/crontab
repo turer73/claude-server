@@ -68,3 +68,7 @@
 # LIVESYS-INTRO öz-introspeksiyon (haftalik Pazartesi 09:15) — deklarasyon↔gercek boslugu
 # (olu-refleks/orphan-cron/dead-infra/stale-flag). SALT-OKUNUR; bulgu→event/discovery.
 15 9 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh intent-liveness /opt/linux-ai-server/automation/intent-liveness-audit.sh
+# LIVESYS-MEMSYN hafiza sentezi (haftalik Pazartesi 09:45) — benzer memory'leri embedding-cosine
+# kumeleyip canonical disi olanlari arsivler (NO-DELETE). VARSAYILAN DRY_RUN (yazma YOK); gercek
+# arsivleme icin MEMSYN_APPLY=1 gerekir (+otomatik DB-backup). Ilk-hafta DRY_RUN gozlem.
+45 9 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh memory-synth /opt/linux-ai-server/automation/memory-synthesize.sh
