@@ -7,6 +7,7 @@ import base64
 import json
 import os
 import re
+import shlex
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -15,7 +16,14 @@ from datetime import UTC, datetime
 from app.core.config import get_settings
 from app.core.events import emit_event
 from app.core.monitor_agent import MonitorAgent
+from app.core.provenance import provenance_json
 from app.core.shell_executor import ShellExecutor
+
+# INTERV: yalnız GERİ-ALINABİLİR komutlar rollback'e uygun (DAR set). cpu-governor değişimi
+# tersine çevrilebilir (önceki governor'a dön); prune/delete/truncate/restart GERİ-ALINAMAZ
+# (escalate-only — surer kuralı). Governor adı güvenlik için katı doğrulanır.
+_GOVERNOR_RE = re.compile(r"scaling_governor|cpufreq-set\s+-g")
+_VALID_GOVERNOR = re.compile(r"^[a-z]+$")  # ondemand/schedutil/performance/powersave...
 
 
 @dataclass
@@ -180,6 +188,13 @@ class DevOpsAgent:
         # Cooldown tracker: source → last remediation time
         self._cooldowns: dict[str, float] = {}
         self._cooldown_seconds = 300  # 5 minutes
+
+        # INTERV: auto-rollback durumu. source → {"kind","state","command"} (aksiyon-öncesi
+        # yakalanan geri-alma bilgisi). _last_rollback: anti-flapping (aynı kaynağı kısa sürede
+        # tekrar-tekrar geri-alma; cooldown içinde rollback ATLA, doğrudan escalate).
+        self._rollback_state: dict[str, dict] = {}
+        self._last_rollback: dict[str, float] = {}
+        self._rollback_cooldown = 600  # 10 dk: bu süre içinde aynı kaynak için 2. rollback yok
 
         # Persistent-critical re-eskalasyon: kalıcı critical alert dedup nedeniyle bir
         # kez bildirilir; çözülene dek her _escalation_interval'da yeniden ping (okunmamış/
@@ -431,7 +446,9 @@ class DevOpsAgent:
             # OPT-IN: gerçekten yürüt. Playbook'lar güvenlileştirildi (yıkıcı/geri-
             # alınamaz adımlar — prune --volumes / backup-silme — çıkarıldı); kalanlar
             # güvenli-reclaim + restart. FAZ5-S2: aksiyon sonrası _verify_and_escalate
-            # verify eder (fail -> escalate; restart geri-alınamaz -> escalate-only).
+            # verify eder (fail -> escalate). INTERV: reversible-komutta aksiyon-ÖNCESİ
+            # geri-alma durumu yakalanır (verify-fail -> auto-rollback).
+            await self._capture_rollback(source, command)
             executed = True
             try:
                 result = await self._executor.execute(command, timeout=timeout)
@@ -453,7 +470,8 @@ class DevOpsAgent:
             )
         )
         # executed -> verify_status NULL (S2 verify-edecek); değilse 'skipped'
-        # (notify/dry_run satırları verify-UPDATE'inden ayrışsın).
+        # (notify/dry_run satırları verify-UPDATE'inden ayrışsın). INTERV: her satıra
+        # provenance (tetik-kökeni) iliştir — sonradan denetlenebilir.
         await self._persist_remediation_row(
             source,
             alert.severity,
@@ -464,8 +482,70 @@ class DevOpsAgent:
             out,
             success,
             verify_status=None if executed else "skipped",
+            provenance=provenance_json(alert, mode),
         )
         alert.remediation = f"[{mode}] {action}"
+
+    # ── INTERV: reversible-set + auto-rollback ─────────────────
+
+    def _reversible_kind(self, command: str) -> str | None:
+        """Komut GERİ-ALINABİLİR mi (DAR set). Şimdilik yalnız cpu-governor değişimi.
+        prune/delete/truncate/restart -> None (geri-alınamaz, escalate-only)."""
+        if _GOVERNOR_RE.search(command):
+            return "governor"
+        return None
+
+    async def _capture_rollback(self, source: str, command: str) -> None:
+        """Aksiyon-ÖNCESİ geri-alma durumunu yakala (yalnız reversible komut). governor:
+        mevcut scaling_governor'ı oku, doğrula, sakla. Yakalanamazsa rollback olmaz (güvenli)."""
+        if self._reversible_kind(command) != "governor":
+            return
+        try:
+            cap = await self._executor.execute("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", timeout=10)
+            prior = (cap.get("stdout", "") or "").strip().splitlines()
+            prior_gov = prior[0].strip() if prior else ""
+        except Exception:
+            prior_gov = ""
+        # GÜVENLİK: yalnız geçerli governor-adı sakla (komut-enjeksiyonu önle); aksi -> rollback yok.
+        if prior_gov and _VALID_GOVERNOR.fullmatch(prior_gov):
+            self._rollback_state[source] = {"kind": "governor", "state": prior_gov, "command": command}
+
+    def _rollback_is_flapping(self, source: str) -> bool:
+        """Anti-flapping: bu kaynak için son rollback _rollback_cooldown içinde mi (tekrar-tekrar
+        geri-alma -> flapping). True -> rollback ATLA (doğrudan escalate)."""
+        last = self._last_rollback.get(source)
+        return last is not None and (time.monotonic() - last) < self._rollback_cooldown
+
+    async def _attempt_rollback(self, source: str) -> tuple[bool, str]:
+        """Yakalı reversible-state varsa geri-al. (rolled_back, rollback_result) döndür.
+        Anti-flapping cooldown'da -> (False, 'skipped: flapping'). Yalnız mode=auto'dan çağrılır."""
+        state = self._rollback_state.pop(source, None)
+        if not state:
+            return False, ""
+        if self._rollback_is_flapping(source):
+            return False, "skipped: flapping-cooldown"
+        gov = state["state"]
+        if not _VALID_GOVERNOR.fullmatch(gov):  # defense-in-depth (saklarken de doğrulandı)
+            return False, "skipped: invalid-governor"
+        q = shlex.quote(gov)
+        cmd = f"cpufreq-set -g {q} 2>/dev/null || echo {q} | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true"
+        # Codex P2: '|| true' + olası whitelist-eksikliği başarısızlığı maskeler → komut
+        # exit_code'una GÜVENME. Rollback'i governor'ı RE-READ ederek DOĞRULA; gerçekten
+        # geri dönmediyse rolled_back=False (gerçekleşmeyen rollback'i 'oldu' RAPORLAMA).
+        try:
+            await self._executor.execute(cmd, timeout=30)
+            chk = await self._executor.execute("cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", timeout=10)
+            lines = (chk.get("stdout", "") or "").strip().splitlines()
+            now_gov = lines[0].strip() if lines else ""
+            ok = now_gov == gov
+            res = f"governor={now_gov or '?'} (hedef {gov})"
+        except Exception as e:
+            ok = False
+            res = f"rollback-error: {str(e)[:200]}"
+        if ok:
+            self._last_rollback[source] = time.monotonic()  # cooldown YALNIZ doğrulanmış rollback'te
+            return True, res
+        return False, f"rollback-DOĞRULANAMADI: {res}"
 
     async def _persist_remediation_row(
         self,
@@ -478,6 +558,7 @@ class DevOpsAgent:
         result: str,
         success: bool | None,
         verify_status: str | None = None,
+        provenance: str | None = None,
     ) -> None:
         """Kalıcı remediation ledger (server.db.remediation_log). Best-effort:
         DB yoksa/yazamazsa sessizce geç (remediation akışını bozma)."""
@@ -486,8 +567,8 @@ class DevOpsAgent:
         try:
             await self._db.execute(
                 "INSERT INTO remediation_log "
-                "(alert_source, severity, mode, action, command, executed, result, success, verify_status) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(alert_source, severity, mode, action, command, executed, result, success, verify_status, provenance) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     source,
                     severity,
@@ -498,6 +579,7 @@ class DevOpsAgent:
                     result,
                     None if success is None else (1 if success else 0),
                     verify_status,
+                    provenance,
                 ),
             )
         except Exception:
@@ -609,16 +691,24 @@ class DevOpsAgent:
         ok = await self._verify_remediation(source)
         status = "n/a" if ok is None else ("pass" if ok else "fail")
         escalated = status == "fail"
+        # INTERV: verify FAIL + reversible-state yakalı + flapping-değil -> AUTO-ROLLBACK
+        # (önceki governor'a dön). Rollback ÇÖZÜM DEĞİL -> yine escalate (manuel müdahale).
+        rolled_back = False
+        rb_result = ""
+        if escalated:
+            rolled_back, rb_result = await self._attempt_rollback(source)
         if self._db:
             try:
                 await self._db.execute(
-                    "UPDATE remediation_log SET verify_status=?, escalated=? WHERE alert_source=? AND verify_status IS NULL",
-                    (status, 1 if escalated else 0, source),
+                    "UPDATE remediation_log SET verify_status=?, escalated=?, rolled_back=?, rollback_result=? "
+                    "WHERE alert_source=? AND verify_status IS NULL",
+                    (status, 1 if escalated else 0, 1 if rolled_back else 0, rb_result or None, source),
                 )
             except Exception:
                 pass
         if escalated:
             # ESCALATE: otonom remediation çalıştı ama sorun sürüyor -> manuel müdahale.
+            rb_note = f" [auto-rollback: {rb_result}]" if rolled_back else ""
             try:
                 await asyncio.to_thread(
                     emit_event,
@@ -626,7 +716,7 @@ class DevOpsAgent:
                     source=f"remediation:{source}",
                     title=f"Otonom remediation BAŞARISIZ: {source} hâlâ kritik — manuel müdahale gerek",
                     severity="critical",
-                    detail=f"auto-remediation yürütüldü ama verify başarısız ({alert.message}).",
+                    detail=f"auto-remediation yürütüldü ama verify başarısız ({alert.message}).{rb_note}",
                 )
             except Exception:
                 pass

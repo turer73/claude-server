@@ -152,7 +152,10 @@ CREATE TABLE IF NOT EXISTS remediation_log (
     result TEXT,                     -- stdout/err (executed) veya 'skipped: mode=<m>'
     success INTEGER,                 -- exec başarılı mı (executed=1 iken); NULL = uygulanmadı
     verify_status TEXT,              -- FAZ5-S2: post-action doğrulama (NULL şimdilik)
-    escalated INTEGER NOT NULL DEFAULT 0    -- FAZ5-S2: eskale edildi mi
+    escalated INTEGER NOT NULL DEFAULT 0,   -- FAZ5-S2: eskale edildi mi
+    rolled_back INTEGER NOT NULL DEFAULT 0, -- INTERV: verify-fail sonrası geri-alındı mı (yalnız reversible)
+    rollback_result TEXT,            -- INTERV: rollback komut çıktısı
+    provenance TEXT                  -- INTERV: tetik-kökeni JSON (build_provenance)
 );
 
 CREATE INDEX IF NOT EXISTS idx_remediation_ts ON remediation_log(timestamp DESC);
@@ -199,6 +202,17 @@ class Database:
         cols = {row[1] for row in await cur.fetchall()}
         if cols and "acked" not in cols:
             await self._conn.execute("ALTER TABLE events ADD COLUMN acked INTEGER NOT NULL DEFAULT 0")
+
+        # INTERV: remediation_log'a rollback + provenance kolonları (idempotent)
+        cur = await self._conn.execute("PRAGMA table_info(remediation_log)")
+        rcols = {row[1] for row in await cur.fetchall()}
+        if rcols:
+            if "rolled_back" not in rcols:
+                await self._conn.execute("ALTER TABLE remediation_log ADD COLUMN rolled_back INTEGER NOT NULL DEFAULT 0")
+            if "rollback_result" not in rcols:
+                await self._conn.execute("ALTER TABLE remediation_log ADD COLUMN rollback_result TEXT")
+            if "provenance" not in rcols:
+                await self._conn.execute("ALTER TABLE remediation_log ADD COLUMN provenance TEXT")
 
     async def close(self) -> None:
         if self._conn:
