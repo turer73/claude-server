@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 
-def build_provenance(alert: Any, mode: str, detected_at: str | None = None) -> dict:
+def build_provenance(alert: Any, mode: str, detected_at: str | None = None) -> dict[str, Any]:
     """Bir alert+mode'dan provenance sözlüğü üret. detected_at verilmezse şimdi (UTC ISO).
 
     Auditor-dostu sabit anahtarlar: trigger_source, severity, reason, agent, mode, detected_at.
