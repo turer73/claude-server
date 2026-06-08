@@ -330,19 +330,28 @@ def _has_merged_into(db) -> bool:
 
 
 @router.get("/surface")
-async def memory_surface(type: str | None = None):
+async def memory_surface(
+    type: str | None = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
     """Sentez-sonrası YÜZEY: aktif + canonical (merged olmayan) memory'ler (LIVESYS-MEMSYN).
-    merged_into kolonu yoksa (sentez henüz çalışmadı) tüm aktifler yüzeydir."""
+    P0-c (surer): SAYFALANMIŞ — default 100 (max 500). 629-korpus limit'siz ~48K-token bomba
+    (LLM-context'i doldurur). Yanıt {total, count, limit, offset, items}; items kapalı-uçlu."""
     db = get_db()
     try:
         cond = "active=1" + (" AND merged_into IS NULL" if _has_merged_into(db) else "")
-        q = f"SELECT id, type, name, description, read_count, date(updated_at) AS updated FROM memories WHERE {cond}"
-        params: list = []
+        wparams: list = []
         if type:
-            q += " AND type=?"
-            params.append(type)
-        q += " ORDER BY type, updated_at DESC"
-        return [dict(r) for r in db.execute(q, params).fetchall()]
+            cond += " AND type=?"
+            wparams.append(type)
+        total = db.execute(f"SELECT COUNT(*) FROM memories WHERE {cond}", wparams).fetchone()[0]
+        q = (
+            f"SELECT id, type, name, description, read_count, date(updated_at) AS updated "
+            f"FROM memories WHERE {cond} ORDER BY type, updated_at DESC LIMIT ? OFFSET ?"
+        )
+        items = [dict(r) for r in db.execute(q, [*wparams, limit, offset]).fetchall()]
+        return {"total": total, "count": len(items), "limit": limit, "offset": offset, "items": items}
     finally:
         db.close()
 
