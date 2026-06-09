@@ -478,12 +478,10 @@ Result: <bir-iki cumle>"
         if [ -f "$spawn_log" ] && grep -q '"api_error_status":401' "$spawn_log" 2>/dev/null; then
             log "OAUTH 401 detected note=#$NOTE_ID — possible refresh race"
             set +e
-            bash /opt/linux-ai-server/automation/telegram-alert.sh \
-                --kind oauth_race \
-                --note-id "$NOTE_ID" \
-                --spawn-log "$spawn_log" \
-                --attempt "1" \
-                >> "$LOG_FILE" 2>&1
+            MK401=
+            curl -sf http://127.0.0.1:8420/api/v1/memory/discoveries 
+                -X POST -H "X-Memory-Key: " -H 'Content-Type: application/json' 
+                -d '{"device_name":"klipper","project":"linux-ai-server","type":"bug","title":"oauth-race #","details":"spawn 401"}' >> "" 2>&1 || true
             set -e
         fi
         # P1.6: Threat scan rc!=0'da da; fail olsa bile suspicious pattern
@@ -521,6 +519,16 @@ except Exception as e:
     print(f'memory write error: {e}')
 PY
 }
+
+    # Nudge flag: /loop klipper-loop-poller.sh oturumu uyandirmak icin
+    printf '%s' "== DISCUSSION NOTE #${NOTE_ID} | ${FROM} | ${TITLE} ==" > /tmp/klipper-nudge-pending
+    printf '\n%s' "${FULL_CONTENT:0:500}" >> /tmp/klipper-nudge-pending
+    log "nudge flag yazildi: #${NOTE_ID}"
+
+    # Nudge flag: /loop klipper-loop-poller.sh oturumu uyandirmak icin
+    printf '%s
+%s' "== DISCUSSION NOTE # |  |  ==" "" > /tmp/klipper-nudge-pending
+    log "nudge flag yazildi: #"
 
 handle_urgent() {
     log "URGENT route #$NOTE_ID — telegram push + info gather + memory + mark read YAPILMADI"

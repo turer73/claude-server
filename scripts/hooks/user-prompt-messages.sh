@@ -57,7 +57,7 @@ if [ "$CURRENT_MAX" -le "$LAST" ]; then
   exit 0
 fi
 
-# Yeni notları çek: id > LAST, hedef bu cihaz veya broadcast, okunmamış
+# Yeni notları çek: id > LAST, hedef bu cihaz veya broadcast (read durumuna BAKILMAZ — session marker yeterli)
 # Tab-separated ile parse, içerik 400 karaktere kırp
 NEW=$(sqlite3 -separator $'\t' "$DB" "
   SELECT id, from_device, COALESCE(to_device, '*'), title,
@@ -66,7 +66,6 @@ NEW=$(sqlite3 -separator $'\t' "$DB" "
   FROM notes
   WHERE id > $LAST
     AND (to_device = '$DEV' OR to_device IS NULL)
-    AND read = 0
   ORDER BY id ASC
   LIMIT 5
 " 2>/dev/null)

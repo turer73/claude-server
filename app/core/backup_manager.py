@@ -50,10 +50,20 @@ class BackupManager:
         name = f"backup_{label}_{ts}.tar.gz" if label else f"backup_{ts}.tar.gz"
         path = os.path.join(self._backup_dir, name)
 
+        # gzip level: default 1 (fast). 03:00 cron backup'ta gzip-9 ~11x daha
+        # fazla CPU yakıyordu (3.3s vs 0.3s) -> 85% eşiğini aşıp CRITICAL alert
+        # üretiyordu. Boyut farkı yedek başına ~2MB (lokal + VPS'e çekiliyor).
+        # BACKUP_GZIP_LEVEL ile override edilebilir (0-9).
+        try:
+            gzip_level = int(os.environ.get("BACKUP_GZIP_LEVEL", "1"))
+        except ValueError:
+            gzip_level = 1
+        gzip_level = min(9, max(1, gzip_level))
+
         with tempfile.TemporaryDirectory(prefix="bkp-snap-") as snap_dir:
             # Map source path -> arcname for items added to tar.
             # SQLite files get a consistent snapshot into snap_dir first.
-            with tarfile.open(path, "w:gz") as tar:
+            with tarfile.open(path, "w:gz", compresslevel=gzip_level) as tar:
                 for source in self._sources:
                     if not os.path.exists(source):
                         continue
