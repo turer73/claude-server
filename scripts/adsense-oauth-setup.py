@@ -29,6 +29,7 @@ import os
 import sys
 import urllib.parse
 import urllib.request
+from typing import Any
 
 AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URI = "https://oauth2.googleapis.com/token"  # noqa: S105 (URL)
@@ -38,19 +39,21 @@ REDIRECT = "http://localhost:8765"
 DEFAULT_OUT = "/opt/linux-ai-server/data/adsense-oauth-token.json"
 
 
-def _post(url: str, fields: dict) -> dict:
+def _post(url: str, fields: dict[str, str]) -> dict[str, Any]:
     data = urllib.parse.urlencode(fields).encode()
     req = urllib.request.Request(  # noqa: S310
         url, data=data, headers={"Content-Type": "application/x-www-form-urlencoded"}
     )
     with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
-        return json.loads(resp.read().decode() or "{}")
+        out: dict[str, Any] = json.loads(resp.read().decode() or "{}")
+    return out
 
 
-def _get(url: str, token: str) -> dict:
+def _get(url: str, token: str) -> dict[str, Any]:
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})  # noqa: S310
     with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
-        return json.loads(resp.read().decode() or "{}")
+        out: dict[str, Any] = json.loads(resp.read().decode() or "{}")
+    return out
 
 
 def main() -> int:
