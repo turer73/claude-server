@@ -23,6 +23,11 @@ echo "==> Sync source -> ${DKMS_SRC}"
 sudo mkdir -p "${DKMS_SRC}"
 sudo cp "${SRC_DIR}"/*.c "${SRC_DIR}/Makefile" "${SRC_DIR}/dkms.conf" "${DKMS_SRC}/"
 
+# Boot autoload: without this, DKMS installs the .ko but nothing loads them at
+# boot, so /proc/linux_ai* stay absent after a reboot (PR #104 Codex P2).
+echo "==> Install boot autoload -> /etc/modules-load.d/linux-ai.conf"
+sudo install -m 0644 "${SRC_DIR}/modules-load.conf" /etc/modules-load.d/linux-ai.conf
+
 # Register source with DKMS if not already registered. We do NOT remove an
 # existing registration — `dkms build --force` below picks up the freshly
 # synced source, so re-runs need no destructive remove/add.
