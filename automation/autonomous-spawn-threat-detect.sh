@@ -133,7 +133,18 @@ TG_MSG="<b>🛡 Autonomous Spawn — Threat Indicators</b>
 <i>Incele:</i> <code>cat ${SPAWN_LOG}</code>
 <i>High-recall scan — false positive olabilir. Manuel review zorunlu.</i>"
 
-bash /opt/linux-ai-server/automation/telegram-alert.sh --kind generic --text "$TG_MSG" >> "$LOG_FILE" 2>&1 || \
-    log "threat telegram alert failed for #$NOTE_ID"
+# Telegram yerine klipper->surer URGENT not (oturumlar notes API ile haberlesir)
+MK=$(grep '^MEMORY_API_KEY=' /opt/linux-ai-server/.env 2>/dev/null | cut -d= -f2-)
+NOTE_BODY=$(python3 -c "
+import json, sys
+hits = open(sys.argv[1]).read()[:800] if len(sys.argv)>1 else ''
+print(json.dumps({'from_device':'klipper','title':'URGENT: Threat #'+sys.argv[2]+' — '+sys.argv[3][:60],
+    'content': 'Threat-detect hits:\n'+hits}, ensure_ascii=False))
+" "$SPAWN_LOG" "$NOTE_ID" "$TG_MSG" 2>/dev/null)
+curl -sf -X POST http://127.0.0.1:8420/api/v1/memory/notes \
+    -H "X-Memory-Key: $MK" -H "Content-Type: application/json" \
+    -d "$NOTE_BODY" >> "$LOG_FILE" 2>&1 \
+    && log "threat note sent to surer: #$NOTE_ID" \
+    || log "threat note send failed for #$NOTE_ID"
 
 exit 0
