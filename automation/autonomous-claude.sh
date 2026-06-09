@@ -527,8 +527,6 @@ PY
 
     # Nudge flag: /loop klipper-loop-poller.sh oturumu uyandirmak icin
     printf '%s
-%s' "== DISCUSSION NOTE # |  |  ==" "" > /tmp/klipper-nudge-pending
-    log "nudge flag yazildi: #"
 
 handle_urgent() {
     log "URGENT route #$NOTE_ID — telegram push + info gather + memory + mark read YAPILMADI"
