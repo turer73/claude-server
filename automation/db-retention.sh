@@ -42,6 +42,23 @@ sqlite_exec() {
     fi
 }
 
+# OUTCOME marker via EXIT trap — covers ALL exit paths (success, dry-run early
+# exit, and set -e abort mid-retention). A trailing `echo OUTCOME: pass` only
+# fires on a full real run, so dry-run and failures fell through to the wrap.sh
+# rc-fallback ("outcome-undefined"). The trap emits an explicit pass/fail every
+# time, honoring the LIVESYS Faz1 outcome-contract (rc=0 alone is not success).
+_emit_outcome() {
+    local rc=$?
+    local tag=""
+    [ "$DRY_RUN" = "1" ] && tag=" (dry-run)"
+    if [ "$rc" -eq 0 ]; then
+        echo "OUTCOME: pass | retention complete${tag}"
+    else
+        echo "OUTCOME: fail | rc=$rc — retention abort${tag} (son log: $LOG_FILE)"
+    fi
+}
+trap _emit_outcome EXIT
+
 if [ "$DRY_RUN" = "1" ]; then
     log "DRY RUN — no rows will be deleted"
 fi
@@ -144,4 +161,4 @@ for db in "$SERVER_DB" "$CI_DB"; do
 done
 
 log "retention complete"
-echo "OUTCOME: pass | retention complete"
+# OUTCOME marker emitted by _emit_outcome EXIT trap (covers success/dry-run/fail).
