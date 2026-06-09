@@ -10,6 +10,8 @@ import httpx
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from app.core.config import read_env_var
+
 try:
     from app.api.memory import verify_key
 except ImportError:
@@ -124,7 +126,7 @@ async def _send_to_surer(
     analysis: dict, task: str, project: str, context: str
 ) -> int:
     """Surer-sonnet'e yapilandirilmis gorev paketi gonder."""
-    mem_key = os.environ.get("MEMORY_API_KEY", "")
+    mem_key = read_env_var("MEMORY_API_KEY")
     mem_url = "http://127.0.0.1:8420/api/v1/memory/notes"
     proje = analysis.get("proje", project) or "genel"
     ozet = analysis.get("ozet", task[:100])
