@@ -1,22 +1,25 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import subprocess
 import time
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.config import read_env_var
+from app.core.config import get_settings, read_env_var
+from app.core.shell_executor import ShellExecutor
+from app.exceptions import AuthorizationError, ShellExecutionError
 
 try:
     from app.api.memory import verify_key
 except ImportError:
-    async def verify_key():
+
+    async def verify_key() -> None:  # type: ignore[misc]
         pass
+
 
 router = APIRouter(prefix="/api/v1/dispatch", tags=["dispatch"])
 
@@ -43,7 +46,7 @@ class DispatchResult(BaseModel):
     summary: str
     klipper_results: list[str] = []
     surer_note_id: int | None = None
-    analysis: dict = {}
+    analysis: dict[str, Any] = {}
     duration_ms: int = 0
 
 
@@ -58,21 +61,41 @@ async def _ollama_chat(user_msg: str, system: str = "") -> str:
             json={"model": MODEL, "stream": False, "messages": messages},
         )
         resp.raise_for_status()
-        return resp.json()["message"]["content"].strip()
+        content: str = resp.json()["message"]["content"]
+        return content.strip()
 
 
 def _quick_route(task: str) -> str:
     """Kural-tabanli hizli yonlendirme — ML oncesi."""
     t = task.lower()
     klipper_kws = [
-        "bash ", "shell ", "servis restart", "log bak", "docker ps",
-        "git log", "git status", "memory yaz", "telegram", "cron ",
-        "discovery kaydet", "ollama", "komut calistir",
+        "bash ",
+        "shell ",
+        "servis restart",
+        "log bak",
+        "docker ps",
+        "git log",
+        "git status",
+        "memory yaz",
+        "telegram",
+        "cron ",
+        "discovery kaydet",
+        "ollama",
+        "komut calistir",
     ]
     surer_kws = [
-        "dosyasini duzenle", "pr ac", "commit at", "feature ekle",
-        ".tsx", ".ts dosya", "react ", "typescript", "component yaz",
-        "kod yaz", "bug fix", "implement",
+        "dosyasini duzenle",
+        "pr ac",
+        "commit at",
+        "feature ekle",
+        ".tsx",
+        ".ts dosya",
+        "react ",
+        "typescript",
+        "component yaz",
+        "kod yaz",
+        "bug fix",
+        "implement",
     ]
     if any(k in t for k in klipper_kws):
         return "KLIPPER"
@@ -81,18 +104,14 @@ def _quick_route(task: str) -> str:
     return ""
 
 
-async def _analyze_task(task: str, project: str, context: str) -> dict:
-    prompt = (
-        f"Gorev: {task}\n"
-        f"Proje: {project or 'belirtilmedi'}\n"
-        f"Ek bilgi: {context or 'yok'}\n\n"
-        "Analiz et ve JSON donus yap."
-    )
+async def _analyze_task(task: str, project: str, context: str) -> dict[str, Any]:
+    prompt = f"Gorev: {task}\nProje: {project or 'belirtilmedi'}\nEk bilgi: {context or 'yok'}\n\nAnaliz et ve JSON donus yap."
     raw = await _ollama_chat(prompt, system=ANALYZER_SYSTEM)
     m = re.search(r"\{[\s\S]+\}", raw)
     if m:
         try:
-            return json.loads(m.group(0))
+            parsed: dict[str, Any] = json.loads(m.group(0))
+            return parsed
         except Exception:
             pass
     return {
@@ -105,26 +124,24 @@ async def _analyze_task(task: str, project: str, context: str) -> dict:
 
 
 async def _run_klipper_cmd(cmd: str) -> str:
-    """Klipper bash komutlarini guvenli subset ile calistir."""
-    BLOCKED = ["rm -rf", "dd ", "mkfs", "chmod 777", "> /dev/", "shutdown", "reboot"]
-    for b in BLOCKED:
-        if b in cmd:
-            return f"BLOCKED: guvenli degil: {cmd[:50]}"
+    """Klipper bash komutunu projenin whitelisted ShellExecutor'i ile calistir.
+
+    GUVENLIK: komut qwen2.5:7b (LLM) tarafindan uretiliyor → bespoke denylist YERINE
+    audit edilmis ShellExecutor: (1) ilk-komut whitelist (shell_whitelist disindaki
+    bilinmeyen komut reddedilir — denylist'in tersi, cok daha guclu), (2) katastrofik
+    desen blogu (rm -rf /, chmod -R / vb. regex). RCE-yuzeyini daraltir."""
+    executor = ShellExecutor(whitelist=get_settings().shell_whitelist)
     try:
-        result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=30
-        )
-        out = (result.stdout + result.stderr).strip()
-        return out[:500] if out else "(cikti yok)"
-    except subprocess.TimeoutExpired:
-        return "TIMEOUT: 30sn asimdi"
-    except Exception as e:
-        return f"HATA: {e}"
+        result = await executor.execute(cmd, timeout=30)
+    except AuthorizationError as e:
+        return f"BLOCKED (whitelist/desen): {str(e)[:80]}"
+    except ShellExecutionError as e:
+        return f"HATA: {str(e)[:80]}"
+    out = (result.get("stdout", "") + result.get("stderr", "")).strip()
+    return out[:500] if out else "(cikti yok)"
 
 
-async def _send_to_surer(
-    analysis: dict, task: str, project: str, context: str
-) -> int:
+async def _send_to_surer(analysis: dict[str, Any], task: str, project: str, context: str) -> int:
     """Surer-sonnet'e yapilandirilmis gorev paketi gonder."""
     mem_key = read_env_var("MEMORY_API_KEY")
     mem_url = "http://127.0.0.1:8420/api/v1/memory/notes"
@@ -152,7 +169,8 @@ async def _send_to_surer(
             json={"from_device": "klipper", "title": title, "content": content},
         )
         resp.raise_for_status()
-        return resp.json().get("id", 0)
+        note_id: int = resp.json().get("id", 0)
+        return note_id
 
 
 @router.post("/task", response_model=DispatchResult, dependencies=[Depends(verify_key)])
@@ -180,15 +198,11 @@ async def dispatch_task(body: DispatchRequest) -> DispatchResult:
     # 5. Surer'a gorev paketi gonder
     if route in ("SURER", "HYBRID"):
         try:
-            surer_note_id = await _send_to_surer(
-                analysis, body.task, body.project, body.context
-            )
+            surer_note_id = await _send_to_surer(analysis, body.task, body.project, body.context)
         except Exception as e:
             klipper_results.append(f"SURER-SEND-HATA: {e}")
 
-    routed_to = (
-        "klipper" if route == "KLIPPER" else ("surer" if route == "SURER" else "both")
-    )
+    routed_to = "klipper" if route == "KLIPPER" else ("surer" if route == "SURER" else "both")
     ms = int((time.monotonic() - t0) * 1000)
 
     return DispatchResult(
