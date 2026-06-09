@@ -64,6 +64,9 @@
 # ad-advisor (reklam-baslatma danismani): GSC->reklam-deger kelime + /claude metin taslagi.
 # seo-gsc'den HEMEN SONRA (08:45) -> taze OAuth+GSC. Salt-okunur, ortak-hafiza, mail yok. ENABLED 2026-06-09.
 45 8 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh ad-advisor /opt/linux-ai-server/automation/ad-advisor.sh
+# adsense-readiness (reklam-alma/monetizasyon): AdSense site-durumu (API) + icerik denetimi ->
+# hazirlik-checklist + durum-degisimi alert. ad-advisor'dan sonra (09:00). Salt-okunur, mail yok. ENABLED 2026-06-09.
+0 9 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh adsense-readiness /opt/linux-ai-server/automation/adsense-readiness.sh
 # LIVESYS-SENSE alarm-yolu canary (gunluk 05:30) — known-good+known-bad enjekte edip
 # cron_outcomes'ta beklenen satiri dogrular; alarm-pipeline bozuksa OUTCOME:fail.
 # Sentetik enjeksiyonlar CANARY_SUPPRESS_ALERT ile sessiz; kendi sonucu normal akar.
