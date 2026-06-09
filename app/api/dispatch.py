@@ -129,7 +129,13 @@ async def _run_klipper_cmd(cmd: str) -> str:
     GUVENLIK: komut qwen2.5:7b (LLM) tarafindan uretiliyor → bespoke denylist YERINE
     audit edilmis ShellExecutor: (1) ilk-komut whitelist (shell_whitelist disindaki
     bilinmeyen komut reddedilir — denylist'in tersi, cok daha guclu), (2) katastrofik
-    desen blogu (rm -rf /, chmod -R / vb. regex). RCE-yuzeyini daraltir."""
+    desen blogu (rm -rf /, chmod -R / vb. regex). RCE-yuzeyini daraltir.
+
+    Codex P1: ShellExecutor whitelist'i YALNIZ ilk komutu kontrol eder → `df; nmap`
+    gibi zincir whitelist'i bypass eder. LLM-uretimi girdide shell-zincirleme/yonlendirme
+    meta-karakterlerini REDDET → tek-komut zorla (boylece whitelist tum komutu kapsar)."""
+    if re.search(r"[;&|`<>\n]|\$\(", cmd):
+        return f"BLOCKED: komut zincirleme/yonlendirme yasak (tek komut ver): {cmd[:60]}"
     executor = ShellExecutor(whitelist=get_settings().shell_whitelist)
     try:
         result = await executor.execute(cmd, timeout=30)
