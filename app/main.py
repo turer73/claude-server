@@ -20,13 +20,13 @@ from app.api.auth import router as auth_router
 from app.api.backup import router as backup_router
 from app.api.ci import router as ci_router
 from app.api.classifier import router as classifier_router
-from app.api.dispatch import router as dispatch_router
 from app.api.claude_code import router as claude_code_router
 from app.api.csp import router as csp_router
 from app.api.deploy import router as deploy_router
 from app.api.dev import router as dev_router
 from app.api.devops import router as devops_router
 from app.api.digest import router as digest_router
+from app.api.dispatch import router as dispatch_router
 from app.api.files import router as files_router
 from app.api.kernel import router as kernel_router
 from app.api.llm import router as llm_router

@@ -11,6 +11,7 @@ import json
 import sys
 import urllib.request
 from datetime import datetime
+from typing import Any
 
 
 def _ts() -> str:
@@ -25,7 +26,7 @@ def _log(path: str, msg: str) -> None:
         pass
 
 
-def _api(method: str, path: str, base: str, key: str, body=None):
+def _api(method: str, path: str, base: str, key: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
     url = base + path
     data = json.dumps(body).encode() if body else None
     req = urllib.request.Request(  # noqa: S310
@@ -36,7 +37,8 @@ def _api(method: str, path: str, base: str, key: str, body=None):
     )
     try:
         with urllib.request.urlopen(req, timeout=8) as r:  # noqa: S310
-            return json.loads(r.read())
+            result: dict[str, Any] = json.loads(r.read())
+        return result
     except Exception:
         return {}
 
@@ -54,7 +56,7 @@ def _classify(title: str, content: str) -> str:
     return "INFO"
 
 
-def main():
+def main() -> None:
     if len(sys.argv) < 6:
         print("usage: script MEM_KEY API_BASE LAST_ID STATE_PATH LOG_PATH")
         sys.exit(1)
