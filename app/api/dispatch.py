@@ -26,6 +26,46 @@ router = APIRouter(prefix="/api/v1/dispatch", tags=["dispatch"])
 OLLAMA_URL = "http://127.0.0.1:11434"
 MODEL = "qwen2.5:7b"
 
+# GUVENLIK (Codex P1b): whitelist'te olsa da arg'iyla keyfi kod calistiran yorumlayici/
+# wrapper komutlar — LLM-uretimi girdide _run_klipper_cmd bunlari reddeder.
+_INTERP_DENY = frozenset(
+    {
+        "bash",
+        "sh",
+        "dash",
+        "zsh",
+        "ksh",
+        "fish",
+        "csh",
+        "tcsh",
+        "python",
+        "python2",
+        "python3",
+        "perl",
+        "ruby",
+        "node",
+        "php",
+        "lua",
+        "tclsh",
+        "env",
+        "xargs",
+        "sudo",
+        "ssh",
+        "eval",
+        "exec",
+        "source",
+        "awk",
+        "gawk",
+        "mawk",
+        "sed",
+        "nc",
+        "ncat",
+        "netcat",
+        "socat",
+        "telnet",
+    }
+)
+
 ANALYZER_SYSTEM = (
     "Gorev analizci. JSON formatinda donus yap:\n"
     '{"route": "KLIPPER|SURER|HYBRID", "klipper_cmds": ["cmd1"], '
@@ -131,11 +171,20 @@ async def _run_klipper_cmd(cmd: str) -> str:
     bilinmeyen komut reddedilir — denylist'in tersi, cok daha guclu), (2) katastrofik
     desen blogu (rm -rf /, chmod -R / vb. regex). RCE-yuzeyini daraltir.
 
-    Codex P1: ShellExecutor whitelist'i YALNIZ ilk komutu kontrol eder → `df; nmap`
+    Codex P1a: ShellExecutor whitelist'i YALNIZ ilk komutu kontrol eder → `df; nmap`
     gibi zincir whitelist'i bypass eder. LLM-uretimi girdide shell-zincirleme/yonlendirme
-    meta-karakterlerini REDDET → tek-komut zorla (boylece whitelist tum komutu kapsar)."""
+    meta-karakterlerini REDDET → tek-komut zorla (boylece whitelist tum komutu kapsar).
+
+    Codex P1b: whitelisted yorumlayici/wrapper (bash -c, python -c, env, xargs, sudo,
+    awk/perl-system, find -exec) keyfi kod calistirir → whitelist'i deler. Ilk-komut
+    bunlardan biriyse REDDET (genis admin-whitelist'inin temel sizintisini kapatir)."""
     if re.search(r"[;&|`<>\n]|\$\(", cmd):
         return f"BLOCKED: komut zincirleme/yonlendirme yasak (tek komut ver): {cmd[:60]}"
+    base = cmd.strip().split()[0].rsplit("/", 1)[-1] if cmd.strip() else ""
+    if base in _INTERP_DENY:
+        return f"BLOCKED: yorumlayici/wrapper komut yasak ({base})"
+    if base == "find" and "-exec" in cmd:
+        return "BLOCKED: find -exec yasak (keyfi kod)"
     executor = ShellExecutor(whitelist=get_settings().shell_whitelist)
     try:
         result = await executor.execute(cmd, timeout=30)
