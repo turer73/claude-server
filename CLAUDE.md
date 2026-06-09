@@ -4,7 +4,7 @@
 - **Hostname:** klipper
 - **Donanim:** Beelink SER8 (AZW) — BIOS V035 P8C0M0C15.14 (26/06/2025)
 - **OS:** Ubuntu 26.04 LTS (Resolute)
-- **Kernel:** 7.0.0-15-generic + 3 ozel modul (proc_linux_ai, nf_linux_ai, usb_linux_ai)
+- **Kernel:** 7.0.0-15-generic (calisan; 7.0.0-22 kurulu, reboot bekliyor) + 3 ozel modul (proc_linux_ai, nf_linux_ai, usb_linux_ai) — **DKMS-yonetimli**, kernel-upgrade'de otomatik rebuild
 - **CPU:** AMD Ryzen 7 8845HS w/ Radeon 780M, 8 cekirdek / 16 thread
 - **RAM:** 28GB (27946896 kB)
 - **Disk:** 98GB SSD (LVM), 28GB kullanildi
@@ -57,6 +57,8 @@ VPS Dokploy uzerinde ayrica baska servisler var (asagi bkz).
 - proc_linux_ai — /proc/linux_ai (CPU, RAM, uptime, esikler)
 - nf_linux_ai — /proc/linux_ai_firewall (IP engelleme)
 - usb_linux_ai — /proc/linux_ai_usb (USB whitelist)
+
+**DKMS:** Moduller DKMS'e bagli (`linux-ai/1.0`) — her kernel upgrade'inde otomatik rebuild+install (`/etc/kernel/postinst.d/dkms` hook), boot'ta `modules-load.d/linux-ai.conf` ile yuklenir. Kaynak=git (`kernel/*.c`), DKMS kopyasi=`/usr/src/linux-ai-1.0`. Kayit/yeniden-kayit: `bash kernel/install-dkms.sh` (idempotent). Durum: `dkms status linux-ai`.
 
 ## Iliskili Projeler
 
@@ -122,7 +124,8 @@ Oturum basinda hook DB durumunu otomatik yukler. Her oturum sonunda /memory save
 sudo systemctl restart linux-ai-server
 journalctl -u linux-ai-server -f
 docker ps -a
-cd /opt/linux-ai-server/kernel && make && sudo insmod proc_linux_ai.ko
+# Kernel modul gelistirme (gecici test): cd kernel && make && sudo insmod proc_linux_ai.ko
+# Kalici/kernel-upgrade-guvenli (DKMS, .c degisince): bash kernel/install-dkms.sh
 
 ## License
 Apache-2.0 — see `LICENSE` at repo root.
