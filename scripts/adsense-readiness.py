@@ -152,9 +152,22 @@ def _fetch(url: str, timeout: int = 12) -> tuple[int | None, str]:
 
 
 def fetch_sites(token: str, account: str) -> dict[str, str]:
-    """AdSense hesabındaki siteler → {domain: state}."""
-    data = _adsense_get(token, f"{account}/sites?pageSize=50")
-    return {s.get("domain", ""): s.get("state", "STATE_UNSPECIFIED") for s in data.get("sites", []) if s.get("domain")}
+    """AdSense hesabındaki siteler → {domain: state}. Codex P2: nextPageToken ile
+    sayfalama (>50 site olan hesapta eksik çekmeyi önle)."""
+    sites: dict[str, str] = {}
+    page_token = ""
+    for _ in range(20):  # güvenlik üst-sınırı (≤1000 site); sonsuz-döngü koruması
+        path = f"{account}/sites?pageSize=50"
+        if page_token:
+            path += f"&pageToken={page_token}"
+        data = _adsense_get(token, path)
+        for s in data.get("sites", []):
+            if s.get("domain"):
+                sites[s["domain"]] = s.get("state", "STATE_UNSPECIFIED")
+        page_token = data.get("nextPageToken", "")
+        if not page_token:
+            break
+    return sites
 
 
 def audit_site(domain: str, pub: str) -> dict[str, Any]:
@@ -313,10 +326,13 @@ def main() -> int:
     print(report)
 
     derr = _write_discovery(f"AdSense hazırlık ({len(sites)} site)", report)
-    # durum-değişimi → ayrı, yüksek-sinyal discovery (type=bug → SessionStart)
+    # durum-değişimi → ayrı, yüksek-sinyal discovery (type=bug → SessionStart).
+    # Codex P2: alert yazımı FAIL olursa o site için state'i İLERLETME (prev'de bırak)
+    # → sonraki koşu değişimi yeniden algılar, alert sessizce kaybolmaz.
+    save_state = dict(sites)
     for c in changes:
         kind = "ONAY" if c["kind"] == "good" else "REGRESYON"
-        _write_discovery(
+        werr = _write_discovery(
             f"AdSense {kind}: {c['domain']} {c['from']}→{c['to']}",
             f"AdSense site durumu değişti: {c['domain']} {c['from']} → {c['to']}. "
             + (
@@ -326,7 +342,9 @@ def main() -> int:
             ),
             dtype="bug",
         )
-    _save_state(sites)
+        if werr and c["domain"] in prev:
+            save_state[c["domain"]] = prev[c["domain"]]  # alert yazılamadı → eski state koru
+    _save_state(save_state)
 
     ready = sum(1 for s in sites.values() if s == "READY")
     note = f"{len(changes)} durum-değişimi" if changes else "değişim yok"
