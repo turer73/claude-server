@@ -53,7 +53,17 @@ scan "cred-shadow"  'cat[[:space:]]+(/etc/shadow|/etc/sudoers)([[:space:]]|$)'
 scan "cred-k8s"     'kubectl[[:space:]]+get[[:space:]]+secret[^|]*-o[[:space:]]+(yaml|json)'
 
 # ───── Exfiltration ─────
-scan "exfil-curl-pipe"  '(curl|wget)[[:space:]][^|;]*\|[[:space:]]*(bash|sh|python|python3)'
+scan_remote() {
+    local label= pattern=
+    local match
+    match=
+    if [ -n  ]; then
+        local short
+        short=
+        HITS+=(: )
+    fi
+}
+scan_remote exfil-curl-pipe  '(curl|wget)[[:space:]][^|;]*\|[[:space:]]*(bash|sh|python|python3)'
 scan "exfil-base64-net" 'base64[[:space:]][^|;]*\|[[:space:]]*(curl|wget|nc|ncat)'
 scan "exfil-curl-file"  'curl[[:space:]][^;|]*-(F|-data-binary)[[:space:]]@'
 

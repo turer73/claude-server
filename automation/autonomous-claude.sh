@@ -522,6 +522,11 @@ except Exception as e:
 PY
 }
 
+    # Nudge flag: /loop klipper-loop-poller.sh oturumu uyandirmak icin
+    printf '%s' "== DISCUSSION NOTE #${NOTE_ID} | ${FROM} | ${TITLE} ==" > /tmp/klipper-nudge-pending
+    printf '\n%s' "${FULL_CONTENT:0:500}" >> /tmp/klipper-nudge-pending
+    log "nudge flag yazildi: #${NOTE_ID}"
+
 handle_urgent() {
     log "URGENT route #$NOTE_ID — telegram push + info gather + memory + mark read YAPILMADI"
 
