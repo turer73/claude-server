@@ -3,6 +3,7 @@ RAG API + metric logging (Qdrant + Ollama bge-m3 + qwen2.5)
 """
 
 import os
+import re
 import sqlite3
 import time
 
@@ -103,6 +104,114 @@ def _search(vec, top_k=5, project=None, source=None):
     return r.json().get("result", [])
 
 
+# ── Hybrid retrieval (dense + keyword → Reciprocal Rank Fusion) ──────────────
+# Clean-room: standart RRF deseni (Odysseus'tan FIKIR alindi, KOD degil — repo
+# tutarsiz-lisansli dev=MIT/main=AGPL). Dense (bge-m3 cosine) anlamsal yakaliyor;
+# keyword (Qdrant full-text) tam-terim/nadir-token (hata-kodu, fonksiyon-adi, ID)
+# yakaliyor — embedding'in kacirdigi recall'i kapatir.
+RRF_K = 60
+KW_PAGE = 128  # keyword scroll sayfa-boyu
+KW_MAX_PAGES = 8  # en cok 8 sayfa (1024 aday) -> common-token'da bile genis havuz
+_STOP = {"ve", "ile", "bir", "bu", "icin", "the", "and", "for", "with", "that", "this", "var", "yok", "ama", "veya"}
+
+
+def _ensure_text_index():
+    """Qdrant 'text' payload alanina full-text index (keyword-match icin). Idempotent —
+    zaten varsa Qdrant no-op doner; hata/erisimsizlik sessizce gecilir (dense calismaya devam)."""
+    try:
+        requests.put(
+            f"{QDRANT_URL}/collections/{COLLECTION}/index",
+            json={
+                "field_name": "text",
+                "field_schema": {"type": "text", "tokenizer": "word", "lowercase": True, "min_token_len": 2},
+            },
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+
+def _tokenize(q):
+    toks = re.findall(r"\w+", (q or "").lower())
+    return [t for t in toks if len(t) >= 3 and t not in _STOP][:12]
+
+
+def _keyword_search(query, top_k=5, project=None, source=None):
+    """Qdrant full-text 'should' match (>=1 token) → token-kapsama skoruyla siralanir.
+    Index yoksa / Qdrant hata → bos liste (hybrid graceful dense-only'e duser)."""
+    toks = _tokenize(query)
+    if not toks:
+        return []
+    flt = {"should": [{"key": "text", "match": {"text": t}} for t in toks]}
+    must = []
+    if project:
+        must.append({"key": "project", "match": {"value": project}})
+    if source:
+        must.append({"key": "source", "match": {"value": source}})
+    if must:
+        flt["must"] = must
+    # Codex P2: scroll'u SAYFALA — tek 'limit' common-token'da en iyi token-kapsama
+    # eslesmelerini kesebilir (scroll ID-sirasi, relevance degil). Genis aday-havuzu
+    # topla (≤KW_MAX_PAGES×KW_PAGE), SONRA kapsama'ya gore sirala.
+    pts = []
+    offset = None
+    for _ in range(KW_MAX_PAGES):
+        body = {"filter": flt, "limit": KW_PAGE, "with_payload": True}
+        if offset is not None:
+            body["offset"] = offset
+        try:
+            r = requests.post(f"{QDRANT_URL}/collections/{COLLECTION}/points/scroll", json=body, timeout=20)
+            if not r.ok:
+                break
+            res = r.json().get("result", {})
+        except Exception:
+            break
+        page = res.get("points", [])
+        pts.extend(page)
+        offset = res.get("next_page_offset")
+        if not offset or not page:
+            break
+    scored = []
+    for p in pts:
+        text = (p.get("payload", {}).get("text", "") or "").lower()
+        cover = sum(1 for t in toks if t in text)
+        if cover:
+            scored.append((cover, p))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [{"id": p["id"], "score": float(c), "payload": p.get("payload", {})} for c, p in scored[:top_k]]
+
+
+def _hybrid_search(query, vec, top_k=5, project=None, source=None):
+    """Dense + keyword → Reciprocal Rank Fusion (k=RRF_K). Keyword-leg bos/fail → dense-only."""
+    pool = max(top_k * 4, 20)
+    dense = _search(vec, top_k=pool, project=project, source=source)
+    kw = _keyword_search(query, top_k=pool, project=project, source=source)
+    fused: dict = {}
+    keep: dict = {}
+    for rank, h in enumerate(dense):
+        pid = h["id"]
+        fused[pid] = fused.get(pid, 0.0) + 1.0 / (RRF_K + rank + 1)
+        keep[pid] = h
+    for rank, h in enumerate(kw):
+        pid = h["id"]
+        fused[pid] = fused.get(pid, 0.0) + 1.0 / (RRF_K + rank + 1)
+        keep.setdefault(pid, h)
+    ranked = sorted(fused.items(), key=lambda x: x[1], reverse=True)[:top_k]
+    out = []
+    for pid, rrf in ranked:
+        h = dict(keep[pid])
+        h["score"] = rrf
+        out.append(h)
+    return out
+
+
+# Modul-load: text-index garanti (idempotent, erisimsizlikte sessiz).
+try:
+    _ensure_text_index()
+except Exception:
+    pass
+
+
 @router.get("/health")
 def health():
     try:
@@ -130,14 +239,24 @@ def search(
     top_k: int = Body(5, embed=True),
     project: str | None = Body(None, embed=True),
     source: str | None = Body(None, embed=True),
+    mode: str = Body("hybrid", embed=True),
 ):
     t0 = time.time()
-    vec = _embed(q)
-    hits = _search(vec, top_k=top_k, project=project, source=source)
+    # mode: hybrid (varsayilan, dense+keyword RRF) | vector (eski cosine) | keyword
+    if mode == "keyword":
+        hits = _keyword_search(q, top_k=top_k, project=project, source=source)
+    else:
+        vec = _embed(q)
+        hits = (
+            _hybrid_search(q, vec, top_k=top_k, project=project, source=source)
+            if mode != "vector"
+            else _search(vec, top_k=top_k, project=project, source=source)
+        )
     duration_ms = int((time.time() - t0) * 1000)
     _log_query("search", q, project, source, top_k, hits, duration_ms, request=request)
     return {
         "query": q,
+        "mode": mode,
         "count": len(hits),
         "duration_ms": duration_ms,
         "results": [
@@ -169,7 +288,7 @@ def ask(
 ):
     t0 = time.time()
     vec = _embed(q)
-    hits = _search(vec, top_k=top_k, project=project)
+    hits = _hybrid_search(q, vec, top_k=top_k, project=project)
     context = "\n\n".join(
         f"--- Kaynak {i + 1} ({h['payload']['source']}, skor {h['score']:.2f}) ---\n{h['payload'].get('text', '')[:1500]}"
         for i, h in enumerate(hits)
