@@ -110,6 +110,8 @@ def _search(vec, top_k=5, project=None, source=None):
 # keyword (Qdrant full-text) tam-terim/nadir-token (hata-kodu, fonksiyon-adi, ID)
 # yakaliyor — embedding'in kacirdigi recall'i kapatir.
 RRF_K = 60
+KW_PAGE = 128  # keyword scroll sayfa-boyu
+KW_MAX_PAGES = 8  # en cok 8 sayfa (1024 aday) -> common-token'da bile genis havuz
 _STOP = {"ve", "ile", "bir", "bu", "icin", "the", "and", "for", "with", "that", "this", "var", "yok", "ama", "veya"}
 
 
@@ -148,17 +150,27 @@ def _keyword_search(query, top_k=5, project=None, source=None):
         must.append({"key": "source", "match": {"value": source}})
     if must:
         flt["must"] = must
-    try:
-        r = requests.post(
-            f"{QDRANT_URL}/collections/{COLLECTION}/points/scroll",
-            json={"filter": flt, "limit": top_k * 4, "with_payload": True},
-            timeout=20,
-        )
-        if not r.ok:
-            return []
-        pts = r.json().get("result", {}).get("points", [])
-    except Exception:
-        return []
+    # Codex P2: scroll'u SAYFALA — tek 'limit' common-token'da en iyi token-kapsama
+    # eslesmelerini kesebilir (scroll ID-sirasi, relevance degil). Genis aday-havuzu
+    # topla (≤KW_MAX_PAGES×KW_PAGE), SONRA kapsama'ya gore sirala.
+    pts = []
+    offset = None
+    for _ in range(KW_MAX_PAGES):
+        body = {"filter": flt, "limit": KW_PAGE, "with_payload": True}
+        if offset is not None:
+            body["offset"] = offset
+        try:
+            r = requests.post(f"{QDRANT_URL}/collections/{COLLECTION}/points/scroll", json=body, timeout=20)
+            if not r.ok:
+                break
+            res = r.json().get("result", {})
+        except Exception:
+            break
+        page = res.get("points", [])
+        pts.extend(page)
+        offset = res.get("next_page_offset")
+        if not offset or not page:
+            break
     scored = []
     for p in pts:
         text = (p.get("payload", {}).get("text", "") or "").lower()
@@ -166,7 +178,7 @@ def _keyword_search(query, top_k=5, project=None, source=None):
         if cover:
             scored.append((cover, p))
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [{"id": p["id"], "score": float(c), "payload": p.get("payload", {})} for c, p in scored[: top_k * 4]]
+    return [{"id": p["id"], "score": float(c), "payload": p.get("payload", {})} for c, p in scored[:top_k]]
 
 
 def _hybrid_search(query, vec, top_k=5, project=None, source=None):
