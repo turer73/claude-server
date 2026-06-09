@@ -20,6 +20,7 @@ from app.api.auth import router as auth_router
 from app.api.backup import router as backup_router
 from app.api.ci import router as ci_router
 from app.api.classifier import router as classifier_router
+from app.api.dispatch import router as dispatch_router
 from app.api.claude_code import router as claude_code_router
 from app.api.csp import router as csp_router
 from app.api.deploy import router as deploy_router
@@ -268,6 +269,7 @@ def create_app() -> FastAPI:
     app.include_router(monitoring_router)
     app.include_router(n8n_router)
     app.include_router(classifier_router)
+    app.include_router(dispatch_router)
     app.include_router(logs_router)
     app.include_router(ws_monitor_router)
     app.include_router(ws_terminal_router)
