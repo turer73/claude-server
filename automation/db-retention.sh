@@ -36,11 +36,28 @@ sqlite_exec() {
     if [ "$DRY_RUN" = "1" ]; then
         local count_stmt
         count_stmt=$(echo "$stmt" | sed -E 's/^DELETE FROM /SELECT COUNT(*) FROM /')
-        sqlite3 "$db" "$count_stmt"
+        sqlite3 -cmd ".timeout 10000" "$db" "$count_stmt"
     else
-        sqlite3 "$db" "$stmt; SELECT changes();"
+        sqlite3 -cmd ".timeout 10000" "$db" "$stmt; SELECT changes();"
     fi
 }
+
+# OUTCOME marker via EXIT trap — covers ALL exit paths (success, dry-run early
+# exit, and set -e abort mid-retention). A trailing `echo OUTCOME: pass` only
+# fires on a full real run, so dry-run and failures fell through to the wrap.sh
+# rc-fallback ("outcome-undefined"). The trap emits an explicit pass/fail every
+# time, honoring the LIVESYS Faz1 outcome-contract (rc=0 alone is not success).
+_emit_outcome() {
+    local rc=$?
+    local tag=""
+    [ "$DRY_RUN" = "1" ] && tag=" (dry-run)"
+    if [ "$rc" -eq 0 ]; then
+        echo "OUTCOME: pass | retention complete${tag}"
+    else
+        echo "OUTCOME: fail | rc=$rc — retention abort${tag} (son log: $LOG_FILE)"
+    fi
+}
+trap _emit_outcome EXIT
 
 if [ "$DRY_RUN" = "1" ]; then
     log "DRY RUN — no rows will be deleted"
@@ -136,7 +153,7 @@ for db in "$SERVER_DB" "$CI_DB"; do
     [ -f "$db" ] || continue
     pre_db=$(stat -c%s "$db" 2>/dev/null || echo 0)
     pre_wal=$(stat -c%s "${db}-wal" 2>/dev/null || echo 0)
-    sqlite3 "$db" "PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null
+    sqlite3 -cmd ".timeout 30000" "$db" "PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null
     post_db=$(stat -c%s "$db" 2>/dev/null || echo 0)
     post_wal=$(stat -c%s "${db}-wal" 2>/dev/null || echo 0)
     saved=$(( (pre_db + pre_wal - post_db - post_wal) / 1024 ))
@@ -144,3 +161,4 @@ for db in "$SERVER_DB" "$CI_DB"; do
 done
 
 log "retention complete"
+# OUTCOME marker emitted by _emit_outcome EXIT trap (covers success/dry-run/fail).
