@@ -36,9 +36,9 @@ sqlite_exec() {
     if [ "$DRY_RUN" = "1" ]; then
         local count_stmt
         count_stmt=$(echo "$stmt" | sed -E 's/^DELETE FROM /SELECT COUNT(*) FROM /')
-        sqlite3 "$db" "$count_stmt"
+        sqlite3 -cmd ".timeout 10000" "$db" "$count_stmt"
     else
-        sqlite3 "$db" "$stmt; SELECT changes();"
+        sqlite3 -cmd ".timeout 10000" "$db" "$stmt; SELECT changes();"
     fi
 }
 
@@ -136,7 +136,7 @@ for db in "$SERVER_DB" "$CI_DB"; do
     [ -f "$db" ] || continue
     pre_db=$(stat -c%s "$db" 2>/dev/null || echo 0)
     pre_wal=$(stat -c%s "${db}-wal" 2>/dev/null || echo 0)
-    sqlite3 "$db" "PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null
+    sqlite3 -cmd ".timeout 30000" "$db" "PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null
     post_db=$(stat -c%s "$db" 2>/dev/null || echo 0)
     post_wal=$(stat -c%s "${db}-wal" 2>/dev/null || echo 0)
     saved=$(( (pre_db + pre_wal - post_db - post_wal) / 1024 ))
@@ -144,3 +144,4 @@ for db in "$SERVER_DB" "$CI_DB"; do
 done
 
 log "retention complete"
+echo "OUTCOME: pass | retention complete"
