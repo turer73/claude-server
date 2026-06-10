@@ -25,6 +25,13 @@ from app.core.shell_executor import ShellExecutor
 _GOVERNOR_RE = re.compile(r"scaling_governor|cpufreq-set\s+-g")
 _VALID_GOVERNOR = re.compile(r"^[a-z]+$")  # ondemand/schedutil/performance/powersave...
 
+# #567 FP fix: sustained-window gating. cpu/mem/disk geçici-zirve eğilimli (zamanlanmış
+# ağır iş — test-runner/e2e gece bakım penceresinde %98 anlık zirve yapıyor ama sürekli
+# değil). Critical SADECE son N örnek de eşik-üstüyse (sürdürülen-yük). temperature hariç
+# (fiziksel — tek yüksek okuma gerçek, thermal yanıt anlık olmalı).
+_SUSTAINED_N = int(os.environ.get("ALERT_SUSTAINED_SAMPLES", "3"))  # 3×30s = 90s sürdürülen
+_SUSTAINED_SOURCES = frozenset({"cpu", "memory", "disk"})
+
 
 @dataclass
 class Alert:
@@ -305,6 +312,16 @@ class DevOpsAgent:
 
     # ── Detector ───────────────────────────────────────
 
+    def _sustained_high(self, key: str, threshold: float) -> bool:
+        """Son _SUSTAINED_N örnek (current dahil — _history'ye _detect'ten ÖNCE append edilir)
+        eşik-üstü mü → sürdürülen-yük. Geçici zirveyi (zamanlanmış toplu-iş) filtreler.
+        Yeterli geçmiş yoksa (<N örnek, startup) False — sürdürülen doğrulanamaz, critical etme."""
+        recent = list(self._history)[-_SUSTAINED_N:]
+        vals = [m.get(key) for m in recent if m.get(key) is not None]
+        if len(vals) < _SUSTAINED_N:
+            return False
+        return all(v >= threshold for v in vals)
+
     def _detect(self, metrics: dict) -> list[Alert]:
         now = datetime.now(UTC).isoformat()
         alerts = []
@@ -323,11 +340,22 @@ class DevOpsAgent:
 
             severity = None
             if value >= threshold:
-                severity = "critical"
+                # Sustained-window gating (#567): cpu/mem/disk geçici-zirvede critical
+                # üretmesin — son N örnek de eşik-üstü olmalı. Eşik-üstü ama sürdürülmemiş
+                # → warning (soft; remediate/escalate/critical-Telegram YOK). temperature
+                # ve diğerleri tek-örnek critical (fiziksel/anlık).
+                unsustained = source in _SUSTAINED_SOURCES and not self._sustained_high(key, threshold)
+                severity = "warning" if unsustained else "critical"
             elif value >= threshold * 0.9:
                 severity = "warning"
 
-            if severity and source not in self._active_alerts:
+            # Codex P1: yeni-alert VEYA warning→critical YÜKSELTME. sustained-gating
+            # sonrası ilk-örnek warning olarak aktif-slotu tutar; sürdürülen olunca
+            # 'source not in _active_alerts' guard'ı critical'i engellerdi → gerçek
+            # sürekli-yük asla escalate olmazdı. Upgrade ile çözülür.
+            existing = self._active_alerts.get(source)
+            is_upgrade = existing is not None and existing.severity == "warning" and severity == "critical"
+            if severity and (existing is None or is_upgrade):
                 alert = Alert(
                     id=f"{source}-{self._check_count}",
                     severity=severity,

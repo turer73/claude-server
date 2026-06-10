@@ -155,15 +155,59 @@ async def test_detect_normal_no_alerts():
     assert len(alerts) == 0
 
 
-async def test_detect_cpu_critical():
+async def test_detect_cpu_sustained_critical():
+    # #567 sustained-gating: SÜRDÜRÜLEN yüksek CPU → critical. _history'de N örnek
+    # eşik-üstü olmalı (prod'da _tick append eder; testte elle doldur).
+    from app.core.devops_agent import _SUSTAINED_N, DevOpsAgent
+
+    agent = DevOpsAgent(db=None, interval=60)
+    hi = {"cpu_percent": 95, "memory_percent": 40, "disk_percent": 50, "temperature": 45}
+    agent._history.extend([dict(hi) for _ in range(_SUSTAINED_N)])
+    alerts = agent._detect(hi)
+    cpu = [a for a in alerts if a.source == "cpu"]
+    assert len(cpu) == 1
+    assert cpu[0].severity == "critical"
+
+
+async def test_detect_cpu_transient_warning():
+    # #567 FP: GEÇİCİ zirve (zamanlanmış ağır iş — test-runner/e2e) tek-örnekte critical
+    # ÜRETMEMELİ. Yeterli sürdürülen-geçmiş yok → warning (remediate/escalate yok).
     from app.core.devops_agent import DevOpsAgent
 
     agent = DevOpsAgent(db=None, interval=60)
-    metrics = {"cpu_percent": 95, "memory_percent": 40, "disk_percent": 50, "temperature": 45}
+    metrics = {"cpu_percent": 98, "memory_percent": 40, "disk_percent": 50, "temperature": 45}
     alerts = agent._detect(metrics)
-    assert len(alerts) == 1
-    assert alerts[0].source == "cpu"
-    assert alerts[0].severity == "critical"
+    cpu = [a for a in alerts if a.source == "cpu"]
+    assert len(cpu) == 1
+    assert cpu[0].severity == "warning"  # eşik-üstü ama sürdürülmemiş → critical DEĞİL
+
+
+async def test_detect_cpu_warning_upgrades_to_critical():
+    # Codex P1: ilk geçici-warning aktif-slotu tutar; SÜRDÜRÜLEN olunca critical'e
+    # YÜKSELMELİ (yoksa gerçek sürekli-yük warning'de takılı kalır, escalate olmaz).
+    from app.core.devops_agent import _SUSTAINED_N, DevOpsAgent
+
+    agent = DevOpsAgent(db=None, interval=60)
+    metrics = {"cpu_percent": 98, "memory_percent": 40, "disk_percent": 50, "temperature": 45}
+    a1 = agent._detect(metrics)  # history boş → transient warning, aktif-slot dolu
+    assert [a for a in a1 if a.source == "cpu"][0].severity == "warning"
+    agent._history.extend([dict(metrics) for _ in range(_SUSTAINED_N)])  # artık sürdürülen
+    a2 = agent._detect(metrics)
+    cpu = [a for a in a2 if a.source == "cpu"]
+    assert len(cpu) == 1
+    assert cpu[0].severity == "critical"  # warning→critical yükseltildi + emit
+
+
+async def test_detect_temperature_single_critical_not_gated():
+    # temperature sustained-gating'e TABİ DEĞİL (fiziksel — tek yüksek okuma gerçek).
+    from app.core.devops_agent import DevOpsAgent
+
+    agent = DevOpsAgent(db=None, interval=60)
+    metrics = {"cpu_percent": 20, "memory_percent": 40, "disk_percent": 50, "temperature": 95}
+    alerts = agent._detect(metrics)
+    temp = [a for a in alerts if a.source == "temperature"]
+    assert len(temp) == 1
+    assert temp[0].severity == "critical"  # tek-örnek bile critical (gated değil)
 
 
 async def test_detect_warning_zone():
