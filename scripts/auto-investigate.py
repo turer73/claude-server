@@ -111,8 +111,16 @@ def investigate(source: str, recur: str) -> dict:
     finding = (run.get("result") or "").strip()
     if not finding:
         return {"ok": False, "error": "boş inceleme"}
-    # Bulguyu AUTO-alert discovery'sine yaz (dedup: aynı başlık -> details güncellenir).
+    # Teşhisi KALICI hale getir — "teşhis edip bırakma" yerine 3 katman:
+    #   (1) discovery FIX-PENDING + status=active: teşhis≠çözüm. Biri yanlışlıkla 'completed'
+    #       yapsa bile sonraki recurrence regression-active üretir → SessionStart'ta kalır.
+    #   (2) durable memory (type=project, name-deduped upsert): teşhis kurumsal-bilgi olur,
+    #       discovery kapansa/silinse bile kaybolmaz.
     if mkey:
+        hdr = {"X-Memory-Key": mkey}
+        fix_pending = (
+            f"⚠️ FIX-PENDING — teşhis tamam, düzeltme UYGULANMADI ({recur}x tekrar).\n🔍 Otonom kök-neden incelemesi:\n{finding[:3400]}"
+        )
         try:
             _post_json(
                 f"{API_BASE}/api/v1/memory/discoveries",
@@ -121,10 +129,27 @@ def investigate(source: str, recur: str) -> dict:
                     "project": "linux-ai-server",
                     "type": "bug",
                     "title": f"AUTO-alert: {source}",
-                    "details": f"🔍 Otonom kök-neden incelemesi ({recur}x):\n{finding[:3500]}",
-                    "rationale": "auto-investigate.py (Slice B, salt-okunur /claude).",
+                    "details": fix_pending,
+                    "status": "active",
+                    "rationale": "auto-investigate.py — teşhis YAPILDI, FIX bekliyor (completed işaretleme!).",
                 },
-                {"X-Memory-Key": mkey},
+                hdr,
+                15,
+            )
+        except Exception:
+            pass
+        try:
+            _post_json(
+                f"{API_BASE}/api/v1/memory/memories",
+                {
+                    "type": "project",
+                    "name": f"auto-diagnosis-{source}",
+                    "description": f"{source} recurring-critical otomatik kök-neden teşhisi (auto-investigate)",
+                    "content": f"{source} {recur}x tekrarlayan critical — otomatik teşhis:\n{finding[:2500]}",
+                    "source_device": "klipper",
+                    "rationale": "auto-investigate.py durable kayıt — teşhis kaybolmasın, fix-takibi için.",
+                },
+                hdr,
                 15,
             )
         except Exception:
