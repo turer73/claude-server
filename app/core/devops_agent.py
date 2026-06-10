@@ -349,7 +349,13 @@ class DevOpsAgent:
             elif value >= threshold * 0.9:
                 severity = "warning"
 
-            if severity and source not in self._active_alerts:
+            # Codex P1: yeni-alert VEYA warning→critical YÜKSELTME. sustained-gating
+            # sonrası ilk-örnek warning olarak aktif-slotu tutar; sürdürülen olunca
+            # 'source not in _active_alerts' guard'ı critical'i engellerdi → gerçek
+            # sürekli-yük asla escalate olmazdı. Upgrade ile çözülür.
+            existing = self._active_alerts.get(source)
+            is_upgrade = existing is not None and existing.severity == "warning" and severity == "critical"
+            if severity and (existing is None or is_upgrade):
                 alert = Alert(
                     id=f"{source}-{self._check_count}",
                     severity=severity,
