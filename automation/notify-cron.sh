@@ -111,8 +111,11 @@ recur_count() {
 # sorgusu; per-source-tip mantığı yok. Best-effort.
 reconcile_autobugs() {
     [ -f "$MEMORY_DB" ] || return 0
+    # Codex P2: FIX-PENDING teşhisleri MUAF. Raw auto-alert "kaynak sessiz=düzeldi" ile
+    # kapatılabilir; ama auto-investigate'in FIX-PENDING teşhisi alarm geçici sessizleşse
+    # bile çözülmemiştir (fix uygulanmadı) — kapatırsak #567'deki gömülme tekrarlanır.
     sqlite3 "$MEMORY_DB" \
-        "SELECT id || '|' || substr(title,13) FROM discoveries WHERE type='bug' AND status='active' AND title LIKE 'AUTO-alert: %';" \
+        "SELECT id || '|' || substr(title,13) FROM discoveries WHERE type='bug' AND status='active' AND title LIKE 'AUTO-alert: %' AND COALESCE(details,'') NOT LIKE '%FIX-PENDING%';" \
         2>/dev/null | while IFS='|' read -r did dsrc; do
         [ -z "$did" ] || [ -z "$dsrc" ] && continue
         local recent
