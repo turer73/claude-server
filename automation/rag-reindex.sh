@@ -5,6 +5,17 @@
 set -uo pipefail
 ROOT="/opt/linux-ai-server"
 . "$ROOT/scripts/lib/outcome.sh"
+
+# Concurrency-kilit (Codex P2 / #566): rag_index_all.py cleanup'i klipper-memory-* (NEW
+# haric) HEPSINI siler. Iki reindex cakisirsa Run-A cleanup'i Run-B'nin in-flight/canli
+# koleksiyonunu silip alias'i kirar. flock -n: cakisan kosu CALISTIRMA, partial-skip.
+LOCK="$ROOT/data/hook-state/rag-reindex.lock"
+exec 9>"$LOCK" || { emit_outcome fail "rag-reindex: lock dosyasi acilamadi ($LOCK)"; exit 0; }
+if ! flock -n 9; then
+    emit_outcome partial "rag-reindex: baska reindex zaten calisiyor (flock), bu kosu atlandi"
+    exit 0
+fi
+
 OUT="$($ROOT/venv/bin/python3 $ROOT/scripts/rag_index_all.py 2>&1)"
 rc=$?
 pts="$(printf '%s' "$OUT" | grep -oE 'Final: [0-9]+ points' | grep -oE '[0-9]+' | head -1)"
