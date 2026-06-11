@@ -57,6 +57,24 @@ def test_verdict_fresh_stale_dead_unknown(monkeypatch):
     assert lv._verdict(None, 300)[0] == "unknown"
 
 
+def test_uptime_s_reads_proc(monkeypatch):
+    monkeypatch.undo()  # autouse _high_uptime'ı geri al — gerçek _uptime_s'i test et
+    up = lv._uptime_s()
+    assert up is None or (isinstance(up, float) and up >= 0)  # Linux'ta float, non-Linux'ta None
+
+
+def test_uptime_s_returns_none_on_read_error(monkeypatch):
+    import builtins
+
+    monkeypatch.undo()  # autouse _high_uptime'ı geri al — gerçek _uptime_s'i test et
+
+    def _boom(*a, **k):
+        raise OSError("boom")
+
+    monkeypatch.setattr(builtins, "open", _boom)
+    assert lv._uptime_s() is None
+
+
 def test_verdict_boot_grace_suppresses_stale_and_dead(monkeypatch):
     # Makine yeni açıldı (uptime < eşik): bayat-ama-üretici-koşamadı -> 'unknown'.
     monkeypatch.setattr(lv, "_uptime_s", lambda: 120)  # 2dk uptime
