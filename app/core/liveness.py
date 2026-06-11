@@ -35,6 +35,12 @@ ENV_FILE = "/opt/linux-ai-server/.env"
 VPS_TAILSCALE_IP = "100.126.113.23"
 VPS_PUBLIC_IP = "194.163.134.239"
 
+# Boot-grace tavanı (saniye): boot sonrası bayat-veri FP'sini bastırma penceresi
+# bununla sınırlı. Tüm kısa-kadanslı üreticilerin (en uzunu notify-cron 45dk)
+# bir kez koşmasına yeter; uzun-kadanslı kaynakları (ci=2g, vps-backup=16h) uzun
+# süre susturmaz (Codex P2 — gerçekten-ölü maskeleme regresyonunu önler).
+BOOT_GRACE_CAP_S = 3600.0
+
 
 def _now() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
@@ -54,6 +60,18 @@ def _parse(ts: str | None) -> dt.datetime | None:
 def _age_s(ts: str | None) -> float | None:
     d = _parse(ts)
     return None if d is None else (_now() - d).total_seconds()
+
+
+def _uptime_s() -> float | None:
+    """Sistem uptime (saniye, /proc/uptime). Boot-grace için: makine yeni açıldıysa
+    kadans-tabanlı üreticiler henüz bir kez koşma fırsatı bulamamış olabilir →
+    pre-boot verisi zorunlu olarak bayat, ama bu arıza DEĞİL. Okunamazsa (test/
+    non-Linux) None → grace devre-dışı (eski davranış, güvenli)."""
+    try:
+        with open("/proc/uptime") as fh:
+            return float(fh.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
 
 
 def _file_age_s(path: str) -> float | None:
@@ -84,6 +102,19 @@ def _verdict(age: float | None, threshold_s: float) -> tuple[str, str]:
         return "unknown", "kaynak/timestamp okunamadı"
     if age <= threshold_s:
         return "alive", f"taze ({int(age)}s ≤ {int(threshold_s)}s)"
+    # Boot-grace: makine yeni açıldıysa kadans-tabanlı üretici daha bir kez
+    # koşamamış olabilir; pre-boot verisi zorunlu olarak bayat ama arıza DEĞİL →
+    # stale/dead yerine 'unknown' (sessiz). FP imzası: downtime > eşik (incident:
+    # 12h kapalı, notify-cron eşiği 45dk). Grace penceresi BOOT_GRACE_CAP_S ile
+    # SINIRLI (Codex P2): uzun-kadanslı kaynaklar (ci=2g, vps-backup=16h) için
+    # tam-eşik grace gerçekten-ölü kaynağı reboot-içi pencerede maskelerdi — ama
+    # oralarda downtime ≪ eşik olduğundan grace zaten gereksiz. Cap, kısa-kadanslı
+    # üreticilerin (notify-cron/metrics/autonomy, eşik ≤45dk) boot sonrası bir kez
+    # koşmasına yeter; sonrası gerçek verdict. Üretici taze yazınca grace kapanır.
+    up = _uptime_s()
+    grace_s = min(threshold_s, BOOT_GRACE_CAP_S)
+    if up is not None and up < grace_s:
+        return "unknown", f"boot-grace ({int(age)}s eski; uptime {int(up)}s < {int(grace_s)}s)"
     if age <= threshold_s * 3:
         return "stale", f"gecikti ({int(age)}s > {int(threshold_s)}s)"
     return "dead", f"ölü ({int(age)}s ≫ {int(threshold_s)}s)"
