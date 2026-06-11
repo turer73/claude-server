@@ -9,7 +9,17 @@ import os
 import sqlite3
 import time
 
+import pytest
+
 from app.core import liveness as lv
+
+
+@pytest.fixture(autouse=True)
+def _high_uptime(monkeypatch):
+    """Boot-grace varsayılan-OFF: tüm staleness testleri uptime'ı eşiğin üstünde
+    varsayar (gerçek runner uptime'ı düşükse stale/dead -> 'unknown' = flaky).
+    Boot-grace'i test eden testler kendi monkeypatch'iyle bunu ezer (son setattr kazanır)."""
+    monkeypatch.setattr(lv, "_uptime_s", lambda: 10**9)
 
 
 def _set_mtime(path, age_s):
@@ -37,11 +47,29 @@ def _cron_db(path, rows):
 # ── _verdict (A-staleness çekirdeği) ──
 
 
-def test_verdict_fresh_stale_dead_unknown():
+def test_verdict_fresh_stale_dead_unknown(monkeypatch):
+    # uptime'ı eşiğin çok üstüne sabitle: boot-grace karışmasın (düşük-uptime CI
+    # runner'da aksi halde stale/dead -> 'unknown'a düşer = flaky).
+    monkeypatch.setattr(lv, "_uptime_s", lambda: 10**9)
     assert lv._verdict(10, 300)[0] == "alive"
     assert lv._verdict(500, 300)[0] == "stale"  # 1-3× eşik
     assert lv._verdict(5000, 300)[0] == "dead"  # >3× eşik
     assert lv._verdict(None, 300)[0] == "unknown"
+
+
+def test_verdict_boot_grace_suppresses_stale_and_dead(monkeypatch):
+    # Makine yeni açıldı (uptime < eşik): bayat-ama-üretici-koşamadı -> 'unknown'.
+    monkeypatch.setattr(lv, "_uptime_s", lambda: 120)  # 2dk uptime
+    assert lv._verdict(500, 300)[0] == "unknown"  # normalde stale
+    assert lv._verdict(5000, 300)[0] == "unknown"  # normalde dead
+    # Taze veri grace'ten bağımsız hâlâ alive.
+    assert lv._verdict(10, 300)[0] == "alive"
+    # uptime eşiği aşınca (üretici koşma fırsatı buldu) gerçek verdict döner.
+    monkeypatch.setattr(lv, "_uptime_s", lambda: 400)
+    assert lv._verdict(500, 300)[0] == "stale"
+    # /proc/uptime okunamazsa (None) grace devre-dışı = eski davranış.
+    monkeypatch.setattr(lv, "_uptime_s", lambda: None)
+    assert lv._verdict(5000, 300)[0] == "dead"
 
 
 # ── A-sınıfı: staleness yakala ──

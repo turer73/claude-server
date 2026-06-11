@@ -56,6 +56,18 @@ def _age_s(ts: str | None) -> float | None:
     return None if d is None else (_now() - d).total_seconds()
 
 
+def _uptime_s() -> float | None:
+    """Sistem uptime (saniye, /proc/uptime). Boot-grace için: makine yeni açıldıysa
+    kadans-tabanlı üreticiler henüz bir kez koşma fırsatı bulamamış olabilir →
+    pre-boot verisi zorunlu olarak bayat, ama bu arıza DEĞİL. Okunamazsa (test/
+    non-Linux) None → grace devre-dışı (eski davranış, güvenli)."""
+    try:
+        with open("/proc/uptime") as fh:
+            return float(fh.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 def _file_age_s(path: str) -> float | None:
     """Dosya mtime yaşı (saniye). İçerik-timestamp tz-belirsiz olabildiği için
     (poller-state/alerts.log yerel-saat yazıyor) heartbeat tazeliğinde mtime
@@ -84,6 +96,14 @@ def _verdict(age: float | None, threshold_s: float) -> tuple[str, str]:
         return "unknown", "kaynak/timestamp okunamadı"
     if age <= threshold_s:
         return "alive", f"taze ({int(age)}s ≤ {int(threshold_s)}s)"
+    # Boot-grace: makine yeni açıldıysa (uptime < eşik) kadans-tabanlı üretici
+    # daha bir kez koşamamış olabilir; pre-boot verisi zorunlu olarak bayat. Bu
+    # bir arıza DEĞİL → stale/dead yerine 'unknown' (sessiz) döndür. Her boot/
+    # downtime sonrası tekrarlayan FP kaskadını (notify-cron/metrics "ölü" sanma)
+    # keser. Üretici bir kadans içinde koşunca taze veri yazar; grace kendi-sınırlı.
+    up = _uptime_s()
+    if up is not None and up < threshold_s:
+        return "unknown", f"boot-grace ({int(age)}s eski; uptime {int(up)}s < eşik {int(threshold_s)}s)"
     if age <= threshold_s * 3:
         return "stale", f"gecikti ({int(age)}s > {int(threshold_s)}s)"
     return "dead", f"ölü ({int(age)}s ≫ {int(threshold_s)}s)"
