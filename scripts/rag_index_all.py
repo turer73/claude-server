@@ -241,19 +241,72 @@ def _is_collection(name):
         return False
 
 
+def _collection_ready(name, expected, attempts=5, delay=1.0):
+    """NEW sorgu-hazir mi: status=green + points_count >= expected. Canli koleksiyonu
+    SILMEDEN ONCE 'dogrulanmis replacement' sarti (Codex P2). Gecici-indexleme bitmemis
+    olabilir diye birkac deneme. expected<=0 ise asla hazir sayma (bos NEW ile swap=veri-kaybi)."""
+    if expected <= 0:
+        return False
+    for _ in range(attempts):
+        try:
+            r = requests.get(f"{QDRANT}/collections/{name}", timeout=10)
+            if r.ok:
+                res = r.json().get("result", {})
+                if res.get("status") == "green" and res.get("points_count", 0) >= expected:
+                    return True
+        except Exception:
+            pass
+        time.sleep(delay)
+    return False
+
+
+def _swap_alias(actions, attempts=4, delay=1.0):
+    """Alias-swap'i RETRY ile uygula: ilk-migration'da canli koleksiyon silindikten sonra
+    gecici Qdrant hatasi KALICI kesintiye donmesin (Codex P2). True=basari."""
+    last = None
+    for _ in range(attempts):
+        try:
+            r = requests.post(f"{QDRANT}/collections/aliases", json={"actions": actions}, timeout=30)
+            if r.ok:
+                return True
+            last = f"{r.status_code} {r.text[:200]}"
+        except Exception as e:
+            last = str(e)
+        time.sleep(delay)
+    print(f"ALIAS-SWAP FAIL ({attempts} deneme): {last}", file=sys.stderr)
+    return False
+
+
 old_target = _alias_target()  # steady-state: onceki versiyonlu koleksiyon (alias hedefi)
-# Ilk-migration: ALIAS hala GERCEK koleksiyon (alias degil) -> aliaslamak icin once sil
-# (tek-seferlik, ~1sn pencere; sonraki tum reindex'ler tam-atomik).
-if old_target is None and _is_collection(ALIAS):
+first_migration = old_target is None and _is_collection(ALIAS)
+
+# Codex P2: canli koleksiyonu silmeden ONCE NEW'in sorgu-hazir oldugunu DOGRULA. Hazir
+# degilse canliya DOKUNMA (eski koleksiyon/alias bozulmadan servis etmeye devam eder).
+if not _collection_ready(NEW, len(points)):
+    print(
+        f"NEW '{NEW}' sorgu-hazir DEGIL (status!=green veya points<{len(points)}) -> CANLI koleksiyona dokunulmadi, abort", file=sys.stderr
+    )
+    sys.exit(1)  # ALL_INDEX_OK yok -> cron fail; canli bozulmadi
+
+# Ilk-migration: ALIAS hala GERCEK koleksiyon (alias degil) -> Qdrant ad-cakismasi nedeniyle
+# aliaslamak icin once silmek ZORUNLU (tek-seferlik). NEW dogrulandi + create_alias retry'li:
+# kesinti-penceresi sub-saniye + gecici hataya dayanikli; sonraki tum reindex'ler tam-atomik.
+if first_migration:
     requests.delete(f"{QDRANT}/collections/{ALIAS}", timeout=30)
 
 actions = []
 if old_target:
     actions.append({"delete_alias": {"alias_name": ALIAS}})
 actions.append({"create_alias": {"collection_name": NEW, "alias_name": ALIAS}})
-swap = requests.post(f"{QDRANT}/collections/aliases", json={"actions": actions}, timeout=30)
-if not swap.ok:
-    print(f"ALIAS-SWAP FAIL: {swap.status_code} {swap.text[:200]}", file=sys.stderr)
+if not _swap_alias(actions):
+    # Ilk-migration'da canli silindi ama alias kurulamadi: VERI KAYBI YOK (NEW tam indeks).
+    # Re-run iyilesir (old_target=None & ALIAS artik koleksiyon-degil -> sadece create_alias).
+    if first_migration:
+        print(
+            f"KURTARMA: NEW='{NEW}' SAGLAM (tam indeks). Tekrar calistir ya da elle alias kur: "
+            f"POST {QDRANT}/collections/aliases create_alias({ALIAS}->{NEW})",
+            file=sys.stderr,
+        )
     sys.exit(1)  # ALL_INDEX_OK YAZMA -> cron fail isaretler
 
 # Eski hedefi + sizan eski versiyonlu koleksiyonlari temizle (alias artik NEW'da)
