@@ -90,6 +90,19 @@ def test_verdict_boot_grace_suppresses_stale_and_dead(monkeypatch):
     assert lv._verdict(5000, 300)[0] == "dead"
 
 
+def test_verdict_boot_grace_capped_for_long_cadence(monkeypatch):
+    # Codex P2: uzun-kadanslı kaynak (ci eşik=2g) reboot-içi penceresinde gerçekten
+    # -ölü'yü maskelemesin. Grace tavanı BOOT_GRACE_CAP_S (1h).
+    two_days = 2 * 86400
+    nine_days = 9 * 86400  # gerçekten ölü
+    # uptime tavanın altında (30dk): hâlâ grace.
+    monkeypatch.setattr(lv, "_uptime_s", lambda: 1800)
+    assert lv._verdict(nine_days, two_days)[0] == "unknown"
+    # uptime tavanı aşmış (2h) ama eşiğin çok altında: grace BİTTİ -> gerçek dead.
+    monkeypatch.setattr(lv, "_uptime_s", lambda: 7200)
+    assert lv._verdict(nine_days, two_days)[0] == "dead"
+
+
 # ── A-sınıfı: staleness yakala ──
 
 
