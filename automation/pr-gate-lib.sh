@@ -39,7 +39,18 @@ codex_state() {
     rev=$(printf '%s' "$reviews" | jq '[.[]|select(.user.login=="chatgpt-codex-connector[bot]")]|length' 2>/dev/null || echo X)
   fi
   [[ "$rev" =~ ^[0-9]+$ ]] || { echo unknown; return; }
-  [ "$rev" -eq 0 ] && { echo none; return; }
+  if [ "$rev" -eq 0 ]; then
+    # Formal review-objesi yok AMA Codex verdict'i issue-comment olarak gelmiş ve
+    # gövdesindeki "Reviewed commit: <sha>" bu HEAD'i işaret ediyor olabilir (#120/
+    # #122 gözlemi 2026-06-12: gate "none" dedi, taze temiz-verdict'in elle teyidi
+    # gerekti). Sha eşleşiyorsa inceleme TAZE -> inline-bulgu kontrolüne düş;
+    # eşleşmiyor/yoksa gerçekten none (force-trigger doğru karar).
+    local vsha
+    vsha=$(codex_issue_reviewed_sha "$repo" "$num")
+    if [ -z "$head" ] || [ -z "$vsha" ] || [[ "$head" != "$vsha"* ]]; then
+      echo none; return
+    fi
+  fi
   # Codex P2 (#119): comments-fetch TRANSIENT FAIL'i boş-liste (-> clean) sayma. Aksi
   # halde gate "MERGE-OK" der ama Codex'in okunamayan inline bulgusu olabilir. Reviews
   # fetch'teki gibi fail -> "unknown" (güvenli; gate auto-pass etmez).
@@ -67,6 +78,18 @@ codex_issue_verdict() {
   v=$(printf '%s' "$cmts" | jq -r '[.[]|select(.user.login=="chatgpt-codex-connector[bot]" and (.body|test("Codex Review";"i")))]|last|.body // ""' 2>/dev/null)
   [ -z "$v" ] || [ "$v" = "null" ] && return 0
   printf '%s' "$v" | head -1 | cut -c1-140
+}
+
+# En son Codex issue-comment verdict'inin gövdesindeki "Reviewed commit: `<sha>`"
+# sha'sını echo'lar (yoksa boş). Verdict commit-bağını kendi gövdesinde taşır ->
+# codex_state bununla HEAD-tazeliğini OTOMATİK teyit eder (elle "tazeliği teyit et"
+# adımı kalkar; sha eşleşmezse stale sayılır, force-trigger kararı değişmez).
+codex_issue_reviewed_sha() {
+  local repo="$1" num="$2" cmts
+  cmts=$(gh api "repos/$repo/issues/$num/comments" 2>/dev/null) || return 0
+  printf '%s' "$cmts" \
+    | jq -r '[.[]|select(.user.login=="chatgpt-codex-connector[bot]" and (.body|test("Codex Review";"i")))]|last|.body // ""' 2>/dev/null \
+    | grep -oE 'Reviewed commit[^`]*`[0-9a-f]{7,40}`' | grep -oE '[0-9a-f]{7,40}' | head -1
 }
 
 # Codecov: en son codecov[bot] PR-yorumunu okuyup insan-okur durum-satırı echo'lar.

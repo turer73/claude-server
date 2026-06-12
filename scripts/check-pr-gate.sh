@@ -41,13 +41,13 @@ fi
 # 2) Codex
 CX=$(codex_state "$REPO" "$PR" "$HEAD")
 case "$CX" in
-  clean)    echo "  ✅ Codex: temiz onay (bu HEAD'de bulgu yok)";;
+  clean)    echo "  ✅ Codex: temiz onay (bu HEAD'de bulgu yok; formal-review ya da HEAD-sha'lı issue-verdict)";;
   findings) echo "  ⚠️  Codex: BULGU var (bu HEAD'de inline yorum) — ele al:";
             gh api "repos/$REPO/pulls/$PR/comments" 2>/dev/null | jq -r --arg h "$HEAD" '.[]|select(.user.login=="chatgpt-codex-connector[bot]" and (.commit_id==$h or .original_commit_id==$h))|"     - [\(.path):\(.line)] \(.body[0:100])"' 2>/dev/null | head -10;;
   none)
     IV=$(codex_issue_verdict "$REPO" "$PR")
     if [ -n "$IV" ]; then
-      echo "  ⚠️  Codex: formal-review YOK ama issue-comment verdict VAR (HEAD bağı yok — tazeliği teyit et):"
+      echo "  ⚠️  Codex: issue-comment verdict VAR ama bu HEAD'e değil (stale ya da sha-okunamadı) — yeni inceleme tetikle:"
       echo "     \"$IV\""
     else
       echo "  ⏳ Codex: bu HEAD'i HENÜZ incelemedi — '@codex-review' ile tetikle ve bekle"
