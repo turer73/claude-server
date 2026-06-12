@@ -25,6 +25,14 @@ from app.core.shell_executor import ShellExecutor
 _GOVERNOR_RE = re.compile(r"scaling_governor|cpufreq-set\s+-g")
 _VALID_GOVERNOR = re.compile(r"^[a-z]+$")  # ondemand/schedutil/performance/powersave...
 
+# GÜVENLİK: otonom remediation'da servis/konteyner adı f-string ile TAM-SHELL
+# komutuna giriyor (ShellExecutor=create_subprocess_shell; whitelist yalnız ilk
+# komuta bakar, zincir geçer). Adlar config'ten gelir (monitor_critical_*) ama
+# config-drift geçmişi var (canlı server.yml repo'yu ezer) → savunma-derinliği:
+# katı ad-doğrulama + shlex.quote. systemd unit + docker name güvenli karakter
+# kümesi (@ . _ : - izinli; boşluk/meta YASAK).
+_VALID_UNIT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@:-]*$")
+
 # #567 FP fix: sustained-window gating. cpu/mem/disk geçici-zirve eğilimli (zamanlanmış
 # ağır iş — test-runner/e2e gece bakım penceresinde %98 anlık zirve yapıyor ama sürekli
 # değil). Critical SADECE son N örnek de eşik-üstüyse (sürdürülen-yük). temperature hariç
@@ -58,10 +66,6 @@ class RemediationRecord:
 
 
 # ── Playbooks ──────────────────────────────────────────────
-
-# Güvenli systemd-unit / docker-container ad deseni (Slice-2 force-remediate shell
-# injection guard). systemd templated unit (foo@bar) için '@' dahil.
-_SAFE_UNIT_NAME = re.compile(r"[A-Za-z0-9._@-]+")
 
 PLAYBOOKS: dict[str, list[dict]] = {
     "cpu_critical": [
@@ -675,7 +679,9 @@ class DevOpsAgent:
         try:
             if base == "service":
                 svc = source.split(":", 1)[1]
-                r = await self._executor.execute(f"systemctl is-active {svc}", timeout=10)
+                # shlex.quote = savunma-derinliği (refused adlar buraya ulaşamaz ama
+                # source-string ileride başka üreticiden gelebilir — Codex P1 simetrisi).
+                r = await self._executor.execute(f"systemctl is-active {shlex.quote(svc)}", timeout=10)
                 return r.get("stdout", "").strip() == "active"
             if base == "docker":
                 cont = source.split(":", 1)[1]
@@ -683,7 +689,7 @@ class DevOpsAgent:
                 # da bak: healthcheck'li container 'healthy' olmalı; healthcheck'siz (none) ->
                 # Running yeter. Çıktı "<running>;<health|none>" (örn "true;healthy"/"true;none").
                 r = await self._executor.execute(
-                    f"docker inspect -f '{{{{.State.Running}}}};{{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{else}}}}none{{{{end}}}}' {cont}",
+                    f"docker inspect -f '{{{{.State.Running}}}};{{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{else}}}}none{{{{end}}}}' {shlex.quote(cont)}",
                     timeout=10,
                 )
                 parts = r.get("stdout", "").strip().lower().split(";")
@@ -767,7 +773,9 @@ class DevOpsAgent:
         # GÜVENLİK (defense-in-depth, RCE-yüzeyi): service/docker adı shell-komutuna
         # gömülüyor. Kaynak iç-yazımlı olsa da, herhangi bir gelecekteki injection
         # yolunu kapat -> yalnız güvenli unit/container-ad karakterleri. Aksi -> aksiyon yok.
-        if base in ("service", "docker") and name and not _SAFE_UNIT_NAME.fullmatch(name):
+        # TEK-KAYNAK: _VALID_UNIT (otonom _remediate_service/_container ile aynı desen;
+        # eski _SAFE_UNIT_NAME kopyası birleştirildi — kopya-drift önleme).
+        if base in ("service", "docker") and name and not _VALID_UNIT.fullmatch(name):
             return None
         if base == "service" and name:
             return [{"desc": f"Restart {name}", "cmd": f"systemctl restart {name}"}]
@@ -888,15 +896,23 @@ class DevOpsAgent:
         # Systemd services
         for svc in self._critical_services:
             try:
-                result = await self._executor.execute(f"systemctl is-active {svc}", timeout=5)
-                if result.get("stdout", "").strip() != "active":
+                # GÜVENLİK (Codex P1): ad-doğrulama PROBE'dan önce — probe da f-string ile
+                # tam-shell'e gider, remediate'teki guard tek başına yetmez (enjeksiyonlu
+                # ad probe'da çalışırdı). Geçersiz ad shell'e HİÇ gömülmez; sessiz değil:
+                # alarm yolu akar, _remediate_service refused-satırı+webhook yazar.
+                if not _VALID_UNIT.fullmatch(svc):
+                    problem = f"Service adi gecersiz ({svc[:60]!r}) — izlenemiyor (enjeksiyon riski)"
+                else:
+                    result = await self._executor.execute(f"systemctl is-active {shlex.quote(svc)}", timeout=5)
+                    problem = None if result.get("stdout", "").strip() == "active" else f"Service {svc} is not active"
+                if problem:
                     source = f"service:{svc}"
                     if source not in self._active_alerts:
                         alert = Alert(
                             id=f"{source}-{self._check_count}",
                             severity="critical",
                             source=source,
-                            message=f"Service {svc} is not active",
+                            message=problem,
                             value=0,
                             threshold=1,
                             timestamp=now,
@@ -909,16 +925,26 @@ class DevOpsAgent:
         # Docker containers
         for container in self._critical_containers:
             try:
-                result = await self._executor.execute(f"docker ps --filter name={container} --format '{{{{.Status}}}}'", timeout=5)
-                status = result.get("stdout", "").strip()
-                # Codex P2: 'Up (unhealthy)' de 'Up' içerir -> çalışıyor-ama-unhealthy kaçardı.
-                # Healthcheck'li container (n8n/qdrant) unhealthy = kritik outage -> yakala.
-                down = not status or "Up" not in status
-                unhealthy = "unhealthy" in status.lower()
+                # GÜVENLİK (Codex P1): servis yoluyla simetrik — doğrulama probe'dan önce.
+                if not _VALID_UNIT.fullmatch(container):
+                    down, unhealthy, status = True, False, ""
+                    invalid_msg = f"Container adi gecersiz ({container[:60]!r}) — izlenemiyor (enjeksiyon riski)"
+                else:
+                    invalid_msg = None
+                    result = await self._executor.execute(
+                        f"docker ps --filter name={shlex.quote(container)} --format '{{{{.Status}}}}'", timeout=5
+                    )
+                    status = result.get("stdout", "").strip()
+                    # Codex P2: 'Up (unhealthy)' de 'Up' içerir -> çalışıyor-ama-unhealthy kaçardı.
+                    # Healthcheck'li container (n8n/qdrant) unhealthy = kritik outage -> yakala.
+                    down = not status or "Up" not in status
+                    unhealthy = "unhealthy" in status.lower()
                 if down or unhealthy:
                     source = f"docker:{container}"
                     if source not in self._active_alerts:
-                        msg = f"Container {container} is not running" if down else f"Container {container} UNHEALTHY ({status})"
+                        msg = invalid_msg or (
+                            f"Container {container} is not running" if down else f"Container {container} UNHEALTHY ({status})"
+                        )
                         alert = Alert(
                             id=f"{source}-{self._check_count}",
                             severity="critical",
@@ -1038,6 +1064,11 @@ class DevOpsAgent:
     async def _remediate_service(self, service: str, alert: Alert) -> None:
         now = time.monotonic()
         source = f"service:{service}"
+        # GÜVENLİK: ad-doğrulama remediation'dan ÖNCE (f-string → tam-shell yolu;
+        # _refuse_invalid_unit ledger'a görünür 'refused' satırı yazar, alarm akar).
+        if not _VALID_UNIT.fullmatch(service):
+            await self._refuse_invalid_unit(source, alert, "service", service)
+            return
         # taze-boot bug fix (Codex-CI): get(source,0)+monotonic<cooldown erken-return
         # yapardi -> None-check (devops _remediate ile ayni).
         last = self._cooldowns.get(source)
@@ -1046,13 +1077,48 @@ class DevOpsAgent:
         self._cooldowns[source] = now
 
         # mode-gate (Codex P1): notify/dry_run'da systemctl restart YÜRÜTÜLMEZ.
-        await self._apply_remediation(alert, source, f"Restart {service}", f"systemctl restart {service}", timeout=15)
+        # shlex.quote = savunma-derinliği (doğrulama geçse bile meta-karakter etkisiz).
+        await self._apply_remediation(alert, source, f"Restart {service}", f"systemctl restart {shlex.quote(service)}", timeout=15)
         await self._send_webhook(alert)
         await self._verify_and_escalate(source, alert)
+
+    async def _refuse_invalid_unit(self, source: str, alert: Alert, kind: str, name: str) -> None:
+        """Geçersiz servis/konteyner adı → remediation REFUSED (yürütme yok), ama
+        SESSİZ DEĞİL: ledger'a refused satırı + webhook (görünürlük korunur).
+        Ad config'ten gelir; geçersiz ad = config bozuk/oynanmış → incelenmeli."""
+        msg = f"refused: gecersiz {kind} adi ({name[:60]!r}) — komut-enjeksiyonu riski, yurutme yok"
+        self._remediation_log.append(
+            RemediationRecord(
+                timestamp=datetime.now(UTC).isoformat(),
+                alert_source=source,
+                action=f"Restart {kind} REFUSED",
+                command="(yurutulmedi)",
+                result=msg,
+                success=False,
+            )
+        )
+        await self._persist_remediation_row(
+            source,
+            alert.severity,
+            self._remediation_mode,
+            f"Restart {kind} REFUSED",
+            "(yurutulmedi)",
+            False,
+            msg,
+            False,
+            verify_status="refused",
+            provenance=provenance_json(alert, self._remediation_mode, detected_at=getattr(alert, "timestamp", None) or None),
+        )
+        alert.remediation = f"[refused] {msg}"
+        await self._send_webhook(alert)
 
     async def _remediate_container(self, container: str, alert: Alert) -> None:
         now = time.monotonic()
         source = f"docker:{container}"
+        # GÜVENLİK: ad-doğrulama (servis yoluyla simetrik — f-string → tam-shell).
+        if not _VALID_UNIT.fullmatch(container):
+            await self._refuse_invalid_unit(source, alert, "container", container)
+            return
         # taze-boot bug fix (Codex-CI): get(source,0)+monotonic<cooldown erken-return
         # yapardi -> None-check (devops _remediate ile ayni).
         last = self._cooldowns.get(source)
@@ -1061,8 +1127,8 @@ class DevOpsAgent:
         self._cooldowns[source] = now
 
         # mode-gate (Codex P1): notify/dry_run'da YÜRÜTÜLMEZ. restart: durmuş+unhealthy
-        # ikisini de kapsar (Codex P2).
-        await self._apply_remediation(alert, source, f"Restart {container}", f"docker restart {container}", timeout=15)
+        # ikisini de kapsar (Codex P2). shlex.quote = savunma-derinliği.
+        await self._apply_remediation(alert, source, f"Restart {container}", f"docker restart {shlex.quote(container)}", timeout=15)
         await self._send_webhook(alert)
         await self._verify_and_escalate(source, alert)
 
