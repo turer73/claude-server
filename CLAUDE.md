@@ -4,7 +4,7 @@
 - **Hostname:** klipper
 - **Donanim:** Beelink SER8 (AZW) — BIOS V035 P8C0M0C15.14 (26/06/2025)
 - **OS:** Ubuntu 26.04 LTS (Resolute)
-- **Kernel:** 7.0.0-15-generic (calisan; 7.0.0-22 kurulu, reboot bekliyor) + 3 ozel modul (proc_linux_ai, nf_linux_ai, usb_linux_ai) — **DKMS-yonetimli**, kernel-upgrade'de otomatik rebuild
+- **Kernel:** 7.0.0-22-generic (canli, reboot 2026-06-11) + 3 ozel modul (proc_linux_ai, nf_linux_ai, usb_linux_ai) — **DKMS-yonetimli**, kernel-upgrade'de otomatik rebuild
 - **CPU:** AMD Ryzen 7 8845HS w/ Radeon 780M, 8 cekirdek / 16 thread
 - **RAM:** 28GB (27946896 kB)
 - **Disk:** 98GB SSD (LVM), 28GB kullanildi
@@ -18,7 +18,7 @@
 - **DB:** 4 SQLite — server.db (ana, alerts/audit_log/metrics + vps_metrics_history), claude_memory.db (hafiza/sessions/tasks_log), coverage.db (test trend + CI/test sonuclari, gunluk run-all-tests.sh), rag_metrics.db (RAG). (ci_tests.db 2026-06-01'de retire edildi — otomasyon hic yazmamisti, olu kod; arsiv data/ci_tests.db.gz)
 - **Auth:** JWT + API Key
 - **Systemd:** linux-ai-server.service
-- **Endpoint sayisi:** 149 (OpenAPI'den)
+- **Endpoint sayisi:** 161 (OpenAPI'den, 2026-06-12)
 
 ## Proje Yapisi
 - app/api/ — 37 route dosyasi (admin, agents, ai, auth, backup, ci, classifier, claude_code, csp, deploy, dev, devops, digest, files, kernel, llm, logs, memory, monitoring, n8n, network, projects, prometheus, rag, research, shell, social, ssh, system, tasks, telegram_bot, validation, vps, webhooks, webops, ws_status)
@@ -30,7 +30,7 @@
 - app/claude_ui/ — Claude Code web chat
 - kernel/ — 3 ozel C kernel modulu (proc, netfilter, usb)
 - automation/ — Cron scriptleri
-- tests/ — 64 dosya / 780 test (pytest, asyncio_mode=auto)
+- tests/ — 94 dosya / 1128 test (pytest, asyncio_mode=auto; sayim 2026-06-12)
 
 ## API Endpointleri
 - /dashboard — Super Dashboard v2
@@ -76,7 +76,7 @@ Test: REDACTED_PHONE / test1234
 Siparis/uretim/stok/CRM. React 19, Supabase. 898 test.
 
 ### Linux-AI Server (100.84.251.49:8420)
-Bu sunucu. FastAPI, kernel modulleri, 61 test dosyasi.
+Bu sunucu. FastAPI, kernel modulleri, 94 test dosyasi.
 GitHub: github.com/turer73/claude-server
 
 ## VPS (Contabo) — 20 konteyner (audit: 2026-06-01, surer doğrulanmış)

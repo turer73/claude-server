@@ -40,6 +40,8 @@ kernel/Module.symvers
 kernel/modules.order
 kernel/.*.cmd
 .claude/
+# data/ tamamen runtime (DB, token, state) — hicbir dosyasi track edilmiyor
+/data/
 data/hook-logs/
 data/hook-state/
 data/wordlists/
