@@ -115,6 +115,11 @@ class TaskLogCreate(BaseModel):
     rationale: str | None = None
 
 
+class TaskLogUpdate(BaseModel):
+    status: Literal["completed", "obsolete", "failed", "pending", "in_progress"] | None = None
+    rationale: str | None = None
+
+
 class DiscoveryCreate(BaseModel):
     session_id: int | None = None
     device_name: str | None = "klipper"
@@ -595,6 +600,30 @@ async def create_task_log(data: TaskLogCreate):
         )
         db.commit()
         return {"id": cur.lastrowid, "status": "created"}
+    finally:
+        db.close()
+
+
+@router.patch("/tasks/{task_id}")
+async def update_task_log(task_id: int, data: TaskLogUpdate):
+    if data.status is None and data.rationale is None:
+        raise HTTPException(400, "En az status veya rationale gönderin")
+    db = get_db()
+    try:
+        row = db.execute("SELECT id, status FROM tasks_log WHERE id=?", (task_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"Task {task_id} bulunamadı")
+        sets, params = [], []
+        if data.status is not None:
+            sets.append("status=?")
+            params.append(data.status)
+        if data.rationale is not None:
+            sets.append("rationale=?")
+            params.append(data.rationale)
+        params.append(task_id)
+        db.execute(f"UPDATE tasks_log SET {', '.join(sets)} WHERE id=?", params)
+        db.commit()
+        return {"id": task_id, "status": "updated", "new_status": data.status or row["status"]}
     finally:
         db.close()
 
