@@ -20,6 +20,7 @@ import datetime as dt
 import os
 import socket
 import sqlite3
+import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -332,6 +333,79 @@ def rag_canary_liveness(timeout: float = 3.0) -> dict:
         return {"source": "rag", "klass": "B", "status": "dead", "detail": f"canary-fail: {type(e).__name__}"}
 
 
+# ── Docker konteyner canary ──────────────────────────────────────────────
+
+# Beklenen konteynerler + host'tan HTTP sağlık probu. URL'ler canlı doğrulandı
+# (2026-06-12). uptime-kuma 302->dashboard döner; urllib redirect'i takip eder.
+DOCKER_CONTAINERS = {
+    "n8n": "http://127.0.0.1:5678/healthz",
+    "qdrant": "http://127.0.0.1:6333/healthz",
+    "grafana": "http://127.0.0.1:3030/api/health",
+    "prometheus": "http://127.0.0.1:9090/-/healthy",
+    "node-exporter": "http://127.0.0.1:9100/",
+    "cadvisor": "http://127.0.0.1:9080/healthz",
+    "dozzle": "http://127.0.0.1:9999/",
+    "uptime-kuma": "http://127.0.0.1:3001/",
+    "stirling-pdf": "http://127.0.0.1:8090/",
+}
+# Boot sonrası docker'a konteyner başlatma süresi tanı (compose start ~1dk).
+DOCKER_BOOT_GRACE_S = 300.0
+
+
+def docker_containers_liveness(timeout: float = 2.5) -> list[dict]:
+    """B (canary): beklenen Docker konteynerleri — docker ps + host'tan HTTP probu.
+
+    2026-06-12 incident: kernel-reboot sonrası grafana+stirling-pdf 'Exited',
+    n8n ise 'Up (healthy)' AMA network/port-binding'siz kalktı — host'tan 38h
+    erişilmez, SIFIR alarm (kör nokta). Ders: docker-status/healthcheck yeterli
+    DEĞİL (container-içi koşar) → canlılık kanıtı = host'tan HTTP probu.
+    Liste-döner; check_all extend eder (per-container edge-detection: yeni ölen
+    her konteyner ayrı dead-set üyesi = ayrı alarm)."""
+    up = _uptime_s()
+    if up is not None and up < DOCKER_BOOT_GRACE_S:
+        return [
+            {
+                "source": "docker",
+                "klass": "B",
+                "status": "unknown",
+                "detail": f"boot-grace (uptime {int(up)}s < {int(DOCKER_BOOT_GRACE_S)}s)",
+            }
+        ]
+    try:
+        proc = subprocess.run(  # noqa: S603, S607 — sabit argv, shell yok
+            ["docker", "ps", "--format", "{{.Names}}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        running = set(proc.stdout.split()) if proc.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
+        running = None
+    if running is None:
+        # docker ps başarısız = daemon ölü/erişilmez → tüm konteynerler fiilen
+        # kapalı; tek toplu sinyal (9 ayrı dead spam'i yerine).
+        return [{"source": "docker", "klass": "B", "status": "dead", "detail": "docker ps çalışmadı (daemon ölü?)"}]
+    results = []
+    for name, url in DOCKER_CONTAINERS.items():
+        src = f"docker:{name}"
+        if name not in running:
+            results.append({"source": src, "klass": "B", "status": "dead", "detail": "konteyner çalışmıyor"})
+            continue
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "klipper-liveness/1"})  # noqa: S310
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+                code = resp.status
+            st, d = ("alive", f"probe http={code}") if code < 400 else ("dead", f"probe http={code}")
+        except urllib.error.HTTPError as e:
+            st, d = "dead", f"probe http={e.code}"
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            # Çalışıyor görünüp probe'a cevap yok = tam incident imzası
+            # (network/port-binding kopuk olabilir).
+            st, d = "dead", f"çalışıyor ama probe-fail: {type(e).__name__} (port-binding kopuk?)"
+        results.append({"source": src, "klass": "B", "status": st, "detail": d})
+    return results
+
+
 REGISTRY = [
     metrics_liveness,
     vps_metrics_liveness,
@@ -345,6 +419,7 @@ REGISTRY = [
     alerts_evaluator_liveness,
     autonomy_liveness,
     rag_canary_liveness,
+    docker_containers_liveness,
 ]
 
 
@@ -354,7 +429,10 @@ def check_all() -> dict:
     results = []
     for fn in REGISTRY:
         try:
-            results.append(fn())
+            r = fn()
+            # Liste dönen komponent (docker_containers) → düzleştir; her üye
+            # ayrı source = per-container edge-detection.
+            results.extend(r) if isinstance(r, list) else results.append(r)
         except Exception as e:  # bir kaynak patlasa diğerleri taransın
             results.append({"source": getattr(fn, "__name__", "?"), "klass": "?", "status": "unknown", "detail": str(e)[:80]})
     return {
