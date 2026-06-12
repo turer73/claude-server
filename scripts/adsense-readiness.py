@@ -59,11 +59,20 @@ LOCALE_PREFIXES = ["", "/tr", "/en"]
 # ── saf fonksiyonlar (test edilebilir, ağ yok) ──────────────────────────
 
 
-def text_len(html: str) -> int:
-    """HTML'den script/style çıkarıp görünür-metin uzunluğu (içerik-derinliği proxy'si)."""
+def visible_text(html: str) -> str:
+    """Görünür GÖVDE metni: script/style/noscript İÇERİĞİ ve <head> tamamen çıkarılır,
+    kalan tag'ler düşürülüp boşluk normalize edilir. Hem içerik-derinliği ölçümü hem de
+    kalite-LLM'ine giden örnek BUNDAN üretilir (tek-kaynak) — aksi halde ölçüm gövdeyi,
+    LLM ise head-script'lerini görür ve SPA'larda yanlış 'ince içerik' verdiği çıkar."""
     h = re.sub(r"(?is)<(script|style|noscript).*?</\1>", " ", html)
+    h = re.sub(r"(?is)<head[^>]*>.*?</head>", " ", h)
     h = re.sub(r"(?s)<[^>]+>", " ", h)
-    return len(re.sub(r"\s+", " ", h).strip())
+    return re.sub(r"\s+", " ", h).strip()
+
+
+def text_len(html: str) -> int:
+    """Görünür-gövde metni uzunluğu (içerik-derinliği proxy'si)."""
+    return len(visible_text(html))
 
 
 def has_snippet(html: str, pub: str) -> bool:
@@ -207,7 +216,7 @@ def quality_note(domain: str, home_html: str) -> str:
     sample = text_len(home_html)
     if not ikey or sample < 200:
         return ""
-    snippet = re.sub(r"(?s)<[^>]+>", " ", home_html)[:2500]
+    snippet = visible_text(home_html)[:2500]
     prompt = (
         f"{domain} sitesinin içeriği aşağıda. AdSense 'düşük değerli içerik' reddi açısından "
         "değerlendir: içerik ÖZGÜN ve doyurucu mu, yoksa ince/şablon/otomatik-üretim hissi mi veriyor? "

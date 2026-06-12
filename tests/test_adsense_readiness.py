@@ -18,6 +18,31 @@ def test_text_len_strips_script_style():
     assert 15 < n < 40  # sadece görünür metin
 
 
+def test_visible_text_excludes_head_scripts():
+    # Regresyon: SPA'larda <head> script-yığını (consent/GTM/AdSense/tema) gövdeden ÖNCE
+    # gelir. Eski snippet yalnız tag-strip yapıyor, script İÇERİĞİNİ tutuyordu -> ilk 2500
+    # char hep head-JS oluyordu -> kalite-LLM'i "içerik yok, sadece script" sanıp yanlış
+    # 'ince içerik' / 'AdSense hazır değil' veriyordu (3d-labx false-negative).
+    html = (
+        "<html><head>"
+        "<script>window.gtag=function(){};var consent={ad_storage:'denied'};"
+        "loadAdSense('pub-123');theme='dark';</script>"
+        "<style>body{margin:0}</style><title>Yarım</title></head>"
+        "<body><h1>3D Baskı Rehberi</h1>"
+        "<p>Filament türleri ve flow kalibrasyonu üzerine özgün makale.</p></body></html>"
+    )
+    text = ar.visible_text(html)
+    # Görünür gövde metni gelmeli
+    assert "3D Baskı Rehberi" in text
+    assert "Filament türleri" in text
+    # Script/JS içeriği SIZMAMALI
+    assert "gtag" not in text
+    assert "loadAdSense" not in text
+    assert "ad_storage" not in text
+    # Snippet gövdeyle başlamalı (head-JS değil) — bug'ın tam tersi
+    assert text.lstrip().startswith("3D Baskı")
+
+
 def test_has_snippet():
     assert ar.has_snippet('<script src="...googlesyndication..."></script>', "pub-123")
     assert ar.has_snippet("<ins class='adsbygoogle'></ins>", "")
