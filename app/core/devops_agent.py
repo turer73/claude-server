@@ -679,7 +679,9 @@ class DevOpsAgent:
         try:
             if base == "service":
                 svc = source.split(":", 1)[1]
-                r = await self._executor.execute(f"systemctl is-active {svc}", timeout=10)
+                # shlex.quote = savunma-derinliği (refused adlar buraya ulaşamaz ama
+                # source-string ileride başka üreticiden gelebilir — Codex P1 simetrisi).
+                r = await self._executor.execute(f"systemctl is-active {shlex.quote(svc)}", timeout=10)
                 return r.get("stdout", "").strip() == "active"
             if base == "docker":
                 cont = source.split(":", 1)[1]
@@ -687,7 +689,7 @@ class DevOpsAgent:
                 # da bak: healthcheck'li container 'healthy' olmalı; healthcheck'siz (none) ->
                 # Running yeter. Çıktı "<running>;<health|none>" (örn "true;healthy"/"true;none").
                 r = await self._executor.execute(
-                    f"docker inspect -f '{{{{.State.Running}}}};{{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{else}}}}none{{{{end}}}}' {cont}",
+                    f"docker inspect -f '{{{{.State.Running}}}};{{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{else}}}}none{{{{end}}}}' {shlex.quote(cont)}",
                     timeout=10,
                 )
                 parts = r.get("stdout", "").strip().lower().split(";")
@@ -894,15 +896,23 @@ class DevOpsAgent:
         # Systemd services
         for svc in self._critical_services:
             try:
-                result = await self._executor.execute(f"systemctl is-active {svc}", timeout=5)
-                if result.get("stdout", "").strip() != "active":
+                # GÜVENLİK (Codex P1): ad-doğrulama PROBE'dan önce — probe da f-string ile
+                # tam-shell'e gider, remediate'teki guard tek başına yetmez (enjeksiyonlu
+                # ad probe'da çalışırdı). Geçersiz ad shell'e HİÇ gömülmez; sessiz değil:
+                # alarm yolu akar, _remediate_service refused-satırı+webhook yazar.
+                if not _VALID_UNIT.fullmatch(svc):
+                    problem = f"Service adi gecersiz ({svc[:60]!r}) — izlenemiyor (enjeksiyon riski)"
+                else:
+                    result = await self._executor.execute(f"systemctl is-active {shlex.quote(svc)}", timeout=5)
+                    problem = None if result.get("stdout", "").strip() == "active" else f"Service {svc} is not active"
+                if problem:
                     source = f"service:{svc}"
                     if source not in self._active_alerts:
                         alert = Alert(
                             id=f"{source}-{self._check_count}",
                             severity="critical",
                             source=source,
-                            message=f"Service {svc} is not active",
+                            message=problem,
                             value=0,
                             threshold=1,
                             timestamp=now,
@@ -915,16 +925,26 @@ class DevOpsAgent:
         # Docker containers
         for container in self._critical_containers:
             try:
-                result = await self._executor.execute(f"docker ps --filter name={container} --format '{{{{.Status}}}}'", timeout=5)
-                status = result.get("stdout", "").strip()
-                # Codex P2: 'Up (unhealthy)' de 'Up' içerir -> çalışıyor-ama-unhealthy kaçardı.
-                # Healthcheck'li container (n8n/qdrant) unhealthy = kritik outage -> yakala.
-                down = not status or "Up" not in status
-                unhealthy = "unhealthy" in status.lower()
+                # GÜVENLİK (Codex P1): servis yoluyla simetrik — doğrulama probe'dan önce.
+                if not _VALID_UNIT.fullmatch(container):
+                    down, unhealthy, status = True, False, ""
+                    invalid_msg = f"Container adi gecersiz ({container[:60]!r}) — izlenemiyor (enjeksiyon riski)"
+                else:
+                    invalid_msg = None
+                    result = await self._executor.execute(
+                        f"docker ps --filter name={shlex.quote(container)} --format '{{{{.Status}}}}'", timeout=5
+                    )
+                    status = result.get("stdout", "").strip()
+                    # Codex P2: 'Up (unhealthy)' de 'Up' içerir -> çalışıyor-ama-unhealthy kaçardı.
+                    # Healthcheck'li container (n8n/qdrant) unhealthy = kritik outage -> yakala.
+                    down = not status or "Up" not in status
+                    unhealthy = "unhealthy" in status.lower()
                 if down or unhealthy:
                     source = f"docker:{container}"
                     if source not in self._active_alerts:
-                        msg = f"Container {container} is not running" if down else f"Container {container} UNHEALTHY ({status})"
+                        msg = invalid_msg or (
+                            f"Container {container} is not running" if down else f"Container {container} UNHEALTHY ({status})"
+                        )
                         alert = Alert(
                             id=f"{source}-{self._check_count}",
                             severity="critical",
