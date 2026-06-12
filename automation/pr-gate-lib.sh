@@ -40,7 +40,10 @@ codex_state() {
   fi
   [[ "$rev" =~ ^[0-9]+$ ]] || { echo unknown; return; }
   [ "$rev" -eq 0 ] && { echo none; return; }
-  comments=$(gh api "repos/$repo/pulls/$num/comments" 2>/dev/null || echo '[]')
+  # Codex P2 (#119): comments-fetch TRANSIENT FAIL'i boş-liste (-> clean) sayma. Aksi
+  # halde gate "MERGE-OK" der ama Codex'in okunamayan inline bulgusu olabilir. Reviews
+  # fetch'teki gibi fail -> "unknown" (güvenli; gate auto-pass etmez).
+  comments=$(gh api "repos/$repo/pulls/$num/comments" 2>/dev/null) || { echo unknown; return; }
   if [ -n "$head" ]; then
     inl=$(printf '%s' "$comments" | jq --arg h "$head" '[.[]|select(.user.login=="chatgpt-codex-connector[bot]" and (.commit_id==$h or .original_commit_id==$h))]|length' 2>/dev/null || echo 0)
   else
