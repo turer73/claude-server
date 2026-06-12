@@ -332,6 +332,40 @@ async def test_task_log_crud(client, memory_db):
     assert len(resp.json()) == 1
 
 
+async def test_task_log_patch_status(client, memory_db):
+    resp = await client.post(
+        "/api/v1/memory/tasks",
+        json={"project": "linux-ai-server", "task": "patch me"},
+    )
+    task_id = resp.json()["id"]
+
+    resp = await client.patch(f"/api/v1/memory/tasks/{task_id}", json={"status": "completed"})
+    assert resp.status_code == 200
+    assert resp.json()["new_status"] == "completed"
+
+    # Sadece rationale — status korunur
+    resp = await client.patch(f"/api/v1/memory/tasks/{task_id}", json={"rationale": "artık gereksiz"})
+    assert resp.status_code == 200
+    assert resp.json()["new_status"] == "completed"
+
+    rows = await client.get("/api/v1/memory/tasks")
+    assert any(r["id"] == task_id and r["status"] == "completed" and r["rationale"] == "artık gereksiz" for r in rows.json())
+
+
+async def test_task_log_patch_validation(client, memory_db):
+    # Boş gövde → 400
+    resp = await client.patch("/api/v1/memory/tasks/1", json={})
+    assert resp.status_code == 400
+
+    # Olmayan task → 404
+    resp = await client.patch("/api/v1/memory/tasks/99999", json={"status": "completed"})
+    assert resp.status_code == 404
+
+    # Geçersiz status → 422 (Pydantic Literal)
+    resp = await client.patch("/api/v1/memory/tasks/1", json={"status": "bogus"})
+    assert resp.status_code == 422
+
+
 # ---------------------------------------------------------------------------
 # Discoveries
 # ---------------------------------------------------------------------------
