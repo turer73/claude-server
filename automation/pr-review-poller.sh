@@ -41,16 +41,11 @@ mark_reviewed() {
   jq --arg k "$1" --arg v "$2" '.[$k]=$v' "$STATE_FILE" > "$tmp" 2>/dev/null && mv "$tmp" "$STATE_FILE"
 }
 
-# CI-yesil mi? statusCheckRollup'ta FAILURE/ERROR yoksa + en az 1 SUCCESS varsa yesil.
-ci_green() {
-  local rollup="$1"
-  # ACTION_REQUIRED/STALE de "yeşil-değil" (premature-review önle — surer minor-2).
-  local bad; bad=$(printf '%s' "$rollup" | jq '[.[] | select((.conclusion // .state // "") | test("FAIL|ERROR|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STALE"; "i"))] | length' 2>/dev/null || echo 1)
-  local ok;  ok=$(printf '%s' "$rollup" | jq '[.[] | select((.conclusion // .state // "") | test("SUCCESS|NEUTRAL|SKIPPED"; "i"))] | length' 2>/dev/null || echo 0)
-  # pending: CheckRun .status VEYA legacy StatusContext .state ("PENDING"/"EXPECTED") — ikisi de.
-  local pend; pend=$(printf '%s' "$rollup" | jq '[.[] | select(((.status // "") | test("IN_PROGRESS|QUEUED|PENDING"; "i")) or ((.state // "") | test("PENDING|EXPECTED"; "i")))] | length' 2>/dev/null || echo 0)
-  [ "${bad:-1}" -eq 0 ] && [ "${pend:-0}" -eq 0 ] && [ "${ok:-0}" -gt 0 ]
-}
+# CI-yeşil (ci_green) + Codex durumu (codex_state) fonksiyonları artık paylaşılan
+# lib'de — pre-merge gate-helper (scripts/check-pr-gate.sh) ile TEK-KAYNAK (kopya-drift
+# yok; elle-poll bug'ının kök-çözümü, 2026-06-12). Codecov-parse (codecov_patch) da orada.
+# shellcheck source=/dev/null
+. "$ROOT/automation/pr-gate-lib.sh"
 
 # ── FAZ2 (koşullu auto-review spawn) config + helper ──
 FAZ2_PILOT_REPOS="${FAZ2_PILOT_REPOS:-turer73/claude-server}"  # pilot: sadece claude-server
@@ -73,32 +68,10 @@ daily_inc() {
   jq --arg d "$today" '.[$d]=((.[$d]//0)+1) | with_entries(select(.key>=($d|sub("-[0-9]+$";""))))' "$DAILY_FILE" > "$tmp" 2>/dev/null && mv "$tmp" "$DAILY_FILE"
 }
 
-# Codex durumu (surer #99737 thumbsup-clean refinement): auto-skip ≠ temiz.
-#   none     = pulls/N/reviews'da codex-entry YOK -> auto-skip (#13 gibi) -> force gerek
-#   findings = entry VAR + inline VAR -> Codex bulgu buldu (FAZ1-digest yüzeye çıkarır)
-#   clean    = entry VAR + inline YOK (+👍) -> gerçekten temiz
-#   unknown  = gh-fail -> spurious-trigger yok
-codex_state() {
-  local repo="$1" num="$2" head="$3" rev inl
-  # Codex-P2: review/comment'leri SADECE current-HEAD'e göre say. GitHub
-  # pulls/N/reviews ESKI-commit review'larini da dondurur (.commit_id) -> PR
-  # yeni-commit alinca stale-review "clean/findings" sayilip force+spawn ATLANIR.
-  # commit_id==head ile filtrele (head bos ise eski-davranis, tum-review).
-  if [ -n "$head" ]; then
-    rev=$(gh api "repos/$repo/pulls/$num/reviews" --jq --arg h "$head" '[.[]|select(.user.login=="chatgpt-codex-connector[bot]" and .commit_id==$h)]|length' 2>/dev/null || echo X)
-  else
-    rev=$(gh api "repos/$repo/pulls/$num/reviews" --jq '[.[]|select(.user.login=="chatgpt-codex-connector[bot]")]|length' 2>/dev/null || echo X)
-  fi
-  [[ "$rev" =~ ^[0-9]+$ ]] || { echo unknown; return; }
-  [ "$rev" -eq 0 ] && { echo none; return; }
-  if [ -n "$head" ]; then
-    inl=$(gh api "repos/$repo/pulls/$num/comments" --jq --arg h "$head" '[.[]|select(.user.login=="chatgpt-codex-connector[bot]" and (.commit_id==$h or .original_commit_id==$h))]|length' 2>/dev/null || echo 0)
-  else
-    inl=$(gh api "repos/$repo/pulls/$num/comments" --jq '[.[]|select(.user.login=="chatgpt-codex-connector[bot]")]|length' 2>/dev/null || echo 0)
-  fi
-  { [[ "$inl" =~ ^[0-9]+$ ]] && [ "$inl" -gt 0 ]; } && { echo findings; return; }
-  echo clean
-}
+# (codex_state artık pr-gate-lib.sh'de — yukarıda source edildi. Eski inline tanım
+#  `gh api --jq --arg` kullanıyordu; gh api --arg KABUL ETMEZ -> hep "unknown" dönerdi.
+#  aday=0 olduğu için prod'da hiç tetiklenmemiş latent bug'dı; lib'de pipe-pattern'le
+#  düzeltildi. none/findings/clean/unknown semantiği aynı.)
 
 # FAZ2 karar: spawn | force-codex | skip. main-hedef ZORUNLU. flag/diff>eşik ->
 # spawn (non-codex). Yoksa codex_state: none->force-codex (önce @codex review
