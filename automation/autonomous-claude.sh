@@ -42,6 +42,14 @@ PLANNER_MAX_TURNS="${PLANNER_MAX_TURNS:-3}"
 
 mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$THROTTLE_FILE")" "$PENDING_PLANS_DIR" 2>/dev/null || true
 
+# Max-plan ABONELİK kimliğini zorla: ANTHROPIC_API_KEY set'liyken claude CLI pay-as-you-go
+# API'yi kullanır → kredi bitince "Credit balance is too low" (API 400) ile her spawn DÜŞER
+# (fail-closed) + threat-detect fail-log'da yanlış-pozitif "threat" notu basar (gürültü döngüsü).
+# /api/v1/claude/run aynı strip'i yapıyor (app/api/claude_code.py: env.pop ANTHROPIC_API_KEY).
+# Strip → claude ~/.claude/.credentials.json (OAuth/Max-plan) kullanır = sıfır API faturası.
+# Script claude CLI dışında ANTHROPIC_API_KEY kullanmıyor → global unset güvenli.
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
+
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 log() { printf '[%s] %s\n' "$(ts)" "$*" >> "$LOG_FILE"; }
 
