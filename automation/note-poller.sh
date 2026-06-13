@@ -65,6 +65,11 @@ poll_once() {
         WHERE (to_device='$HOOK_DEVICE' OR to_device IS NULL)
           AND read=0
           AND id > $last_seen
+          -- DÖNGÜ KIR: klipper'ın KENDİ threat-detect notlarına spawn etme. Aksi halde
+          -- spawn→threat-detect→'URGENT: Threat' notu→(URGENT=priority1000)→yeni spawn→…
+          -- kendini-besleyen döngü (throttle yavaşlatır ama durdurmaz). Bu notlar bilgi
+          -- amaçlı; spawn-edilecek iş değil.
+          AND NOT (from_device='klipper' AND title LIKE 'URGENT: Threat #%')
         ORDER BY id
     " 2>/dev/null || echo '[]')
 
