@@ -55,6 +55,15 @@ def test_parse_extracts_embedded_json():
     assert art["tags"] == ["A", "B"]
 
 
+def test_parse_json_with_trailing_prose():
+    # P3 (Codex): JSON ile BAŞLAYIP sonrasında düz metin → 'extra data' yerine brace-fallback
+    import json
+
+    raw = json.dumps(_valid_article()) + "\nUmarım işine yarar."
+    art = ce._parse_article(raw)
+    assert art["slug"] == "test-makale"
+
+
 def test_parse_slug_normalized_ascii_kebab():
     import json
 

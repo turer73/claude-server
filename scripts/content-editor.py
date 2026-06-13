@@ -153,11 +153,16 @@ def _parse_article(text: str) -> dict[str, Any]:
     t = text.strip()
     t = re.sub(r"^```(?:json)?\s*", "", t)
     t = re.sub(r"\s*```$", "", t).strip()
-    if not t.startswith("{"):
+    # Önce doğrudan dene; başarısızsa ilk{..son} span'ini çıkar. P3 (Codex): '{...}\ntrailing'
+    # gibi JSON-sonrası düz-metinde startswith-{ true olup json.loads 'extra data' verir →
+    # her sarmalı-metin (önde VEYA arkada prose) durumunda brace-narrowing fallback'i çalışır.
+    try:
+        art: dict[str, Any] = json.loads(t)
+    except json.JSONDecodeError:
         i, j = t.find("{"), t.rfind("}")
-        if i >= 0 and j > i:
-            t = t[i : j + 1]
-    art: dict[str, Any] = json.loads(t)
+        if i < 0 or j <= i:
+            raise
+        art = json.loads(t[i : j + 1])
     req = ["slug", "tags", "title", "description", "content"]
     missing = [k for k in req if k not in art]
     if missing:
@@ -386,8 +391,13 @@ def main() -> int:
             pr = open_pr(site, art, topic)
             print(f"OUTCOME: pass | makale taslağı PR açıldı: {pr}")
         except Exception as e:
+            # P2 (Codex): write_draft de FAIL'se içerik HİÇBİR yerde yok → 'partial/yazıldı' yanıltıcı.
+            # err'e göre ayır: fail (içerik kayıp) vs partial (PR yok ama taslak kurtarıldı).
             err = write_draft(site_name, art, topic)
-            print(f"OUTCOME: partial | PR açılamadı ({str(e)[:120]}); taslak hafızaya yazıldı{' (' + err + ')' if err else ''}")
+            if err:
+                print(f"OUTCOME: fail | PR açılamadı ({str(e)[:80]}) VE taslak kaydedilemedi ({err}) — içerik KAYIP")
+            else:
+                print(f"OUTCOME: partial | PR açılamadı ({str(e)[:100]}); taslak hafızaya kurtarıldı")
         return 0
 
     # draft adaptörü
