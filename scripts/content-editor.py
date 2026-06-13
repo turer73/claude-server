@@ -253,6 +253,11 @@ def open_pr(site: dict[str, str], art: dict[str, Any], topic: str) -> str:
         orig_branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], repo)
     except RuntimeError:
         orig_branch = "master"
+    # P2 (Codex): /data/projects/<repo> İNSAN+başka-otomasyonla PAYLAŞILIYOR. Kirliyse DOKUNMA —
+    # aksi halde finally'deki 'checkout -f' alakasız yerel değişikliği siler ya da staged edit
+    # üretilen commit'e sızar. Kirli → raise (main except → write_draft fallback, içerik kaybolmaz).
+    if _git(["status", "--porcelain"], repo).strip():
+        raise RuntimeError(f"{repo} kirli (commit'siz değişiklik var) — güvenlik için dokunulmadı")
     try:
         _git(["fetch", "origin", "-q"], repo)
         _git(["checkout", "-B", branch, "origin/master"], repo)
@@ -312,11 +317,16 @@ def write_draft(site_name: str, art: dict[str, Any], topic: str) -> str:
     mkey = _envget("MEMORY_API_KEY")
     if not mkey:
         return "no MEMORY_API_KEY"
+    # P2 (Codex): bu discovery taslağın TEK kalıcı kopyası (draft-only site / PR-fail fallback)
+    # → TR+EN içeriğin TAMAMINI sakla (eski hali yalnız TR'yi 3000c kırpıyordu → EN + TR-kuyruğu
+    # kaybolup taslak yeniden-üretmeden yayınlanamıyordu). discoveries.details TEXT — sınırsız.
     details = (
         f"📝 İçerik Editörü taslağı — {site_name} (konu: {topic})\n"
         f"PR-hedefi yok ({SITES[site_name].get('reason', '')}); yayın elle.\n\n"
-        f"BAŞLIK (TR): {art['title']['tr']}\nSLUG: {art['slug']}\n"
-        f"META: {art['description']['tr']}\n\n--- İÇERİK (TR) ---\n{art['content']['tr'][:3000]}"
+        f"SLUG: {art['slug']}\nETİKETLER: {', '.join(art['tags'])}\n\n"
+        f"BAŞLIK (TR): {art['title']['tr']}\nMETA (TR): {art['description']['tr']}\n"
+        f"BAŞLIK (EN): {art['title']['en']}\nMETA (EN): {art['description']['en']}\n\n"
+        f"--- İÇERİK (TR) ---\n{art['content']['tr']}\n\n--- İÇERİK (EN) ---\n{art['content']['en']}"
     )
     # P2 (Codex): memory API timeout/HTTP hatası propagate olup OUTCOME marker'sız crash
     # ETMESİN → hata string'i döndür (main OUTCOME: fail/partial basar, diğer script'lerle tutarlı).
@@ -368,16 +378,14 @@ def main() -> int:
         print(f"OUTCOME: fail | makale üretilemedi: {str(e)[:180]}")
         return 0
 
-    # slug çakışma kontrolü (dosya-blog)
+    # Dosya-blog: slug-çakışma kontrolü open_pr İÇİNDE (fetch→origin/master sonrası, tek-kaynak;
+    # Codex P2: main'deki ön-kontrol stale local checkout'a bakardı → kaldırıldı). Çakışma/hata →
+    # except → write_draft (üretilen içerik kaybolmaz).
     if site["adapter"] == "articles_ts":
-        if any(a["slug"] == art["slug"] for a in existing_articles(site)):
-            print(f"OUTCOME: fail | slug zaten var: {art['slug']} (farklı konu/açı dene)")
-            return 0
         try:
             pr = open_pr(site, art, topic)
             print(f"OUTCOME: pass | makale taslağı PR açıldı: {pr}")
         except Exception as e:
-            # PR başarısızsa taslağı kaybetme → hafızaya düş
             err = write_draft(site_name, art, topic)
             print(f"OUTCOME: partial | PR açılamadı ({str(e)[:120]}); taslak hafızaya yazıldı{' (' + err + ')' if err else ''}")
         return 0
