@@ -256,6 +256,11 @@ def open_pr(site: dict[str, str], art: dict[str, Any], topic: str) -> str:
     try:
         _git(["fetch", "origin", "-q"], repo)
         _git(["checkout", "-B", branch, "origin/master"], repo)
+        # P2 (Codex): slug-çakışmasını GERÇEK base'e (origin/master) karşı YENİDEN doğrula —
+        # main'deki ön-kontrol stale local checkout'a bakar; slug yalnız origin/master'da varsa
+        # duplicate /blog/<slug> eklenirdi. Çakışma → raise (main except → write_draft fallback).
+        if any(a["slug"] == art["slug"] for a in existing_articles(site)):
+            raise RuntimeError(f"slug origin/master'da zaten var: {art['slug']}")
         # git kimliği: Vercel-deploy repo kuralı → author turer73 (klipperos DEĞİL); bkz
         # prompt-sonnet-uretici.md / memory.py. Co-Authored-By de YASAK (Vercel deploy bloklar).
         subprocess.run(["git", "config", "user.email", "turgut.urer@gmail.com"], cwd=repo, check=False)
@@ -294,8 +299,10 @@ def open_pr(site: dict[str, str], art: dict[str, Any], topic: str) -> str:
             raise RuntimeError(f"gh pr create → {pr_url.stderr.strip()[:200]}")
         return pr_url.stdout.strip()
     finally:
-        # Her yolda (başarı/başarısızlık) orijinal branch'e dön — checkout başarısız olsa da yut.
-        subprocess.run(["git", "checkout", orig_branch, "-q"], cwd=repo, check=False)
+        # Her yolda orijinal branch'e dön; -f yarım-uygulanan (insert oldu ama commit/push
+        # olmadı) değişiklikleri de ATAR → repo TEMİZ kalır, aynı dizinde koşan audit/test
+        # zehirlenmez (Codex P2: kirli-tree restore). checkout başarısız olsa da yut.
+        subprocess.run(["git", "checkout", "-f", orig_branch, "-q"], cwd=repo, check=False)
 
 
 # ── taslak adaptörü: hafızaya yaz (dosya-blog'u olmayan siteler) ──
@@ -311,19 +318,24 @@ def write_draft(site_name: str, art: dict[str, Any], topic: str) -> str:
         f"BAŞLIK (TR): {art['title']['tr']}\nSLUG: {art['slug']}\n"
         f"META: {art['description']['tr']}\n\n--- İÇERİK (TR) ---\n{art['content']['tr'][:3000]}"
     )
-    _post_json(
-        f"{API_BASE}/api/v1/memory/discoveries",
-        {
-            "device_name": "klipper",
-            "project": site_name,
-            "type": "learning",
-            "title": f"İçerik taslağı: {art['title']['tr'][:50]}",
-            "details": details,
-            "rationale": "content-editor.py — taslak makale (dosya-blog yok, yayın elle).",
-        },
-        {"X-Memory-Key": mkey},
-        15,
-    )
+    # P2 (Codex): memory API timeout/HTTP hatası propagate olup OUTCOME marker'sız crash
+    # ETMESİN → hata string'i döndür (main OUTCOME: fail/partial basar, diğer script'lerle tutarlı).
+    try:
+        _post_json(
+            f"{API_BASE}/api/v1/memory/discoveries",
+            {
+                "device_name": "klipper",
+                "project": site_name,
+                "type": "learning",
+                "title": f"İçerik taslağı: {art['title']['tr'][:50]}",
+                "details": details,
+                "rationale": "content-editor.py — taslak makale (dosya-blog yok, yayın elle).",
+            },
+            {"X-Memory-Key": mkey},
+            15,
+        )
+    except Exception as e:
+        return str(e)[:150]
     return ""
 
 
