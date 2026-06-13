@@ -31,13 +31,14 @@ import subprocess
 import sys
 import urllib.request
 from datetime import UTC, datetime
+from typing import Any
 
 API_BASE = os.environ.get("API_BASE", "http://localhost:8420")
 CLAUDE_TIMEOUT = int(os.environ.get("EDITOR_CLAUDE_TIMEOUT", "240"))
 ENV_FILE = "/opt/linux-ai-server/.env"
 
 # Site kayıt defteri. adapter=articles_ts → dosya-blog PR; adapter=draft → hafıza taslağı.
-SITES: dict[str, dict] = {
+SITES: dict[str, dict[str, str]] = {
     "renderhane": {
         "repo": "/data/projects/renderhane",
         "adapter": "articles_ts",
@@ -82,14 +83,15 @@ def _envget(key: str) -> str:
     return os.environ.get(key, "")
 
 
-def _post_json(url: str, payload: dict, headers: dict, timeout: int) -> dict:
+def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str], timeout: int) -> dict[str, Any]:
     data = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=data, method="POST")  # noqa: S310 (sabit localhost)
     req.add_header("Content-Type", "application/json")
     for k, v in headers.items():
         req.add_header(k, v)
     with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 (sabit localhost)
-        return json.loads(r.read().decode())
+        out: dict[str, Any] = json.loads(r.read().decode())
+        return out
 
 
 def _git(args: list[str], cwd: str) -> str:
@@ -102,7 +104,7 @@ def _git(args: list[str], cwd: str) -> str:
 # ── mevcut içerik (tekrar önleme) ──
 
 
-def existing_articles(site: dict) -> list[dict]:
+def existing_articles(site: dict[str, str]) -> list[dict[str, str]]:
     """articles.ts'ten slug + TR başlıkları çıkar (regex; tam-parse gerekmez)."""
     path = os.path.join(site["repo"], site.get("articles_path", ""))
     try:
@@ -112,7 +114,7 @@ def existing_articles(site: dict) -> list[dict]:
         return []
     slugs = re.findall(r'slug:\s*"([^"]+)"', src)
     tr_titles = re.findall(r'title:\s*\{\s*\n?\s*tr:\s*"([^"]+)"', src)
-    out = []
+    out: list[dict[str, str]] = []
     for i, s in enumerate(slugs):
         out.append({"slug": s, "title": tr_titles[i] if i < len(tr_titles) else ""})
     return out
@@ -134,7 +136,7 @@ def _claude(prompt: str) -> str:
     return (out.get("result") or "").strip()
 
 
-def suggest_topics(site: dict) -> str:
+def suggest_topics(site: dict[str, str]) -> str:
     existing = existing_articles(site)
     titles = "; ".join(a["title"] for a in existing if a["title"]) or "(henüz makale yok)"
     prompt = (
@@ -146,7 +148,7 @@ def suggest_topics(site: dict) -> str:
     return _claude(prompt)
 
 
-def _parse_article(text: str) -> dict:
+def _parse_article(text: str) -> dict[str, Any]:
     """LLM çıktısından JSON makaleyi çıkar (markdown fence'leri ayıkla, ilk{..son} dene)."""
     t = text.strip()
     t = re.sub(r"^```(?:json)?\s*", "", t)
@@ -155,7 +157,7 @@ def _parse_article(text: str) -> dict:
         i, j = t.find("{"), t.rfind("}")
         if i >= 0 and j > i:
             t = t[i : j + 1]
-    art = json.loads(t)
+    art: dict[str, Any] = json.loads(t)
     req = ["slug", "tags", "title", "description", "content"]
     missing = [k for k in req if k not in art]
     if missing:
@@ -169,7 +171,7 @@ def _parse_article(text: str) -> dict:
     return art
 
 
-def generate_article(site: dict, topic: str) -> dict:
+def generate_article(site: dict[str, str], topic: str) -> dict[str, Any]:
     existing = existing_articles(site)
     titles = "; ".join(a["title"] for a in existing if a["title"]) or "(yok)"
     prompt = (
@@ -203,7 +205,7 @@ def _ts_template(s: str) -> str:
     return "`" + s.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${") + "`"
 
 
-def render_ts_object(art: dict, author: str, date: str) -> str:
+def render_ts_object(art: dict[str, Any], author: str, date: str) -> str:
     tags = ", ".join(_ts_str(t) for t in art["tags"])
     return (
         "  {\n"
@@ -227,7 +229,7 @@ def render_ts_object(art: dict, author: str, date: str) -> str:
     )
 
 
-def insert_article(site: dict, ts_obj: str) -> None:
+def insert_article(site: dict[str, str], ts_obj: str) -> None:
     path = os.path.join(site["repo"], site["articles_path"])
     with open(path, encoding="utf-8") as f:
         src = f.read()
@@ -241,54 +243,65 @@ def insert_article(site: dict, ts_obj: str) -> None:
         f.write(new_src)
 
 
-def open_pr(site: dict, art: dict, topic: str) -> str:
+def open_pr(site: dict[str, str], art: dict[str, Any], topic: str) -> str:
     repo = site["repo"]
     branch = f"content/blog-{art['slug'][:40]}"
-    _git(["fetch", "origin", "-q"], repo)
-    _git(["checkout", "-B", branch, "origin/master"], repo)
-    # git kimliği (cron/headless ortamda boş olabilir)
-    subprocess.run(["git", "config", "user.email", "turgut.urer@gmail.com"], cwd=repo)
-    subprocess.run(["git", "config", "user.name", "klipperos"], cwd=repo)
+    # P2 (Codex): commit/push başarısız olursa checkout'u ESKİ branch'e geri al — aksi halde
+    # /data/projects/<repo> content-branch'inde kalır, ORADA koşan audit/test'leri zehirler
+    # (weekly-audit.sh, run-all-tests.sh aynı dizinde çalışır). finally tüm yollarda restore.
+    try:
+        orig_branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], repo)
+    except RuntimeError:
+        orig_branch = "master"
+    try:
+        _git(["fetch", "origin", "-q"], repo)
+        _git(["checkout", "-B", branch, "origin/master"], repo)
+        # git kimliği: Vercel-deploy repo kuralı → author turer73 (klipperos DEĞİL); bkz
+        # prompt-sonnet-uretici.md / memory.py. Co-Authored-By de YASAK (Vercel deploy bloklar).
+        subprocess.run(["git", "config", "user.email", "turgut.urer@gmail.com"], cwd=repo, check=False)
+        subprocess.run(["git", "config", "user.name", "turer73"], cwd=repo, check=False)
 
-    date = datetime.now(UTC).strftime("%Y-%m-%d")
-    insert_article(site, render_ts_object(art, site["author"], date))
-    _git(["add", site["articles_path"]], repo)
-    msg = (
-        f"content(blog): {art['title']['tr'][:60]}\n\n"
-        f"İçerik Editörü ajanı (content-editor.py) tarafından üretildi.\n"
-        f"Konu: {topic}\nSlug: {art['slug']} | Etiketler: {', '.join(art['tags'])}\n\n"
-        "TASLAK — insan review gerekli: özgünlük, teknik doğruluk, ton.\n"
-        "Auto-publish yok; merge öncesi içerik gözden geçirilmeli.\n\n"
-        "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
-    )
-    _git(["commit", "-m", msg], repo)
-    _git(["push", "-u", "origin", branch], repo)
-    body = (
-        f"## İçerik Editörü taslağı — SEO blog makalesi\n\n"
-        f"- **Konu:** {topic}\n- **Slug:** `{art['slug']}` → `/blog/{art['slug']}` (TR+EN)\n"
-        f"- **Etiketler:** {', '.join(art['tags'])}\n\n"
-        f"### TR başlık\n{art['title']['tr']}\n\n### Açıklama (meta)\n{art['description']['tr']}\n\n"
-        "---\n⚠️ **İNSAN REVIEW GEREKLİ** — `content-editor.py` ajanı üretti. Merge öncesi kontrol: "
-        "(1) bilgi doğruluğu/uydurma-iddia yok, (2) özgünlük, (3) dürüst ton, (4) TR/EN denklik. "
-        "Auto-publish yok; CI+Codex gate + insan onayı.\n\n"
-        "🤖 content-editor.py (multi-uzman: editör)"
-    )
-    pr_url = subprocess.run(
-        ["gh", "pr", "create", "--title", f"content(blog): {art['title']['tr'][:60]}", "--body", body, "--head", branch],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-    )
-    _git(["checkout", "master", "-q"], repo)
-    if pr_url.returncode != 0:
-        raise RuntimeError(f"gh pr create → {pr_url.stderr.strip()[:200]}")
-    return pr_url.stdout.strip()
+        date = datetime.now(UTC).strftime("%Y-%m-%d")
+        insert_article(site, render_ts_object(art, site["author"], date))
+        _git(["add", site["articles_path"]], repo)
+        # Co-Authored-By YOK (P1, Codex): renderhane/Vercel hobby-deploy'u trailer'da bloklar.
+        msg = (
+            f"content(blog): {art['title']['tr'][:60]}\n\n"
+            "İçerik Editörü ajanı (content-editor.py) tarafından üretildi.\n"
+            f"Konu: {topic}\nSlug: {art['slug']} | Etiketler: {', '.join(art['tags'])}\n\n"
+            "TASLAK — insan review gerekli: özgünlük, teknik doğruluk, ton.\n"
+            "Auto-publish yok; merge öncesi içerik gözden geçirilmeli."
+        )
+        _git(["commit", "-m", msg], repo)
+        _git(["push", "-u", "origin", branch], repo)
+        body = (
+            "## İçerik Editörü taslağı — SEO blog makalesi\n\n"
+            f"- **Konu:** {topic}\n- **Slug:** `{art['slug']}` → `/blog/{art['slug']}` (TR+EN)\n"
+            f"- **Etiketler:** {', '.join(art['tags'])}\n\n"
+            f"### TR başlık\n{art['title']['tr']}\n\n### Açıklama (meta)\n{art['description']['tr']}\n\n"
+            "---\n⚠️ **İNSAN REVIEW GEREKLİ** — `content-editor.py` ajanı üretti. Merge öncesi kontrol: "
+            "(1) bilgi doğruluğu/uydurma-iddia yok, (2) özgünlük, (3) dürüst ton, (4) TR/EN denklik. "
+            "Auto-publish yok; CI+Codex gate + insan onayı.\n\n"
+            "🤖 content-editor.py (multi-uzman: editör)"
+        )
+        pr_url = subprocess.run(
+            ["gh", "pr", "create", "--title", f"content(blog): {art['title']['tr'][:60]}", "--body", body, "--head", branch],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+        )
+        if pr_url.returncode != 0:
+            raise RuntimeError(f"gh pr create → {pr_url.stderr.strip()[:200]}")
+        return pr_url.stdout.strip()
+    finally:
+        # Her yolda (başarı/başarısızlık) orijinal branch'e dön — checkout başarısız olsa da yut.
+        subprocess.run(["git", "checkout", orig_branch, "-q"], cwd=repo, check=False)
 
 
 # ── taslak adaptörü: hafızaya yaz (dosya-blog'u olmayan siteler) ──
 
 
-def write_draft(site_name: str, art: dict, topic: str) -> str:
+def write_draft(site_name: str, art: dict[str, Any], topic: str) -> str:
     mkey = _envget("MEMORY_API_KEY")
     if not mkey:
         return "no MEMORY_API_KEY"
