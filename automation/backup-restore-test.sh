@@ -1,8 +1,8 @@
 #!/bin/bash
 # backup-restore-test.sh — En yeni backup'i gecici dizine ac, SQLite integrity dogrula.
 #
-# Cron: 0 3 * * 0 (Pazar 03:30, daily-backup sonrasi)
-# Telegram: SADECE fail durumunda (PASS sessiz)
+# Cron: 20 3 * * * (gunluk 03:20, daily-backup sonrasi) — klipper-cron-wrap ile sarili
+# Telegram: SADECE fail durumunda (PASS sessiz). OUTCOME marker -> cron_outcomes (wrap).
 # Exit: 0 OK, 1 fail
 #
 # 2026-05-27 ekleme — "yedek alindi" != "yedek calisir". Restore-time validation.
@@ -29,6 +29,7 @@ send_telegram() {
 LATEST=$(ls -t "$BACKUP_DIR"/*.tar.gz 2>/dev/null | head -1)
 if [ -z "$LATEST" ]; then
     log "FAIL: backup bulunamadi"
+    echo "OUTCOME: fail | backup bulunamadi: $BACKUP_DIR"
     send_telegram "🔴 *Backup Restore Test*
 Backup bulunamadi: \`$BACKUP_DIR\`"
     exit 1
@@ -42,6 +43,7 @@ trap "rm -rf '$TMP'" EXIT
 
 if ! tar -xzf "$LATEST" -C "$TMP" 2>>"$LOG"; then
     log "FAIL: tar acilmadi"
+    echo "OUTCOME: fail | tar açılamadı (corrupt?): $LATEST_NAME"
     send_telegram "🔴 *Backup Restore Test FAIL*
 \`$LATEST_NAME\` tar.gz acilamadi (corrupt?)"
     exit 1
@@ -65,6 +67,7 @@ done < <(find "$TMP" -name "*.db" -type f -print0)
 
 if [ "$DB_COUNT" -eq 0 ]; then
     log "FAIL: backup'ta hic .db dosyasi yok"
+    echo "OUTCOME: fail | $LATEST_NAME içinde SQLite DB yok"
     send_telegram "🔴 *Backup Restore Test FAIL*
 \`$LATEST_NAME\` icinde hic SQLite DB yok!"
     exit 1
@@ -73,6 +76,7 @@ fi
 # 4) Sonuc
 if [ "$FAIL_COUNT" -gt 0 ]; then
     log "FAIL: $FAIL_COUNT/$DB_COUNT DB bozuk"
+    echo "OUTCOME: fail | $FAIL_COUNT/$DB_COUNT DB bozuk ($LATEST_NAME)"
     send_telegram "🔴 *Backup Restore Test FAIL*
 \`$LATEST_NAME\` ($DB_COUNT DB, $FAIL_COUNT bozuk)
 
@@ -82,5 +86,6 @@ $FAIL_NAMES"
 fi
 
 log "PASS: $DB_COUNT DB hepsi integrity OK"
+echo "OUTCOME: pass | $DB_COUNT DB integrity OK ($LATEST_NAME)"
 # Sessiz PASS — Telegram spam yapmasin (sadece fail bildirilir)
 exit 0
