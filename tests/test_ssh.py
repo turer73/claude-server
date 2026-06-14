@@ -1,5 +1,7 @@
+import os
 from unittest.mock import MagicMock, patch
 
+import paramiko
 import pytest
 
 from app.core.ssh_client import SSHClient, SSHSessionManager
@@ -78,6 +80,39 @@ def test_ssh_client_connect_mock():
             key_filename=None,
             timeout=10,
         )
+
+
+def test_ssh_client_loads_known_hosts_and_default_warning_policy():
+    # Host-key pinning: known_hosts yüklenir + default WarningPolicy (strict env yok)
+    with patch("paramiko.SSHClient") as MockSSH, patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("SSH_STRICT_HOST_KEY", None)
+        mock_instance = MagicMock()
+        MockSSH.return_value = mock_instance
+        SSHClient().connect(host="h", username="root", password="p")
+        mock_instance.load_system_host_keys.assert_called_once()
+        policy = mock_instance.set_missing_host_key_policy.call_args[0][0]
+        assert isinstance(policy, paramiko.WarningPolicy)
+
+
+def test_ssh_client_strict_uses_reject_policy(monkeypatch):
+    # SSH_STRICT_HOST_KEY=1 → RejectPolicy (yalnız known_hosts)
+    monkeypatch.setenv("SSH_STRICT_HOST_KEY", "1")
+    with patch("paramiko.SSHClient") as MockSSH:
+        mock_instance = MagicMock()
+        MockSSH.return_value = mock_instance
+        SSHClient().connect(host="h", username="root", password="p")
+        policy = mock_instance.set_missing_host_key_policy.call_args[0][0]
+        assert isinstance(policy, paramiko.RejectPolicy)
+
+
+def test_ssh_client_known_hosts_load_error_tolerated():
+    # known_hosts okunamazsa (OSError) bağlantı yine kurulur (except dalı)
+    with patch("paramiko.SSHClient") as MockSSH:
+        mock_instance = MagicMock()
+        mock_instance.load_system_host_keys.side_effect = OSError("no known_hosts")
+        MockSSH.return_value = mock_instance
+        SSHClient().connect(host="h", username="root", password="p")
+        mock_instance.connect.assert_called_once()
 
 
 def test_ssh_client_exec_mock():

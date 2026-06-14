@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import uuid
 from datetime import datetime
 
 import paramiko
 
 from app.exceptions import NotFoundError, RateLimitError, ShellExecutionError
+
+log = logging.getLogger(__name__)
 
 
 class SSHClient:
@@ -23,7 +27,17 @@ class SSHClient:
         timeout: int = 10,
     ) -> paramiko.SSHClient:
         client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # Host-key pinning (MITM sertleştirme): known_hosts'u yükle → BİLİNEN bir host'un
+        # key'i değişirse paramiko BadHostKeyException atar (re-key veya aktif-MITM yakalanır;
+        # eski AutoAddPolicy bunu sessiz-geçiyordu). Bilinmeyen-host politikası:
+        #   default WarningPolicy = logla+bağlan (arbitrary-host SSH aracı kırılmaz),
+        #   SSH_STRICT_HOST_KEY=1 → RejectPolicy = yalnız known_hosts'taki host'lar (opt-in sıkı).
+        try:
+            client.load_system_host_keys()
+        except OSError:
+            pass  # known_hosts yoksa sorun değil; politika devreye girer
+        strict = os.environ.get("SSH_STRICT_HOST_KEY", "").strip().lower() in ("1", "true", "yes")
+        client.set_missing_host_key_policy(paramiko.RejectPolicy() if strict else paramiko.WarningPolicy())
         try:
             client.connect(
                 hostname=host,
