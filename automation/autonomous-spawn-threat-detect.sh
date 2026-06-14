@@ -46,24 +46,20 @@ scan() {
 }
 
 # ───── Credential read ─────
-scan "cred-env"     'cat[[:space:]]+[^[:space:]|]*\.env([[:space:]]|$)'
-scan "cred-ssh"     'cat[[:space:]]+[^[:space:]|]*\.ssh/(id_[a-z0-9_]+|authorized_keys)([[:space:]]|$)'
+# Boundary = yol-karakteri-olmayan herhangi bir şey VEYA satır-sonu (Codex P1 r2):
+# JSON/prose çıktısı komutu escaped-quote (cat .env") veya noktalama (id_ed25519,) ile
+# bitirince eski [[:space:]]|$ eşleşmiyordu → gerçek cred-read kaçıyordu. [^[:alnum:]_/.-]
+# quote/virgül/;/| vb.yi yakalar ama .environment gibi devam-eden-yolu eşleştirmez.
+scan "cred-env"     'cat[[:space:]]+[^[:space:]|]*\.env([^[:alnum:]_/.-]|$)'
+scan "cred-ssh"     'cat[[:space:]]+[^[:space:]|]*\.ssh/(id_[a-z0-9_]+|authorized_keys)([^[:alnum:]_/.-]|$)'
 scan "cred-aws"     'cat[[:space:]]+[^[:space:]|]*\.aws/credentials'
-scan "cred-shadow"  'cat[[:space:]]+(/etc/shadow|/etc/sudoers)([[:space:]]|$)'
+scan "cred-shadow"  'cat[[:space:]]+(/etc/shadow|/etc/sudoers)([^[:alnum:]_/.-]|$)'
 scan "cred-k8s"     'kubectl[[:space:]]+get[[:space:]]+secret[^|]*-o[[:space:]]+(yaml|json)'
 
 # ───── Exfiltration ─────
-scan_remote() {
-    local label= pattern=
-    local match
-    match=
-    if [ -n  ]; then
-        local short
-        short=
-        HITS+=(: )
-    fi
-}
-scan_remote exfil-curl-pipe  '(curl|wget)[[:space:]][^|;]*\|[[:space:]]*(bash|sh|python|python3)'
+# (eski scan_remote() bozuktu: local label= pattern= / match= / if [ -n ] → arg'ları hiç
+#  kullanmıyordu, exfil-curl-pipe FİİLEN HİÇ TARANMIYORDU. Normal scan'e çevrildi.)
+scan "exfil-curl-pipe"  '(curl|wget)[[:space:]][^|;]*\|[[:space:]]*(bash|sh|python|python3)'
 scan "exfil-base64-net" 'base64[[:space:]][^|;]*\|[[:space:]]*(curl|wget|nc|ncat)'
 scan "exfil-curl-file"  'curl[[:space:]][^;|]*-(F|-data-binary)[[:space:]]@'
 
@@ -97,7 +93,28 @@ if [ "${#HITS[@]}" -eq 0 ]; then
     exit 0
 fi
 
-log "THREAT INDICATORS #$NOTE_ID: ${#HITS[@]} hit(s)"
+# FP-AZALT (cred-fix sonrası spawn'lar başarıyla çalışınca threat-detect benign
+# result-PROSE'unu komut-regex'lerine takıp her başarılı spawn'ı "URGENT" sayıyordu).
+# Spawn log = `claude -p --output-format json` = result-PROSE (komut-transkripti DEĞİL);
+# low-confidence pattern'ler (ssh user@host, systemctl enable, journalctl, crontab…)
+# claude'un düz-metin açıklamasında/enjekte-context'te kolayca eşleşir → FP.
+# Strateji: HIGH-confidence hit (reverse-shell/exfil-pipe/drop-exec/cred-dosya) benign
+# prose'da neredeyse çıkmaz → her zaman flag. YALNIZ low-confidence + spawn-benign-başarılı
+# (is_error=false) → FP, FLAG'LEME. Spawn hatalıysa (is_error!=false) low de korunur.
+IS_ERROR=$(grep -aoE '"is_error":[[:space:]]*(true|false)' "$SPAWN_LOG" 2>/dev/null | head -1 | grep -oE 'true|false')
+# cred-* HEPSI HIGH (Codex P1): pattern'ler gerçek KOMUT gerektirir ('cat .env' / 'cat .ssh/id_*'
+# — bare '.env' prose DEĞİL), bu yüzden benign-success'ta bile cred-read sinyali korunmalı.
+HIGH_RE='^(rshell-|exfil-|drop-tmp-exec|cred-|persist-authkey)'
+has_high=0
+for h in "${HITS[@]}"; do
+    [[ "${h%%:*}" =~ $HIGH_RE ]] && has_high=1
+done
+if [ "$has_high" -eq 0 ] && [ "$IS_ERROR" = "false" ]; then
+    log "scan: benign spawn #$NOTE_ID (is_error=false) yalniz low-confidence hit (${#HITS[@]}) -> FP, atlandi: ${HITS[*]}"
+    exit 0
+fi
+
+log "THREAT INDICATORS #$NOTE_ID: ${#HITS[@]} hit(s) (high=$has_high is_error=$IS_ERROR)"
 
 HITS_LIST=$(printf -- '- %s\n' "${HITS[@]}")
 NOTE_ID_VAR="$NOTE_ID" HITS_VAR="$HITS_LIST" \
@@ -135,12 +152,18 @@ TG_MSG="<b>🛡 Autonomous Spawn — Threat Indicators</b>
 
 # Telegram yerine klipper->surer URGENT not (oturumlar notes API ile haberlesir)
 MK=$(grep '^MEMORY_API_KEY=' /opt/linux-ai-server/.env 2>/dev/null | cut -d= -f2-)
-NOTE_BODY=$(python3 -c "
-import json, sys
-hits = open(sys.argv[1]).read()[:800] if len(sys.argv)>1 else ''
-print(json.dumps({'from_device':'klipper','title':'URGENT: Threat #'+sys.argv[2]+' — '+sys.argv[3][:60],
-    'content': 'Threat-detect hits:\n'+hits}, ensure_ascii=False))
-" "$SPAWN_LOG" "$NOTE_ID" "$TG_MSG" 2>/dev/null)
+# BUG-FIX: eskiden not'a ham SPAWN_LOG'un ilk 800c'i (result-JSON) basılıyordu — yanıltıcı.
+# Artık GERÇEK eşleşen indicator'ları (label: match) + log-yolunu basıyoruz.
+NOTE_BODY=$(HITS_VAR="$HITS_LIST" NOTE_ID_VAR="$NOTE_ID" SPAWN_LOG_VAR="$SPAWN_LOG" \
+    HIGH_VAR="$has_high" ISERR_VAR="${IS_ERROR:-?}" python3 -c "
+import json, os
+print(json.dumps({'from_device':'klipper',
+    'title':'URGENT: Threat #'+os.environ['NOTE_ID_VAR']+' — autonomous spawn',
+    'content': 'Threat-detect indicators (high='+os.environ['HIGH_VAR']+' is_error='+os.environ['ISERR_VAR']+'):\n'
+        + os.environ['HITS_VAR'][:800]
+        + '\n\nIncele: cat '+os.environ['SPAWN_LOG_VAR']
+        + '\n(High-recall — false positive olabilir, manuel review.)'}, ensure_ascii=False))
+" 2>/dev/null)
 curl -sf -X POST http://127.0.0.1:8420/api/v1/memory/notes \
     -H "X-Memory-Key: $MK" -H "Content-Type: application/json" \
     -d "$NOTE_BODY" >> "$LOG_FILE" 2>&1 \

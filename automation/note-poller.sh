@@ -138,8 +138,16 @@ def score(n):
 sorted_notes = sorted(notes, key=score)
 source_count = {}
 spawned = []
+skipped_self = []   # klipper'in KENDI threat-detect notlari: spawn YOK ama not GORUNUR kalir
 deferred_rate_limit = []
 for n in sorted_notes:
+    # DONGU KIR (Codex P2): klipper'in kendi 'URGENT: Threat #' notuna spawn ETME — aksi
+    # halde spawn->threat-detect->urgent-not->(priority1000)->spawn... kendini-besleyen dongu.
+    # WHERE'de DEGIL burada: not new_notes'ta KALIR (manuel/hook surface'inde gorunur) +
+    # state ILERLER (asagida skipped_self max'a dahil -> yeniden-islenmez).
+    if n['from_device'] == 'klipper' and (n['title'] or '').startswith('URGENT: Threat #'):
+        skipped_self.append(n['id'])
+        continue
     src = n['from_device']
     cnt = source_count.get(src, 0)
     if cnt >= 3:
@@ -160,14 +168,15 @@ for n in spawned:
                      stdout=open('/dev/null', 'w'),
                      stderr=subprocess.STDOUT, start_new_session=True)
 
-# State guncellemesi: SADECE spawned not ID'lerinin maxi.
-# Deferred'lar bir sonraki poll'da yine pickup'lanir.
+# State: spawned + skipped_self (kendi threat-notlari) ILERLET — deferred HARIC (onlar retry).
+# skipped_self state'e dahil ki yeniden-fetch edilip dongu olusturmasin (Codex P2).
 import sys
-if spawned:
-    spawned_max = max(n['id'] for n in spawned)
+handled_ids = [n['id'] for n in spawned] + skipped_self
+if handled_ids:
+    spawned_max = max(handled_ids)
 else:
     spawned_max = $last_seen
-sys.stderr.write(f'spawned (priority order): {[n[\"id\"] for n in spawned]} deferred: {deferred_rate_limit}\n')
+sys.stderr.write(f'spawned (priority order): {[n[\"id\"] for n in spawned]} skipped_self: {skipped_self} deferred: {deferred_rate_limit}\n')
 print(spawned_max)
 " 2>>"$LOG_FILE" || echo $last_seen)
     else
