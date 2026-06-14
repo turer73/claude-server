@@ -54,13 +54,13 @@ scan "cred-k8s"     'kubectl[[:space:]]+get[[:space:]]+secret[^|]*-o[[:space:]]+
 
 # ───── Exfiltration ─────
 scan_remote() {
-    local label= pattern=
+    local label="$1" pattern="$2"
     local match
-    match=
-    if [ -n  ]; then
+    match=$(grep -aoE "$pattern" "$SPAWN_LOG" 2>/dev/null | head -1)
+    if [ -n "$match" ]; then
         local short
-        short=
-        HITS+=(: )
+        short=$(printf '%s' "$match" | tr -d '\n' | cut -c1-200)
+        HITS+=("$label: $short")
     fi
 }
 scan_remote exfil-curl-pipe  '(curl|wget)[[:space:]][^|;]*\|[[:space:]]*(bash|sh|python|python3)'
