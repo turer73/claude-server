@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import paramiko
 import pytest
 
-from app.core.ssh_client import SSHClient, SSHSessionManager
+from app.core.ssh_client import SSHClient, SSHSessionManager, _LogAndAcceptPolicy
 
 
 @pytest.fixture
@@ -91,7 +91,17 @@ def test_ssh_client_loads_known_hosts_and_default_warning_policy():
         SSHClient().connect(host="h", username="root", password="p")
         mock_instance.load_system_host_keys.assert_called_once()
         policy = mock_instance.set_missing_host_key_policy.call_args[0][0]
-        assert isinstance(policy, paramiko.WarningPolicy)
+        assert isinstance(policy, _LogAndAcceptPolicy)
+
+
+def test_log_accept_policy_immune_to_warnings_as_error():
+    # Codex P2: WarningPolicy PYTHONWARNINGS=error altında patlardı; bizim policy logging
+    # kullanır → error-filter altında bile exception ATMAZ (bilinmeyen-host bağlantısı kırılmaz).
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # tüm warning'ler exception olur
+        _LogAndAcceptPolicy().missing_host_key(MagicMock(), "newhost", MagicMock())  # patlamamalı
 
 
 def test_ssh_client_strict_uses_reject_policy(monkeypatch):
