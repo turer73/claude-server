@@ -390,7 +390,7 @@ async def _run_local(cfg: dict) -> tuple[str, str, int]:
 async def _run_ssh(cfg: dict) -> tuple[str, str, int]:
     """Execute test command on VPS via SSH subprocess."""
     remote_cmd = cfg["test_cmd"]
-    ssh_cmd = f"ssh -o ConnectTimeout={VPS_SSH_TIMEOUT} -o StrictHostKeyChecking=no {VPS_SSH_USER}@{VPS_SSH_HOST} '{remote_cmd}'"
+    ssh_cmd = f"ssh -o ConnectTimeout={VPS_SSH_TIMEOUT} -o StrictHostKeyChecking=accept-new {VPS_SSH_USER}@{VPS_SSH_HOST} '{remote_cmd}'"
     logger.info("Running SSH: %s", ssh_cmd)
 
     proc = await asyncio.create_subprocess_shell(

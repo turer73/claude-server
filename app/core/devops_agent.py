@@ -100,7 +100,7 @@ PLAYBOOKS: dict[str, list[dict]] = {
 }
 
 VPS_HOST = os.environ.get("VPS_HOST", "")
-VPS_SSH = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 {VPS_HOST}"
+VPS_SSH = f"ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 {VPS_HOST}"
 
 # Fixed, internal probe run on the VPS to collect host metrics + container state.
 # Single sample of /proc/stat deltas (no tool dependency beyond awk/free/df/docker).
@@ -974,7 +974,7 @@ class DevOpsAgent:
             proc = await asyncio.create_subprocess_exec(
                 "ssh",
                 "-o",
-                "StrictHostKeyChecking=no",
+                "StrictHostKeyChecking=accept-new",
                 "-o",
                 "ConnectTimeout=10",
                 "-o",

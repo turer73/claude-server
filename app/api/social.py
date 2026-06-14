@@ -17,7 +17,7 @@ from app.middleware.dependencies import require_admin
 router = APIRouter(prefix="/api/v1/social", tags=["social"])
 
 VPS_HOST = os.environ.get("VPS_HOST", "")
-VPS_SSH = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 {VPS_HOST}"
+VPS_SSH = f"ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 {VPS_HOST}"
 SOCIAL_DIR = "/opt/panola-social"
 PYTHON = f"{SOCIAL_DIR}/venv/bin/python"
 CLI = f"cd {SOCIAL_DIR} && {PYTHON} main.py"
