@@ -1000,7 +1000,7 @@ def execute_tool(name: str, arguments: dict) -> str:
             # metni SSH'a gidiyordu, komut HIC calismiyordu (surer P1). shlex.quote ile
             # remote'a tek-arg + injection-guard (app/api/vps.py:35 sağlam deseni birebir).
             cmd = (
-                "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "
+                "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "
                 + os.environ.get("VPS_HOST", "")
                 + " "
                 + shlex.quote(arguments["command"])
@@ -1015,7 +1015,7 @@ def execute_tool(name: str, arguments: dict) -> str:
             settings = get_settings()
             executor = ShellExecutor(whitelist=settings.shell_whitelist)
             cmd = (
-                "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "
+                "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "
                 + os.environ.get("VPS_HOST", "")
                 + " 'hostname && uptime -p && free -h | head -2 && df -h / | tail -1 && docker ps --format \"{{.Names}}: {{.Status}}\" | head -15'"
             )
@@ -1032,7 +1032,7 @@ def execute_tool(name: str, arguments: dict) -> str:
             # DEGIL, literal metin olarak komuta gomuluyordu (surer P1: komut bozuk).
             # Gercek concatenation'a cevrildi (vps_status:1010 sağlam deseni).
             cmd = (
-                "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "
+                "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "
                 + os.environ.get("VPS_HOST", "")
                 + " 'for u in https://coolify.panola.app https://uptime.panola.app https://n8n.panola.app https://analytics.panola.app; do echo \"$u $(curl -s -o /dev/null -w %{http_code} $u)\"; done'"
             )

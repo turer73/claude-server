@@ -10,7 +10,7 @@ set -uo pipefail
 source /opt/linux-ai-server/.env 2>/dev/null
 
 VPS="${VPS_HOST:?Set VPS_HOST in .env}"
-SSH="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 $VPS"
+SSH="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 $VPS"
 LOG=/var/log/linux-ai-server/vps-backup.log
 TARGET_ROOT=/data/backups/vps
 RETENTION_DAYS=7

@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/v1/vps", tags=["vps"])
 
 def _vps_ssh():
     s = get_settings()
-    return f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 {s.vps_host}"
+    return f"ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 {s.vps_host}"
 
 
 class VPSCommandRequest(BaseModel):

@@ -229,7 +229,7 @@ async def _run_on_vps(body: ClaudePromptRequest) -> dict:
     ssh_cmd = [
         "ssh",
         "-o",
-        "StrictHostKeyChecking=no",
+        "StrictHostKeyChecking=accept-new",
         "-o",
         "ConnectTimeout=10",
         settings.vps_host,
