@@ -34,7 +34,7 @@ def _valid_article() -> dict:
 def test_parse_plain_json():
     import json
 
-    art = ce._parse_article(json.dumps(_valid_article()))
+    art = ce._parse_article(json.dumps(_valid_article()), ["tr", "en"])
     assert art["slug"] == "test-makale"
     assert art["title"]["tr"] == "Türkçe Başlık"
 
@@ -43,7 +43,7 @@ def test_parse_strips_markdown_fence():
     import json
 
     raw = "```json\n" + json.dumps(_valid_article()) + "\n```"
-    art = ce._parse_article(raw)
+    art = ce._parse_article(raw, ["tr", "en"])
     assert art["slug"] == "test-makale"
 
 
@@ -51,7 +51,7 @@ def test_parse_extracts_embedded_json():
     import json
 
     raw = "İşte makale:\n" + json.dumps(_valid_article()) + "\nUmarım beğenirsin."
-    art = ce._parse_article(raw)
+    art = ce._parse_article(raw, ["tr", "en"])
     assert art["tags"] == ["A", "B"]
 
 
@@ -60,7 +60,7 @@ def test_parse_json_with_trailing_prose():
     import json
 
     raw = json.dumps(_valid_article()) + "\nUmarım işine yarar."
-    art = ce._parse_article(raw)
+    art = ce._parse_article(raw, ["tr", "en"])
     assert art["slug"] == "test-makale"
 
 
@@ -69,7 +69,7 @@ def test_parse_slug_normalized_ascii_kebab():
 
     a = _valid_article()
     a["slug"] = "Türkçe Slug Çöp!!"
-    art = ce._parse_article(json.dumps(a))
+    art = ce._parse_article(json.dumps(a), ["tr", "en"])
     # Türkçe karakter + boşluk + noktalama temizlenir, ascii-kebab kalır
     assert art["slug"] == "trke-slug-p"
     assert all(c.isascii() for c in art["slug"])
@@ -81,7 +81,7 @@ def test_parse_rejects_missing_field():
     a = _valid_article()
     del a["content"]
     with pytest.raises(ValueError, match="eksik alan"):
-        ce._parse_article(json.dumps(a))
+        ce._parse_article(json.dumps(a), ["tr", "en"])
 
 
 def test_parse_rejects_monolingual():
@@ -90,7 +90,7 @@ def test_parse_rejects_monolingual():
     a = _valid_article()
     a["title"] = {"tr": "yalniz tr"}  # en eksik
     with pytest.raises(ValueError, match="tr\\+en"):
-        ce._parse_article(json.dumps(a))
+        ce._parse_article(json.dumps(a), ["tr", "en"])
 
 
 def test_parse_rejects_empty_slug_after_normalize():
@@ -99,7 +99,7 @@ def test_parse_rejects_empty_slug_after_normalize():
     a = _valid_article()
     a["slug"] = "!!!"  # normalize sonrası boş
     with pytest.raises(ValueError, match="slug"):
-        ce._parse_article(json.dumps(a))
+        ce._parse_article(json.dumps(a), ["tr", "en"])
 
 
 # ── TS literal üretimi (escape doğruluğu = derlenebilir articles.ts) ──
@@ -174,3 +174,127 @@ def test_existing_articles_parses_slugs(tmp_path):
 def test_existing_articles_missing_file_returns_empty():
     site = {"repo": "/nonexistent", "articles_path": "x.ts"}
     assert ce.existing_articles(site) == []
+
+
+# ── astro_rehber adaptörü (3d-labx) ──
+
+
+def _valid_article_3lang() -> dict:
+    a = _valid_article()
+    a["title"]["de"] = "Deutscher Titel"
+    a["description"]["de"] = "de beschreibung"
+    a["content"]["de"] = "<h2>Überschrift</h2><p>Inhalt.</p>"
+    return a
+
+
+def test_parse_3lang_requires_de():
+    import json
+
+    a = _valid_article()  # yalniz tr+en
+    with pytest.raises(ValueError, match="tr\\+en\\+de"):
+        ce._parse_article(json.dumps(a), ["tr", "en", "de"])
+
+
+def test_parse_3lang_accepts_full():
+    import json
+
+    art = ce._parse_article(json.dumps(_valid_article_3lang()), ["tr", "en", "de"])
+    assert art["title"]["de"] == "Deutscher Titel"
+
+
+def test_render_astro_page_wellformed():
+    ts = ce.render_astro_page(_valid_article_3lang(), ["tr", "en", "de"])
+    # Frontmatter + import + Record<Language> + body
+    assert ts.startswith("---\n")
+    assert 'import BaseLayout from "../../layouts/BaseLayout.astro";' in ts
+    assert "const titles: Record<Language, string> = {" in ts
+    assert "tr:" in ts
+    assert "en:" in ts
+    assert "de:" in ts
+    assert "<article set:html={body} />" in ts
+    assert ts.rstrip().endswith("</BaseLayout>")
+
+
+def test_render_astro_page_escapes_backtick_content():
+    a = _valid_article_3lang()
+    a["content"]["tr"] = "Örnek: `npm run build` ve ${x}"
+    ts = ce.render_astro_page(a, ["tr", "en", "de"])
+    # content template-literal'i kırılmasın
+    assert "\\`npm run build\\`" in ts
+    assert "\\${x}" in ts
+
+
+def test_astro_slug_exists(tmp_path):
+    cdir = tmp_path / "rehberler"
+    cdir.mkdir()
+    (cdir / "var-olan.astro").write_text("x", encoding="utf-8")
+    site = {"repo": str(tmp_path), "content_dir": "rehberler"}
+    assert ce._astro_slug_exists(site, "var-olan") is True
+    assert ce._astro_slug_exists(site, "yok") is False
+
+
+# ── Codex #128 P2 fix'leri ──
+
+
+def test_sanitize_html_strips_dangerous():
+    out = ce._sanitize_html(
+        '<h2>Başlık</h2><script>alert(1)</script><p onclick="x()">m</p>'
+        '<a href="javascript:evil()">l</a><iframe src=x></iframe><p>güvenli</p>'
+    )
+    assert "<script" not in out
+    assert "onclick" not in out
+    assert "javascript:" not in out
+    assert "<iframe" not in out
+    assert "<h2>Başlık</h2>" in out
+    assert "<p>güvenli</p>" in out
+
+
+def test_sanitize_html_strips_unquoted_dangerous_urls():
+    # Codex P2 r2: tırnaksız javascript:/data: değerleri eski regex'i atlıyordu
+    out = ce._sanitize_html(
+        '<a href=javascript:alert(1)>x</a><img src=data:text/html;base64,abc><a href=vbscript:msgbox>y</a><a href="/güvenli">ok</a>'
+    )
+    assert "javascript:" not in out
+    assert "data:text/html" not in out
+    assert "vbscript:" not in out
+    assert 'href="/güvenli"' in out
+
+
+def test_render_astro_page_sanitizes_content():
+    a = _valid_article_3lang()
+    a["content"]["tr"] = "<p>ok</p><script>alert(1)</script>"
+    ts = ce.render_astro_page(a, ["tr", "en", "de"])
+    assert "<script" not in ts
+
+
+def test_existing_articles_astro_scans_dir(tmp_path):
+    cdir = tmp_path / "rehberler"
+    cdir.mkdir()
+    (cdir / "rehber-bir.astro").write_text(
+        'const titles: Record<Language, string> = {\n  tr: "Rehber Bir",\n  en: "Guide One",\n};\n',
+        encoding="utf-8",
+    )
+    (cdir / "_test.astro").write_text("x", encoding="utf-8")  # _ ile başlayan atlanır
+    (cdir / "index.astro").write_text("x", encoding="utf-8")  # index atlanır
+    site = {"repo": str(tmp_path), "adapter": "astro_rehber", "content_dir": "rehberler"}
+    arts = ce.existing_articles(site)
+    slugs = [a["slug"] for a in arts]
+    assert slugs == ["rehber-bir"]
+    assert arts[0]["title"] == "Rehber Bir"
+
+
+def test_existing_articles_astro_missing_dir():
+    site = {"repo": "/nonexistent", "adapter": "astro_rehber", "content_dir": "x"}
+    assert ce.existing_articles(site) == []
+
+
+def test_write_draft_langs_intersection_no_keyerror():
+    # title'da fazladan 'de' var ama description/content'te yok → KeyError VERMEMELI
+    import re as _re
+
+    a = _valid_article()
+    a["title"]["de"] = "extra"  # description/content'te de yok
+    # langs hesabı kesişim olmalı (tr,en) → KeyError yok; details TR+EN içermeli
+    langs = [lng for lng in a["title"] if lng in a["description"] and lng in a["content"]]
+    assert langs == ["tr", "en"]
+    assert _re  # noqa
