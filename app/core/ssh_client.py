@@ -2,12 +2,35 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import logging
+import os
 import uuid
 from datetime import datetime
 
 import paramiko
 
 from app.exceptions import NotFoundError, RateLimitError, ShellExecutionError
+
+log = logging.getLogger(__name__)
+
+
+def _key_fingerprint(key: paramiko.PKey) -> str:
+    """OpenSSH-uyumlu SHA256 fingerprint (SHA256:base64) — denetim-izi için."""
+    digest = hashlib.sha256(key.asbytes()).digest()
+    return "SHA256:" + base64.b64encode(digest).decode().rstrip("=")
+
+
+class _LogAndAcceptPolicy(paramiko.MissingHostKeyPolicy):
+    """Bilinmeyen host: logla + kabul et (TOFU). paramiko.WarningPolicy gibi AMA
+    `logging` kullanır, `warnings.warn` DEĞİL (Codex P2): WarningPolicy `PYTHONWARNINGS=error`
+    veya error-filter altında bilinmeyen-host bağlantısını exception'a çevirip kırardı."""
+
+    def missing_host_key(self, client: paramiko.SSHClient, hostname: str, key: paramiko.PKey) -> None:
+        # FINGERPRINT logla (Codex P3): get_name() yalnız algoritma; log-and-accept'in TEK
+        # denetim-izi bu → operatör sonraki key-değişimi/MITM ile karşılaştırabilsin.
+        log.warning("SSH bilinmeyen host-key kabul edildi (TOFU): %s %s %s", hostname, key.get_name(), _key_fingerprint(key))
 
 
 class SSHClient:
@@ -23,7 +46,17 @@ class SSHClient:
         timeout: int = 10,
     ) -> paramiko.SSHClient:
         client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # Host-key pinning (MITM sertleştirme): known_hosts'u yükle → BİLİNEN bir host'un
+        # key'i değişirse paramiko BadHostKeyException atar (re-key veya aktif-MITM yakalanır;
+        # eski AutoAddPolicy bunu sessiz-geçiyordu). Bilinmeyen-host politikası:
+        #   default _LogAndAcceptPolicy = logla+bağlan (arbitrary-host SSH aracı kırılmaz),
+        #   SSH_STRICT_HOST_KEY=1 → RejectPolicy = yalnız known_hosts'taki host'lar (opt-in sıkı).
+        try:
+            client.load_system_host_keys()
+        except OSError:
+            pass  # known_hosts yoksa sorun değil; politika devreye girer
+        strict = os.environ.get("SSH_STRICT_HOST_KEY", "").strip().lower() in ("1", "true", "yes")
+        client.set_missing_host_key_policy(paramiko.RejectPolicy() if strict else _LogAndAcceptPolicy())
         try:
             client.connect(
                 hostname=host,

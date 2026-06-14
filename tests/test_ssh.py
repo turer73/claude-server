@@ -1,8 +1,10 @@
+import os
 from unittest.mock import MagicMock, patch
 
+import paramiko
 import pytest
 
-from app.core.ssh_client import SSHClient, SSHSessionManager
+from app.core.ssh_client import SSHClient, SSHSessionManager, _LogAndAcceptPolicy
 
 
 @pytest.fixture
@@ -78,6 +80,67 @@ def test_ssh_client_connect_mock():
             key_filename=None,
             timeout=10,
         )
+
+
+def test_ssh_client_loads_known_hosts_and_default_warning_policy():
+    # Host-key pinning: known_hosts yüklenir + default WarningPolicy (strict env yok)
+    with patch("paramiko.SSHClient") as MockSSH, patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("SSH_STRICT_HOST_KEY", None)
+        mock_instance = MagicMock()
+        MockSSH.return_value = mock_instance
+        SSHClient().connect(host="h", username="root", password="p")
+        mock_instance.load_system_host_keys.assert_called_once()
+        policy = mock_instance.set_missing_host_key_policy.call_args[0][0]
+        assert isinstance(policy, _LogAndAcceptPolicy)
+
+
+def _mock_key(name="ssh-ed25519", raw=b"\x01\x02\x03"):
+    k = MagicMock()
+    k.get_name.return_value = name
+    k.asbytes.return_value = raw
+    return k
+
+
+def test_log_accept_policy_immune_to_warnings_as_error():
+    # Codex P2: WarningPolicy PYTHONWARNINGS=error altında patlardı; bizim policy logging
+    # kullanır → error-filter altında bile exception ATMAZ (bilinmeyen-host bağlantısı kırılmaz).
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # tüm warning'ler exception olur
+        _LogAndAcceptPolicy().missing_host_key(MagicMock(), "newhost", _mock_key())  # patlamamalı
+
+
+def test_log_accept_policy_logs_sha256_fingerprint(caplog):
+    # Codex P3: denetim-izi için SHA256 fingerprint loglanmalı (sadece algoritma değil).
+    import logging as _logging
+
+    key = _mock_key(raw=b"hello-key-bytes")
+    with caplog.at_level(_logging.WARNING):
+        _LogAndAcceptPolicy().missing_host_key(MagicMock(), "newhost", key)
+    assert "SHA256:" in caplog.text
+    assert "newhost" in caplog.text
+
+
+def test_ssh_client_strict_uses_reject_policy(monkeypatch):
+    # SSH_STRICT_HOST_KEY=1 → RejectPolicy (yalnız known_hosts)
+    monkeypatch.setenv("SSH_STRICT_HOST_KEY", "1")
+    with patch("paramiko.SSHClient") as MockSSH:
+        mock_instance = MagicMock()
+        MockSSH.return_value = mock_instance
+        SSHClient().connect(host="h", username="root", password="p")
+        policy = mock_instance.set_missing_host_key_policy.call_args[0][0]
+        assert isinstance(policy, paramiko.RejectPolicy)
+
+
+def test_ssh_client_known_hosts_load_error_tolerated():
+    # known_hosts okunamazsa (OSError) bağlantı yine kurulur (except dalı)
+    with patch("paramiko.SSHClient") as MockSSH:
+        mock_instance = MagicMock()
+        mock_instance.load_system_host_keys.side_effect = OSError("no known_hosts")
+        MockSSH.return_value = mock_instance
+        SSHClient().connect(host="h", username="root", password="p")
+        mock_instance.connect.assert_called_once()
 
 
 def test_ssh_client_exec_mock():
