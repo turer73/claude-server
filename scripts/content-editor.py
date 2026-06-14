@@ -314,8 +314,11 @@ def _sanitize_html(html: str) -> str:
     html = re.sub(r"(?is)<(script|style|iframe|object|embed|link|meta|base|form|input)\b[^>]*>", "", html)
     # Inline event handler attribute'ları (onclick=, onerror= …)
     html = re.sub(r"""(?i)\s+on\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)""", "", html)
-    # javascript:/data: URL'leri etkisizleştir
+    # javascript:/data:/vbscript: URL'leri etkisizleştir — TIRNAKLI (Codex P2)
     html = re.sub(r"""(?i)(href|src)\s*=\s*(["'])\s*(?:javascript|data|vbscript):[^"']*\2""", r"\1=\2#\2", html)
+    # …ve TIRNAKSIZ (Codex P2 r2): <a href=javascript:alert(1)> gibi tırnaksız değer önceki regex'i
+    # atlıyordu (quote zorunluydu) → set:html'e aktif URL sızabiliyordu. Değer boşluk/'>'e kadar.
+    html = re.sub(r"""(?i)(href|src)\s*=\s*(?:javascript|data|vbscript):[^\s>]*""", r'\1="#"', html)
     return html
 
 

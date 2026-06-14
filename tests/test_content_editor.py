@@ -249,6 +249,17 @@ def test_sanitize_html_strips_dangerous():
     assert "<p>güvenli</p>" in out
 
 
+def test_sanitize_html_strips_unquoted_dangerous_urls():
+    # Codex P2 r2: tırnaksız javascript:/data: değerleri eski regex'i atlıyordu
+    out = ce._sanitize_html(
+        '<a href=javascript:alert(1)>x</a><img src=data:text/html;base64,abc><a href=vbscript:msgbox>y</a><a href="/güvenli">ok</a>'
+    )
+    assert "javascript:" not in out
+    assert "data:text/html" not in out
+    assert "vbscript:" not in out
+    assert 'href="/güvenli"' in out
+
+
 def test_render_astro_page_sanitizes_content():
     a = _valid_article_3lang()
     a["content"]["tr"] = "<p>ok</p><script>alert(1)</script>"
