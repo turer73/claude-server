@@ -43,6 +43,9 @@ SITES: dict[str, dict[str, str]] = {
         "repo": "/data/projects/renderhane",
         "adapter": "articles_ts",
         "articles_path": "src/lib/blog/articles.ts",
+        "default_branch": "master",
+        "langs": "tr,en",
+        "content_format": "markdown",  # blog [slug] sayfası markdown render eder
         "author": "Renderhane",
         "about": (
             "Renderhane: AI destekli e-ticaret görsel üretim stüdyosu. Tek ürün fotoğrafından "
@@ -54,13 +57,23 @@ SITES: dict[str, dict[str, str]] = {
     },
     "3d-labx": {
         "repo": "/data/projects/3d-labx",
-        "adapter": "draft",
-        "reason": "İçerik DB/CMS-tabanlı (update-content.sql) — PR'ın dosya-hedefi yok; yayın elle.",
-        "about": "3D-Labx: 3D baskı, filament, teknik rehber ve ürün içeriği.",
+        "adapter": "astro_rehber",
+        # tech-portal-frontend Astro sitesi; rehberler/ dosya-tabanlı .astro içerik sayfaları.
+        "content_dir": "tech-portal-frontend/src/pages/rehberler",
+        "route_prefix": "/rehberler",
+        "default_branch": "main",
+        "langs": "tr,en,de",  # mevcut rehberler 3-dilli (Language type = tr|en|de)
+        "content_format": "html",  # .astro set:html ile basar
+        "about": (
+            "3D-labX: 3D baskı meraklıları ve profesyoneller için Türkçe rehber/teknik içerik sitesi. "
+            "Konular: 3D yazıcı ayarları, slicer (Cura/PrusaSlicer/Orca/Bambu) kalibrasyonu, filament "
+            "(PLA/PETG/ABS/TPU) seçimi, sık karşılaşılan baskı sorunları ve çözümleri, bakım, donanım."
+        ),
     },
     "bilge-arena": {
         "repo": "/data/projects/bilge-arena",
         "adapter": "draft",
+        "langs": "tr,en",
         "reason": "Blog katmanı yok (quiz platformu) — içerik-destination tanımlı değil.",
         "about": "Bilge Arena: TYT/LGS/AYT eğitim quiz platformu; eğitim içeriği/rehber.",
     },
@@ -148,8 +161,9 @@ def suggest_topics(site: dict[str, str]) -> str:
     return _claude(prompt)
 
 
-def _parse_article(text: str) -> dict[str, Any]:
-    """LLM çıktısından JSON makaleyi çıkar (markdown fence'leri ayıkla, ilk{..son} dene)."""
+def _parse_article(text: str, langs: list[str]) -> dict[str, Any]:
+    """LLM çıktısından JSON makaleyi çıkar (markdown fence'leri ayıkla, ilk{..son} dene).
+    langs: zorunlu dil anahtarları (renderhane tr,en; 3d-labx tr,en,de)."""
     t = text.strip()
     t = re.sub(r"^```(?:json)?\s*", "", t)
     t = re.sub(r"\s*```$", "", t).strip()
@@ -168,8 +182,8 @@ def _parse_article(text: str) -> dict[str, Any]:
     if missing:
         raise ValueError(f"eksik alan: {missing}")
     for sub in ("title", "description", "content"):
-        if not (isinstance(art[sub], dict) and art[sub].get("tr") and art[sub].get("en")):
-            raise ValueError(f"{sub} tr+en olmalı")
+        if not isinstance(art[sub], dict) or any(not art[sub].get(lng) for lng in langs):
+            raise ValueError(f"{sub} {'+'.join(langs)} olmalı")
     art["slug"] = re.sub(r"[^a-z0-9-]", "", art["slug"].lower().replace(" ", "-")).strip("-")
     if not art["slug"]:
         raise ValueError("slug geçersiz")
@@ -177,24 +191,41 @@ def _parse_article(text: str) -> dict[str, Any]:
 
 
 def generate_article(site: dict[str, str], topic: str) -> dict[str, Any]:
+    langs = site["langs"].split(",")
     existing = existing_articles(site)
     titles = "; ".join(a["title"] for a in existing if a["title"]) or "(yok)"
-    prompt = (
-        f"Sen {site['about']} sitesi için çift-dilli SEO blog editörüsün.\n"
-        f"KONU: {topic}\n"
-        f"MEVCUT MAKALELER (tekrarlama, farklı açıdan yaz): {titles}\n\n"
-        "Bu konuda TEK bir özgün makale üret. SADECE şu şemada geçerli JSON döndür "
-        "(markdown fence YOK, giriş/açıklama YOK):\n"
-        '{"slug":"ascii-kebab-case","tags":["Etiket1","Etiket2","Etiket3"],'
-        '"title":{"tr":"...","en":"..."},'
-        '"description":{"tr":"120-160 karakter meta","en":"120-160 chars"},'
-        '"content":{"tr":"## ...\\n\\nmarkdown 800-1200 kelime...","en":"## ...markdown..."}}\n\n'
-        "KURALLAR: özgün + doğru bilgi; UYDURMA teknik iddia/istatistik YOK; H2/H3 başlıklı, "
-        "okunabilir, dürüst ton (abartı/clickbait yok); TR ve EN içerik birbirinin EŞDEĞERİ "
-        "(birebir çeviri şart değil, aynı değeri taşısın); slug ASCII kebab-case (Türkçe karakter yok); "
-        "JSON içindeki tüm string'ler düzgün escape'li (özellikle content içi \\n)."
+    # Şema dil-sayısına göre kurulur (tr,en / tr,en,de). Örnek değerler langs'tan üretilir.
+    lang_names = {"tr": "Türkçe", "en": "İngilizce", "de": "Almanca"}
+
+    fmt = site.get("content_format", "markdown")
+    fmt_sample = "<h2>...</h2><p>...</p> (HTML)" if fmt == "html" else "## ...\\n\\n(markdown)"
+    fmt_rule = (
+        "içerik HTML (<h2>/<h3>/<p>/<ul>/<li>; set:html ile basılır, markdown DEĞİL)"
+        if fmt == "html"
+        else "içerik markdown (## / ### başlıklar, ** vurgu; markdown-render edilir)"
     )
-    return _parse_article(_claude(prompt))
+
+    def _obj(sample: str) -> str:
+        return "{" + ",".join(f'"{lng}":"{sample}"' for lng in langs) + "}"
+
+    schema = (
+        '{"slug":"ascii-kebab-case","tags":["Etiket1","Etiket2","Etiket3"],'
+        f'"title":{_obj("...")},"description":{_obj("120-160 karakter meta")},'
+        f'"content":{_obj(fmt_sample + " 800-1200 kelime")}}}'
+    )
+    diller = ", ".join(lang_names.get(lng, lng) for lng in langs)
+    prompt = (
+        f"Sen {site['about']} sitesi için çok-dilli SEO editörüsün.\n"
+        f"KONU: {topic}\nDİLLER: {diller} ({','.join(langs)})\n"
+        f"MEVCUT İÇERİK (tekrarlama, farklı açıdan yaz): {titles}\n\n"
+        "Bu konuda TEK bir özgün makale üret. SADECE şu şemada geçerli JSON döndür "
+        "(markdown fence YOK, giriş/açıklama YOK):\n" + schema + "\n\n"
+        f"KURALLAR: özgün + doğru bilgi; UYDURMA teknik iddia/istatistik YOK; {fmt_rule}; "
+        f"okunabilir, dürüst ton (abartı/clickbait yok); TÜM diller ({','.join(langs)}) birbirinin "
+        "EŞDEĞERİ (aynı değeri taşısın); slug ASCII kebab-case (Türkçe/aksan yok); JSON string'leri "
+        "düzgün escape'li."
+    )
+    return _parse_article(_claude(prompt), langs)
 
 
 # ── renderhane adaptörü: articles.ts'e ekle ──
@@ -248,16 +279,72 @@ def insert_article(site: dict[str, str], ts_obj: str) -> None:
         f.write(new_src)
 
 
+# ── 3d-labx adaptörü: tech-portal-frontend rehberler/<slug>.astro dosyası ──
+
+
+def render_astro_page(art: dict[str, Any], langs: list[str]) -> str:
+    """BaseLayout+Header kullanan, çok-dilli (Record<Language,string>) içerik .astro sayfası.
+    Frontmatter yapısı mevcut rehberler'in pattern'iyle aynı (astro check ile doğrulandı);
+    title/description JSON-string, content template-literal (HTML, backtick/${} escape)."""
+
+    def _rec(field: str) -> str:
+        body = "".join(f"    {lng}: {_ts_str(art[field][lng])},\n" for lng in langs)
+        return "{\n" + body + "  }"
+
+    content_body = "".join(f"    {lng}: {_ts_template(art['content'][lng])},\n" for lng in langs)
+    content_rec = "{\n" + content_body + "  }"
+    return (
+        "---\n"
+        'import BaseLayout from "../../layouts/BaseLayout.astro";\n'
+        'import Header from "../../components/Header.astro";\n'
+        'import { getLanguage, type Language } from "../../lib/api";\n\n'
+        "export const prerender = false;\n\n"
+        "// İçerik Editörü ajanı (content-editor.py) tarafından üretildi — insan review gerekli.\n"
+        "const lang = getLanguage(Astro.request) as Language;\n\n"
+        f"const titles: Record<Language, string> = {_rec('title')};\n"
+        f"const descriptions: Record<Language, string> = {_rec('description')};\n"
+        f"const content: Record<Language, string> = {content_rec};\n\n"
+        "const title = titles[lang];\nconst description = descriptions[lang];\nconst body = content[lang];\n"
+        "---\n\n"
+        "<BaseLayout title={title} description={description}>\n"
+        "  <Header />\n"
+        '  <main class="article-page">\n'
+        '    <div class="container" style="max-width:860px;margin:0 auto;padding:2.5rem 1rem;line-height:1.7;">\n'
+        "      <article set:html={body} />\n"
+        "    </div>\n"
+        "  </main>\n"
+        "</BaseLayout>\n"
+    )
+
+
+def write_astro(site: dict[str, str], art: dict[str, Any]) -> str:
+    """Üretilen .astro'yu content_dir/<slug>.astro'ya yaz. Dönüş: git-add için repo-rel yol."""
+    rel = os.path.join(site["content_dir"], art["slug"] + ".astro")
+    path = os.path.join(site["repo"], rel)
+    if os.path.exists(path):
+        raise RuntimeError(f"dosya zaten var: {rel}")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(render_astro_page(art, site["langs"].split(",")))
+    return rel
+
+
+def _astro_slug_exists(site: dict[str, str], slug: str) -> bool:
+    return os.path.exists(os.path.join(site["repo"], site["content_dir"], slug + ".astro"))
+
+
 def open_pr(site: dict[str, str], art: dict[str, Any], topic: str) -> str:
     repo = site["repo"]
-    branch = f"content/blog-{art['slug'][:40]}"
+    adapter = site["adapter"]
+    default_branch = site.get("default_branch", "master")
+    route_prefix = site.get("route_prefix", "/blog")
+    branch = f"content/{art['slug'][:42]}"
     # P2 (Codex): commit/push başarısız olursa checkout'u ESKİ branch'e geri al — aksi halde
     # /data/projects/<repo> content-branch'inde kalır, ORADA koşan audit/test'leri zehirler
     # (weekly-audit.sh, run-all-tests.sh aynı dizinde çalışır). finally tüm yollarda restore.
     try:
         orig_branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], repo)
     except RuntimeError:
-        orig_branch = "master"
+        orig_branch = default_branch
     # P2 (Codex): /data/projects/<repo> İNSAN+başka-otomasyonla PAYLAŞILIYOR. Kirliyse DOKUNMA —
     # aksi halde finally'deki 'checkout -f' alakasız yerel değişikliği siler ya da staged edit
     # üretilen commit'e sızar. Kirli → raise (main except → write_draft fallback, içerik kaybolmaz).
@@ -265,23 +352,28 @@ def open_pr(site: dict[str, str], art: dict[str, Any], topic: str) -> str:
         raise RuntimeError(f"{repo} kirli (commit'siz değişiklik var) — güvenlik için dokunulmadı")
     try:
         _git(["fetch", "origin", "-q"], repo)
-        _git(["checkout", "-B", branch, "origin/master"], repo)
-        # P2 (Codex): slug-çakışmasını GERÇEK base'e (origin/master) karşı YENİDEN doğrula —
-        # main'deki ön-kontrol stale local checkout'a bakar; slug yalnız origin/master'da varsa
-        # duplicate /blog/<slug> eklenirdi. Çakışma → raise (main except → write_draft fallback).
-        if any(a["slug"] == art["slug"] for a in existing_articles(site)):
-            raise RuntimeError(f"slug origin/master'da zaten var: {art['slug']}")
-        # git kimliği: Vercel-deploy repo kuralı → author turer73 (klipperos DEĞİL); bkz
-        # prompt-sonnet-uretici.md / memory.py. Co-Authored-By de YASAK (Vercel deploy bloklar).
+        _git(["checkout", "-B", branch, f"origin/{default_branch}"], repo)
+        # P2 (Codex): slug-çakışmasını GERÇEK base'e (origin/<default>) karşı YENİDEN doğrula.
+        if adapter == "articles_ts":
+            collision = any(a["slug"] == art["slug"] for a in existing_articles(site))
+        else:  # astro_rehber
+            collision = _astro_slug_exists(site, art["slug"])
+        if collision:
+            raise RuntimeError(f"slug origin/{default_branch}'da zaten var: {art['slug']}")
+        # git kimliği: Vercel/CF-deploy repo kuralı → author turer73 (klipperos DEĞİL) +
+        # Co-Authored-By YOK (renderhane Vercel hobby-deploy bloklar; 3d-labx convention=0 co-author).
         subprocess.run(["git", "config", "user.email", "turgut.urer@gmail.com"], cwd=repo, check=False)
         subprocess.run(["git", "config", "user.name", "turer73"], cwd=repo, check=False)
 
         date = datetime.now(UTC).strftime("%Y-%m-%d")
-        insert_article(site, render_ts_object(art, site["author"], date))
-        _git(["add", site["articles_path"]], repo)
-        # Co-Authored-By YOK (P1, Codex): renderhane/Vercel hobby-deploy'u trailer'da bloklar.
+        if adapter == "articles_ts":
+            insert_article(site, render_ts_object(art, site["author"], date))
+            add_path = site["articles_path"]
+        else:  # astro_rehber
+            add_path = write_astro(site, art)
+        _git(["add", add_path], repo)
         msg = (
-            f"content(blog): {art['title']['tr'][:60]}\n\n"
+            f"content: {art['title']['tr'][:60]}\n\n"
             "İçerik Editörü ajanı (content-editor.py) tarafından üretildi.\n"
             f"Konu: {topic}\nSlug: {art['slug']} | Etiketler: {', '.join(art['tags'])}\n\n"
             "TASLAK — insan review gerekli: özgünlük, teknik doğruluk, ton.\n"
@@ -289,18 +381,19 @@ def open_pr(site: dict[str, str], art: dict[str, Any], topic: str) -> str:
         )
         _git(["commit", "-m", msg], repo)
         _git(["push", "-u", "origin", branch], repo)
+        diller = "/".join(s.upper() for s in site["langs"].split(","))
         body = (
-            "## İçerik Editörü taslağı — SEO blog makalesi\n\n"
-            f"- **Konu:** {topic}\n- **Slug:** `{art['slug']}` → `/blog/{art['slug']}` (TR+EN)\n"
+            "## İçerik Editörü taslağı — SEO içerik\n\n"
+            f"- **Konu:** {topic}\n- **Slug:** `{art['slug']}` → `{route_prefix}/{art['slug']}` ({diller})\n"
             f"- **Etiketler:** {', '.join(art['tags'])}\n\n"
             f"### TR başlık\n{art['title']['tr']}\n\n### Açıklama (meta)\n{art['description']['tr']}\n\n"
             "---\n⚠️ **İNSAN REVIEW GEREKLİ** — `content-editor.py` ajanı üretti. Merge öncesi kontrol: "
-            "(1) bilgi doğruluğu/uydurma-iddia yok, (2) özgünlük, (3) dürüst ton, (4) TR/EN denklik. "
-            "Auto-publish yok; CI+Codex gate + insan onayı.\n\n"
+            "(1) bilgi doğruluğu/uydurma-iddia yok, (2) özgünlük, (3) dürüst ton, (4) dil denkliği. "
+            "Auto-publish yok; insan onayı.\n\n"
             "🤖 content-editor.py (multi-uzman: editör)"
         )
         pr_url = subprocess.run(
-            ["gh", "pr", "create", "--title", f"content(blog): {art['title']['tr'][:60]}", "--body", body, "--head", branch],
+            ["gh", "pr", "create", "--title", f"content: {art['title']['tr'][:60]}", "--body", body, "--head", branch],
             cwd=repo,
             capture_output=True,
             text=True,
@@ -325,14 +418,19 @@ def write_draft(site_name: str, art: dict[str, Any], topic: str) -> str:
     # P2 (Codex): bu discovery taslağın TEK kalıcı kopyası (draft-only site / PR-fail fallback)
     # → TR+EN içeriğin TAMAMINI sakla (eski hali yalnız TR'yi 3000c kırpıyordu → EN + TR-kuyruğu
     # kaybolup taslak yeniden-üretmeden yayınlanamıyordu). discoveries.details TEXT — sınırsız.
-    details = (
+    # Dile-genel: art'ta bulunan TÜM dilleri sakla (3d-labx fallback'inde DE kaybolmasın).
+    langs = list(art.get("title", {}).keys())
+    head = (
         f"📝 İçerik Editörü taslağı — {site_name} (konu: {topic})\n"
-        f"PR-hedefi yok ({SITES[site_name].get('reason', '')}); yayın elle.\n\n"
-        f"SLUG: {art['slug']}\nETİKETLER: {', '.join(art['tags'])}\n\n"
-        f"BAŞLIK (TR): {art['title']['tr']}\nMETA (TR): {art['description']['tr']}\n"
-        f"BAŞLIK (EN): {art['title']['en']}\nMETA (EN): {art['description']['en']}\n\n"
-        f"--- İÇERİK (TR) ---\n{art['content']['tr']}\n\n--- İÇERİK (EN) ---\n{art['content']['en']}"
+        f"PR-hedefi yok/başarısız ({SITES[site_name].get('reason', '')}); yayın elle.\n\n"
+        f"SLUG: {art['slug']}\nETİKETLER: {', '.join(art['tags'])}\n"
     )
+    body = "".join(
+        f"\nBAŞLIK ({lng.upper()}): {art['title'][lng]}\nMETA ({lng.upper()}): {art['description'][lng]}\n"
+        f"--- İÇERİK ({lng.upper()}) ---\n{art['content'][lng]}\n"
+        for lng in langs
+    )
+    details = head + body
     # P2 (Codex): memory API timeout/HTTP hatası propagate olup OUTCOME marker'sız crash
     # ETMESİN → hata string'i döndür (main OUTCOME: fail/partial basar, diğer script'lerle tutarlı).
     try:
@@ -386,7 +484,7 @@ def main() -> int:
     # Dosya-blog: slug-çakışma kontrolü open_pr İÇİNDE (fetch→origin/master sonrası, tek-kaynak;
     # Codex P2: main'deki ön-kontrol stale local checkout'a bakardı → kaldırıldı). Çakışma/hata →
     # except → write_draft (üretilen içerik kaybolmaz).
-    if site["adapter"] == "articles_ts":
+    if site["adapter"] in ("articles_ts", "astro_rehber"):
         try:
             pr = open_pr(site, art, topic)
             print(f"OUTCOME: pass | makale taslağı PR açıldı: {pr}")
