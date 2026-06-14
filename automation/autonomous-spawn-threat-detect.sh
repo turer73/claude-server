@@ -46,10 +46,14 @@ scan() {
 }
 
 # ───── Credential read ─────
-scan "cred-env"     'cat[[:space:]]+[^[:space:]|]*\.env([[:space:]]|$)'
-scan "cred-ssh"     'cat[[:space:]]+[^[:space:]|]*\.ssh/(id_[a-z0-9_]+|authorized_keys)([[:space:]]|$)'
+# Boundary = yol-karakteri-olmayan herhangi bir şey VEYA satır-sonu (Codex P1 r2):
+# JSON/prose çıktısı komutu escaped-quote (cat .env") veya noktalama (id_ed25519,) ile
+# bitirince eski [[:space:]]|$ eşleşmiyordu → gerçek cred-read kaçıyordu. [^[:alnum:]_/.-]
+# quote/virgül/;/| vb.yi yakalar ama .environment gibi devam-eden-yolu eşleştirmez.
+scan "cred-env"     'cat[[:space:]]+[^[:space:]|]*\.env([^[:alnum:]_/.-]|$)'
+scan "cred-ssh"     'cat[[:space:]]+[^[:space:]|]*\.ssh/(id_[a-z0-9_]+|authorized_keys)([^[:alnum:]_/.-]|$)'
 scan "cred-aws"     'cat[[:space:]]+[^[:space:]|]*\.aws/credentials'
-scan "cred-shadow"  'cat[[:space:]]+(/etc/shadow|/etc/sudoers)([[:space:]]|$)'
+scan "cred-shadow"  'cat[[:space:]]+(/etc/shadow|/etc/sudoers)([^[:alnum:]_/.-]|$)'
 scan "cred-k8s"     'kubectl[[:space:]]+get[[:space:]]+secret[^|]*-o[[:space:]]+(yaml|json)'
 
 # ───── Exfiltration ─────
