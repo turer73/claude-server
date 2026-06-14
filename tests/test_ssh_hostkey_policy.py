@@ -31,9 +31,7 @@ def _ssh_source_files() -> list[Path]:
 
 
 def test_no_strict_hostkey_disabled_repo_wide():
-    offenders = [
-        str(p.relative_to(ROOT)) for p in _ssh_source_files() if FORBIDDEN in p.read_text(encoding="utf-8", errors="ignore")
-    ]
+    offenders = [str(p.relative_to(ROOT)) for p in _ssh_source_files() if FORBIDDEN in p.read_text(encoding="utf-8", errors="ignore")]
     assert not offenders, f"host-key doğrulaması kapalı (MITM) — 'accept-new' kullan: {offenders}"
 
 
