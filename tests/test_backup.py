@@ -28,6 +28,16 @@ def test_create_backup(bm):
     assert result["path"].endswith(".tar.gz")
 
 
+def test_create_backup_atomic_no_tmp(bm):
+    # Başarılı backup sonrası hiçbir .tmp artığı kalmamalı (restore-test *.tar.gz
+    # glob'una partial arşiv sızmasın — atomik yayın).
+    result = bm.create_backup()
+    assert result["success"] is True
+    files = os.listdir(bm._backup_dir)
+    assert all(not f.endswith(".tmp") for f in files), files
+    assert any(f.endswith(".tar.gz") for f in files)
+
+
 def test_list_backups_empty(tmp_path):
     bm = BackupManager(source_dirs=[], backup_dir=str(tmp_path / "empty"))
     backups = bm.list_backups()

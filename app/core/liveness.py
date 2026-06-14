@@ -412,6 +412,9 @@ REGISTRY = [
     ci_liveness,
     lambda: cron_job_liveness("vps-backup-push", 16 * 3600, absent_status="dead"),  # günlük; 16h→dead@48h (~2g)
     lambda: cron_job_liveness("demo-reset-test", 28 * 3600),
+    # restore-test = "yedek çalışır mı" doğrulayıcısı; tamamen DURURSA (27 May–14 Haz
+    # boşluğu gibi) kimse fark etmiyordu → registry'ye al. Günlük (03:20); 28h→4h grace.
+    lambda: cron_job_liveness("restore-test", 28 * 3600, absent_status="dead"),
     # notify-cron = alarm TESLİM-yolu; ölürse/kapalıysa HİÇBİR alarm gitmez (kör).
     # enable-gate + */20 kadans tazeliği. Spine'ın kalbi; meta-monitor DIRECT izler.
     notify_cron_liveness,

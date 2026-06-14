@@ -49,6 +49,11 @@ class BackupManager:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         name = f"backup_{label}_{ts}.tar.gz" if label else f"backup_{ts}.tar.gz"
         path = os.path.join(self._backup_dir, name)
+        # Atomik yayın (Codex): arşivi önce .tmp'ye yaz, tamamlanınca os.replace ile
+        # yerine koy. Aksi halde yarıda-kesilen yazım, restore-test'in `*.tar.gz`
+        # glob'una (ve cleanup `ls -t`'ye) PARTIAL arşiv olarak sızıp false-FAIL üretir.
+        # `.tar.gz.tmp` glob'a takılmaz → in-progress arşiv görünmez.
+        tmp_path = path + ".tmp"
 
         # gzip level: default 1 (fast). 03:00 cron backup'ta gzip-9 ~11x daha
         # fazla CPU yakıyordu (3.3s vs 0.3s) -> 85% eşiğini aşıp CRITICAL alert
@@ -63,7 +68,7 @@ class BackupManager:
         with tempfile.TemporaryDirectory(prefix="bkp-snap-") as snap_dir:
             # Map source path -> arcname for items added to tar.
             # SQLite files get a consistent snapshot into snap_dir first.
-            with tarfile.open(path, "w:gz", compresslevel=gzip_level) as tar:
+            with tarfile.open(tmp_path, "w:gz", compresslevel=gzip_level) as tar:
                 for source in self._sources:
                     if not os.path.exists(source):
                         continue
@@ -96,6 +101,10 @@ class BackupManager:
                                 tar.add(source, arcname=src_base)
                         else:
                             tar.add(source, arcname=src_base)
+        # Atomik yayın (Codex): tar tamamlanınca .tmp'yi os.replace ile yerine koy →
+        # restore-test'in *.tar.gz glob'u yarıda-kalan arşivi GÖRMEZ (.tar.gz.tmp eşleşmez).
+        # Hata'da .tmp kalabilir ama glob'a takılmaz (zararsız); daily-backup zaten fail-alert atar.
+        os.replace(tmp_path, path)
 
         size = os.path.getsize(path)
         return {
