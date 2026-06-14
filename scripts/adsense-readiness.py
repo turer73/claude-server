@@ -182,9 +182,22 @@ def fetch_sites(token: str, account: str) -> dict[str, str]:
 def audit_site(domain: str, pub: str) -> dict[str, Any]:
     """Tek site içerik denetimi (ağ): sitemap, anasayfa, güven sayfaları, ads.txt, snippet."""
     _, sm = _fetch(f"https://{domain}/sitemap.xml")
-    pages = len(re.findall(r"<loc>(.*?)</loc>", sm))
+    locs = re.findall(r"<loc>(.*?)</loc>", sm)
+    pages = len(locs)
     hs, home = _fetch(f"https://{domain}/")
     home_chars = text_len(home) if hs == 200 else 0
+    # İÇERİK ÖRNEKLE (PR#118 dersi + Codex: ana sayfa ≠ site içeriği). SaaS ana sayfası
+    # landing/satış-kopyasıdır; editöryel içerik /blog,/rehberler'de. Quality-note ana
+    # sayfayı görüp hep "ince" sanıyordu → sitemap'ten gerçek bir makale çek, onu değerlendir.
+    content_url, content_sample = "", ""
+    # NOT: 'rehberler' önce (alternation longest-first) → /rehberler/<slug> eşleşir; /rehber/ değil.
+    _art_re = r"/(blog|rehberler|rehber|makale|article|guide|post|haber|3d-baski|sorun-cozumleri|anleitungen|guides)/"
+    arts = [u for u in locs if re.search(_art_re, u, re.I)]
+    for u in arts[:4]:
+        cs, ch = _fetch(u)
+        if cs == 200 and text_len(ch) > 800:
+            content_url, content_sample = u, visible_text(ch)[:3000]
+            break
     trust: dict[str, bool] = {}
     for key, paths in TRUST.items():
         found = False
@@ -203,26 +216,39 @@ def audit_site(domain: str, pub: str) -> dict[str, Any]:
         "pages": pages,
         "home_chars": home_chars,
         "home_html": home if hs == 200 else "",
+        "content_url": content_url,
+        "content_sample": content_sample,
+        "content_pages": len(arts),
         "trust": trust,
         "ads_txt": ads_txt_ok(ax_b, ax_s, pub),
         "snippet": has_snippet(home, pub) if hs == 200 else False,
     }
 
 
-def quality_note(domain: str, home_html: str) -> str:
-    """/claude ile içerik-kalite notu (best-effort; 3d-labx dersi: metrik yetmez, özgünlük önemli).
-    Hata/timeout → boş döner, denetim yine teslim edilir."""
+def quality_note(domain: str, home_html: str, content_sample: str = "", content_url: str = "") -> str:
+    """/claude ile SİTE-GENELİ içerik-kalite notu (best-effort; 3d-labx/PR#118 dersi: metrik
+    yetmez, özgünlük önemli + ana sayfa ≠ site içeriği). Hata/timeout → boş döner."""
     ikey = gsc._envget("INTERNAL_API_KEY")
-    sample = text_len(home_html)
-    if not ikey or sample < 200:
+    if not ikey or text_len(home_html) < 200:
         return ""
-    snippet = visible_text(home_html)[:2500]
-    prompt = (
-        f"{domain} sitesinin içeriği aşağıda. AdSense 'düşük değerli içerik' reddi açısından "
-        "değerlendir: içerik ÖZGÜN ve doyurucu mu, yoksa ince/şablon/otomatik-üretim hissi mi veriyor? "
-        "1 cümle verdi + en kritik 2 somut eksik. Kısa, dürüst, abartısız.\n\n"
-        f"İÇERİK:\n{snippet}"
-    )
+    home_snip = visible_text(home_html)[:1500]
+    if content_sample:
+        # Editöryel içerik VAR → onu birincil değerlendir; ana sayfa landing'i normal say.
+        prompt = (
+            f"{domain} sitesini AdSense 'düşük değerli içerik' reddi açısından değerlendir. "
+            "Ana sayfa çoğu SaaS'ta landing/satış kopyasıdır — bu TEK BAŞINA sorun değil; "
+            "asıl soru sitenin EDİTÖRYEL içeriğinin (blog/rehber makaleleri) özgün ve doyurucu olup "
+            "olmadığı. Aşağıda ana sayfa ÖZETİ + GERÇEK BİR MAKALE örneği var. Makale özgün/doyurucu "
+            f"mu? AdSense'e hazır mı? 1 cümle verdict + en kritik 2 eksik (varsa). Kısa, dürüst.\n\n"
+            f"--- ANA SAYFA (landing) ---\n{home_snip}\n\n--- MAKALE ({content_url}) ---\n{content_sample}"
+        )
+    else:
+        prompt = (
+            f"{domain} sitesinin içeriği aşağıda (sitemap'te makale/blog sayfası BULUNAMADI — "
+            "editöryel içerik yok olabilir). AdSense 'düşük değerli içerik' açısından değerlendir: "
+            "özgün/doyurucu mu yoksa ince/şablon mı? 1 cümle verdict + en kritik 2 eksik. Kısa, dürüst.\n\n"
+            f"İÇERİK:\n{visible_text(home_html)[:2500]}"
+        )
     try:
         out = gsc._post_json(
             f"{API_BASE}/api/v1/claude/run",
@@ -324,7 +350,7 @@ def main() -> int:
     for domain in sites:
         try:
             a = audit_site(domain, pub)
-            a["quality"] = quality_note(domain, a.pop("home_html", ""))
+            a["quality"] = quality_note(domain, a.pop("home_html", ""), a.get("content_sample", ""), a.get("content_url", ""))
             audits[domain] = a
         except Exception as e:  # noqa: BLE001
             audits[domain] = {"domain": domain, "gaps": [f"denetlenemedi: {str(e)[:60]}"]}
