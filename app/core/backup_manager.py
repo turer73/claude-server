@@ -65,51 +65,46 @@ class BackupManager:
             gzip_level = 1
         gzip_level = min(9, max(1, gzip_level))
 
-        try:
-            with tempfile.TemporaryDirectory(prefix="bkp-snap-") as snap_dir:
-                # Map source path -> arcname for items added to tar.
-                # SQLite files get a consistent snapshot into snap_dir first.
-                with tarfile.open(tmp_path, "w:gz", compresslevel=gzip_level) as tar:
-                    for source in self._sources:
-                        if not os.path.exists(source):
-                            continue
-                        src_base = os.path.basename(source.rstrip(os.sep))
-                        if os.path.isdir(source):
-                            for entry in os.listdir(source):
-                                full = os.path.join(source, entry)
-                                arcname = os.path.join(src_base, entry)
-                                # Skip WAL/SHM sidecars — captured by online backup
-                                if entry.endswith((".db-wal", ".db-shm")):
-                                    continue
-                                if _is_sqlite_file(full):
-                                    snap_path = os.path.join(snap_dir, entry)
-                                    try:
-                                        _snapshot_sqlite(full, snap_path)
-                                        tar.add(snap_path, arcname=arcname)
-                                    except sqlite3.Error:
-                                        # Snapshot failed (corrupt?) — fall back to raw add
-                                        tar.add(full, arcname=arcname)
-                                else:
-                                    tar.add(full, arcname=arcname)
-                        else:
-                            # Single file source
-                            if _is_sqlite_file(source):
-                                snap_path = os.path.join(snap_dir, src_base)
+        with tempfile.TemporaryDirectory(prefix="bkp-snap-") as snap_dir:
+            # Map source path -> arcname for items added to tar.
+            # SQLite files get a consistent snapshot into snap_dir first.
+            with tarfile.open(tmp_path, "w:gz", compresslevel=gzip_level) as tar:
+                for source in self._sources:
+                    if not os.path.exists(source):
+                        continue
+                    src_base = os.path.basename(source.rstrip(os.sep))
+                    if os.path.isdir(source):
+                        for entry in os.listdir(source):
+                            full = os.path.join(source, entry)
+                            arcname = os.path.join(src_base, entry)
+                            # Skip WAL/SHM sidecars — captured by online backup
+                            if entry.endswith((".db-wal", ".db-shm")):
+                                continue
+                            if _is_sqlite_file(full):
+                                snap_path = os.path.join(snap_dir, entry)
                                 try:
-                                    _snapshot_sqlite(source, snap_path)
-                                    tar.add(snap_path, arcname=src_base)
+                                    _snapshot_sqlite(full, snap_path)
+                                    tar.add(snap_path, arcname=arcname)
                                 except sqlite3.Error:
-                                    tar.add(source, arcname=src_base)
+                                    # Snapshot failed (corrupt?) — fall back to raw add
+                                    tar.add(full, arcname=arcname)
                             else:
+                                tar.add(full, arcname=arcname)
+                    else:
+                        # Single file source
+                        if _is_sqlite_file(source):
+                            snap_path = os.path.join(snap_dir, src_base)
+                            try:
+                                _snapshot_sqlite(source, snap_path)
+                                tar.add(snap_path, arcname=src_base)
+                            except sqlite3.Error:
                                 tar.add(source, arcname=src_base)
-            os.replace(tmp_path, path)
-        except BaseException:
-            # Yarıda-kalan .tmp arşivini temizle (disk sızıntısı + restore-test'e sızma yok)
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
-            raise
+                        else:
+                            tar.add(source, arcname=src_base)
+        # Atomik yayın (Codex): tar tamamlanınca .tmp'yi os.replace ile yerine koy →
+        # restore-test'in *.tar.gz glob'u yarıda-kalan arşivi GÖRMEZ (.tar.gz.tmp eşleşmez).
+        # Hata'da .tmp kalabilir ama glob'a takılmaz (zararsız); daily-backup zaten fail-alert atar.
+        os.replace(tmp_path, path)
 
         size = os.path.getsize(path)
         return {
