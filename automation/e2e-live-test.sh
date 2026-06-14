@@ -14,7 +14,7 @@ send_telegram() {
 }
 
 # Get Renderhane API key from VPS
-RH_KEY=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${VPS_HOST:?Set VPS_HOST} \
+RH_KEY=$(ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 ${VPS_HOST:?Set VPS_HOST} \
     "grep RENDERHANE_API_KEY /opt/panola-social/.env | cut -d= -f2" 2>/dev/null)
 
 cd "$DIR" || exit 1

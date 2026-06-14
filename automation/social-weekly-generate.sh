@@ -5,7 +5,7 @@
 source /opt/linux-ai-server/.env 2>/dev/null
 
 VPS="${VPS_HOST:?Set VPS_HOST in .env}"
-SSH="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 $VPS"
+SSH="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 $VPS"
 CLI="cd /opt/panola-social && /opt/panola-social/venv/bin/python main.py"
 LOG=/var/log/linux-ai-server/social-generate.log
 TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
