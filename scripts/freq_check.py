@@ -103,7 +103,7 @@ def main():
     p.add_argument("--summary-only", action="store_true")
     args = p.parse_args()
 
-    items = [json.loads(l) for l in Path(args.items_jsonl).read_text().splitlines() if l.strip()]
+    items = [json.loads(ln) for ln in Path(args.items_jsonl).read_text().splitlines() if ln.strip()]
     rows = []
     for idx, it in enumerate(items, 1):
         r = assess(it, args.expected_cefr, args.tolerance)
@@ -116,9 +116,9 @@ def main():
     above = [r for r in rows if r["zipf"] > CEFR_ZIPF_RANGE[args.expected_cefr][1] + args.tolerance]
     below = [r for r in rows if r["zipf"] < CEFR_ZIPF_RANGE[args.expected_cefr][0] - args.tolerance]
 
-    print(f"=== freq_check report ===")
+    print("=== freq_check report ===")
     print(f"items_evaluated={len(rows)}  expected={args.expected_cefr}  tolerance=±{args.tolerance} zipf")
-    print(f"in_band={in_band_count}/{len(rows)}  ({100*in_band_count//max(1,len(rows))}%)")
+    print(f"in_band={in_band_count}/{len(rows)}  ({100 * in_band_count // max(1, len(rows))}%)")
     print(f"too_easy_for_cefr (above band): {len(above)}")
     for r in above:
         print(f"  #{r['i']:2}  zipf={r['zipf']:.2f}  actual={r['actual_cefr_band']}  target={r['target']!r}")
@@ -128,7 +128,7 @@ def main():
 
     if not args.summary_only:
         print()
-        print(f"=== full per-item ===")
+        print("=== full per-item ===")
         for r in rows:
             mark = "✓" if r["in_band"] else "✗"
             print(f"  {mark} #{r['i']:2}  zipf={r['zipf']:.2f}  band={r['actual_cefr_band']}  dev={r['deviation']:+.2f}  {r['target']!r}")

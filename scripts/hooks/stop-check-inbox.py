@@ -19,6 +19,7 @@ Hook output Claude Code Stop event icin:
   - Exit 0: normal
   - Exit 2: blocking error (kullanmiyoruz)
 """
+
 from __future__ import annotations
 
 import json
@@ -37,6 +38,7 @@ def log(msg: str) -> None:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         with (LOG_DIR / "hooks.log").open("a", encoding="utf-8") as f:
             from datetime import datetime
+
             f.write(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] [stop-check-inbox] {msg}\n")
     except Exception:
         pass
@@ -79,8 +81,7 @@ def main() -> int:
     lines = [
         f"=== {len(rows)} OKUNMAMIS NOT — ISLEM GEREKLI ===",
         "",
-        "Turn'unu kapatmadan once gelen yeni notlari islemen gerekiyor. "
-        "Bu otonom inbox kontrolu (Stop hook); kullanici prompt'u gerekmez.",
+        "Turn'unu kapatmadan once gelen yeni notlari islemen gerekiyor. Bu otonom inbox kontrolu (Stop hook); kullanici prompt'u gerekmez.",
         "",
     ]
     for nid, frm, title, preview in rows:
@@ -90,12 +91,14 @@ def main() -> int:
             preview_clean = preview.replace("\n", " ")[:200]
             lines.append(f"    {preview_clean}...")
         lines.append("")
-    lines.extend([
-        "Detay icin:",
-        f"  sqlite3 {DB_PATH} \"SELECT content FROM notes WHERE id IN (...)\"",
-        "Okundu isaretle (her not isleminden sonra):",
-        '  curl -X PUT http://127.0.0.1:8420/api/v1/memory/notes/<ID>/read -H "X-Memory-Key: $KEY"',
-    ])
+    lines.extend(
+        [
+            "Detay icin:",
+            f'  sqlite3 {DB_PATH} "SELECT content FROM notes WHERE id IN (...)"',
+            "Okundu isaretle (her not isleminden sonra):",
+            '  curl -X PUT http://127.0.0.1:8420/api/v1/memory/notes/<ID>/read -H "X-Memory-Key: $KEY"',
+        ]
+    )
     reason = "\n".join(lines)
 
     output = {"decision": "block", "reason": reason}

@@ -6,8 +6,16 @@ session olarak yazar. Yari otonomi icin kritik: oturum bilgisi ucup gitmez.
 Stdin: {"session_id":"...", "transcript_path":"...", "stop_hook_active":bool, ...}
 Cikti: bos. Hook sessiz calisir, hatalari /opt/.../hook-logs/hooks.log'a yazar.
 """
+
 from __future__ import annotations
-import json, os, sys, socket, time, urllib.request, urllib.error
+
+import json
+import os
+import socket
+import sys
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 HOOK_NAME = "stop-save-session"
@@ -15,7 +23,7 @@ LOG_DIR = Path(os.environ.get("HOOK_LOG_DIR", "/opt/linux-ai-server/data/hook-lo
 API_BASE = os.environ.get("HOOK_API", "http://127.0.0.1:8420/api/v1/memory")
 ENV_FILE = Path(os.environ.get("HOOK_ENV_FILE", "/opt/linux-ai-server/.env"))
 DEVICE = os.environ.get("HOOK_DEVICE") or socket.gethostname()
-MIN_TURNS = int(os.environ.get("HOOK_MIN_TURNS", "2"))   # Bu kadar user mesaji yoksa kaydetme
+MIN_TURNS = int(os.environ.get("HOOK_MIN_TURNS", "2"))  # Bu kadar user mesaji yoksa kaydetme
 MAX_FILES = 30
 MAX_SUMMARY_LEN = 2000
 
@@ -82,7 +90,7 @@ def parse_transcript(path: Path) -> dict:
                 # Asistan blogu — son metni tut, tool_use'lari topla
                 if rtype in ("assistant",):
                     msg = rec.get("message") or {}
-                    for blk in (msg.get("content") or []):
+                    for blk in msg.get("content") or []:
                         if not isinstance(blk, dict):
                             continue
                         bt = blk.get("type")

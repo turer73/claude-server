@@ -12,15 +12,16 @@ with stderr="not in whitelist" — never executed. AI-based escalation
 Usage: python3 task_worker.py [--once]
   --once   process at most one task and exit (for cron / smoke test)
 """
+
+import json
 import os
 import re
-import sys
-import json
-import time
 import socket
 import subprocess
-import urllib.request
+import sys
+import time
 import urllib.error
+import urllib.request
 
 API_BASE = os.environ.get("MEMORY_API", "http://127.0.0.1:8420/api/v1/memory")
 API_KEY = os.environ.get("MEMORY_KEY", "")
@@ -120,24 +121,32 @@ def process_one() -> bool:
 
     # Whitelist gate
     if not is_safe(command):
-        http_request("PUT", f"/queue/{task_id}/result", {
-            "exit_code": 126,
-            "stdout": "",
-            "stderr": "command not in whitelist - human approval required",
-            "status": "failed",
-        })
+        http_request(
+            "PUT",
+            f"/queue/{task_id}/result",
+            {
+                "exit_code": 126,
+                "stdout": "",
+                "stderr": "command not in whitelist - human approval required",
+                "status": "failed",
+            },
+        )
         log(f"task {task_id} REJECTED (not whitelisted)")
         return True
 
     # Execute + writeback
     rc, stdout, stderr = run_command(command)
     status = "completed" if rc == 0 else "failed"
-    http_request("PUT", f"/queue/{task_id}/result", {
-        "exit_code": rc,
-        "stdout": stdout,
-        "stderr": stderr,
-        "status": status,
-    })
+    http_request(
+        "PUT",
+        f"/queue/{task_id}/result",
+        {
+            "exit_code": rc,
+            "stdout": stdout,
+            "stderr": stderr,
+            "status": status,
+        },
+    )
     log(f"task {task_id} {status} rc={rc}")
     return True
 

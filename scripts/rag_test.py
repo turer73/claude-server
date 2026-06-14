@@ -1,27 +1,23 @@
 #!/usr/bin/env python3
 """Bilge Arena RAG query test"""
+
 import requests
-import json
 
 QDRANT = "http://localhost:6333"
 OLLAMA = "http://localhost:11434"
 COLLECTION = "bilge-arena"
 
+
 def embed(text):
-    r = requests.post(f"{OLLAMA}/api/embeddings", json={
-        "model": "nomic-embed-text",
-        "prompt": text
-    }, timeout=30)
+    r = requests.post(f"{OLLAMA}/api/embeddings", json={"model": "nomic-embed-text", "prompt": text}, timeout=30)
     return r.json()["embedding"]
+
 
 def search(query, top_k=5):
     vec = embed(query)
-    r = requests.post(f"{QDRANT}/collections/{COLLECTION}/points/search", json={
-        "vector": vec,
-        "limit": top_k,
-        "with_payload": True
-    })
+    r = requests.post(f"{QDRANT}/collections/{COLLECTION}/points/search", json={"vector": vec, "limit": top_k, "with_payload": True})
     return r.json().get("result", [])
+
 
 queries = [
     "Realtime hibrit nasil calisiyor",
