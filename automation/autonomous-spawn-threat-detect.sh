@@ -98,7 +98,9 @@ fi
 # prose'da neredeyse çıkmaz → her zaman flag. YALNIZ low-confidence + spawn-benign-başarılı
 # (is_error=false) → FP, FLAG'LEME. Spawn hatalıysa (is_error!=false) low de korunur.
 IS_ERROR=$(grep -aoE '"is_error":[[:space:]]*(true|false)' "$SPAWN_LOG" 2>/dev/null | head -1 | grep -oE 'true|false')
-HIGH_RE='^(rshell-|exfil-|drop-tmp-exec|cred-shadow|cred-aws|cred-ssh|cred-k8s|persist-authkey)'
+# cred-* HEPSI HIGH (Codex P1): pattern'ler gerçek KOMUT gerektirir ('cat .env' / 'cat .ssh/id_*'
+# — bare '.env' prose DEĞİL), bu yüzden benign-success'ta bile cred-read sinyali korunmalı.
+HIGH_RE='^(rshell-|exfil-|drop-tmp-exec|cred-|persist-authkey)'
 has_high=0
 for h in "${HITS[@]}"; do
     [[ "${h%%:*}" =~ $HIGH_RE ]] && has_high=1
