@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-"""İçerik Editörü — SEO blog makalesi üretici (multi-uzman vizyon: editör).
+"""İçerik Editörü — çok-dilli SEO içerik üretici (multi-uzman vizyon: editör).
 
 Diğer uzmanlar (seo-audit/ad-advisor/data-analyst) ANALİZ eder; bu uzman ÜRETİR:
-verilen konu için özgün, çift-dilli (TR+EN) SEO blog makalesi yazar ve insan-onayına
-PR olarak açar. Auto-publish YOK — PR merge-gate (CI+Codex) + insan review zorunlu.
+verilen konu için özgün, çok-dilli SEO içeriği yazar ve insan-onayına PR olarak açar.
+Auto-publish YOK — PR merge-gate (CI/build + Codex) + insan review zorunlu.
 
 Akış:
-  1. /claude (Max-plan, read_only) ile makale METNİ üretilir — yalnız metin, mutasyon yok.
+  1. /claude (Max-plan, read_only) ile içerik METNİ üretilir — yalnız metin, mutasyon yok.
      Mevcut başlıklar prompt'a beslenir → tekrar/çakışma önlenir (slug benzersizliği).
-  2. Script (LLM değil) çıktıyı parse eder, hedef-adaptöre yazar:
-       - renderhane: articles.ts dizisine BlogArticle literal'i ekler → branch+commit+PR.
-       - 3d-labx / bilge-arena: içerik-katmanı yok (DB/CMS veya blog-yok) → şimdilik
-         TASLAK olarak ortak-hafızaya (discovery) yazılır; yayın eli/destination tanımlanınca
-         PR-adaptörü eklenir. (Dürüstlük: PR-çıktısı yalnız dosya-blog'da gerçek.)
+  2. Script (LLM değil) çıktıyı parse eder, site-adaptörüne yazar:
+       - renderhane (articles_ts): articles.ts dizisine BlogArticle (TR/EN markdown) → PR.
+       - 3d-labx (astro_rehber): rehberler/<slug>.astro (TR/EN/DE, set:html — sanitize'li) → PR.
+       - bilge-arena (draft): blog katmanı yok → taslak ortak-hafızaya (yayın elle).
 
 LLM içerik halüsinasyon riski → prompt "uydurma teknik iddia yok, dürüst ton" zorlar +
 nihai kapı insan PR-review'ı. Salt-okunur /claude; git/PR'ı SCRIPT yapar (Claude değil).
