@@ -28,6 +28,31 @@ def test_create_backup(bm):
     assert result["path"].endswith(".tar.gz")
 
 
+def test_create_backup_atomic_no_tmp(bm):
+    # Başarılı backup sonrası hiçbir .tmp artığı kalmamalı (restore-test *.tar.gz
+    # glob'una partial arşiv sızmasın — atomik yayın).
+    result = bm.create_backup()
+    assert result["success"] is True
+    files = os.listdir(bm._backup_dir)
+    assert all(not f.endswith(".tmp") for f in files), files
+    assert any(f.endswith(".tar.gz") for f in files)
+
+
+def test_create_backup_error_cleans_tmp(bm, monkeypatch):
+    # Yazım yarıda patlarsa .tmp temizlenmeli + final arşiv oluşmamalı.
+    import app.core.backup_manager as bmgr
+
+    def boom(path, *a, **k):
+        open(path, "wb").close()  # yarım .tmp arşivi simüle et
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(bmgr.tarfile, "open", boom)
+    with pytest.raises(RuntimeError):
+        bm.create_backup()
+    leftovers = os.listdir(bm._backup_dir)
+    assert leftovers == [], f"temizlenmeyen artık: {leftovers}"
+
+
 def test_list_backups_empty(tmp_path):
     bm = BackupManager(source_dirs=[], backup_dir=str(tmp_path / "empty"))
     backups = bm.list_backups()
