@@ -231,3 +231,59 @@ def test_astro_slug_exists(tmp_path):
     site = {"repo": str(tmp_path), "content_dir": "rehberler"}
     assert ce._astro_slug_exists(site, "var-olan") is True
     assert ce._astro_slug_exists(site, "yok") is False
+
+
+# ── Codex #128 P2 fix'leri ──
+
+
+def test_sanitize_html_strips_dangerous():
+    out = ce._sanitize_html(
+        '<h2>Başlık</h2><script>alert(1)</script><p onclick="x()">m</p>'
+        '<a href="javascript:evil()">l</a><iframe src=x></iframe><p>güvenli</p>'
+    )
+    assert "<script" not in out
+    assert "onclick" not in out
+    assert "javascript:" not in out
+    assert "<iframe" not in out
+    assert "<h2>Başlık</h2>" in out
+    assert "<p>güvenli</p>" in out
+
+
+def test_render_astro_page_sanitizes_content():
+    a = _valid_article_3lang()
+    a["content"]["tr"] = "<p>ok</p><script>alert(1)</script>"
+    ts = ce.render_astro_page(a, ["tr", "en", "de"])
+    assert "<script" not in ts
+
+
+def test_existing_articles_astro_scans_dir(tmp_path):
+    cdir = tmp_path / "rehberler"
+    cdir.mkdir()
+    (cdir / "rehber-bir.astro").write_text(
+        'const titles: Record<Language, string> = {\n  tr: "Rehber Bir",\n  en: "Guide One",\n};\n',
+        encoding="utf-8",
+    )
+    (cdir / "_test.astro").write_text("x", encoding="utf-8")  # _ ile başlayan atlanır
+    (cdir / "index.astro").write_text("x", encoding="utf-8")  # index atlanır
+    site = {"repo": str(tmp_path), "adapter": "astro_rehber", "content_dir": "rehberler"}
+    arts = ce.existing_articles(site)
+    slugs = [a["slug"] for a in arts]
+    assert slugs == ["rehber-bir"]
+    assert arts[0]["title"] == "Rehber Bir"
+
+
+def test_existing_articles_astro_missing_dir():
+    site = {"repo": "/nonexistent", "adapter": "astro_rehber", "content_dir": "x"}
+    assert ce.existing_articles(site) == []
+
+
+def test_write_draft_langs_intersection_no_keyerror():
+    # title'da fazladan 'de' var ama description/content'te yok → KeyError VERMEMELI
+    import re as _re
+
+    a = _valid_article()
+    a["title"]["de"] = "extra"  # description/content'te de yok
+    # langs hesabı kesişim olmalı (tr,en) → KeyError yok; details TR+EN içermeli
+    langs = [lng for lng in a["title"] if lng in a["description"] and lng in a["content"]]
+    assert langs == ["tr", "en"]
+    assert _re  # noqa

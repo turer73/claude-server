@@ -118,7 +118,30 @@ def _git(args: list[str], cwd: str) -> str:
 
 
 def existing_articles(site: dict[str, str]) -> list[dict[str, str]]:
-    """articles.ts'ten slug + TR başlıkları çıkar (regex; tam-parse gerekmez)."""
+    """Mevcut içerik (slug + TR başlık) — tekrar/çakışma önleme için prompt'a beslenir.
+    Adapter-farkında (Codex P2): articles_ts → articles.ts dizisi; astro_rehber → content_dir
+    altındaki .astro dosyaları (yoksa boş döner → 3d-labx'i 'boş site' sanmaz)."""
+    out: list[dict[str, str]] = []
+    if site.get("adapter") == "astro_rehber":
+        cdir = os.path.join(site["repo"], site.get("content_dir", ""))
+        try:
+            files = sorted(os.listdir(cdir))
+        except OSError:
+            return []
+        for fn in files:
+            if not fn.endswith(".astro") or fn.startswith(("_", "[", "index")):
+                continue
+            slug = fn[:-6]
+            tr = ""
+            try:
+                with open(os.path.join(cdir, fn), encoding="utf-8") as f:
+                    m = re.search(r'titles[^=]*=\s*\{[^}]*?tr:\s*"([^"]+)"', f.read(), re.S)
+                    tr = m.group(1) if m else ""
+            except OSError:
+                pass
+            out.append({"slug": slug, "title": tr})
+        return out
+    # articles_ts: articles.ts dizisinden slug + TR başlık (regex; tam-parse gerekmez)
     path = os.path.join(site["repo"], site.get("articles_path", ""))
     try:
         with open(path, encoding="utf-8") as f:
@@ -127,7 +150,6 @@ def existing_articles(site: dict[str, str]) -> list[dict[str, str]]:
         return []
     slugs = re.findall(r'slug:\s*"([^"]+)"', src)
     tr_titles = re.findall(r'title:\s*\{\s*\n?\s*tr:\s*"([^"]+)"', src)
-    out: list[dict[str, str]] = []
     for i, s in enumerate(slugs):
         out.append({"slug": s, "title": tr_titles[i] if i < len(tr_titles) else ""})
     return out
@@ -282,16 +304,33 @@ def insert_article(site: dict[str, str], ts_obj: str) -> None:
 # ── 3d-labx adaptörü: tech-portal-frontend rehberler/<slug>.astro dosyası ──
 
 
+def _sanitize_html(html: str) -> str:
+    """set:html ile basılan içeriği zararsızlaştır (Codex P2 — stored XSS). İçerik LLM-üretimi;
+    prompt-injection'lı konu/kötü-üretim <script>/onerror gibi aktif markup'ı yayımlamasın.
+    Denylist: tehlikeli etiketler (içerikleriyle), inline event-handler'lar, javascript:/data: URL.
+    İçerik makale HTML'i (h2/h3/p/ul/li) — bu etiketler korunur."""
+    # Tehlikeli blok etiketleri içerikleriyle sil
+    html = re.sub(r"(?is)<(script|style|iframe|object|embed|noscript|template|svg|math)\b.*?</\1\s*>", "", html)
+    # Açık/self-closing tehlikeli etiketler
+    html = re.sub(r"(?is)<(script|style|iframe|object|embed|link|meta|base|form|input)\b[^>]*>", "", html)
+    # Inline event handler attribute'ları (onclick=, onerror= …)
+    html = re.sub(r"""(?i)\s+on\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)""", "", html)
+    # javascript:/data: URL'leri etkisizleştir
+    html = re.sub(r"""(?i)(href|src)\s*=\s*(["'])\s*(?:javascript|data|vbscript):[^"']*\2""", r"\1=\2#\2", html)
+    return html
+
+
 def render_astro_page(art: dict[str, Any], langs: list[str]) -> str:
     """BaseLayout+Header kullanan, çok-dilli (Record<Language,string>) içerik .astro sayfası.
     Frontmatter yapısı mevcut rehberler'in pattern'iyle aynı (astro check ile doğrulandı);
-    title/description JSON-string, content template-literal (HTML, backtick/${} escape)."""
+    title/description JSON-string, content template-literal (sanitize edilmiş HTML, backtick/${} escape)."""
 
     def _rec(field: str) -> str:
         body = "".join(f"    {lng}: {_ts_str(art[field][lng])},\n" for lng in langs)
         return "{\n" + body + "  }"
 
-    content_body = "".join(f"    {lng}: {_ts_template(art['content'][lng])},\n" for lng in langs)
+    # P2 (Codex): set:html öncesi HTML sanitize — XSS yüzeyi.
+    content_body = "".join(f"    {lng}: {_ts_template(_sanitize_html(art['content'][lng]))},\n" for lng in langs)
     content_rec = "{\n" + content_body + "  }"
     return (
         "---\n"
@@ -418,8 +457,9 @@ def write_draft(site_name: str, art: dict[str, Any], topic: str) -> str:
     # P2 (Codex): bu discovery taslağın TEK kalıcı kopyası (draft-only site / PR-fail fallback)
     # → TR+EN içeriğin TAMAMINI sakla (eski hali yalnız TR'yi 3000c kırpıyordu → EN + TR-kuyruğu
     # kaybolup taslak yeniden-üretmeden yayınlanamıyordu). discoveries.details TEXT — sınırsız.
-    # Dile-genel: art'ta bulunan TÜM dilleri sakla (3d-labx fallback'inde DE kaybolmasın).
-    langs = list(art.get("title", {}).keys())
+    # Dile-genel: title∩description∩content KESİŞİMİ (Codex P2: title'da fazladan tutarsız
+    # anahtar varsa description/content erişimi KeyError verir → taslak kaydedilemez).
+    langs = [lng for lng in art.get("title", {}) if lng in art.get("description", {}) and lng in art.get("content", {})]
     head = (
         f"📝 İçerik Editörü taslağı — {site_name} (konu: {topic})\n"
         f"PR-hedefi yok/başarısız ({SITES[site_name].get('reason', '')}); yayın elle.\n\n"
