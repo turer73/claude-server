@@ -90,8 +90,11 @@ def estimate_output_tokens(prompt_text: str, target_items: int | None, avg_token
     2) Else, scan prompt for an explicit count hint ("exactly N items", "Output N lines").
     """
     import re
+
     if target_items is None:
-        m = re.search(r"(?:exactly|tam|total|toplam|Output|output)\s+(\d+)\s+(?:items|item|satir|lines|line|JSONL)", prompt_text, re.IGNORECASE)
+        m = re.search(
+            r"(?:exactly|tam|total|toplam|Output|output)\s+(\d+)\s+(?:items|item|satir|lines|line|JSONL)", prompt_text, re.IGNORECASE
+        )
         if m:
             target_items = int(m.group(1))
     if target_items is None:
@@ -120,7 +123,7 @@ def cmd_estimate(args):
     if out > 0:
         print(f"output_tokens_est={out}  (target_items × avg_tokens_per_item)")
     else:
-        print(f"output_tokens_est=UNKNOWN  (no count hint in prompt; pass --target-items)")
+        print("output_tokens_est=UNKNOWN  (no count hint in prompt; pass --target-items)")
     print(f"sonnet_output_hard_limit={SONNET_OUTPUT_HARD_LIMIT}")
     print(f"safe_threshold={SAFE_OUTPUT_THRESHOLD}")
     print(f"status={status}")
@@ -187,26 +190,30 @@ def cmd_send(args):
         f"3. Prompt talimatlarini uygula, ciktiyi {out_win}'e yaz.\n"
         f"4. scp {out_win} klipper:{return_path}\n"
         f"5. Donus notu: POST {API}/notes from_device={canonical_to} to_device=klipper "
-        f"title=\"{project} done\" content=\"path={return_path} | summary=<kac satir, dist, vs>\"\n"
+        f'title="{project} done" content="path={return_path} | summary=<kac satir, dist, vs>"\n'
         f"6. Bu note (id={{this_id}}) read=1 isaretle: PUT {API}/notes/<id>/read\n\n"
         f"KURAL: Sadece interactive Max subscription oturum. Headless `-p` ya da `--api-key` ile cagri YASAK "
         f"(charge eder, kullanici net yasakladi)."
     )
 
-    resp = api_post("/notes", get_key(), {
-        "from_device": SELF_DEVICE,
-        "to_device": canonical_to,
-        "title": title,
-        "content": content,
-    })
+    resp = api_post(
+        "/notes",
+        get_key(),
+        {
+            "from_device": SELF_DEVICE,
+            "to_device": canonical_to,
+            "title": title,
+            "content": content,
+        },
+    )
 
     print(f"note_id={resp['id']}")
     print(f"to={to} (canonical={canonical_to})  project={project}")
     print(f"prompt_uploaded={remote_scp}")
     print(f"expected_output_remote={out_scp}")
     print(f"return_path={return_path}")
-    print(f"")
-    print(f"# arm watcher:")
+    print("")
+    print("# arm watcher:")
     print(f"python3 {sys.argv[0]} wait {return_path}")
 
 
@@ -223,11 +230,7 @@ def cmd_wait(args):
             return 0
         try:
             data = api_get("/notes?device=klipper&unread_only=true", key)
-            new_notes = [
-                n for n in data
-                if n.get("from_device") in WINDOWS_DEVICES
-                and n.get("created_at", "") > start
-            ]
+            new_notes = [n for n in data if n.get("from_device") in WINDOWS_DEVICES and n.get("created_at", "") > start]
             if new_notes:
                 n = new_notes[0]
                 print(f"NOTE_ARRIVED:id={n['id']}:from={n['from_device']}:title={n['title']!r}")
@@ -270,8 +273,12 @@ def main():
     s.add_argument("--return-dir", help="local dir for return file (default ~/handoffs/<project>)")
     s.add_argument("--output-name", help="explicit output filename (default <project>_<ts>.out)")
     s.add_argument("--target-items", type=int, help="expected item count (used for output token estimate)")
-    s.add_argument("--avg-tokens-per-item", type=int, default=230,
-                   help="avg output tokens per item (default 230, calibrated on Bilge English A2 batch)")
+    s.add_argument(
+        "--avg-tokens-per-item",
+        type=int,
+        default=230,
+        help="avg output tokens per item (default 230, calibrated on Bilge English A2 batch)",
+    )
     s.add_argument("--force", action="store_true", help="send even if estimated output > safe threshold")
     s.set_defaults(func=cmd_send)
 

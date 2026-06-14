@@ -8,6 +8,7 @@ Updates discoveries.status accordingly.
 
 Triggered: cron 03:30 daily (after rule-based triage 03:15).
 """
+
 from __future__ import annotations
 
 import os
@@ -56,12 +57,12 @@ def log(msg: str):
 def triage_one(client: anthropic.Anthropic, disc: dict) -> str:
     """Return: keep | obsolete | superseded | unknown"""
     prompt = f"""Discover (otonom hafiza sistemi kaydi):
-Project: {disc.get('project','')}
-Type: {disc.get('type','')}
-Title: {disc.get('title','')[:100]}
-Details: {(disc.get('details') or '')[:400]}
-Olusturma: {disc.get('date','')}
-Yas: {disc.get('age_days')} gun
+Project: {disc.get("project", "")}
+Type: {disc.get("type", "")}
+Title: {disc.get("title", "")[:100]}
+Details: {(disc.get("details") or "")[:400]}
+Olusturma: {disc.get("date", "")}
+Yas: {disc.get("age_days")} gun
 Hic okunmadi (read_count=0).
 
 Karar:

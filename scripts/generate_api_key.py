@@ -31,12 +31,12 @@ async def main():
     )
     await db.close()
 
-    print(f"\n=== API Key Generated ===")
+    print("\n=== API Key Generated ===")
     print(f"Name:        {name}")
     print(f"Permissions: {permissions}")
     print(f"API Key:     {api_key}")
-    print(f"\nSave this key! It cannot be recovered.")
-    print(f"Use it in the X-API-Key header or POST /api/v1/auth/token")
+    print("\nSave this key! It cannot be recovered.")
+    print("Use it in the X-API-Key header or POST /api/v1/auth/token")
 
 
 if __name__ == "__main__":

@@ -34,6 +34,11 @@ dev = [
     "ruff>=0.7.0",
     "mypy>=1.11.0",
     "bandit>=1.7.0",
+    # Type stub'ları — mypy "Library stubs not installed" gürültüsünü keser (psutil/yaml/jose/paramiko)
+    "types-psutil",
+    "types-PyYAML",
+    "types-python-jose",
+    "types-paramiko",
 ]
 
 [project.scripts]
@@ -92,6 +97,23 @@ ignore = [
 "app/api/vps.py" = ["E501"]
 "app/core/ci_db.py" = ["E501"]
 "app/api/rag.py" = ["E501"]  # Inline SQL INSERT column list, wrap hurts readability
+# scripts/ = CI-gate edilmeyen dev/yardımcı araçlar (CI yalnız app/+tests'i denetler).
+# Gerekçeli istisnalar (autofix sonrası kalan, doğrulanmış-zararsız):
+# S113: RAG bulk-index dev script'leri — manuel-çalışan; timeout dayatmak uzun-index'i keser.
+"scripts/rag_index_bilge.py" = ["S113", "E501"]
+"scripts/rag_index_bilge_code.py" = ["S113"]
+"scripts/rag_index_project.py" = ["S113"]
+"scripts/rag_reindex.py" = ["S113"]
+"scripts/rag_llm.py" = ["S113", "E501"]
+"scripts/rag_qa.py" = ["S113", "E501"]
+"scripts/rag_test.py" = ["S113"]
+"scripts/rag_test2.py" = ["S113"]
+# E501: LLM-prompt prose (triple-quoted string) — wrap prompt metnini değiştirir.
+"scripts/memory-triage-llm.py" = ["E501"]
+# S310: internal-controlled API URL (localhost memory/task API) + timeout zaten var → scheme-FP.
+"scripts/handoff.py" = ["S310"]
+"scripts/hooks/stop-save-session.py" = ["S310"]
+"scripts/workers/task_worker.py" = ["S310"]
 "app/core/devops_agent.py" = ["E501"]
 "app/core/task_queue.py" = ["E501"]
 # Config/auth literals are setting names, not real secrets
