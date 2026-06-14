@@ -135,6 +135,19 @@ def test_cron_job_fresh_pass_partial_old_missing(monkeypatch, tmp_path):
     assert lv.cron_job_liveness("x", 3600)["status"] == "stale"
 
 
+def test_restore_test_registered_dead_when_missing(monkeypatch, tmp_path):
+    """restore-test REGISTRY lambda'sı kayıtlı + cron_outcomes satırı yoksa absent='dead'
+    (restore-test tamamen DURURSA — 27 May–14 Haz boşluğu gibi — liveness yakalasın)."""
+    p = tmp_path / "server.db"
+    _cron_db(p, [])  # boş cron_outcomes
+    monkeypatch.setattr(lv, "SERVER_DB", str(p))
+    # REGISTRY lambda'larını çalıştır (docker/rag/network named-fn'leri atla) → restore-test var mı
+    lambda_sources = [fn()["source"] for fn in lv.REGISTRY if getattr(fn, "__name__", "") == "<lambda>"]
+    assert "cron:restore-test" in lambda_sources
+    # satır yoksa absent_status='dead'
+    assert lv.cron_job_liveness("restore-test", 28 * 3600, absent_status="dead")["status"] == "dead"
+
+
 # ── B-sınıfı FALSE-POSITIVE disiplini (idle ≠ dead) ──
 
 
