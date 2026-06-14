@@ -94,6 +94,13 @@ def test_ssh_client_loads_known_hosts_and_default_warning_policy():
         assert isinstance(policy, _LogAndAcceptPolicy)
 
 
+def _mock_key(name="ssh-ed25519", raw=b"\x01\x02\x03"):
+    k = MagicMock()
+    k.get_name.return_value = name
+    k.asbytes.return_value = raw
+    return k
+
+
 def test_log_accept_policy_immune_to_warnings_as_error():
     # Codex P2: WarningPolicy PYTHONWARNINGS=error altında patlardı; bizim policy logging
     # kullanır → error-filter altında bile exception ATMAZ (bilinmeyen-host bağlantısı kırılmaz).
@@ -101,7 +108,18 @@ def test_log_accept_policy_immune_to_warnings_as_error():
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")  # tüm warning'ler exception olur
-        _LogAndAcceptPolicy().missing_host_key(MagicMock(), "newhost", MagicMock())  # patlamamalı
+        _LogAndAcceptPolicy().missing_host_key(MagicMock(), "newhost", _mock_key())  # patlamamalı
+
+
+def test_log_accept_policy_logs_sha256_fingerprint(caplog):
+    # Codex P3: denetim-izi için SHA256 fingerprint loglanmalı (sadece algoritma değil).
+    import logging as _logging
+
+    key = _mock_key(raw=b"hello-key-bytes")
+    with caplog.at_level(_logging.WARNING):
+        _LogAndAcceptPolicy().missing_host_key(MagicMock(), "newhost", key)
+    assert "SHA256:" in caplog.text
+    assert "newhost" in caplog.text
 
 
 def test_ssh_client_strict_uses_reject_policy(monkeypatch):
