@@ -12,6 +12,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import app.api.research as research
+
 
 @pytest.fixture(autouse=True)
 def _set_memory_auth(monkeypatch):
@@ -225,9 +227,10 @@ async def test_run_returns_report(client):
         patch("app.api.research._ollama_generate", side_effect=[plan, synth]),
         patch("app.api.research._qdrant_chunks", side_effect=fake_chunks),
     ):
+        # synth_model=ollama → plan VE sentez _ollama_generate'ten (mock'lanabilir tek-yol)
         resp = await client.post(
             "/api/v1/research/run",
-            json={"topic": "linux kernel", "max_iterations": 2, "depth": 3},
+            json={"topic": "linux kernel", "max_iterations": 2, "depth": 3, "synth_model": "ollama"},
         )
     assert resp.status_code == 200
     body = resp.json()
@@ -256,3 +259,50 @@ async def test_run_validates_short_topic(client):
     """topic min_length=3 → 422 (Ollama/Qdrant çağrılmadan)."""
     resp = await client.post("/api/v1/research/run", json={"topic": "x"})
     assert resp.status_code == 422
+
+
+# ───────── synth-model seçici (FAZ1: Haiku) ─────────
+
+
+def test_synth_llm_ollama_uses_aya():
+    with patch("app.api.research._ollama_generate", return_value="x") as gen:
+        research._synth_llm("ollama")("prompt")
+    gen.assert_called_once()
+    assert gen.call_args.kwargs.get("model") == research.LLM_MODEL_HI  # aya:8b
+
+
+def test_synth_llm_haiku_uses_anthropic():
+    with patch("app.api.research._anthropic_generate", return_value="haiku-çıktı") as a:
+        out = research._synth_llm("haiku")("p")
+    assert out == "haiku-çıktı"
+    a.assert_called_once()
+
+
+def test_synth_llm_haiku_falls_back_to_aya_on_error():
+    # Haiku patlarsa (anahtar-yok/API-hata) → aya:8b yerel fallback (araştırma düşmez)
+    with (
+        patch("app.api.research._anthropic_generate", side_effect=RuntimeError("no key")),
+        patch("app.api.research._ollama_generate", return_value="aya-çıktı") as o,
+    ):
+        out = research._synth_llm("haiku")("p")
+    assert out == "aya-çıktı"
+    o.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_run_haiku_synth_path(client):
+    """synth_model=haiku → sentez Haiku'dan, plan Ollama'dan."""
+    with (
+        patch("app.api.research._ollama_generate", return_value="Soru bir?\nSoru iki?"),
+        patch("app.api.research._anthropic_generate", return_value="Haiku özeti.\n- bulgu A") as haiku,
+        patch("app.api.research._qdrant_chunks", side_effect=lambda q, **k: [{"id": "a", "title": "A", "score": 0.8, "text": "t"}]),
+    ):
+        resp = await client.post(
+            "/api/v1/research/run",
+            json={"topic": "konu testi", "max_iterations": 1, "depth": 2, "synth_model": "haiku"},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "Haiku özeti" in body["summary"]
+    assert body["findings"] == ["bulgu A"]
+    haiku.assert_called_once()  # sentez gerçekten Haiku'dan geçti

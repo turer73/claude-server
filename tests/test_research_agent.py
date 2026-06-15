@@ -139,3 +139,40 @@ def test_synthesize_compact_bullet_and_decimal_safety():
     summary, findings = agent._synthesize("konu", srcs)
     assert findings == ["kompakt bulgu"]  # -kompakt → finding; 3.14-satırı → finding DEĞİL
     assert "3.14 değerindedir" in summary  # ondalık prose summary'de kaldı
+
+
+def test_synth_uses_separate_synth_llm():
+    # FAZ1: plan→llm, sentez→synth_llm (AYRI modeller)
+    plan_calls, synth_calls = [], []
+
+    def plan(p):
+        plan_calls.append(p)
+        return "soru bir\nsoru iki"
+
+    def synth(p):
+        synth_calls.append(p)
+        return "Güçlü-model özeti.\n- bulgu X"
+
+    agent = ResearchAgent(
+        llm=plan,
+        synth_llm=synth,
+        search=lambda q, k, pr: [{"id": "a", "title": "A", "score": 0.8, "text": "t"}],
+    )
+    rep = agent.run(ResearchConfig(topic="konu xyz", max_iterations=2, depth=2))
+    assert len(plan_calls) == 1  # plan tek-çağrı (qwen)
+    assert len(synth_calls) == 1  # sentez tek-çağrı (Haiku) — AYRI llm
+    assert "Güçlü-model özeti" in rep.summary
+    assert rep.findings == ["bulgu X"]
+
+
+def test_synth_llm_defaults_to_plan_llm():
+    # synth_llm verilmezse plan-llm'e düşer (geriye-uyum)
+    calls = []
+
+    def llm(p):
+        calls.append(p)
+        return "soru\n- bulgu" if len(calls) == 1 else "Özet.\n- bulgu"
+
+    agent = ResearchAgent(llm=llm, search=lambda *a: [{"id": "a", "title": "A", "score": 0.7, "text": "t"}])
+    agent.run(ResearchConfig(topic="konu xyz", max_iterations=1, depth=2))
+    assert len(calls) == 2  # plan + sentez AYNI llm'e gitti (synth_llm=None → llm)
