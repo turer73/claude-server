@@ -560,3 +560,84 @@ def test_run_critic_no_revision_when_clean():
     assert rep.critique.verdict == "yeterli"
     assert rep.critique.revised is False
     assert "İyi özet" in rep.summary
+
+
+# ───────── FAZ7: kaynaklar-arası çelişki-tespiti (detect_conflicts opt-in) ─────────
+
+
+def test_detect_contradictions_single_source_empty():
+    agent = ResearchAgent(llm=lambda _p: "", search=lambda *a: [], synth_llm=lambda _p: "ÇAĞRILMAMALI")
+    assert agent._detect_contradictions("konu", _srcs(1)) == []  # tek kaynak çelişemez
+
+
+def test_detect_contradictions_parses_conflicts():
+    def synth(_p):
+        return "- [1] vs [3]: kaynak 1 X der, kaynak 3 tam tersini söyler\n- [2] [4]: tarih uyuşmuyor"
+
+    agent = ResearchAgent(llm=lambda _p: "", search=lambda *a: [], synth_llm=synth)
+    out = agent._detect_contradictions("konu", _srcs(4))
+    assert len(out) == 2
+    assert out[0].sources == [1, 3]
+    assert "tam tersini" in out[0].description
+    assert "[" not in out[0].description  # ref-etiketleri açıklamadan ayıklandı
+    assert out[1].sources == [2, 4]
+
+
+def test_detect_contradictions_none_returns_empty():
+    agent = ResearchAgent(llm=lambda _p: "", search=lambda *a: [], synth_llm=lambda _p: "ÇELİŞKİ YOK")
+    assert agent._detect_contradictions("konu", _srcs(3)) == []
+
+
+def test_detect_contradictions_ignores_invalid_or_single_ref():
+    # [9] geçersiz (kaynak yok) → tek geçerli ref kalır → çelişki sayılmaz
+    def synth(_p):
+        return "- [1] vs [9]: yalnız 1 geçerli ref\n- [1] tek kaynak, çelişki değil"
+
+    agent = ResearchAgent(llm=lambda _p: "", search=lambda *a: [], synth_llm=synth)
+    assert agent._detect_contradictions("konu", _srcs(3)) == []
+
+
+def test_detect_contradictions_llm_fail_returns_empty():
+    def boom(_p):
+        raise RuntimeError("model down")
+
+    agent = ResearchAgent(llm=lambda _p: "", search=lambda *a: [], synth_llm=boom)
+    assert agent._detect_contradictions("konu", _srcs(2)) == []
+
+
+def test_run_detect_conflicts_opt_in():
+    # detect_conflicts=True → contradictions dolar; synth hem sentez hem çelişki için kullanılır
+    def synth(_p):
+        if "ÇELİŞİYOR" in _p:  # çelişki-tespiti prompt'u
+            return "- [1] vs [2]: iki kaynak farklı değer veriyor"
+        return "Özet [1].\nÇIKARIMLAR:\n- bulgu [1]"
+
+    def search(q, k, p):
+        return [
+            {"id": "d1", "title": q, "score": 0.9, "text": "t"},
+            {"id": "d2", "title": "B", "score": 0.8, "text": "u"},
+        ]
+
+    agent = ResearchAgent(llm=lambda _p: "Soru?", synth_llm=synth, search=search)
+    rep = agent.run(ResearchConfig(topic="konu testi", max_iterations=1, depth=2, max_hops=1, detect_conflicts=True))
+    assert len(rep.contradictions) == 1
+    assert rep.contradictions[0].sources == [1, 2]
+
+
+def test_run_detect_conflicts_default_off():
+    calls = {"conflict": 0}
+
+    def synth(_p):
+        if "ÇELİŞİYOR" in _p:
+            calls["conflict"] += 1
+            return "- [1] vs [2]: x"
+        return "Özet [1].\nÇIKARIMLAR:\n- bulgu [1]"
+
+    agent = ResearchAgent(
+        llm=lambda _p: "Soru?",
+        synth_llm=synth,
+        search=lambda q, k, p: [{"id": "d1", "title": q, "score": 0.9, "text": "t"}],
+    )
+    rep = agent.run(ResearchConfig(topic="konu testi", max_iterations=1, depth=2, max_hops=1))
+    assert rep.contradictions == []
+    assert calls["conflict"] == 0  # çelişki-tespiti çağrılmadı

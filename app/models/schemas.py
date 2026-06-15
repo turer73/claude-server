@@ -428,6 +428,9 @@ class ResearchConfig(BaseModel):
     # /ask gelecekte FTS ile bulur (kümülatif araştırma). Aynı topic tekrar = upsert.
     # Opt-in (yan-etki: memory DB yazımı). False = yalnız döndür, kaydetme.
     save: bool = False
+    # Çelişki-tespiti (FAZ7): True = kaynaklar BİRBİRİYLE çelişiyor mu analiz edilir
+    # (kaynak-seviyesi karışık-kanıt sinyali; critic'ten bağımsız). +1 LLM çağrısı; opt-in.
+    detect_conflicts: bool = False
 
 
 class ResearchSource(BaseModel):
@@ -464,6 +467,16 @@ class ResearchCritique(BaseModel):
     revised: bool  # critique sonrası özet revize edildi mi
 
 
+class ResearchConflict(BaseModel):
+    """Kaynaklar-arası çelişki (FAZ7): ≥2 kaynağın BİRBİRİYLE uyuşmadığı nokta.
+
+    Grounding'den farklı: sentez kaynaklara doğru-atıflı olsa bile kaynaklar kendi
+    aralarında çelişebilir → kullanıcıya 'karışık kanıt' sinyali (detect_conflicts opt-in)."""
+
+    sources: list[int]  # çelişen kaynak ref'leri (≥2)
+    description: str  # neyin çeliştiği (kısa)
+
+
 class ResearchReport(BaseModel):
     """Otonom ajanın nihai çıktısı."""
 
@@ -476,3 +489,4 @@ class ResearchReport(BaseModel):
     citations: CitationAudit  # [n] atıf-doğrulama (grounding denetimi)
     critique: ResearchCritique | None = None  # critic-ajan (opt-in; kapalıysa None)
     saved_discovery_id: int | None = None  # save=True ise kaydedilen discovery id (yoksa None)
+    contradictions: list[ResearchConflict] = []  # kaynaklar-arası çelişkiler (detect_conflicts opt-in)
