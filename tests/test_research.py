@@ -230,7 +230,7 @@ async def test_run_returns_report(client):
         # synth_model=ollama → plan VE sentez _ollama_generate'ten (mock'lanabilir tek-yol)
         resp = await client.post(
             "/api/v1/research/run",
-            json={"topic": "linux kernel", "max_iterations": 2, "depth": 3, "synth_model": "ollama"},
+            json={"topic": "linux kernel", "max_iterations": 2, "depth": 3, "synth_model": "ollama", "max_hops": 1},
         )
     assert resp.status_code == 200
     body = resp.json()
@@ -317,7 +317,7 @@ async def test_run_haiku_synth_path(client):
     ):
         resp = await client.post(
             "/api/v1/research/run",
-            json={"topic": "konu testi", "max_iterations": 1, "depth": 2, "synth_model": "haiku"},
+            json={"topic": "konu testi", "max_iterations": 1, "depth": 2, "synth_model": "haiku", "max_hops": 1},
         )
     assert resp.status_code == 200
     body = resp.json()
