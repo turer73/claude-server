@@ -306,3 +306,55 @@ async def test_run_haiku_synth_path(client):
     assert "Haiku özeti" in body["summary"]
     assert body["findings"] == ["bulgu A"]
     haiku.assert_called_once()  # sentez gerçekten Haiku'dan geçti
+
+
+# ───────── web arama (FAZ2: DDG-lite) ─────────
+
+_WEB_HIT = {"type": "web", "id": "https://w.com", "title": "W", "score": 0.6, "text": "web"}
+
+
+def test_strip_html():
+    assert research._strip_html("<b>Linux</b> &amp; kernel") == "Linux & kernel"
+
+
+def test_web_search_parses_ddg_lite():
+    page = (
+        '<a rel="nofollow" href="https://kernel.org/mm" class=\'result-link\'>Memory Mgmt</a>'
+        '<td class="result-snippet">Linux &amp; bellek yönetimi</td>'
+        '<a rel="nofollow" href="https://example.com" class=\'result-link\'>İkinci</a>'
+    )
+    resp = MagicMock(ok=True)
+    resp.text = page
+    with patch("app.api.research.requests.post", return_value=resp):
+        out = research._web_search("bellek", n=5)
+    assert len(out) == 2
+    assert out[0]["type"] == "web"
+    assert out[0]["id"] == "https://kernel.org/mm"
+    assert out[0]["title"] == "Memory Mgmt"
+    assert "bellek yönetimi" in out[0]["text"]
+    assert out[0]["score"] > out[1]["score"]  # rank-tabanlı
+
+
+def test_web_search_network_fail_returns_empty():
+    with patch("app.api.research.requests.post", side_effect=Exception("timeout")):
+        assert research._web_search("x") == []
+
+
+@pytest.mark.anyio
+async def test_run_include_web_wires_web_search(client):
+    """include_web=true → _web_search çağrılır + sonuçları rapora girer."""
+    with (
+        patch("app.api.research._ollama_generate", side_effect=["soru bir?", "Özet.\n- bulgu"]),
+        patch("app.api.research._qdrant_chunks", side_effect=lambda q, **k: [{"id": "rag-1", "title": "R", "score": 0.8, "text": "t"}]),
+        patch("app.api.research._web_search", return_value=[_WEB_HIT]) as web,
+        patch("app.api.research._synth_llm", return_value=lambda p: "Özet.\n- bulgu"),
+    ):
+        resp = await client.post(
+            "/api/v1/research/run",
+            json={"topic": "konu testi", "max_iterations": 1, "depth": 2, "include_web": True},
+        )
+    assert resp.status_code == 200
+    web.assert_called()  # web arama tetiklendi
+    ids = {s["source_id"] for s in resp.json()["sources"]}
+    assert "https://w.com" in ids  # web kaynağı rapora girdi
+    assert "rag-1" in ids  # RAG kaynağı da

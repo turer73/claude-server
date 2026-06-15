@@ -413,6 +413,9 @@ class ResearchConfig(BaseModel):
     # Sentez modeli (FAZ1): haiku = Claude Haiku (kalite, Haiku-fail'de aya:8b fallback);
     # ollama = yerel aya:8b (anahtarsız). Plan hep hızlı-Ollama (qwen).
     synth_model: Literal["haiku", "ollama"] = "haiku"
+    # Web arama (FAZ2): True = RAG'a EK olarak DDG-lite web sonuçları (anahtarsız, opt-in;
+    # gecikme + dış-bağımlılık ekler, fail'de RAG'la devam). False = yalnız yerel RAG.
+    include_web: bool = False
 
 
 class ResearchSource(BaseModel):

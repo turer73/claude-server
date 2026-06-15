@@ -26,12 +26,20 @@ SearchFn = Callable[..., list[dict[str, Any]]]
 
 
 class ResearchAgent:
-    def __init__(self, *, llm: LLMFn, search: SearchFn, synth_llm: LLMFn | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        llm: LLMFn,
+        search: SearchFn,
+        synth_llm: LLMFn | None = None,
+        web_search: SearchFn | None = None,
+    ) -> None:
         self._llm = llm  # planlama: hızlı/ucuz (Ollama qwen) — plan basit
         # sentez: GÜÇLÜ model (Haiku). FAZ1: ayrı synth_llm; verilmezse plan-llm'e düşer
         # (geriye-dönük uyum + test-DI). Sentez kalite-darboğazı → ayrı model değer.
         self._synth_llm = synth_llm or llm
-        self._search = search
+        self._search = search  # RAG (Qdrant)
+        self._web_search = web_search  # FAZ2: opt-in web kaynağı (None = yalnız RAG)
 
     # ── 1) Planlama ──
     def _generate_plan(self, topic: str, n: int) -> list[str]:
@@ -67,6 +75,12 @@ class ResearchAgent:
                 hits = self._search(sq, depth, project) or []
             except Exception:
                 hits = []  # tek alt-soru aramasının patlaması tüm araştırmayı düşürmesin
+            # FAZ2: web kaynağı (opt-in) — RAG sonuçlarına ekle. Web fail → RAG'la devam.
+            if self._web_search is not None:
+                try:
+                    hits = hits + (self._web_search(sq, depth) or [])
+                except Exception:
+                    pass
             for h in hits:
                 collected.append({**h, "_subq": sq})
         return collected
