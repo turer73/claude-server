@@ -398,3 +398,36 @@ class CIStatusResponse(BaseModel):
     passed: int
     failed: int
     projects: list[CIProjectResult]
+
+
+# --- Research Agent (otonom çok-aşamalı araştırma) ---
+
+
+class ResearchConfig(BaseModel):
+    """POST /api/v1/research/run girdisi."""
+
+    topic: str = Field(..., min_length=3, max_length=500)
+    max_iterations: int = Field(5, ge=1, le=8)  # üretilecek alt-soru sayısı
+    depth: int = Field(5, ge=1, le=15)  # alt-soru başına RAG top-K
+    project: str | None = None  # RAG'ı tek projeye sınırla (opsiyonel)
+
+
+class ResearchSource(BaseModel):
+    """Raporda atıf-numaralı tek kaynak."""
+
+    ref: int  # metin-içi atıf numarası [1], [2] ...
+    title: str
+    source_id: str
+    snippet: str
+    relevance: float  # 0..1 (RAG skoru)
+
+
+class ResearchReport(BaseModel):
+    """Otonom ajanın nihai çıktısı."""
+
+    topic: str
+    summary: str
+    findings: list[str]
+    sources: list[ResearchSource]
+    subquestions: list[str]
+    confidence_score: float  # 0..1
