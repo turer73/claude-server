@@ -18,7 +18,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from app.models.schemas import CitationAudit, ResearchConfig, ResearchReport, ResearchSource
+from app.models.schemas import CitationAudit, ResearchConfig, ResearchCritique, ResearchReport, ResearchSource
 
 # llm: (prompt) -> metin ; search: (soru, top_k, project) -> [{title,id,score,text,...}]
 LLMFn = Callable[[str], str]
@@ -33,6 +33,7 @@ class ResearchAgent:
         search: SearchFn,
         synth_llm: LLMFn | None = None,
         web_search: SearchFn | None = None,
+        critic_llm: LLMFn | None = None,
     ) -> None:
         self._llm = llm  # planlama: hızlı/ucuz (Ollama qwen) — plan basit
         # sentez: GÜÇLÜ model (Haiku). FAZ1: ayrı synth_llm; verilmezse plan-llm'e düşer
@@ -40,6 +41,9 @@ class ResearchAgent:
         self._synth_llm = synth_llm or llm
         self._search = search  # RAG (Qdrant)
         self._web_search = web_search  # FAZ2: opt-in web kaynağı (None = yalnız RAG)
+        # FAZ5: critic-ajan (multi-agent katman). Kalite-değerlendirme akıl-yürütme işi →
+        # GÜÇLÜ model; verilmezse synth_llm'e düşer. config.critic=True ile opt-in çalışır.
+        self._critic_llm = critic_llm or self._synth_llm
 
     # ── 1) Planlama ──
     def _generate_plan(self, topic: str, n: int) -> list[str]:
@@ -179,9 +183,15 @@ class ResearchAgent:
             "İddiaları [1], [2] gibi kaynak numaralarıyla atıfla."
         )
         out = (self._synth_llm(prompt) or "").strip()
-        # FORMAT-TOLERANSLI parse (canlı-smoke: 3B model 'ÇIKARIMLAR:' yerine '### Özet'
-        # markdown verdi → eski split 0-findings buluyordu). Kural: bullet/numara satırları
-        # = findings; başlık (#) ve 'ÇIKARIMLAR:' satırları atlanır; kalan prose = summary.
+        return self._parse_synthesis(out, topic)
+
+    @staticmethod
+    def _parse_synthesis(out: str, topic: str) -> tuple[str, list[str]]:
+        """FORMAT-TOLERANSLI sentez parse (canlı-smoke: 3B model 'ÇIKARIMLAR:' yerine
+        '### Özet' markdown verdi → eski split 0-findings buluyordu). Kural: bullet/numara
+        satırları = findings; başlık (#) ve 'ÇIKARIMLAR:' satırları atlanır; kalan prose =
+        summary. (Sentez + critic-revizyon ortak kullanır.)"""
+        out = (out or "").strip()
         findings: list[str] = []
         summary_parts: list[str] = []
         for line in out.splitlines():
@@ -201,6 +211,57 @@ class ResearchAgent:
         if not summary:
             summary = out or f'"{topic}" için özet üretilemedi.'
         return summary, findings
+
+    # ── 4) Critic-ajan (multi-agent katman, opt-in) ──
+    def _critique(self, topic: str, summary: str, findings: list[str], sources: list[ResearchSource]) -> ResearchCritique:
+        """Sentez raporunu kaynaklara karşı eleştir: kaynaklarca DESTEKLENMEYEN iddialar,
+        önemli BOŞLUKLAR, kaynaklar-arası ÇELİŞKİLER. Issue bulursa verdict='revizyon'.
+        Critic GÜÇLÜ modelde (kalite-akıl-yürütme). Boş/parse-fail → 'yeterli' (degrade-safe)."""
+        if not sources:
+            return ResearchCritique(verdict="yeterli", issues=[], revised=False)
+        context = "\n".join(f"[{s.ref}] {s.title}: {s.snippet}" for s in sources)
+        report_txt = summary + "\n" + "\n".join(f"- {f}" for f in findings)
+        prompt = (
+            f'Konu: "{topic}"\n\nKAYNAKLAR:\n{context}\n\nÜRETİLEN RAPOR:\n{report_txt}\n\n'
+            "Bu raporu ELEŞTİR. Yalnızca GERÇEK sorunları madde-madde (- ile) yaz:\n"
+            "(1) Kaynaklarca DESTEKLENMEYEN/abartılı iddialar, (2) önemli BOŞLUK/eksik açı, "
+            "(3) kaynaklar-arası ÇELİŞKİ. Sorun yoksa madde yazma.\n"
+            "Son satıra büyük harfle 'KARAR: yeterli' VEYA 'KARAR: revizyon' yaz."
+        )
+        out = (self._critic_llm(prompt) or "").strip()
+        issues: list[str] = []
+        verdict = ""
+        for line in out.splitlines():
+            s = line.strip()
+            mk = re.match(r"(?i)^\**\s*KARAR\s*[:：]\s*(\w+)", s)
+            if mk:
+                verdict = mk.group(1).lower()
+                continue
+            m = re.match(r"^(?:[-*•]\s*|\d+[.)]\s+)(.+)$", s)
+            if m:
+                issues.append(m.group(1).strip().strip("*").strip())
+        # KARAR satırı 'revizyon' DEĞİLSE ama issue VARSA yine revizyon (model kararı atlasa bile
+        # somut sorun gider); KARAR 'revizyon' ama issue yoksa eyleme dönmez (revize edilecek şey yok).
+        needs = ("revizyon" in verdict or "revize" in verdict or "zayıf" in verdict or "zayif" in verdict) or bool(issues)
+        return ResearchCritique(verdict=("revizyon" if needs else "yeterli"), issues=issues, revised=False)
+
+    def _revise(
+        self, topic: str, summary: str, findings: list[str], sources: list[ResearchSource], issues: list[str]
+    ) -> tuple[str, list[str]]:
+        """Critic sorunlarını gidererek özeti yeniden sentezle (tek tur). Kaynak-sadık kal,
+        [n] atıfla. synth_llm (sentezle aynı güçlü model)."""
+        context = "\n".join(f"[{s.ref}] {s.title}: {s.snippet}" for s in sources)
+        report_txt = summary + "\n" + "\n".join(f"- {f}" for f in findings)
+        issue_block = "\n".join(f"- {i}" for i in issues)
+        prompt = (
+            f'Konu: "{topic}"\n\nKAYNAKLAR:\n{context}\n\nMEVCUT RAPOR:\n{report_txt}\n\n'
+            f"GİDERİLECEK ELEŞTİRİLER:\n{issue_block}\n\n"
+            "Yukarıdaki eleştirileri gidererek raporu DÜZELT: kaynak-DIŞI iddiaları çıkar veya "
+            "atıfla destekle, boşlukları kaynaklardan doldur. (1) kapsamlı ÖZET paragrafı, sonra "
+            "(2) 'ÇIKARIMLAR:' ardından madde-madde bulgular. İddiaları [1], [2] ile atıfla."
+        )
+        out = (self._synth_llm(prompt) or "").strip()
+        return self._parse_synthesis(out, topic)
 
     # ── güven puanı (heuristik) ──
     @staticmethod
@@ -266,6 +327,13 @@ class ResearchAgent:
                 next_subqs = []
         sources = self._dedup_sources(raw_all)
         summary, findings = self._synthesize(config.topic, sources)
+        # FAZ5: critic-ajan (opt-in). Sentezi eleştir → sorun varsa TEK revizyon → yeniden-denetim.
+        critique: ResearchCritique | None = None
+        if config.critic:
+            critique = self._critique(config.topic, summary, findings, sources)
+            if critique.verdict == "revizyon" and critique.issues:
+                summary, findings = self._revise(config.topic, summary, findings, sources, critique.issues)
+                critique.revised = True  # revizyon sonrası audit/güven aşağıda taze hesaplanır
         audit = self._audit_citations(summary, findings, sources)
         conf = self._ground_penalty(self._confidence(sources, len(subqs_all), config.depth), audit)
         return ResearchReport(
@@ -276,4 +344,5 @@ class ResearchAgent:
             subquestions=subqs_all,
             confidence_score=conf,
             citations=audit,
+            critique=critique,
         )

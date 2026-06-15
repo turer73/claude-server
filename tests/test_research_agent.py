@@ -457,3 +457,106 @@ def test_run_populates_citations_and_penalizes_hallucination():
     # güven cezalandı: ham güven > raporlanan güven
     raw_conf = ResearchAgent._confidence(report.sources, len(report.subquestions), 2)
     assert report.confidence_score < raw_conf
+
+
+# ───────── critic-ajan (FAZ5: multi-agent katman, opt-in) ─────────
+
+
+def test_critique_no_sources_is_sufficient():
+    agent = _agent(lambda _p: "ÇAĞRILMAMALI", lambda *a: [])
+    c = agent._critique("konu", "", [], [])
+    assert c.verdict == "yeterli"
+    assert c.issues == []
+    assert c.revised is False
+
+
+def test_critique_parses_issues_and_verdict():
+    def critic(_p):
+        return "- desteksiz iddia var\n- X boşluğu eksik\nKARAR: revizyon"
+
+    agent = ResearchAgent(llm=lambda _p: "", search=lambda *a: [], critic_llm=critic)
+    c = agent._critique("konu", "özet [1]", ["bulgu [1]"], _srcs(1))
+    assert c.issues == ["desteksiz iddia var", "X boşluğu eksik"]
+    assert c.verdict == "revizyon"
+
+
+def test_critique_issues_force_revision_even_if_verdict_yeterli():
+    # KARAR 'yeterli' dese de somut issue varsa revizyon (model kararı atlasa bile)
+    agent = ResearchAgent(llm=lambda _p: "", search=lambda *a: [], critic_llm=lambda _p: "- gerçek sorun\nKARAR: yeterli")
+    c = agent._critique("konu", "özet", ["b"], _srcs(1))
+    assert c.verdict == "revizyon"
+
+
+def test_critique_clean_report_stays_sufficient():
+    agent = ResearchAgent(llm=lambda _p: "", search=lambda *a: [], critic_llm=lambda _p: "KARAR: yeterli")
+    c = agent._critique("konu", "özet [1]", ["bulgu [1]"], _srcs(1))
+    assert c.verdict == "yeterli"
+    assert c.issues == []
+
+
+def test_run_critic_disabled_by_default():
+    # config.critic varsayılan False → critique None, critic_llm hiç çağrılmaz
+    calls = {"critic": 0}
+
+    def critic(_p):
+        calls["critic"] += 1
+        return "KARAR: revizyon"
+
+    def llm(_p):
+        return "Soru?" if "alt-soru" in _p else "Özet [1].\nÇIKARIMLAR:\n- bulgu [1]"
+
+    agent = ResearchAgent(
+        llm=llm,
+        search=lambda q, k, p: [{"id": "d1", "title": q, "score": 0.9, "text": "t"}],
+        critic_llm=critic,
+    )
+    rep = agent.run(ResearchConfig(topic="konu testi", max_iterations=1, depth=2, max_hops=1))
+    assert rep.critique is None
+    assert calls["critic"] == 0
+
+
+def test_run_critic_revises_on_issues():
+    # critic issue bulur → revize edilir; revised=True; revize-edilmiş özet rapora girer
+    state = {"phase": 0}
+
+    def llm(_p):
+        # plan çağrısı
+        return "Soru?"
+
+    def synth(_p):
+        # ilk sentez vs revizyon ayrımı: revizyon prompt'unda 'GİDERİLECEK ELEŞTİRİLER' geçer
+        if "GİDERİLECEK ELEŞTİRİLER" in _p:
+            return "Düzeltilmiş özet [1].\nÇIKARIMLAR:\n- sağlam bulgu [1]"
+        return "Ham özet [1].\nÇIKARIMLAR:\n- zayıf bulgu [1]"
+
+    def critic(_p):
+        return "- zayıf bulgu desteksiz\nKARAR: revizyon"
+
+    agent = ResearchAgent(
+        llm=llm,
+        synth_llm=synth,
+        search=lambda q, k, p: [{"id": "d1", "title": q, "score": 0.9, "text": "t"}],
+        critic_llm=critic,
+    )
+    rep = agent.run(ResearchConfig(topic="konu testi", max_iterations=1, depth=2, max_hops=1, critic=True))
+    assert rep.critique is not None
+    assert rep.critique.revised is True
+    assert rep.critique.issues == ["zayıf bulgu desteksiz"]
+    assert "Düzeltilmiş" in rep.summary  # revize-edilmiş içerik rapora girdi
+
+
+def test_run_critic_no_revision_when_clean():
+    # critic 'yeterli' → revizyon yok, ham sentez korunur
+    def synth(_p):
+        return "İyi özet [1].\nÇIKARIMLAR:\n- bulgu [1]"
+
+    agent = ResearchAgent(
+        llm=lambda _p: "Soru?",
+        synth_llm=synth,
+        search=lambda q, k, p: [{"id": "d1", "title": q, "score": 0.9, "text": "t"}],
+        critic_llm=lambda _p: "KARAR: yeterli",
+    )
+    rep = agent.run(ResearchConfig(topic="konu testi", max_iterations=1, depth=2, max_hops=1, critic=True))
+    assert rep.critique.verdict == "yeterli"
+    assert rep.critique.revised is False
+    assert "İyi özet" in rep.summary
