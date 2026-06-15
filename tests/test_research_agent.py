@@ -641,3 +641,79 @@ def test_run_detect_conflicts_default_off():
     rep = agent.run(ResearchConfig(topic="konu testi", max_iterations=1, depth=2, max_hops=1))
     assert rep.contradictions == []
     assert calls["conflict"] == 0  # çelişki-tespiti çağrılmadı
+
+
+# ───────── FAZ8: Markdown export (markdown opt-in) ─────────
+
+
+def _full_report(**over):
+    from app.models.schemas import CitationAudit, ResearchReport, ResearchSource
+
+    base = {
+        "topic": "liveness",
+        "summary": "Özet [1] ve [2].",
+        "findings": ["bulgu A [1]", "bulgu B [2]"],
+        "sources": [
+            ResearchSource(ref=1, title="Kaynak Bir", source_id="s1", snippet="x", relevance=0.9),
+            ResearchSource(ref=2, title="Kaynak İki", source_id="s2", snippet="y", relevance=0.7),
+        ],
+        "subquestions": ["q1", "q2"],
+        "confidence_score": 0.75,
+        "citations": CitationAudit(used=[1, 2], hallucinated=[], uncited=[], grounded=True),
+    }
+    base.update(over)
+    return ResearchReport(**base)
+
+
+def test_render_markdown_core_sections():
+    md = ResearchAgent._render_markdown(_full_report())
+    assert md.startswith("# Araştırma: liveness")
+    assert "Özet [1] ve [2]." in md
+    assert "## Çıkarımlar" in md
+    assert "- bulgu A [1]" in md
+    assert "## Kaynaklar" in md
+    assert "1. Kaynak Bir — `s1` (alaka 0.9)" in md
+    assert "Güven: 0.75" in md
+    # opt-in bölümler üretilmediyse görünmez
+    assert "Çelişki" not in md
+    assert "Değerlendirme" not in md
+
+
+def test_render_markdown_includes_conflicts_and_critique():
+    from app.models.schemas import ResearchConflict, ResearchCritique
+
+    rep = _full_report(
+        contradictions=[ResearchConflict(sources=[1, 2], description="iki kaynak farklı değer veriyor")],
+        critique=ResearchCritique(verdict="revizyon", issues=["desteksiz iddia"], revised=True),
+    )
+    md = ResearchAgent._render_markdown(rep)
+    assert "## ⚠️ Kaynaklar-Arası Çelişkiler" in md
+    assert "Kaynaklar [1, 2]: iki kaynak farklı değer veriyor" in md
+    assert "## Değerlendirme (critic)" in md
+    assert "Karar: **revizyon** (revize edildi: True)" in md
+    assert "- desteksiz iddia" in md
+
+
+def test_render_markdown_flags_hallucinated_in_footer():
+    from app.models.schemas import CitationAudit
+
+    rep = _full_report(citations=CitationAudit(used=[1], hallucinated=[9], uncited=[2], grounded=False))
+    md = ResearchAgent._render_markdown(rep)
+    assert "1 uydurma" in md
+    assert "1 atıfsız" in md
+
+
+def test_run_markdown_opt_in_and_default_off():
+    def synth(_p):
+        return "Özet [1].\nÇIKARIMLAR:\n- bulgu [1]"
+
+    agent = ResearchAgent(
+        llm=lambda _p: "Soru?",
+        synth_llm=synth,
+        search=lambda q, k, p: [{"id": "d1", "title": q, "score": 0.9, "text": "t"}],
+    )
+    off = agent.run(ResearchConfig(topic="konu testi", max_iterations=1, depth=2, max_hops=1))
+    assert off.markdown is None  # default off
+    on = agent.run(ResearchConfig(topic="konu testi", max_iterations=1, depth=2, max_hops=1, markdown=True))
+    assert on.markdown is not None
+    assert on.markdown.startswith("# Araştırma: konu testi")

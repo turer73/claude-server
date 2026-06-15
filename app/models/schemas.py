@@ -431,6 +431,9 @@ class ResearchConfig(BaseModel):
     # Çelişki-tespiti (FAZ7): True = kaynaklar BİRBİRİYLE çelişiyor mu analiz edilir
     # (kaynak-seviyesi karışık-kanıt sinyali; critic'ten bağımsız). +1 LLM çağrısı; opt-in.
     detect_conflicts: bool = False
+    # Markdown export (FAZ8): True = rapor okunabilir/paylaşılabilir Markdown'a render edilir
+    # (saf fonksiyon, LLM yok → maliyetsiz; sadece yanıt payload'ı büyür). False = yalnız JSON.
+    markdown: bool = False
 
 
 class ResearchSource(BaseModel):
@@ -490,3 +493,4 @@ class ResearchReport(BaseModel):
     critique: ResearchCritique | None = None  # critic-ajan (opt-in; kapalıysa None)
     saved_discovery_id: int | None = None  # save=True ise kaydedilen discovery id (yoksa None)
     contradictions: list[ResearchConflict] = []  # kaynaklar-arası çelişkiler (detect_conflicts opt-in)
+    markdown: str | None = None  # markdown=True ise render edilmiş rapor (yoksa None)

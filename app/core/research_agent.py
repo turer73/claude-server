@@ -337,6 +337,35 @@ class ResearchAgent:
             conflicts.append(ResearchConflict(sources=refs, description=desc or "(açıklama yok)"))
         return conflicts
 
+    # ── 6) Markdown export (FAZ8: okunabilir/paylaşılabilir rapor, opt-in) ──
+    @staticmethod
+    def _render_markdown(report: ResearchReport) -> str:
+        """Raporu Markdown'a render et (saf fonksiyon, LLM yok). Bölümler koşullu:
+        çelişki/değerlendirme yalnız opt-in üretildiyse görünür."""
+        L: list[str] = [f"# Araştırma: {report.topic}", "", report.summary or "_(özet yok)_"]
+        if report.findings:
+            L += ["", "## Çıkarımlar", *[f"- {f}" for f in report.findings]]
+        if report.contradictions:
+            L += ["", "## ⚠️ Kaynaklar-Arası Çelişkiler"]
+            L += [f"- Kaynaklar {c.sources}: {c.description}" for c in report.contradictions]
+        if report.critique:
+            cq = report.critique
+            L += ["", "## Değerlendirme (critic)", f"- Karar: **{cq.verdict}** (revize edildi: {cq.revised})"]
+            L += [f"  - {i}" for i in cq.issues]
+        if report.sources:
+            L += ["", "## Kaynaklar"]
+            L += [f"{s.ref}. {s.title} — `{s.source_id}` (alaka {s.relevance})" for s in report.sources]
+        ci = report.citations
+        L += [
+            "",
+            "---",
+            f"_Güven: {report.confidence_score} · Atıf: {len(ci.used)} kullanıldı"
+            f"{f', {len(ci.hallucinated)} uydurma' if ci.hallucinated else ''}"
+            f"{f', {len(ci.uncited)} atıfsız' if ci.uncited else ''}"
+            f" · {len(report.sources)} kaynak · {len(report.subquestions)} alt-soru_",
+        ]
+        return "\n".join(L)
+
     # ── orkestrasyon (FAZ3: multi-hop otonom döngü) ──
     def run(self, config: ResearchConfig) -> ResearchReport:
         subqs_all: list[str] = []
@@ -375,7 +404,7 @@ class ResearchAgent:
         conf = self._ground_penalty(self._confidence(sources, len(subqs_all), config.depth), audit)
         # FAZ7: kaynaklar-arası çelişki-tespiti (opt-in). Sentezden bağımsız kaynak-seviyesi sinyal.
         contradictions = self._detect_contradictions(config.topic, sources) if config.detect_conflicts else []
-        return ResearchReport(
+        report = ResearchReport(
             topic=config.topic,
             summary=summary,
             findings=findings,
@@ -386,3 +415,6 @@ class ResearchAgent:
             critique=critique,
             contradictions=contradictions,
         )
+        if config.markdown:  # FAZ8: okunabilir export (saf render, tüm alanlar dolduktan sonra)
+            report.markdown = self._render_markdown(report)
+        return report
