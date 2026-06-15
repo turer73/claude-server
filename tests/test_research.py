@@ -335,7 +335,9 @@ def test_strip_html():
     assert research._strip_html("<b>Linux</b> &amp; kernel") == "Linux & kernel"
 
 
-def test_web_search_parses_ddg_lite():
+def test_web_search_parses_ddg_lite(monkeypatch):
+    # Parse testi (alaka filtresi DEĞİL) → embed'i sabit-vektöre mock'la (cosine=1 → hepsi tutulur).
+    monkeypatch.setattr(research.rag_module, "_embed", lambda text: [1.0, 0.0])
     page = (
         '<a rel="nofollow" href="https://kernel.org/mm" class=\'result-link\'>Memory Mgmt</a>'
         '<td class="result-snippet">Linux &amp; bellek yönetimi</td>'
@@ -401,7 +403,13 @@ async def test_health_exposes_selectable_synth_models(client):
 # ───────── web alaka filtresi (off-topic ele + çapraz-dil güvenliği) ─────────
 
 
-def test_filter_relevant_drops_off_topic():
+def test_filter_relevant_drops_off_topic_semantic(monkeypatch):
+    # Anlamsal kapı: query ile hizalı = tut, dik = at. Embed mock'lanır (Ollama'sız).
+    def fake_embed(text):
+        t = text.lower()
+        return [0.0, 1.0] if ("macos" in t or "apple" in t) else [1.0, 0.0]
+
+    monkeypatch.setattr(research.rag_module, "_embed", fake_embed)
     cands = [
         {"url": "a", "title": "Linux kernel güvenlik", "text": "sertleştirme teknikleri"},
         {"url": "b", "title": "Linux kernel modül", "text": "yükleme"},
@@ -411,15 +419,45 @@ def test_filter_relevant_drops_off_topic():
     urls = [c["url"] for c in out]
     assert "a" in urls
     assert "b" in urls
-    assert "c" not in urls  # off-topic elendi (≥2 kaldı → filtre uygulandı)
+    assert "c" not in urls  # cosine 0.0 < eşik → elendi
 
 
-def test_filter_relevant_safety_floor_cross_language():
+def test_filter_relevant_drops_homonym(monkeypatch):
+    # ASIL BUG (06-15): "klipper" hem bu-sunucu hem 3D-yazıcı firmware'i → token-örtüşmesi
+    # ayıramıyordu (printer sayfaları geçiyordu). Anlamsal kapı ayırır.
+    def fake_embed(text):
+        t = text.lower()
+        return [0.2, 1.0] if ("yazıcı" in t or "firmware" in t) else [1.0, 0.1]
+
+    monkeypatch.setattr(research.rag_module, "_embed", fake_embed)
     cands = [
-        {"url": "a", "title": "Linux kernel", "text": "x"},
-        {"url": "b", "title": "English only", "text": "hardening guide"},
-        {"url": "c", "title": "Another english", "text": "security doc"},
+        {"url": "printer", "title": "Klipper 3D Yazıcı Firmware Kurulum", "text": "ayar rehberi"},
+        {"url": "server", "title": "Klipper sunucu liveness", "text": "meta-monitor bekçi"},
     ]
-    # TR sorgu / EN sonuç: sadece 'a' eşleşir (1<2) → GÜVENLİK: ham liste döner (over-filter yok)
-    out = research._filter_relevant(cands, "linux güvenlik sertleştirme", 5)
-    assert len(out) == 3
+    out = research._filter_relevant(cands, "klipper sunucu liveness meta-monitor bekçi", 5)
+    urls = [c["url"] for c in out]
+    assert "server" in urls
+    assert "printer" not in urls  # homonim off-topic anlamsal olarak elendi
+
+
+def test_filter_relevant_falls_back_to_tokens_on_embed_error(monkeypatch):
+    # Embed/Ollama fail → token-örtüşme fallback (hard-fail yok). Sıfır-örtüşme atılır.
+    def boom(text):
+        raise RuntimeError("ollama down")
+
+    monkeypatch.setattr(research.rag_module, "_embed", boom)
+    cands = [
+        {"url": "a", "title": "Linux kernel", "text": "güvenlik"},
+        {"url": "c", "title": "Apple macOS", "text": "alakasız"},
+    ]
+    out = research._filter_relevant(cands, "linux kernel güvenlik", 5)
+    urls = [c["url"] for c in out]
+    assert "a" in urls
+    assert "c" not in urls
+
+
+def test_token_filter_empty_when_no_overlap():
+    # Davranış değişikliği: hiç örtüşme yoksa ham-listeye DÖNMEZ (off-topic kirliliği
+    # geri sokardı) — dürüst boş döner.
+    cands = [{"url": "x", "title": "zzz", "text": "qqq"}]
+    assert research._token_filter(cands, "linux kernel güvenlik", 5) == []
