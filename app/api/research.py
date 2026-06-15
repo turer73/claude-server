@@ -513,23 +513,45 @@ def _persist_research(report: ResearchReport, project: str | None) -> int | None
         db = sqlite3.connect(MEMORY_DB, timeout=5)
         try:
             db.execute("PRAGMA busy_timeout=5000")  # lock'ta hemen READONLY atma ([[fix_db_retention]])
-            db.execute(
-                "INSERT INTO discoveries (project, type, title, details, status, device_name) "
-                "VALUES (?, 'learning', ?, ?, 'active', 'klipper') "
-                "ON CONFLICT(project, type, title) WHERE status='active' "
-                "DO UPDATE SET details=excluded.details, created_at=datetime('now')",
-                (proj, title, details),
-            )
-            db.commit()
-            row = db.execute(
-                "SELECT id FROM discoveries WHERE project=? AND type='learning' AND title=? AND status='active'",
+            # Açık insert/update — discoveries_fts external-content + trigger YOK; FTS'i
+            # elle senkronlamalıyız (yoksa /ask kaydı bulamaz). Upsert'te eski FTS girdisini
+            # 'delete' ile sil, yeniyi ekle (re-insert çift-indekslerdi).
+            existing = db.execute(
+                "SELECT id, title, details FROM discoveries WHERE project=? AND type='learning' AND title=? AND status='active'",
                 (proj, title),
             ).fetchone()
-            return int(row[0]) if row else None
+            if existing:
+                rid, old_title, old_details = int(existing[0]), existing[1], existing[2]
+                db.execute("UPDATE discoveries SET details=?, created_at=datetime('now') WHERE id=?", (details, rid))
+                _sync_fts_replace(db, rid, old_title, old_details or "", title, details)
+            else:
+                cur = db.execute(
+                    "INSERT INTO discoveries (project, type, title, details, status, device_name) "
+                    "VALUES (?, 'learning', ?, ?, 'active', 'klipper')",
+                    (proj, title, details),
+                )
+                rid = int(cur.lastrowid)
+                _sync_fts_replace(db, rid, None, None, title, details)
+            db.commit()
+            return rid
         finally:
             db.close()
     except Exception:
         return None
+
+
+def _sync_fts_replace(db, rid: int, old_title, old_details, new_title: str, new_details: str) -> None:
+    """discoveries_fts (external-content) elle senkron: eski girdi varsa 'delete', sonra
+    yeniyi ekle. FTS tablosu yok/hatalıysa sessiz geç (best-effort, [[memory._sync_fts]] deseni)."""
+    try:
+        if old_title is not None:
+            db.execute(
+                "INSERT INTO discoveries_fts(discoveries_fts, rowid, title, details) VALUES('delete', ?, ?, ?)",
+                (rid, old_title, old_details or ""),
+            )
+        db.execute("INSERT INTO discoveries_fts(rowid, title, details) VALUES (?, ?, ?)", (rid, new_title, new_details))
+    except Exception:
+        pass
 
 
 @router.post("/run", response_model=ResearchReport)

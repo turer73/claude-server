@@ -489,6 +489,8 @@ def _tmp_discoveries_db(path):
         "title TEXT NOT NULL, details TEXT, status TEXT DEFAULT 'active', created_at TEXT DEFAULT (datetime('now')), "
         "device_name TEXT DEFAULT 'klipper');"
         "CREATE UNIQUE INDEX idx_uniq ON discoveries(project, type, title) WHERE status='active';"
+        # /ask'in sorguladığı external-content FTS — persist bunu da senkronlamalı (kümülatif döngü)
+        "CREATE VIRTUAL TABLE discoveries_fts USING fts5(title, details, content=discoveries, content_rowid=id);"
     )
     db.commit()
     db.close()
@@ -510,10 +512,15 @@ def test_persist_research_writes_and_upserts(tmp_path, monkeypatch):
 
     db = sqlite3.connect(dbp)
     rows = db.execute("SELECT type, details FROM discoveries WHERE id=?", (rid,)).fetchall()
+    # KÜMÜLATİF DÖNGÜ: FTS senkronlandı mı (/ask bunu bulur) + upsert çift-indekslemedi mi
+    fts = db.execute("SELECT rowid FROM discoveries_fts WHERE discoveries_fts MATCH 'güncellenmiş' AND rowid=?", (rid,)).fetchall()
+    fts_old = db.execute("SELECT rowid FROM discoveries_fts WHERE discoveries_fts MATCH 'bulgu'").fetchall()
     db.close()
     assert len(rows) == 1  # upsert: tek satır
     assert rows[0][0] == "learning"
     assert "güncellenmiş bulgu" in rows[0][1]  # details upsert'lendi
+    assert len(fts) == 1  # FTS senkron: yeni içerik aranabilir
+    assert len(fts_old) == 1  # eski FTS girdisi 'delete' edildi → çift-indeks yok
 
 
 def test_persist_research_failure_returns_none(monkeypatch):
