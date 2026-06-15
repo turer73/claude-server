@@ -219,11 +219,11 @@ def test_refine_empty_without_sources():
 
 
 def test_multihop_refines_and_accumulates():
-    llm_prompts = []
+    synth_prompts = []
 
-    def llm(p):
-        llm_prompts.append(p)
-        return "ikinci-hop sorusu" if "bulunan bilgiler" in p else "ilk hop sorusu"
+    def synth(p):  # refine ARTIK synth_llm'den (Sonnet); sentez de aynı callable
+        synth_prompts.append(p)
+        return "ikinci-hop sorusu" if "bulunan bilgiler" in p else "Özet.\n- bulgu"
 
     seen = {"n": 0}
 
@@ -231,9 +231,9 @@ def test_multihop_refines_and_accumulates():
         seen["n"] += 1
         return [{"id": f"doc-{seen['n']}", "title": q, "score": 0.8, "text": "t"}]  # her çağrı YENİ doc
 
-    agent = ResearchAgent(llm=llm, synth_llm=lambda p: "Özet.\n- bulgu", search=search)
+    agent = ResearchAgent(llm=lambda p: "ilk hop sorusu", synth_llm=synth, search=search)
     rep = agent.run(ResearchConfig(topic="konu xyz", max_iterations=1, depth=2, max_hops=2))
-    assert any("bulunan bilgiler" in p for p in llm_prompts)  # refine (FAZ3) çağrıldı
+    assert any("bulunan bilgiler" in p for p in synth_prompts)  # refine synth_llm'den çağrıldı
     assert len(rep.subquestions) == 2  # iki hop'un alt-soruları birikti
     assert len(rep.sources) == 2  # her hop yeni kaynak
 
@@ -241,15 +241,15 @@ def test_multihop_refines_and_accumulates():
 def test_multihop_stops_when_no_new_sources():
     refine = {"n": 0}
 
-    def llm(p):
+    def synth(p):
         if "bulunan bilgiler" in p:
             refine["n"] += 1
             return "yeniden derin soru"  # geçerli (>=5) → hop2 araması koşar
-        return "ilk plan sorusu"
+        return "Ö.\n- b"  # sentez
 
     agent = ResearchAgent(
-        llm=llm,
-        synth_llm=lambda p: "Ö.\n- b",
+        llm=lambda p: "ilk plan sorusu",
+        synth_llm=synth,
         search=lambda *a: [{"id": "ayni", "title": "S", "score": 0.8, "text": "t"}],  # HEP aynı doc
     )
     rep = agent.run(ResearchConfig(topic="konu xyz", max_iterations=1, depth=2, max_hops=3))
@@ -260,19 +260,19 @@ def test_multihop_stops_when_no_new_sources():
 def test_multihop_default_single_pass_no_refine():
     refine = {"n": 0}
 
-    def llm(p):
+    def synth(p):
         if "bulunan bilgiler" in p:
             refine["n"] += 1
-        return "soru"
+        return "Ö.\n- b"
 
-    agent = ResearchAgent(llm=llm, synth_llm=lambda p: "Ö.\n- b", search=lambda *a: [{"id": "d", "title": "D", "score": 0.7, "text": "t"}])
+    agent = ResearchAgent(llm=lambda p: "soru", synth_llm=synth, search=lambda *a: [{"id": "d", "title": "D", "score": 0.7, "text": "t"}])
     agent.run(ResearchConfig(topic="konu xyz", max_iterations=1, depth=2))  # max_hops default=1
     assert refine["n"] == 0  # tek-geçiş, refine YOK (geriye-uyum)
 
 
 def test_multihop_stops_when_refine_returns_empty():
-    def llm(p):
-        return "ab" if "bulunan bilgiler" in p else "ilk plan sorusu"  # refine 'ab'<5 → boş
+    def synth(p):
+        return "ab" if "bulunan bilgiler" in p else "Ö.\n- b"  # refine 'ab'<5 → boş
 
     n = {"i": 0}
 
@@ -280,7 +280,7 @@ def test_multihop_stops_when_refine_returns_empty():
         n["i"] += 1
         return [{"id": f"d{n['i']}", "title": q, "score": 0.8, "text": "t"}]  # her çağrı yeni doc
 
-    agent = ResearchAgent(llm=llm, synth_llm=lambda p: "Ö.\n- b", search=search)
+    agent = ResearchAgent(llm=lambda p: "ilk plan sorusu", synth_llm=synth, search=search)
     rep = agent.run(ResearchConfig(topic="konu xyz", max_iterations=1, depth=2, max_hops=2))
     assert len(rep.sources) == 1  # hop0 yeni-doc + refine→boş → hop1 loop-başı dur
 
