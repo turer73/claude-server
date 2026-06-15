@@ -505,13 +505,16 @@ def research_run(config: ResearchConfig) -> ResearchReport:
     Auth: router-level verify_key (X-Memory-Key). RAG=canlı Qdrant (ChromaDB ÖLÜ).
     Plan=hızlı Ollama (qwen). SENTEZ=synth_model: sonnet(varsayılan)/haiku/ollama —
     Claude'lar fail/anahtar-yok'ta aya:8b'ye düşer. Web=opt-in (include_web). Multi-hop=max_hops.
+    Critic=opt-in (config.critic): sentezi eleştir→gerekirse tek revizyon (synth_model'de).
     Ağır iş → sync endpoint threadpool'da koşar, event-loop'u bloklamaz.
     """
+    synth = _synth_llm(config.synth_model)
     agent = ResearchAgent(
         llm=_ollama_generate,  # plan: hızlı/ucuz
-        synth_llm=_synth_llm(config.synth_model),  # sentez: sonnet/haiku/aya
+        synth_llm=synth,  # sentez: sonnet/haiku/aya
         search=lambda q, k, p: _qdrant_chunks(q, top_k=k, project=p),
         web_search=(lambda q, k: _web_search(q, k)) if config.include_web else None,  # FAZ2: opt-in
+        critic_llm=synth,  # FAZ5: critic = sentezle aynı güçlü model (config.critic ile aktif)
     )
     return agent.run(config)
 

@@ -420,6 +420,10 @@ class ResearchConfig(BaseModel):
     # Web arama (FAZ2): True = RAG'a EK olarak DDG-lite web sonuçları (anahtarsız, opt-in;
     # gecikme + dış-bağımlılık ekler, fail'de RAG'la devam). False = yalnız yerel RAG.
     include_web: bool = False
+    # Critic-ajan (FAZ5, multi-agent katman): True = sentezden sonra rapor eleştirilir
+    # (desteksiz iddia / boşluk / çelişki) ve gerekirse TEK revizyon yapılır. +1-2 LLM
+    # çağrısı (güçlü model) → gecikme/maliyet ekler; opt-in. False = sentez tek-geçiş.
+    critic: bool = False
 
 
 class ResearchSource(BaseModel):
@@ -445,6 +449,17 @@ class CitationAudit(BaseModel):
     grounded: bool  # hallucinated boş mu → özet tümüyle kaynaklara dayalı mı
 
 
+class ResearchCritique(BaseModel):
+    """Critic-ajan değerlendirmesi (FAZ5, multi-agent): sentez raporunun kalite-denetimi.
+
+    config.critic=True iken üretilir. verdict='revizyon'+issue varsa özet TEK kez revize
+    edilir (revised=True) ve grounding/güven taze hesaplanır."""
+
+    verdict: str  # "yeterli" | "revizyon"
+    issues: list[str]  # tespit edilen zayıflıklar (desteksiz iddia / boşluk / çelişki)
+    revised: bool  # critique sonrası özet revize edildi mi
+
+
 class ResearchReport(BaseModel):
     """Otonom ajanın nihai çıktısı."""
 
@@ -455,3 +470,4 @@ class ResearchReport(BaseModel):
     subquestions: list[str]
     confidence_score: float  # 0..1
     citations: CitationAudit  # [n] atıf-doğrulama (grounding denetimi)
+    critique: ResearchCritique | None = None  # critic-ajan (opt-in; kapalıysa None)
