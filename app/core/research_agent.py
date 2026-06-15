@@ -112,7 +112,9 @@ class ResearchAgent:
                 continue
             if re.match(r"(?i)^#*\s*\**\s*Ç?IKARIMLAR\b", s) or re.match(r"^#+\s+\S", s):
                 continue  # başlık/etiket satırı: ne summary ne finding
-            m = re.match(r"^(?:[-*•]|\d+[.)])\s+(.+)$", s)
+            # Sembol-bullet'ta boşluk OPSİYONEL (-bulgu da kabul, Codex); ama sayıda
+            # boşluk ZORUNLU → "3.14 önemli" gibi ondalığı yanlış-finding sayma.
+            m = re.match(r"^(?:[-*•]\s*|\d+[.)]\s+)(.+)$", s)
             if m:
                 findings.append(m.group(1).strip().strip("*").strip())
             else:

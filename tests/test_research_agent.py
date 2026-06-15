@@ -127,3 +127,15 @@ def test_synthesize_markdown_format_without_cikarimlar_header():
     assert "3 kernel modülü" in summary  # başlık atlandı, prose summary'de
     assert "### Özet" not in summary  # markdown başlık summary'ye girmedi
     assert findings == ["proc_linux_ai CPU/RAM sağlar", "nf_linux_ai IP firewall"]  # bullet'lar findings
+
+
+def test_synthesize_compact_bullet_and_decimal_safety():
+    # Codex: boşluksuz '-bulgu' finding olmalı. AMA ondalık '3.14 ...' finding OLMAMALI.
+    from app.models.schemas import ResearchSource
+
+    out = "Özet metni burada.\n-kompakt bulgu\nOran 3.14 değerindedir ve önemlidir."
+    agent = _agent(lambda _p: out, lambda *a: [])
+    srcs = [ResearchSource(ref=1, title="A", source_id="a", snippet="x", relevance=0.9)]
+    summary, findings = agent._synthesize("konu", srcs)
+    assert findings == ["kompakt bulgu"]  # -kompakt → finding; 3.14-satırı → finding DEĞİL
+    assert "3.14 değerindedir" in summary  # ondalık prose summary'de kaldı
