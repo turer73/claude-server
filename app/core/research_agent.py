@@ -64,22 +64,47 @@ class ResearchAgent:
         return subs[:n]
 
     # ── FAZ3: multi-hop — bulgulara göre EKSİK kalan yeni alt-sorular ──
-    def _refine(self, topic: str, sources: list[ResearchSource], n: int) -> list[str]:
+    def _refine(self, topic: str, sources: list[ResearchSource], n: int, asked: list[str] | None = None) -> list[str]:
         if not sources:
             return []
         # BAŞLIK YETERSİZ (RAG başlıkları 'memory'/'discovery' gibi jenerik) → SNIPPET ver.
         # Böylece LLM ne bulunduğunu GÖRÜP gerçek-boşluğu hedefler; aksi halde 'metodoloji
         # nedir' gibi meta/süreç sorusu üretiyordu (canlı-smoke: bilge-arena 2. hop zayıftı).
         found = "\n".join(f"- {s.snippet[:160]}" for s in sources[:8] if s.snippet)
+        asked = asked or []
+        # ÖNCEKİ SORULAR'ı ver → çapraz-hop tekrar biter (3-hop smoke: hop3, hop2'yi tekrarladı).
+        asked_block = ("ZATEN SORULDU (BUNLARI TEKRARLAMA):\n" + "\n".join(f"- {q}" for q in asked[-15:]) + "\n\n") if asked else ""
         prompt = (
             f'Konu: "{topic}"\n\nŞu ana dek bulunan bilgiler:\n{found or "(içerik yok)"}\n\n'
+            f"{asked_block}"
             f"Yukarıdakilerin DEĞİNMEDİĞİ, {topic} ile ilgili {n} SOMUT ve SPESİFİK alt-soru üret. "
             "Doğrudan teknik/konu-özel alt-başlıkları sor (belirli bir açık türü, bileşen, senaryo). "
-            "METODOLOJİ/SÜREÇ/'hangi kaynak' sorusu SORMA. Öncekileri tekrarlama. Her satıra tek soru."
+            "METODOLOJİ/SÜREÇ/'hangi kaynak' sorusu SORMA. Her satıra tek soru."
         )
         # refine GÜÇLÜ modelde (synth_llm=Sonnet): boşluk-tespiti+keskin-soru akıl-yürütme işi;
         # qwen meta-soru üretiyordu. Plan (ilk-tur) hâlâ hızlı _llm'de (basit bölme).
-        return self._parse_questions(self._synth_llm(prompt), n)
+        new = self._parse_questions(self._synth_llm(prompt), n)
+        # ÇİFT-KEMER: LLM yine tekrarlarsa kod-tarafı near-dup ele (Jaccard token-overlap).
+        return self._novel_questions(new, asked, n)
+
+    @staticmethod
+    def _novel_questions(new: list[str], asked: list[str], n: int) -> list[str]:
+        """asked'a (≥0.6 Jaccard token-overlap) çok benzeyenleri ele → çapraz-hop tekrar yok."""
+
+        def toks(q: str) -> set[str]:
+            return set(re.findall(r"\w{4,}", q.lower()))
+
+        asked_t = [t for t in (toks(a) for a in asked) if t]
+        out: list[str] = []
+        for q in new:
+            qt = toks(q)
+            if not qt:
+                continue
+            if any(len(qt & at) / len(qt | at) >= 0.6 for at in asked_t):
+                continue  # near-dup → atla
+            out.append(q)
+            asked_t.append(qt)  # aynı turdaki kendi-tekrarını da önle
+        return out[:n]
 
     @staticmethod
     def _clean_line(line: str) -> str:
@@ -199,8 +224,9 @@ class ResearchAgent:
             if not new:
                 break
             # son hop değilse: mevcut bulgulara göre EKSİK alanlar için yeni sorular
+            # (asked=subqs_all → refine önceki TÜM soruları görüp tekrarlamaz)
             if hop + 1 < config.max_hops:
-                next_subqs = self._refine(config.topic, self._dedup_sources(raw_all), config.max_iterations)
+                next_subqs = self._refine(config.topic, self._dedup_sources(raw_all), config.max_iterations, subqs_all)
             else:
                 next_subqs = []
         sources = self._dedup_sources(raw_all)

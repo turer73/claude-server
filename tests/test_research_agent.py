@@ -314,3 +314,50 @@ def test_refine_uses_snippets_and_bans_methodology():
     p = captured[0]
     assert "wildcard injection" in p  # snippet içeriği prompt'a girdi (jenerik başlık 'memory' değil)
     assert "METODOLOJİ" in p  # meta/süreç sorusu yasak talimatı var
+
+
+def test_refine_drops_asked_repeats():
+    # refine, asked listesindeki soruyu tekrar üretirse elenir; yeni olan kalır
+    from app.models.schemas import ResearchSource
+
+    def llm(p):
+        return "kritik güvenlik açıkları nelerdir\nşifreleme yöntemleri uygun mudur"
+
+    agent = _agent(llm, lambda *a: [])  # synth_llm=None→llm (refine llm'den)
+    srcs = [ResearchSource(ref=1, title="m", source_id="m", snippet="bilgi var", relevance=0.9)]
+    out = agent._refine("güvenlik", srcs, 5, asked=["kritik güvenlik açıkları nelerdir"])
+    assert out == ["şifreleme yöntemleri uygun mudur"]  # asked-dup elendi
+
+
+def test_novel_questions_jaccard_and_intra_batch():
+    asked = ["linux kernel güvenlik açıkları nelerdir"]
+    new = [
+        "linux kernel güvenlik açıkları neler",  # asked'a near-dup (>0.6)
+        "veritabanı şifreleme yöntemi nedir",  # novel
+        "veritabanı şifreleme yöntemi nasıldır",  # önceki-novel'e near-dup (intra-batch)
+    ]
+    out = ResearchAgent._novel_questions(new, asked, 5)
+    assert out == ["veritabanı şifreleme yöntemi nedir"]  # 1: asked-dup, 3: kendi-tekrar elendi
+
+
+def test_multihop_no_cross_hop_repeat():
+    def synth(p):
+        if "bulunan bilgiler" in p:  # refine: hop1 sorusunu TEKRARLAR + yeni alan
+            return "birinci güvenlik konusu\nikinci farklı şifreleme alanı"
+        return "Ö.\n- b"
+
+    seen = {"n": 0}
+
+    def search(q, k, pr):
+        seen["n"] += 1
+        return [{"id": f"d{seen['n']}", "title": q, "score": 0.8, "text": "snippet var"}]
+
+    agent = ResearchAgent(llm=lambda p: "birinci güvenlik konusu", synth_llm=synth, search=search)
+    rep = agent.run(ResearchConfig(topic="konu xyz", max_iterations=2, depth=2, max_hops=2))
+    assert rep.subquestions.count("birinci güvenlik konusu") == 1  # çapraz-hop tekrar elendi
+    assert "ikinci farklı şifreleme alanı" in rep.subquestions  # gerçek-yeni alan kaldı
+
+
+def test_novel_questions_skips_tokenless():
+    # ≥4-harf token içermeyen soru (ör. çok kısa kelimeler) atlanır
+    assert ResearchAgent._novel_questions(["abc de fgh ij"], [], 5) == []
