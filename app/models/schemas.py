@@ -407,9 +407,12 @@ class ResearchConfig(BaseModel):
     """POST /api/v1/research/run girdisi."""
 
     topic: str = Field(..., min_length=3, max_length=500)
-    max_iterations: int = Field(5, ge=1, le=8)  # üretilecek alt-soru sayısı
+    max_iterations: int = Field(5, ge=1, le=8)  # hop başına üretilen alt-soru sayısı
     depth: int = Field(5, ge=1, le=15)  # alt-soru başına RAG top-K
     project: str | None = None  # RAG'ı tek projeye sınırla (opsiyonel)
+    # Multi-hop (FAZ3): kaç tur plan→ara→refine. 1 = tek-geçiş (varsayılan); >1 = bulgulara
+    # göre yeni alt-soru üretip derinleşir. Yeni-kaynak gelmezse otonom erken-durur.
+    max_hops: int = Field(1, ge=1, le=4)
     # Sentez modeli (FAZ1): haiku = Claude Haiku (kalite, Haiku-fail'de aya:8b fallback);
     # ollama = yerel aya:8b (anahtarsız). Plan hep hızlı-Ollama (qwen).
     synth_model: Literal["haiku", "ollama"] = "haiku"
