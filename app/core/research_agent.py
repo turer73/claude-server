@@ -77,7 +77,9 @@ class ResearchAgent:
             "Doğrudan teknik/konu-özel alt-başlıkları sor (belirli bir açık türü, bileşen, senaryo). "
             "METODOLOJİ/SÜREÇ/'hangi kaynak' sorusu SORMA. Öncekileri tekrarlama. Her satıra tek soru."
         )
-        return self._parse_questions(self._llm(prompt), n)
+        # refine GÜÇLÜ modelde (synth_llm=Sonnet): boşluk-tespiti+keskin-soru akıl-yürütme işi;
+        # qwen meta-soru üretiyordu. Plan (ilk-tur) hâlâ hızlı _llm'de (basit bölme).
+        return self._parse_questions(self._synth_llm(prompt), n)
 
     @staticmethod
     def _clean_line(line: str) -> str:
