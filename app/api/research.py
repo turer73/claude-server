@@ -19,6 +19,7 @@ Auth: verify_key (memory API key). Internal sorgulara yonelik.
 
 from __future__ import annotations
 
+import html as _htmllib
 import re
 import sqlite3
 import time
@@ -264,6 +265,50 @@ def _synth_llm(model: str) -> Callable[[str], str]:
     return haiku_then_aya
 
 
+# ── Web arama (FAZ2): DDG-lite, anahtarsız, opt-in ──
+WEB_UA = "Mozilla/5.0 (X11; Linux x86_64) klipper-research-agent"
+WEB_TIMEOUT = 12
+_WEB_LINK_RE = re.compile(r'<a rel="nofollow" href="([^"]+)"[^>]*class=[\'"]result-link[\'"][^>]*>(.*?)</a>', re.S)
+_WEB_SNIP_RE = re.compile(r'class="result-snippet"[^>]*>(.*?)</td>', re.S)
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html(s: str) -> str:
+    return _htmllib.unescape(_TAG_RE.sub("", s)).strip()
+
+
+def _web_search(query: str, n: int = 5) -> list[dict]:
+    """DDG-lite anahtarsız web arama (FAZ2). HTML-parse toleranslı; ağ/parse fail → []
+    (araştırma RAG'la devam eder). Skor rank-tabanlı sözde-skor (RAG ile karışsın, ezmesin)."""
+    try:
+        r = requests.post(
+            "https://lite.duckduckgo.com/lite/",
+            data={"q": query},
+            headers={"User-Agent": WEB_UA},
+            timeout=WEB_TIMEOUT,
+        )
+        if not r.ok:
+            return []
+        page = r.text
+    except Exception:
+        return []
+    links = _WEB_LINK_RE.findall(page)
+    snips = _WEB_SNIP_RE.findall(page)
+    out: list[dict] = []
+    for i, (url, title) in enumerate(links[:n]):
+        snippet = _strip_html(snips[i]) if i < len(snips) else ""
+        out.append(
+            {
+                "type": "web",
+                "id": url,
+                "title": _strip_html(title)[:120] or url,
+                "score": round(max(0.4, 0.65 - i * 0.04), 3),  # rank→sözde-skor (0.65↓)
+                "text": snippet[:600],
+            }
+        )
+    return out
+
+
 _CITE_RE = re.compile(r"\[([a-z]+):([^\]\s]+)\]")
 
 
@@ -411,6 +456,7 @@ def research_run(config: ResearchConfig) -> ResearchReport:
         llm=_ollama_generate,  # plan: hızlı/ucuz
         synth_llm=_synth_llm(config.synth_model),  # sentez: güçlü (Haiku/aya)
         search=lambda q, k, p: _qdrant_chunks(q, top_k=k, project=p),
+        web_search=(lambda q, k: _web_search(q, k)) if config.include_web else None,  # FAZ2: opt-in
     )
     return agent.run(config)
 

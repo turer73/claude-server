@@ -176,3 +176,30 @@ def test_synth_llm_defaults_to_plan_llm():
     agent = ResearchAgent(llm=llm, search=lambda *a: [{"id": "a", "title": "A", "score": 0.7, "text": "t"}])
     agent.run(ResearchConfig(topic="konu xyz", max_iterations=1, depth=2))
     assert len(calls) == 2  # plan + sentez AYNI llm'e gitti (synth_llm=None → llm)
+
+
+def test_web_search_merged_with_rag():
+    # FAZ2: web_search verilirse RAG sonuçlarına EKLENİR (her ikisi de toplanır)
+    def rag(q, k, pr):
+        return [{"id": "rag-1", "title": "RAG kaynak", "score": 0.8, "text": "yerel"}]
+
+    def web(q, k):
+        return [{"id": "https://x.com", "title": "Web kaynak", "score": 0.6, "text": "web"}]
+
+    agent = ResearchAgent(llm=lambda p: "soru bir", search=rag, web_search=web)
+    out = agent._execute_search(["soru bir"], depth=3, project=None)
+    ids = {h["id"] for h in out}
+    assert ids == {"rag-1", "https://x.com"}  # RAG + web birleşti
+
+
+def test_web_search_failure_does_not_crash():
+    def web_boom(q, k):
+        raise RuntimeError("ddg down")
+
+    agent = ResearchAgent(
+        llm=lambda p: "s",
+        search=lambda *a: [{"id": "rag-1", "title": "R", "score": 0.7, "text": "t"}],
+        web_search=web_boom,
+    )
+    out = agent._execute_search(["s"], depth=2, project=None)
+    assert [h["id"] for h in out] == ["rag-1"]  # web patladı → RAG'la devam
