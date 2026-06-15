@@ -104,3 +104,26 @@ def test_synthesize_blank_llm_with_sources_falls_back():
     summary, findings = agent._synthesize("konu", srcs)
     assert "üretilemedi" in summary  # boş çıktı → fallback metni
     assert findings == []
+
+
+def test_plan_strips_markdown_and_label_prefixes():
+    # Canlı-smoke: 3B model "**Madde: X**", "Soru: Y", "### Z" döndürdü
+    def llm(_p):
+        return "**Madde: Linux Kernel Modülleri**\nSoru: Bellek nasıl yönetilir?\n### Mimari katmanları"
+
+    agent = _agent(llm, lambda *a: [])
+    subs = agent._generate_plan("konu", n=5)
+    assert subs == ["Linux Kernel Modülleri", "Bellek nasıl yönetilir?", "Mimari katmanları"]
+
+
+def test_synthesize_markdown_format_without_cikarimlar_header():
+    # Canlı-smoke kök-sorun: model 'ÇIKARIMLAR:' yerine '### Özet' + bullet verdi
+    from app.models.schemas import ResearchSource
+
+    out = "### Özet Paragraf\n\nLinux AI server 3 kernel modülü tanımlar.\n\n- proc_linux_ai CPU/RAM sağlar\n- nf_linux_ai IP firewall"
+    agent = _agent(lambda _p: out, lambda *a: [])
+    srcs = [ResearchSource(ref=1, title="A", source_id="a", snippet="x", relevance=0.9)]
+    summary, findings = agent._synthesize("konu", srcs)
+    assert "3 kernel modülü" in summary  # başlık atlandı, prose summary'de
+    assert "### Özet" not in summary  # markdown başlık summary'ye girmedi
+    assert findings == ["proc_linux_ai CPU/RAM sağlar", "nf_linux_ai IP firewall"]  # bullet'lar findings
