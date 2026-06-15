@@ -297,19 +297,32 @@ def _web_search(query: str, n: int = 5) -> list[dict]:
         return []
     links = _WEB_LINK_RE.findall(page)
     snips = _WEB_SNIP_RE.findall(page)
-    out: list[dict] = []
-    for i, (url, title) in enumerate(links[:n]):
+    cands: list[dict] = []
+    for i, (url, title) in enumerate(links):
         snippet = _strip_html(snips[i]) if i < len(snips) else ""
-        out.append(
-            {
-                "type": "web",
-                "id": url,
-                "title": _strip_html(title)[:120] or url,
-                "score": round(max(0.4, 0.65 - i * 0.04), 3),  # rank→sözde-skor (0.65↓)
-                "text": snippet[:600],
-            }
-        )
-    return out
+        cands.append({"url": url, "title": _strip_html(title)[:120] or url, "text": snippet[:600]})
+    cands = _filter_relevant(cands, query, n)
+    return [
+        {
+            "type": "web",
+            "id": c["url"],
+            "title": c["title"],
+            "score": round(max(0.4, 0.65 - i * 0.04), 3),  # rank→sözde-skor (0.65↓)
+            "text": c["text"],
+        }
+        for i, c in enumerate(cands)
+    ]
+
+
+def _filter_relevant(cands: list[dict], query: str, n: int) -> list[dict]:
+    """Off-topic web sonuçlarını ele: query-token'larıyla (≥4 harf) title+snippet hiç
+    örtüşmeyenleri at. GÜVENLİK: filtre <2 sonuç bırakırsa ham listeye dön (çapraz-dilli
+    over-filter koruması — TR sorgu / EN sonuç durumunda legit sonuçları kaybetme)."""
+    toks = set(re.findall(r"\w{4,}", query.lower()))
+    if not toks:
+        return cands[:n]
+    kept = [c for c in cands if any(t in (c["title"] + " " + c["text"]).lower() for t in toks)]
+    return (kept if len(kept) >= 2 else cands)[:n]
 
 
 _CITE_RE = re.compile(r"\[([a-z]+):([^\]\s]+)\]")

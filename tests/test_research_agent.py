@@ -283,3 +283,16 @@ def test_multihop_stops_when_refine_returns_empty():
     agent = ResearchAgent(llm=llm, synth_llm=lambda p: "Ö.\n- b", search=search)
     rep = agent.run(ResearchConfig(topic="konu xyz", max_iterations=1, depth=2, max_hops=2))
     assert len(rep.sources) == 1  # hop0 yeni-doc + refine→boş → hop1 loop-başı dur
+
+
+def test_web_query_topic_anchored():
+    # ALAKA rötuşu: web sorgusu KONU ile çapalanır (alt-soru genel olsa da konuda kalsın)
+    captured = []
+
+    def web(q, k):
+        captured.append(q)
+        return []
+
+    agent = ResearchAgent(llm=lambda p: "x", search=lambda *a: [], web_search=web)
+    agent._execute_search(["hangi kaynaklar var"], depth=3, project=None, topic="linux kernel")
+    assert captured == ["linux kernel hangi kaynaklar var"]  # topic+subq

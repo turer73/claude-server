@@ -396,3 +396,30 @@ async def test_health_exposes_selectable_synth_models(client):
     assert a["synth_models"]["sonnet"] == research.ANTHROPIC_MODEL_SONNET
     assert a["synth_models"]["haiku"] == research.ANTHROPIC_MODEL
     assert a["default_synth_model"] == "sonnet"
+
+
+# ───────── web alaka filtresi (off-topic ele + çapraz-dil güvenliği) ─────────
+
+
+def test_filter_relevant_drops_off_topic():
+    cands = [
+        {"url": "a", "title": "Linux kernel güvenlik", "text": "sertleştirme teknikleri"},
+        {"url": "b", "title": "Linux kernel modül", "text": "yükleme"},
+        {"url": "c", "title": "Apple macOS", "text": "tamamen alakasız konu"},
+    ]
+    out = research._filter_relevant(cands, "linux kernel güvenlik", 5)
+    urls = [c["url"] for c in out]
+    assert "a" in urls
+    assert "b" in urls
+    assert "c" not in urls  # off-topic elendi (≥2 kaldı → filtre uygulandı)
+
+
+def test_filter_relevant_safety_floor_cross_language():
+    cands = [
+        {"url": "a", "title": "Linux kernel", "text": "x"},
+        {"url": "b", "title": "English only", "text": "hardening guide"},
+        {"url": "c", "title": "Another english", "text": "security doc"},
+    ]
+    # TR sorgu / EN sonuç: sadece 'a' eşleşir (1<2) → GÜVENLİK: ham liste döner (over-filter yok)
+    out = research._filter_relevant(cands, "linux güvenlik sertleştirme", 5)
+    assert len(out) == 3

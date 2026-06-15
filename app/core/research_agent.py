@@ -83,7 +83,7 @@ class ResearchAgent:
         return s.strip().strip("*").strip().strip("\"'").strip()
 
     # ── 2) Arama/Toplama ──
-    def _execute_search(self, subquestions: list[str], depth: int, project: str | None) -> list[dict[str, Any]]:
+    def _execute_search(self, subquestions: list[str], depth: int, project: str | None, topic: str = "") -> list[dict[str, Any]]:
         collected: list[dict[str, Any]] = []
         for sq in subquestions:
             try:
@@ -92,8 +92,11 @@ class ResearchAgent:
                 hits = []  # tek alt-soru aramasının patlaması tüm araştırmayı düşürmesin
             # FAZ2: web kaynağı (opt-in) — RAG sonuçlarına ekle. Web fail → RAG'la devam.
             if self._web_search is not None:
+                # ALAKA: web sorgusunu KONU ile çapala → alt-soru genel olsa da konuda kalır
+                # (canlı-smoke: 'Hangi kaynaklar...' Apple/macOS getirdi). RAG zaten alt-soruda.
+                wq = f"{topic} {sq}".strip() if topic else sq
                 try:
-                    hits = hits + (self._web_search(sq, depth) or [])
+                    hits = hits + (self._web_search(wq, depth) or [])
                 except Exception:
                     pass
             for h in hits:
@@ -181,7 +184,7 @@ class ResearchAgent:
             if not next_subqs:
                 break
             subqs_all.extend(next_subqs)
-            raw = self._execute_search(next_subqs, config.depth, config.project)
+            raw = self._execute_search(next_subqs, config.depth, config.project, config.topic)
             new = [h for h in raw if self._sid(h) not in seen]
             for h in new:
                 seen.add(self._sid(h))
