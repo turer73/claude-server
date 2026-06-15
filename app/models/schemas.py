@@ -410,9 +410,9 @@ class ResearchConfig(BaseModel):
     max_iterations: int = Field(5, ge=1, le=8)  # hop başına üretilen alt-soru sayısı
     depth: int = Field(5, ge=1, le=15)  # alt-soru başına RAG top-K
     project: str | None = None  # RAG'ı tek projeye sınırla (opsiyonel)
-    # Multi-hop (FAZ3): kaç tur plan→ara→refine. 1 = tek-geçiş (varsayılan); >1 = bulgulara
-    # göre yeni alt-soru üretip derinleşir. Yeni-kaynak gelmezse otonom erken-durur.
-    max_hops: int = Field(1, ge=1, le=4)
+    # Multi-hop (FAZ3): kaç tur plan→ara→refine. VARSAYILAN 2 (pratik tatlı-nokta); 1=tek-geçiş.
+    # >1 = bulgulara göre yeni alt-soru üretip derinleşir; yeni-kaynak gelmezse otonom erken-durur.
+    max_hops: int = Field(2, ge=1, le=4)
     # Sentez modeli: sonnet = Claude Sonnet (en derin, varsayılan); haiku = Claude Haiku
     # (hızlı/ucuz); ollama = yerel aya:8b (anahtarsız). Claude'lar fail→aya fallback.
     # Plan hep hızlı-Ollama (qwen) — bu YALNIZ sentez adımı.

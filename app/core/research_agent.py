@@ -59,6 +59,10 @@ class ResearchAgent:
             q = ResearchAgent._clean_line(line)
             # küçük-model "Soru:"/"Madde:"/markdown-başlık ekleyebilir (canlı-smoke'ta görüldü)
             q = re.sub(r"(?i)^\s*(?:soru|madde|alt-?soru|question)\s*\d*\s*[:：]\s*", "", q).strip()
+            # BUG1: Sonnet 'Başlık:\nsoru' formatı üretiyor → sonu ':' label-satırını ele
+            # (soru değil, başlık). Gerçek soru sonraki satırda kalır.
+            if q.endswith((":", "：")):
+                continue
             if len(q) >= 5:
                 subs.append(q)
         return subs[:n]
@@ -100,8 +104,11 @@ class ResearchAgent:
             qt = toks(q)
             if not qt:
                 continue
-            if any(len(qt & at) / len(qt | at) >= 0.6 for at in asked_t):
-                continue  # near-dup → atla
+            # BUG2: Jaccard simetrik → kısa-label uzun-sorunun ALT-KÜMESİ olunca kaçıyordu
+            # (3-hop smoke). CONTAINMENT (kesişim/min-uzunluk) subset-dup'ı yakalar; kesişim≥2
+            # şartı tek-ortak-kelimenin (ör. 'güvenlik') yanlış-dup tetiklemesini önler.
+            if any(len(qt & at) >= 2 and len(qt & at) / min(len(qt), len(at)) >= 0.75 for at in asked_t):
+                continue  # near-dup / subset → atla
             out.append(q)
             asked_t.append(qt)  # aynı turdaki kendi-tekrarını da önle
         return out[:n]

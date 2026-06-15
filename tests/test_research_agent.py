@@ -85,7 +85,7 @@ def test_run_end_to_end_with_fakes():
         return [{"id": f"doc-{q[:3]}", "title": q, "score": 0.8, "text": f"{q} içeriği"}]
 
     agent = _agent(llm, search)
-    report = agent.run(ResearchConfig(topic="linux kernel", max_iterations=2, depth=3))
+    report = agent.run(ResearchConfig(topic="linux kernel", max_iterations=2, depth=3, max_hops=1))
     assert report.topic == "linux kernel"
     assert report.subquestions == ["Mimari?", "Bellek?"]
     assert "Kapsamlı özet" in report.summary
@@ -158,7 +158,7 @@ def test_synth_uses_separate_synth_llm():
         synth_llm=synth,
         search=lambda q, k, pr: [{"id": "a", "title": "A", "score": 0.8, "text": "t"}],
     )
-    rep = agent.run(ResearchConfig(topic="konu xyz", max_iterations=2, depth=2))
+    rep = agent.run(ResearchConfig(topic="konu xyz", max_iterations=2, depth=2, max_hops=1))
     assert len(plan_calls) == 1  # plan tek-çağrı (qwen)
     assert len(synth_calls) == 1  # sentez tek-çağrı (Haiku) — AYRI llm
     assert "Güçlü-model özeti" in rep.summary
@@ -174,7 +174,7 @@ def test_synth_llm_defaults_to_plan_llm():
         return "soru\n- bulgu" if len(calls) == 1 else "Özet.\n- bulgu"
 
     agent = ResearchAgent(llm=llm, search=lambda *a: [{"id": "a", "title": "A", "score": 0.7, "text": "t"}])
-    agent.run(ResearchConfig(topic="konu xyz", max_iterations=1, depth=2))
+    agent.run(ResearchConfig(topic="konu xyz", max_iterations=1, depth=2, max_hops=1))
     assert len(calls) == 2  # plan + sentez AYNI llm'e gitti (synth_llm=None → llm)
 
 
@@ -266,7 +266,7 @@ def test_multihop_default_single_pass_no_refine():
         return "Ö.\n- b"
 
     agent = ResearchAgent(llm=lambda p: "soru", synth_llm=synth, search=lambda *a: [{"id": "d", "title": "D", "score": 0.7, "text": "t"}])
-    agent.run(ResearchConfig(topic="konu xyz", max_iterations=1, depth=2))  # max_hops default=1
+    agent.run(ResearchConfig(topic="konu xyz", max_iterations=1, depth=2, max_hops=1))  # max_hops=1 -> tek-gecis
     assert refine["n"] == 0  # tek-geçiş, refine YOK (geriye-uyum)
 
 
@@ -361,3 +361,20 @@ def test_multihop_no_cross_hop_repeat():
 def test_novel_questions_skips_tokenless():
     # ≥4-harf token içermeyen soru (ör. çok kısa kelimeler) atlanır
     assert ResearchAgent._novel_questions(["abc de fgh ij"], [], 5) == []
+
+
+def test_parse_drops_label_lines():
+    # BUG1: Sonnet 'Başlık:\nsoru' → sonu ':' label elenir, gerçek soru kalır
+    raw = "Kullanıcı Girişi ve Cihaz Güvenliği:\nBilge Arena girişi nasıl korunuyor"
+    assert ResearchAgent._parse_questions(raw, 5) == ["Bilge Arena girişi nasıl korunuyor"]
+
+
+def test_novel_questions_containment_catches_subset():
+    # BUG2: kısa soru uzun-sorunun ALT-KÜMESİ → containment yakalar (Jaccard kaçırırdı)
+    asked = ["bilge arena kullanıcı girişi ve cihaz güvenliği konusu detaylı"]
+    new = ["kullanıcı girişi cihaz güvenliği"]  # 4 token, hepsi asked'ın alt-kümesi
+    assert ResearchAgent._novel_questions(new, asked, 5) == []  # subset-dup elendi
+
+
+def test_default_max_hops_is_two():
+    assert ResearchConfig(topic="abcde").max_hops == 2  # varsayılan 2-hop
