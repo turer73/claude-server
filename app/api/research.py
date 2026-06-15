@@ -498,6 +498,40 @@ def research_ask(req: AskRequest):
     }
 
 
+def _persist_research(report: ResearchReport, project: str | None) -> int | None:
+    """Araştırma raporunu discoveries'e 'learning' olarak kaydet → /ask gelecekte FTS ile
+    bulur (kümülatif araştırma). Aynı topic tekrar = upsert (partial unique index
+    project+type+title WHERE active). Yazma fail → None (rapor yine döner; kayıt best-effort)."""
+    proj = project or "linux-ai-server"
+    title = f"[araştırma] {report.topic}"[:200]
+    findings = "\n".join(f"- {f}" for f in report.findings[:10])
+    details = (
+        f"{report.summary}\n\nÇIKARIMLAR:\n{findings or '(yok)'}\n\n"
+        f"(güven={report.confidence_score}, kaynak={len(report.sources)}, alt-soru={len(report.subquestions)})"
+    )
+    try:
+        db = sqlite3.connect(MEMORY_DB, timeout=5)
+        try:
+            db.execute("PRAGMA busy_timeout=5000")  # lock'ta hemen READONLY atma ([[fix_db_retention]])
+            db.execute(
+                "INSERT INTO discoveries (project, type, title, details, status, device_name) "
+                "VALUES (?, 'learning', ?, ?, 'active', 'klipper') "
+                "ON CONFLICT(project, type, title) WHERE status='active' "
+                "DO UPDATE SET details=excluded.details, created_at=datetime('now')",
+                (proj, title, details),
+            )
+            db.commit()
+            row = db.execute(
+                "SELECT id FROM discoveries WHERE project=? AND type='learning' AND title=? AND status='active'",
+                (proj, title),
+            ).fetchone()
+            return int(row[0]) if row else None
+        finally:
+            db.close()
+    except Exception:
+        return None
+
+
 @router.post("/run", response_model=ResearchReport)
 def research_run(config: ResearchConfig) -> ResearchReport:
     """Otonom çok-aşamalı araştırma: planla→ara(Qdrant)→sentezle→atıflı-rapor.
@@ -506,6 +540,7 @@ def research_run(config: ResearchConfig) -> ResearchReport:
     Plan=hızlı Ollama (qwen). SENTEZ=synth_model: sonnet(varsayılan)/haiku/ollama —
     Claude'lar fail/anahtar-yok'ta aya:8b'ye düşer. Web=opt-in (include_web). Multi-hop=max_hops.
     Critic=opt-in (config.critic): sentezi eleştir→gerekirse tek revizyon (synth_model'de).
+    Save=opt-in (config.save): raporu discoveries'e 'learning' kaydet (kümülatif araştırma).
     Ağır iş → sync endpoint threadpool'da koşar, event-loop'u bloklamaz.
     """
     synth = _synth_llm(config.synth_model)
@@ -516,7 +551,10 @@ def research_run(config: ResearchConfig) -> ResearchReport:
         web_search=(lambda q, k: _web_search(q, k)) if config.include_web else None,  # FAZ2: opt-in
         critic_llm=synth,  # FAZ5: critic = sentezle aynı güçlü model (config.critic ile aktif)
     )
-    return agent.run(config)
+    report = agent.run(config)
+    if config.save:  # FAZ6: opt-in kalıcılaştırma (best-effort; fail rapora dokunmaz)
+        report.saved_discovery_id = _persist_research(report, config.project)
+    return report
 
 
 @router.get("/health")

@@ -461,3 +461,96 @@ def test_token_filter_empty_when_no_overlap():
     # geri sokardı) — dürüst boş döner.
     cands = [{"url": "x", "title": "zzz", "text": "qqq"}]
     assert research._token_filter(cands, "linux kernel güvenlik", 5) == []
+
+
+# ───────── FAZ6: araştırma sonucunu memory'e kaydet (save opt-in) ─────────
+
+
+def _mk_report(topic="liveness nedir", findings=None):
+    from app.models.schemas import CitationAudit, ResearchReport, ResearchSource
+
+    return ResearchReport(
+        topic=topic,
+        summary="Özet [1].",
+        findings=findings if findings is not None else ["bulgu A [1]", "bulgu B"],
+        sources=[ResearchSource(ref=1, title="T", source_id="s1", snippet="x", relevance=0.8)],
+        subquestions=["q1"],
+        confidence_score=0.7,
+        citations=CitationAudit(used=[1], hallucinated=[], uncited=[], grounded=True),
+    )
+
+
+def _tmp_discoveries_db(path):
+    import sqlite3
+
+    db = sqlite3.connect(path)
+    db.executescript(
+        "CREATE TABLE discoveries (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT, type TEXT, "
+        "title TEXT NOT NULL, details TEXT, status TEXT DEFAULT 'active', created_at TEXT DEFAULT (datetime('now')), "
+        "device_name TEXT DEFAULT 'klipper');"
+        "CREATE UNIQUE INDEX idx_uniq ON discoveries(project, type, title) WHERE status='active';"
+    )
+    db.commit()
+    db.close()
+
+
+def test_persist_research_writes_and_upserts(tmp_path, monkeypatch):
+    dbp = str(tmp_path / "mem.db")
+    _tmp_discoveries_db(dbp)
+    monkeypatch.setattr(research, "MEMORY_DB", dbp)
+
+    rid = research._persist_research(_mk_report(), project="linux-ai-server")
+    assert rid is not None
+
+    # aynı topic tekrar → UPSERT (yeni satır değil, aynı id, details güncel)
+    rid2 = research._persist_research(_mk_report(findings=["güncellenmiş bulgu [1]"]), project="linux-ai-server")
+    assert rid2 == rid
+
+    import sqlite3
+
+    db = sqlite3.connect(dbp)
+    rows = db.execute("SELECT type, details FROM discoveries WHERE id=?", (rid,)).fetchall()
+    db.close()
+    assert len(rows) == 1  # upsert: tek satır
+    assert rows[0][0] == "learning"
+    assert "güncellenmiş bulgu" in rows[0][1]  # details upsert'lendi
+
+
+def test_persist_research_failure_returns_none(monkeypatch):
+    # DB yolu bozuk → exception yutulur, None döner (rapor yine döner)
+    monkeypatch.setattr(research, "MEMORY_DB", "/nonexistent/dir/x.db")
+    assert research._persist_research(_mk_report(), project=None) is None
+
+
+@pytest.mark.anyio
+async def test_run_save_wires_persist(client):
+    """save=true → _persist_research çağrılır, id rapora girer."""
+    with (
+        patch("app.api.research._ollama_generate", side_effect=["soru?", "Özet [1].\n- bulgu [1]"]),
+        patch("app.api.research._qdrant_chunks", side_effect=lambda q, **k: [{"id": "r1", "title": "R", "score": 0.8, "text": "t"}]),
+        patch("app.api.research._persist_research", return_value=777) as persist,
+    ):
+        resp = await client.post(
+            "/api/v1/research/run",
+            json={"topic": "konu testi", "max_iterations": 1, "depth": 2, "synth_model": "ollama", "max_hops": 1, "save": True},
+        )
+    assert resp.status_code == 200
+    persist.assert_called_once()
+    assert resp.json()["saved_discovery_id"] == 777
+
+
+@pytest.mark.anyio
+async def test_run_save_default_off(client):
+    """save default False → _persist_research çağrılmaz, saved_discovery_id None."""
+    with (
+        patch("app.api.research._ollama_generate", side_effect=["soru?", "Özet [1].\n- bulgu [1]"]),
+        patch("app.api.research._qdrant_chunks", side_effect=lambda q, **k: [{"id": "r1", "title": "R", "score": 0.8, "text": "t"}]),
+        patch("app.api.research._persist_research", return_value=777) as persist,
+    ):
+        resp = await client.post(
+            "/api/v1/research/run",
+            json={"topic": "konu testi", "max_iterations": 1, "depth": 2, "synth_model": "ollama", "max_hops": 1},
+        )
+    assert resp.status_code == 200
+    persist.assert_not_called()
+    assert resp.json()["saved_discovery_id"] is None
