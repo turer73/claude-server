@@ -376,3 +376,23 @@ async def test_run_include_web_wires_web_search(client):
     ids = {s["source_id"] for s in resp.json()["sources"]}
     assert "https://w.com" in ids  # web kaynağı rapora girdi
     assert "rag-1" in ids  # RAG kaynağı da
+
+
+@pytest.mark.anyio
+async def test_health_exposes_selectable_synth_models(client):
+    """Codex: /health hem Haiku hem Sonnet sentez-model-id'lerini + varsayılanı bildirir."""
+    ol = MagicMock(ok=True)
+    ol.json.return_value = {"version": "0.23.2"}
+    qd = MagicMock(ok=True)
+    qd.json.return_value = {"result": {"points_count": 1}}
+    fake_conn = MagicMock()
+    fake_conn.execute.return_value.fetchone.return_value = (1,)
+    with (
+        patch("app.api.research.requests.get", side_effect=lambda url, **_: ol if "/api/version" in url else qd),
+        patch("app.api.research.sqlite3.connect", return_value=fake_conn),
+    ):
+        resp = await client.get("/api/v1/research/health")
+    a = resp.json()["anthropic"]
+    assert a["synth_models"]["sonnet"] == research.ANTHROPIC_MODEL_SONNET
+    assert a["synth_models"]["haiku"] == research.ANTHROPIC_MODEL
+    assert a["default_synth_model"] == "sonnet"

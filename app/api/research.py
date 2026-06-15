@@ -452,12 +452,13 @@ def research_run(config: ResearchConfig) -> ResearchReport:
     """Otonom çok-aşamalı araştırma: planla→ara(Qdrant)→sentezle→atıflı-rapor.
 
     Auth: router-level verify_key (X-Memory-Key). RAG=canlı Qdrant (ChromaDB ÖLÜ).
-    Plan=hızlı Ollama (qwen); SENTEZ=güçlü model (FAZ1: Haiku, fail'de aya:8b).
+    Plan=hızlı Ollama (qwen). SENTEZ=synth_model: sonnet(varsayılan)/haiku/ollama —
+    Claude'lar fail/anahtar-yok'ta aya:8b'ye düşer. Web=opt-in (include_web). Multi-hop=max_hops.
     Ağır iş → sync endpoint threadpool'da koşar, event-loop'u bloklamaz.
     """
     agent = ResearchAgent(
         llm=_ollama_generate,  # plan: hızlı/ucuz
-        synth_llm=_synth_llm(config.synth_model),  # sentez: güçlü (Haiku/aya)
+        synth_llm=_synth_llm(config.synth_model),  # sentez: sonnet/haiku/aya
         search=lambda q, k, p: _qdrant_chunks(q, top_k=k, project=p),
         web_search=(lambda q, k: _web_search(q, k)) if config.include_web else None,  # FAZ2: opt-in
     )
@@ -487,5 +488,10 @@ def research_health():
         db.close()
     except Exception as e:
         out["memory_db"] = {"ok": False, "error": str(e)[:100]}
-    out["anthropic"] = {"configured": bool(ANTHROPIC_API_KEY), "model": ANTHROPIC_MODEL}
+    out["anthropic"] = {
+        "configured": bool(ANTHROPIC_API_KEY),
+        "model": ANTHROPIC_MODEL,  # /ask varsayılanı (Haiku) — geriye-uyum
+        "synth_models": {"haiku": ANTHROPIC_MODEL, "sonnet": ANTHROPIC_MODEL_SONNET},
+        "default_synth_model": "sonnet",
+    }
     return out
