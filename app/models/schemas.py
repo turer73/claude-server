@@ -424,6 +424,10 @@ class ResearchConfig(BaseModel):
     # (desteksiz iddia / boşluk / çelişki) ve gerekirse TEK revizyon yapılır. +1-2 LLM
     # çağrısı (güçlü model) → gecikme/maliyet ekler; opt-in. False = sentez tek-geçiş.
     critic: bool = False
+    # Kalıcılaştırma (FAZ6): True = rapor discoveries'e 'learning' olarak kaydedilir →
+    # /ask gelecekte FTS ile bulur (kümülatif araştırma). Aynı topic tekrar = upsert.
+    # Opt-in (yan-etki: memory DB yazımı). False = yalnız döndür, kaydetme.
+    save: bool = False
 
 
 class ResearchSource(BaseModel):
@@ -471,3 +475,4 @@ class ResearchReport(BaseModel):
     confidence_score: float  # 0..1
     citations: CitationAudit  # [n] atıf-doğrulama (grounding denetimi)
     critique: ResearchCritique | None = None  # critic-ajan (opt-in; kapalıysa None)
+    saved_discovery_id: int | None = None  # save=True ise kaydedilen discovery id (yoksa None)
