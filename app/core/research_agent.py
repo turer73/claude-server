@@ -39,14 +39,22 @@ class ResearchAgent:
         raw = self._llm(prompt) or ""
         subs: list[str] = []
         for line in raw.splitlines():
-            # baştaki numara/madde-işareti/tırnağı ayıkla
-            q = re.sub(r"^\s*(?:\d+[.)]\s*|[-*•]\s*)", "", line).strip().strip("\"'")
+            q = self._clean_line(line)
+            # küçük-model "Soru:"/"Madde:"/markdown-başlık ekleyebilir (canlı-smoke'ta görüldü)
+            q = re.sub(r"(?i)^\s*(?:soru|madde|alt-?soru|question)\s*\d*\s*[:：]\s*", "", q).strip()
             if len(q) >= 5:
                 subs.append(q)
         # LLM boş/bozuk dönerse en azından konunun kendisini ara (degrade-gracefully)
         if not subs:
             subs = [topic]
         return subs[:n]
+
+    @staticmethod
+    def _clean_line(line: str) -> str:
+        """Satır başı gürültüsünü ayıkla: markdown başlık (#), bullet/numara, ** vurgu, tırnak."""
+        s = re.sub(r"^\s*#+\s*", "", line.strip())  # markdown başlık
+        s = re.sub(r"^\s*(?:\d+[.)]\s*|[-*•]\s*)", "", s)  # numara/madde-işareti
+        return s.strip().strip("*").strip().strip("\"'").strip()
 
     # ── 2) Arama/Toplama ──
     def _execute_search(self, subquestions: list[str], depth: int, project: str | None) -> list[dict[str, Any]]:
@@ -92,18 +100,28 @@ class ResearchAgent:
             "sonra (2) 'ÇIKARIMLAR:' satırı ardından madde-madde (- ile) bulguları listele. "
             "İddiaları [1], [2] gibi kaynak numaralarıyla atıfla."
         )
-        out = self._llm(prompt) or ""
-        # Özet = 'ÇIKARIMLAR:' öncesi; çıkarımlar = sonrası '- ' satırları
-        parts = re.split(r"(?im)^\s*Ç?IKARIMLAR\s*:?\s*$", out, maxsplit=1)
-        summary = parts[0].strip()
+        out = (self._llm(prompt) or "").strip()
+        # FORMAT-TOLERANSLI parse (canlı-smoke: 3B model 'ÇIKARIMLAR:' yerine '### Özet'
+        # markdown verdi → eski split 0-findings buluyordu). Kural: bullet/numara satırları
+        # = findings; başlık (#) ve 'ÇIKARIMLAR:' satırları atlanır; kalan prose = summary.
         findings: list[str] = []
-        if len(parts) > 1:
-            for line in parts[1].splitlines():
-                m = re.sub(r"^\s*[-*•]\s*", "", line).strip()
-                if m:
-                    findings.append(m)
+        summary_parts: list[str] = []
+        for line in out.splitlines():
+            s = line.strip()
+            if not s:
+                continue
+            if re.match(r"(?i)^#*\s*\**\s*Ç?IKARIMLAR\b", s) or re.match(r"^#+\s+\S", s):
+                continue  # başlık/etiket satırı: ne summary ne finding
+            # Sembol-bullet'ta boşluk OPSİYONEL (-bulgu da kabul, Codex); ama sayıda
+            # boşluk ZORUNLU → "3.14 önemli" gibi ondalığı yanlış-finding sayma.
+            m = re.match(r"^(?:[-*•]\s*|\d+[.)]\s+)(.+)$", s)
+            if m:
+                findings.append(m.group(1).strip().strip("*").strip())
+            else:
+                summary_parts.append(s)
+        summary = " ".join(summary_parts).strip()
         if not summary:
-            summary = out.strip() or f'"{topic}" için özet üretilemedi.'
+            summary = out or f'"{topic}" için özet üretilemedi.'
         return summary, findings
 
     # ── güven puanı (heuristik) ──
