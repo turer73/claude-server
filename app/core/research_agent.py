@@ -67,11 +67,15 @@ class ResearchAgent:
     def _refine(self, topic: str, sources: list[ResearchSource], n: int) -> list[str]:
         if not sources:
             return []
-        known = "; ".join(s.title for s in sources[:12])
+        # BAŞLIK YETERSİZ (RAG başlıkları 'memory'/'discovery' gibi jenerik) → SNIPPET ver.
+        # Böylece LLM ne bulunduğunu GÖRÜP gerçek-boşluğu hedefler; aksi halde 'metodoloji
+        # nedir' gibi meta/süreç sorusu üretiyordu (canlı-smoke: bilge-arena 2. hop zayıftı).
+        found = "\n".join(f"- {s.snippet[:160]}" for s in sources[:8] if s.snippet)
         prompt = (
-            f'"{topic}" araştırmasında şu kaynaklar bulundu: {known}\n\n'
-            f"Bu kaynakların KAPSAMADIĞI, derinleşmesi gereken {n} YENİ alt-soru üret "
-            f"(öncekileri TEKRARLAMA). Her satıra tek soru, numara/açıklama koyma."
+            f'Konu: "{topic}"\n\nŞu ana dek bulunan bilgiler:\n{found or "(içerik yok)"}\n\n'
+            f"Yukarıdakilerin DEĞİNMEDİĞİ, {topic} ile ilgili {n} SOMUT ve SPESİFİK alt-soru üret. "
+            "Doğrudan teknik/konu-özel alt-başlıkları sor (belirli bir açık türü, bileşen, senaryo). "
+            "METODOLOJİ/SÜREÇ/'hangi kaynak' sorusu SORMA. Öncekileri tekrarlama. Her satıra tek soru."
         )
         return self._parse_questions(self._llm(prompt), n)
 
