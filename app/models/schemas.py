@@ -410,6 +410,9 @@ class ResearchConfig(BaseModel):
     max_iterations: int = Field(5, ge=1, le=8)  # üretilecek alt-soru sayısı
     depth: int = Field(5, ge=1, le=15)  # alt-soru başına RAG top-K
     project: str | None = None  # RAG'ı tek projeye sınırla (opsiyonel)
+    # Sentez modeli (FAZ1): haiku = Claude Haiku (kalite, Haiku-fail'de aya:8b fallback);
+    # ollama = yerel aya:8b (anahtarsız). Plan hep hızlı-Ollama (qwen).
+    synth_model: Literal["haiku", "ollama"] = "haiku"
 
 
 class ResearchSource(BaseModel):

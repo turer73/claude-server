@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import time
+from collections.abc import Callable
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException
@@ -232,6 +233,37 @@ def _anthropic_generate(system: str, user: str) -> str:
     return "".join(text_parts).strip()
 
 
+# ── Araştırma-ajanı sentez-modeli (FAZ1) ──
+SYNTH_SYS = (
+    "Sen kaynak-temelli araştırma sentez asistanısın. Verilen kaynaklara DAYANARAK, "
+    "istenen formatı (özet + ÇIKARIMLAR madde-listesi) izle, iddiaları [1],[2] gibi "
+    "kaynak numaralarıyla atıfla. Türkçe, mesleki, kaynak-dışı bilgi ekleme."
+)
+
+
+def _synth_llm(model: str) -> Callable[[str], str]:
+    """Araştırma sentezi için model-seçici (FAZ1). haiku → Claude Haiku (kalite);
+    Haiku fail/anahtar-yok → aya:8b yerel fallback. ollama → doğrudan aya:8b.
+    Plan adımı ayrı (hep hızlı qwen); bu YALNIZ sentez içindir."""
+
+    def aya(prompt: str) -> str:
+        return _ollama_generate(prompt, model=LLM_MODEL_HI)
+
+    if model == "ollama":
+        return aya
+
+    def haiku_then_aya(prompt: str) -> str:
+        try:
+            out = _anthropic_generate(SYNTH_SYS, prompt)
+            if out.strip():
+                return out
+        except Exception:
+            pass  # anahtar-yok / API-hata / boş → yerel fallback (araştırma düşmesin)
+        return aya(prompt)
+
+    return haiku_then_aya
+
+
 _CITE_RE = re.compile(r"\[([a-z]+):([^\]\s]+)\]")
 
 
@@ -368,15 +400,16 @@ def research_ask(req: AskRequest):
 
 
 @router.post("/run", response_model=ResearchReport)
-def research_run(config: ResearchConfig):
+def research_run(config: ResearchConfig) -> ResearchReport:
     """Otonom çok-aşamalı araştırma: planla→ara(Qdrant)→sentezle→atıflı-rapor.
 
     Auth: router-level verify_key (X-Memory-Key). RAG=canlı Qdrant (ChromaDB ÖLÜ).
-    LLM=Ollama (yerel, anahtarsız). Ağır iş (max_iterations × Ollama) → sync endpoint
-    threadpool'da koşar, event-loop'u bloklamaz.
+    Plan=hızlı Ollama (qwen); SENTEZ=güçlü model (FAZ1: Haiku, fail'de aya:8b).
+    Ağır iş → sync endpoint threadpool'da koşar, event-loop'u bloklamaz.
     """
     agent = ResearchAgent(
-        llm=_ollama_generate,
+        llm=_ollama_generate,  # plan: hızlı/ucuz
+        synth_llm=_synth_llm(config.synth_model),  # sentez: güçlü (Haiku/aya)
         search=lambda q, k, p: _qdrant_chunks(q, top_k=k, project=p),
     )
     return agent.run(config)

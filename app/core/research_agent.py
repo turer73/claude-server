@@ -26,8 +26,11 @@ SearchFn = Callable[..., list[dict[str, Any]]]
 
 
 class ResearchAgent:
-    def __init__(self, *, llm: LLMFn, search: SearchFn) -> None:
-        self._llm = llm
+    def __init__(self, *, llm: LLMFn, search: SearchFn, synth_llm: LLMFn | None = None) -> None:
+        self._llm = llm  # planlama: hızlı/ucuz (Ollama qwen) — plan basit
+        # sentez: GÜÇLÜ model (Haiku). FAZ1: ayrı synth_llm; verilmezse plan-llm'e düşer
+        # (geriye-dönük uyum + test-DI). Sentez kalite-darboğazı → ayrı model değer.
+        self._synth_llm = synth_llm or llm
         self._search = search
 
     # ── 1) Planlama ──
@@ -100,7 +103,7 @@ class ResearchAgent:
             "sonra (2) 'ÇIKARIMLAR:' satırı ardından madde-madde (- ile) bulguları listele. "
             "İddiaları [1], [2] gibi kaynak numaralarıyla atıfla."
         )
-        out = (self._llm(prompt) or "").strip()
+        out = (self._synth_llm(prompt) or "").strip()
         # FORMAT-TOLERANSLI parse (canlı-smoke: 3B model 'ÇIKARIMLAR:' yerine '### Özet'
         # markdown verdi → eski split 0-findings buluyordu). Kural: bullet/numara satırları
         # = findings; başlık (#) ve 'ÇIKARIMLAR:' satırları atlanır; kalan prose = summary.
