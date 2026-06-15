@@ -47,18 +47,33 @@ class ResearchAgent:
             f'"{topic}" konusunu kapsamlı araştırmak için sorulması gereken {n} ODAKLI alt-soru üret. '
             f"Her satıra TEK soru yaz, numara/madde-işareti koyma, açıklama ekleme."
         )
-        raw = self._llm(prompt) or ""
+        subs = self._parse_questions(self._llm(prompt), n)
+        # LLM boş/bozuk dönerse en azından konunun kendisini ara (degrade-gracefully)
+        return subs or [topic]
+
+    @staticmethod
+    def _parse_questions(raw: str | None, n: int) -> list[str]:
+        """LLM çıktısından temiz alt-soru listesi (numara/madde/markdown/Soru:-önek ayıkla)."""
         subs: list[str] = []
-        for line in raw.splitlines():
-            q = self._clean_line(line)
+        for line in (raw or "").splitlines():
+            q = ResearchAgent._clean_line(line)
             # küçük-model "Soru:"/"Madde:"/markdown-başlık ekleyebilir (canlı-smoke'ta görüldü)
             q = re.sub(r"(?i)^\s*(?:soru|madde|alt-?soru|question)\s*\d*\s*[:：]\s*", "", q).strip()
             if len(q) >= 5:
                 subs.append(q)
-        # LLM boş/bozuk dönerse en azından konunun kendisini ara (degrade-gracefully)
-        if not subs:
-            subs = [topic]
         return subs[:n]
+
+    # ── FAZ3: multi-hop — bulgulara göre EKSİK kalan yeni alt-sorular ──
+    def _refine(self, topic: str, sources: list[ResearchSource], n: int) -> list[str]:
+        if not sources:
+            return []
+        known = "; ".join(s.title for s in sources[:12])
+        prompt = (
+            f'"{topic}" araştırmasında şu kaynaklar bulundu: {known}\n\n'
+            f"Bu kaynakların KAPSAMADIĞI, derinleşmesi gereken {n} YENİ alt-soru üret "
+            f"(öncekileri TEKRARLAMA). Her satıra tek soru, numara/açıklama koyma."
+        )
+        return self._parse_questions(self._llm(prompt), n)
 
     @staticmethod
     def _clean_line(line: str) -> str:
@@ -85,12 +100,17 @@ class ResearchAgent:
                 collected.append({**h, "_subq": sq})
         return collected
 
+    @staticmethod
+    def _sid(h: dict[str, Any]) -> str:
+        """Kaynak kimliği — dedup + hop-arası yeni-kaynak tespiti için tek-kaynak."""
+        return str(h.get("id") or h.get("title") or h.get("text", "")[:40])
+
     # ── kaynak dedup + atıf-numarası ──
     @staticmethod
     def _dedup_sources(raw: list[dict[str, Any]]) -> list[ResearchSource]:
         best: dict[str, dict[str, Any]] = {}
         for h in raw:
-            sid = str(h.get("id") or h.get("title") or h.get("text", "")[:40])
+            sid = ResearchAgent._sid(h)
             score = float(h.get("score", 0) or 0)
             if sid not in best or score > float(best[sid].get("score", 0) or 0):
                 best[sid] = h
@@ -150,17 +170,37 @@ class ResearchAgent:
         coverage = min(1.0, len(sources) / max(1, n_subq))  # alt-soru başına ≥1 kaynak ideali
         return round(min(1.0, 0.5 * avg_rel + 0.5 * coverage), 3)
 
-    # ── orkestrasyon ──
+    # ── orkestrasyon (FAZ3: multi-hop otonom döngü) ──
     def run(self, config: ResearchConfig) -> ResearchReport:
-        subqs = self._generate_plan(config.topic, config.max_iterations)
-        raw = self._execute_search(subqs, config.depth, config.project)
-        sources = self._dedup_sources(raw)
+        subqs_all: list[str] = []
+        raw_all: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        # 1. hop = plan; sonraki hop'lar = bulgu-boşluğuna göre refine
+        next_subqs = self._generate_plan(config.topic, config.max_iterations)
+        for hop in range(config.max_hops):
+            if not next_subqs:
+                break
+            subqs_all.extend(next_subqs)
+            raw = self._execute_search(next_subqs, config.depth, config.project)
+            new = [h for h in raw if self._sid(h) not in seen]
+            for h in new:
+                seen.add(self._sid(h))
+            raw_all.extend(new)
+            # OTONOM DURMA: yeni kaynak gelmediyse derinleşmenin anlamı yok
+            if not new:
+                break
+            # son hop değilse: mevcut bulgulara göre EKSİK alanlar için yeni sorular
+            if hop + 1 < config.max_hops:
+                next_subqs = self._refine(config.topic, self._dedup_sources(raw_all), config.max_iterations)
+            else:
+                next_subqs = []
+        sources = self._dedup_sources(raw_all)
         summary, findings = self._synthesize(config.topic, sources)
         return ResearchReport(
             topic=config.topic,
             summary=summary,
             findings=findings,
             sources=sources,
-            subquestions=subqs,
-            confidence_score=self._confidence(sources, len(subqs), config.depth),
+            subquestions=subqs_all,
+            confidence_score=self._confidence(sources, len(subqs_all), config.depth),
         )
