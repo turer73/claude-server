@@ -223,7 +223,7 @@ def test_multihop_refines_and_accumulates():
 
     def llm(p):
         llm_prompts.append(p)
-        return "ikinci-hop sorusu" if "KAPSAMADIĞI" in p else "ilk hop sorusu"
+        return "ikinci-hop sorusu" if "bulunan bilgiler" in p else "ilk hop sorusu"
 
     seen = {"n": 0}
 
@@ -233,7 +233,7 @@ def test_multihop_refines_and_accumulates():
 
     agent = ResearchAgent(llm=llm, synth_llm=lambda p: "Özet.\n- bulgu", search=search)
     rep = agent.run(ResearchConfig(topic="konu xyz", max_iterations=1, depth=2, max_hops=2))
-    assert any("KAPSAMADIĞI" in p for p in llm_prompts)  # refine (FAZ3) çağrıldı
+    assert any("bulunan bilgiler" in p for p in llm_prompts)  # refine (FAZ3) çağrıldı
     assert len(rep.subquestions) == 2  # iki hop'un alt-soruları birikti
     assert len(rep.sources) == 2  # her hop yeni kaynak
 
@@ -242,7 +242,7 @@ def test_multihop_stops_when_no_new_sources():
     refine = {"n": 0}
 
     def llm(p):
-        if "KAPSAMADIĞI" in p:
+        if "bulunan bilgiler" in p:
             refine["n"] += 1
             return "yeniden derin soru"  # geçerli (>=5) → hop2 araması koşar
         return "ilk plan sorusu"
@@ -261,7 +261,7 @@ def test_multihop_default_single_pass_no_refine():
     refine = {"n": 0}
 
     def llm(p):
-        if "KAPSAMADIĞI" in p:
+        if "bulunan bilgiler" in p:
             refine["n"] += 1
         return "soru"
 
@@ -272,7 +272,7 @@ def test_multihop_default_single_pass_no_refine():
 
 def test_multihop_stops_when_refine_returns_empty():
     def llm(p):
-        return "ab" if "KAPSAMADIĞI" in p else "ilk plan sorusu"  # refine 'ab'<5 → boş
+        return "ab" if "bulunan bilgiler" in p else "ilk plan sorusu"  # refine 'ab'<5 → boş
 
     n = {"i": 0}
 
@@ -296,3 +296,21 @@ def test_web_query_topic_anchored():
     agent = ResearchAgent(llm=lambda p: "x", search=lambda *a: [], web_search=web)
     agent._execute_search(["hangi kaynaklar var"], depth=3, project=None, topic="linux kernel")
     assert captured == ["linux kernel hangi kaynaklar var"]  # topic+subq
+
+
+def test_refine_uses_snippets_and_bans_methodology():
+    # (d) rötuşu: refine başlık değil SNIPPET (içerik) görür + 'metodoloji sorma' talimatı
+    from app.models.schemas import ResearchSource
+
+    captured = []
+
+    def llm(p):
+        captured.append(p)
+        return "spesifik açık sorusu"
+
+    agent = _agent(llm, lambda *a: [])
+    srcs = [ResearchSource(ref=1, title="memory", source_id="m1", snippet="wildcard injection escapeForLike açığı", relevance=0.9)]
+    agent._refine("güvenlik", srcs, 3)
+    p = captured[0]
+    assert "wildcard injection" in p  # snippet içeriği prompt'a girdi (jenerik başlık 'memory' değil)
+    assert "METODOLOJİ" in p  # meta/süreç sorusu yasak talimatı var
