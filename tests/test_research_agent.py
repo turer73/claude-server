@@ -93,3 +93,14 @@ def test_run_end_to_end_with_fakes():
     assert len(report.sources) == 2  # 2 farklı alt-soru → 2 farklı doc
     assert all(s.ref == i + 1 for i, s in enumerate(report.sources))
     assert 0.0 < report.confidence_score <= 1.0
+
+
+def test_synthesize_blank_llm_with_sources_falls_back():
+    # Codex: kaynak VAR ama LLM boş dönerse summary fallback'e düşer (satır 106).
+    from app.models.schemas import ResearchSource
+
+    agent = _agent(lambda _p: "   \n  ", lambda *a: [])
+    srcs = [ResearchSource(ref=1, title="A", source_id="a", snippet="x", relevance=0.9)]
+    summary, findings = agent._synthesize("konu", srcs)
+    assert "üretilemedi" in summary  # boş çıktı → fallback metni
+    assert findings == []
