@@ -271,6 +271,13 @@ def _synth_llm(model: str) -> Callable[[str], str]:
 # ── Web arama (FAZ2): DDG-lite, anahtarsız, opt-in ──
 WEB_UA = "Mozilla/5.0 (X11; Linux x86_64) klipper-research-agent"
 WEB_TIMEOUT = 12
+# Semantik web-alaka eşiği (bge-m3 cosine). Canlı-smoke kalibrasyonu (06-15):
+# off-topic homonim sonuçlar (ör. "klipper" 3D-yazıcı firmware'i) 0.36–0.53,
+# gerçekten ilgili içerik 0.62+. 0.55 ikisini ayırır. Token-örtüşmesi tek güçlü
+# homonim token'da (her ikisine de uyan) çuvallıyordu — anlamsal kapı bunu çözer.
+WEB_RELEVANCE_MIN_COS = 0.55
+# Anlamsal kapı için en fazla kaç aday embed'lenir (DDG zaten rank-sıralı döner).
+WEB_RELEVANCE_MAX_EMBED = 10
 _WEB_LINK_RE = re.compile(r'<a rel="nofollow" href="([^"]+)"[^>]*class=[\'"]result-link[\'"][^>]*>(.*?)</a>', re.S)
 _WEB_SNIP_RE = re.compile(r'class="result-snippet"[^>]*>(.*?)</td>', re.S)
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -314,15 +321,46 @@ def _web_search(query: str, n: int = 5) -> list[dict]:
     ]
 
 
-def _filter_relevant(cands: list[dict], query: str, n: int) -> list[dict]:
-    """Off-topic web sonuçlarını ele: query-token'larıyla (≥4 harf) title+snippet hiç
-    örtüşmeyenleri at. GÜVENLİK: filtre <2 sonuç bırakırsa ham listeye dön (çapraz-dilli
-    over-filter koruması — TR sorgu / EN sonuç durumunda legit sonuçları kaybetme)."""
+def _cosine(a: list[float], b: list[float]) -> float:
+    """Saf-python cosine benzerliği (numpy bağımlılığı yok)."""
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def _token_filter(cands: list[dict], query: str, n: int) -> list[dict]:
+    """Ucuz token-örtüşme filtresi (anlamsal kapı kullanılamazsa fallback). ≥4-harf
+    query token'ı title+snippet'te hiç geçmeyeni at; hiçbiri kalmazsa boş dön
+    (ham-listeye dönmek off-topic kirliliği geri sokardı — dürüst boş daha iyi)."""
     toks = set(re.findall(r"\w{4,}", query.lower()))
     if not toks:
         return cands[:n]
-    kept = [c for c in cands if any(t in (c["title"] + " " + c["text"]).lower() for t in toks)]
-    return (kept if len(kept) >= 2 else cands)[:n]
+    return [c for c in cands if any(t in (c["title"] + " " + c["text"]).lower() for t in toks)][:n]
+
+
+def _filter_relevant(cands: list[dict], query: str, n: int) -> list[dict]:
+    """Off-topic web sonuçlarını anlamsal-benzerlikle ele. Token-örtüşmesi tek güçlü
+    homonim token'da çuvallıyordu (ör. "klipper" hem bu-sunucu hem 3D-yazıcı firmware'i
+    → printer sayfaları geçiyordu). bge-m3 embed + cosine: query'ye anlamsal yakınlığı
+    WEB_RELEVANCE_MIN_COS altındaki adayları at, skora göre sırala. Embed/Ollama fail →
+    token-örtüşme fallback (asla hard-fail etme; web opt-in ve fail'de RAG'la devam)."""
+    if not cands:
+        return []
+    try:
+        qv = rag_module._embed(query)
+        scored: list[tuple[float, dict]] = []
+        for c in cands[:WEB_RELEVANCE_MAX_EMBED]:
+            cv = rag_module._embed(f"{c['title']} {c['text']}")
+            scored.append((_cosine(qv, cv), c))
+        kept = sorted(
+            (sc for sc in scored if sc[0] >= WEB_RELEVANCE_MIN_COS),
+            key=lambda sc: sc[0],
+            reverse=True,
+        )
+        return [c for _, c in kept[:n]]
+    except Exception:
+        return _token_filter(cands, query, n)
 
 
 _CITE_RE = re.compile(r"\[([a-z]+):([^\]\s]+)\]")
