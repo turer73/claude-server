@@ -18,7 +18,14 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from app.models.schemas import CitationAudit, ResearchConfig, ResearchCritique, ResearchReport, ResearchSource
+from app.models.schemas import (
+    CitationAudit,
+    ResearchConfig,
+    ResearchConflict,
+    ResearchCritique,
+    ResearchReport,
+    ResearchSource,
+)
 
 # llm: (prompt) -> metin ; search: (soru, top_k, project) -> [{title,id,score,text,...}]
 LLMFn = Callable[[str], str]
@@ -300,6 +307,36 @@ class ResearchAgent:
         grounding = len(audit.used) / total  # geçerli-atıf oranı (0..<1)
         return round(conf * (0.5 + 0.5 * grounding), 3)
 
+    # ── 5) Çelişki-tespiti (FAZ7: kaynaklar-arası uyuşmazlık, opt-in) ──
+    def _detect_contradictions(self, topic: str, sources: list[ResearchSource]) -> list[ResearchConflict]:
+        """Kaynakların BİRBİRİYLE çeliştiği noktaları yapısal çıkar (kalite ≠ grounding:
+        sentez doğru-atıflı olsa da kaynaklar uyuşmayabilir → karışık-kanıt sinyali).
+        Her çelişki ≥2 geçerli ref taşımalı. LLM fail/boş/tek-kaynak → [] (degrade-safe)."""
+        if len(sources) < 2:
+            return []  # tek kaynak kendiyle çelişemez
+        context = "\n".join(f"[{s.ref}] {s.title}: {s.snippet}" for s in sources)
+        prompt = (
+            f'Konu: "{topic}"\n\nKAYNAKLAR:\n{context}\n\n'
+            "Kaynaklar BİRBİRİYLE ÇELİŞİYOR mu? Sadece GERÇEK çelişkileri (bir kaynağın iddiasını "
+            "başka kaynağın açıkça reddetmesi/uyuşmaması) madde-madde (- ile) yaz. Her satırda "
+            "çelişen kaynak numaralarını [n] [m] ver + kısa açıklama. Çelişki yoksa 'ÇELİŞKİ YOK' yaz."
+        )
+        try:
+            out = (self._synth_llm(prompt) or "").strip()
+        except Exception:
+            return []
+        valid_refs = {s.ref for s in sources}
+        conflicts: list[ResearchConflict] = []
+        for line in out.splitlines():
+            s = line.strip()
+            refs = sorted({int(m) for m in self._CITE_NUM_RE.findall(s) if int(m) in valid_refs})
+            if len(refs) < 2:  # ≥2 geçerli kaynak yoksa çelişki değil
+                continue
+            # açıklama: bullet/numara önekini ve ref-etiketlerini ayıkla
+            desc = re.sub(r"\[\d{1,3}\]", "", re.sub(r"^(?:[-*•]\s*|\d+[.)]\s+)", "", s)).strip(" -–:vs.").strip()
+            conflicts.append(ResearchConflict(sources=refs, description=desc or "(açıklama yok)"))
+        return conflicts
+
     # ── orkestrasyon (FAZ3: multi-hop otonom döngü) ──
     def run(self, config: ResearchConfig) -> ResearchReport:
         subqs_all: list[str] = []
@@ -336,6 +373,8 @@ class ResearchAgent:
                 critique.revised = True  # revizyon sonrası audit/güven aşağıda taze hesaplanır
         audit = self._audit_citations(summary, findings, sources)
         conf = self._ground_penalty(self._confidence(sources, len(subqs_all), config.depth), audit)
+        # FAZ7: kaynaklar-arası çelişki-tespiti (opt-in). Sentezden bağımsız kaynak-seviyesi sinyal.
+        contradictions = self._detect_contradictions(config.topic, sources) if config.detect_conflicts else []
         return ResearchReport(
             topic=config.topic,
             summary=summary,
@@ -345,4 +384,5 @@ class ResearchAgent:
             confidence_score=conf,
             citations=audit,
             critique=critique,
+            contradictions=contradictions,
         )
