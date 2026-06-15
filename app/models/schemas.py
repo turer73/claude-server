@@ -413,9 +413,10 @@ class ResearchConfig(BaseModel):
     # Multi-hop (FAZ3): kaç tur plan→ara→refine. 1 = tek-geçiş (varsayılan); >1 = bulgulara
     # göre yeni alt-soru üretip derinleşir. Yeni-kaynak gelmezse otonom erken-durur.
     max_hops: int = Field(1, ge=1, le=4)
-    # Sentez modeli (FAZ1): haiku = Claude Haiku (kalite, Haiku-fail'de aya:8b fallback);
-    # ollama = yerel aya:8b (anahtarsız). Plan hep hızlı-Ollama (qwen).
-    synth_model: Literal["haiku", "ollama"] = "haiku"
+    # Sentez modeli: sonnet = Claude Sonnet (en derin, varsayılan); haiku = Claude Haiku
+    # (hızlı/ucuz); ollama = yerel aya:8b (anahtarsız). Claude'lar fail→aya fallback.
+    # Plan hep hızlı-Ollama (qwen) — bu YALNIZ sentez adımı.
+    synth_model: Literal["sonnet", "haiku", "ollama"] = "sonnet"
     # Web arama (FAZ2): True = RAG'a EK olarak DDG-lite web sonuçları (anahtarsız, opt-in;
     # gecikme + dış-bağımlılık ekler, fail'de RAG'la devam). False = yalnız yerel RAG.
     include_web: bool = False

@@ -276,6 +276,24 @@ def test_synth_llm_haiku_uses_anthropic():
         out = research._synth_llm("haiku")("p")
     assert out == "haiku-çıktı"
     a.assert_called_once()
+    assert a.call_args.kwargs.get("model") == research.ANTHROPIC_MODEL  # Haiku model'i
+
+
+def test_synth_llm_sonnet_uses_sonnet_model():
+    with patch("app.api.research._anthropic_generate", return_value="sonnet-çıktı") as a:
+        out = research._synth_llm("sonnet")("p")
+    assert out == "sonnet-çıktı"
+    assert a.call_args.kwargs.get("model") == research.ANTHROPIC_MODEL_SONNET  # Sonnet model'i
+
+
+def test_synth_llm_sonnet_falls_back_to_aya_on_error():
+    with (
+        patch("app.api.research._anthropic_generate", side_effect=RuntimeError("api down")),
+        patch("app.api.research._ollama_generate", return_value="aya-çıktı") as o,
+    ):
+        out = research._synth_llm("sonnet")("p")
+    assert out == "aya-çıktı"  # Sonnet fail → aya:8b fallback
+    o.assert_called_once()
 
 
 def test_synth_llm_haiku_falls_back_to_aya_on_error():
@@ -358,3 +376,23 @@ async def test_run_include_web_wires_web_search(client):
     ids = {s["source_id"] for s in resp.json()["sources"]}
     assert "https://w.com" in ids  # web kaynağı rapora girdi
     assert "rag-1" in ids  # RAG kaynağı da
+
+
+@pytest.mark.anyio
+async def test_health_exposes_selectable_synth_models(client):
+    """Codex: /health hem Haiku hem Sonnet sentez-model-id'lerini + varsayılanı bildirir."""
+    ol = MagicMock(ok=True)
+    ol.json.return_value = {"version": "0.23.2"}
+    qd = MagicMock(ok=True)
+    qd.json.return_value = {"result": {"points_count": 1}}
+    fake_conn = MagicMock()
+    fake_conn.execute.return_value.fetchone.return_value = (1,)
+    with (
+        patch("app.api.research.requests.get", side_effect=lambda url, **_: ol if "/api/version" in url else qd),
+        patch("app.api.research.sqlite3.connect", return_value=fake_conn),
+    ):
+        resp = await client.get("/api/v1/research/health")
+    a = resp.json()["anthropic"]
+    assert a["synth_models"]["sonnet"] == research.ANTHROPIC_MODEL_SONNET
+    assert a["synth_models"]["haiku"] == research.ANTHROPIC_MODEL
+    assert a["default_synth_model"] == "sonnet"
