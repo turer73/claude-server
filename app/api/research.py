@@ -30,6 +30,8 @@ from pydantic import BaseModel
 from app.api import rag as rag_module
 from app.api.memory import verify_key
 from app.core.config import read_env_var
+from app.core.research_agent import ResearchAgent
+from app.models.schemas import ResearchConfig, ResearchReport
 
 MEMORY_DB = "/opt/linux-ai-server/data/claude_memory.db"
 LLM_MODEL = "qwen2.5:3b"  # default: ~35 tok/s, Turkce yeterli
@@ -363,6 +365,21 @@ def research_ask(req: AskRequest):
         },
         "errors": errors or None,
     }
+
+
+@router.post("/run", response_model=ResearchReport)
+def research_run(config: ResearchConfig):
+    """Otonom çok-aşamalı araştırma: planla→ara(Qdrant)→sentezle→atıflı-rapor.
+
+    Auth: router-level verify_key (X-Memory-Key). RAG=canlı Qdrant (ChromaDB ÖLÜ).
+    LLM=Ollama (yerel, anahtarsız). Ağır iş (max_iterations × Ollama) → sync endpoint
+    threadpool'da koşar, event-loop'u bloklamaz.
+    """
+    agent = ResearchAgent(
+        llm=_ollama_generate,
+        search=lambda q, k, p: _qdrant_chunks(q, top_k=k, project=p),
+    )
+    return agent.run(config)
 
 
 @router.get("/health")

@@ -201,3 +201,58 @@ async def test_fts_query_hyphens_normalised():
     # FTS5'in column-prefix sentaksini tetikleyecek karakterler yok
     for forbidden in ('"', "*", ":"):
         assert forbidden not in out
+
+
+# ───────── /run (otonom araştırma ajanı) ─────────
+
+
+@pytest.mark.anyio
+async def test_run_route_registered(client):
+    resp = await client.get("/openapi.json")
+    assert "/api/v1/research/run" in resp.json()["paths"]
+
+
+@pytest.mark.anyio
+async def test_run_returns_report(client):
+    """/run → ResearchReport (plan+ara+sentez), Ollama+Qdrant mock'lu."""
+    plan = "Mimari nedir?\nBellek yönetimi nasıl?"
+    synth = "Kapsamlı özet metni [1].\nÇIKARIMLAR:\n- ilk bulgu [1]\n- ikinci bulgu [2]"
+
+    def fake_chunks(q, top_k=5, project=None):
+        return [{"id": f"doc-{q[:4]}", "title": q, "score": 0.85, "text": f"{q} içerik"}]
+
+    with (
+        patch("app.api.research._ollama_generate", side_effect=[plan, synth]),
+        patch("app.api.research._qdrant_chunks", side_effect=fake_chunks),
+    ):
+        resp = await client.post(
+            "/api/v1/research/run",
+            json={"topic": "linux kernel", "max_iterations": 2, "depth": 3},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["topic"] == "linux kernel"
+    assert body["subquestions"] == ["Mimari nedir?", "Bellek yönetimi nasıl?"]
+    assert "Kapsamlı özet" in body["summary"]
+    assert body["findings"] == ["ilk bulgu [1]", "ikinci bulgu [2]"]
+    assert len(body["sources"]) == 2
+    assert body["sources"][0]["ref"] == 1
+    assert 0.0 < body["confidence_score"] <= 1.0
+
+
+@pytest.mark.anyio
+async def test_run_rejects_wrong_memory_key(client):
+    """Router-level verify_key: yanlış X-Memory-Key → reddedilir."""
+    resp = await client.post(
+        "/api/v1/research/run",
+        json={"topic": "x" * 5},
+        headers={"X-Memory-Key": "wrong-key"},
+    )
+    assert resp.status_code in (401, 403)
+
+
+@pytest.mark.anyio
+async def test_run_validates_short_topic(client):
+    """topic min_length=3 → 422 (Ollama/Qdrant çağrılmadan)."""
+    resp = await client.post("/api/v1/research/run", json={"topic": "x"})
+    assert resp.status_code == 422
