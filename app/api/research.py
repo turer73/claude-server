@@ -45,7 +45,8 @@ LLM_NUM_PREDICT = 300  # 3B model @ ~35 tok/s -> 300 token ~9sn
 # Anthropic fallback — daha hizli + daha iyi citation
 ANTHROPIC_API_KEY = read_env_var("ANTHROPIC_API_KEY")
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
+ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"  # hızlı/ucuz (Haiku)
+ANTHROPIC_MODEL_SONNET = "claude-sonnet-4-6"  # derin sentez (daha güçlü akıl-yürütme)
 ANTHROPIC_MAX_TOKENS = 600
 ANTHROPIC_TIMEOUT = 30
 
@@ -207,8 +208,8 @@ def _ollama_generate(prompt: str, model: str = LLM_MODEL) -> str:
     return r.json().get("response", "").strip()
 
 
-def _anthropic_generate(system: str, user: str) -> str:
-    """Claude Haiku 4.5 — synthesis fallback. Citation izlemede daha tutarli."""
+def _anthropic_generate(system: str, user: str, model: str = ANTHROPIC_MODEL) -> str:
+    """Claude (varsayılan Haiku; model= ile Sonnet seçilebilir). Citation tutarlı."""
     if not ANTHROPIC_API_KEY:
         raise HTTPException(503, "ANTHROPIC_API_KEY .env'de tanimli degil")
     r = requests.post(
@@ -219,7 +220,7 @@ def _anthropic_generate(system: str, user: str) -> str:
             "content-type": "application/json",
         },
         json={
-            "model": ANTHROPIC_MODEL,
+            "model": model,
             "max_tokens": ANTHROPIC_MAX_TOKENS,
             "system": system,
             "messages": [{"role": "user", "content": user}],
@@ -243,9 +244,9 @@ SYNTH_SYS = (
 
 
 def _synth_llm(model: str) -> Callable[[str], str]:
-    """Araştırma sentezi için model-seçici (FAZ1). haiku → Claude Haiku (kalite);
-    Haiku fail/anahtar-yok → aya:8b yerel fallback. ollama → doğrudan aya:8b.
-    Plan adımı ayrı (hep hızlı qwen); bu YALNIZ sentez içindir."""
+    """Araştırma sentezi için model-seçici. sonnet → Claude Sonnet (en derin);
+    haiku → Claude Haiku (hızlı); ikisi de fail/anahtar-yok → aya:8b yerel fallback.
+    ollama → doğrudan aya:8b. Plan adımı ayrı (hep hızlı qwen); bu YALNIZ sentez içindir."""
 
     def aya(prompt: str) -> str:
         return _ollama_generate(prompt, model=LLM_MODEL_HI)
@@ -253,16 +254,18 @@ def _synth_llm(model: str) -> Callable[[str], str]:
     if model == "ollama":
         return aya
 
-    def haiku_then_aya(prompt: str) -> str:
+    api_model = ANTHROPIC_MODEL_SONNET if model == "sonnet" else ANTHROPIC_MODEL
+
+    def claude_then_aya(prompt: str) -> str:
         try:
-            out = _anthropic_generate(SYNTH_SYS, prompt)
+            out = _anthropic_generate(SYNTH_SYS, prompt, model=api_model)
             if out.strip():
                 return out
         except Exception:
             pass  # anahtar-yok / API-hata / boş → yerel fallback (araştırma düşmesin)
         return aya(prompt)
 
-    return haiku_then_aya
+    return claude_then_aya
 
 
 # ── Web arama (FAZ2): DDG-lite, anahtarsız, opt-in ──
