@@ -432,6 +432,19 @@ class ResearchSource(BaseModel):
     relevance: float  # 0..1 (RAG skoru)
 
 
+class CitationAudit(BaseModel):
+    """/run sentezindeki [n] atıflarının kaynaklara karşı doğrulanması (grounding).
+
+    /ask'teki _validate_citations'ın numerik-ref karşılığı: /ask [type:id] tag kullanır,
+    /run ise kaynak-ref-numarası [1],[2]. Otonom rapor halüsinasyona açıktı (model
+    var-olmayan [7]'ye atıf yapabilir) → bu denetim onu yakalar."""
+
+    used: list[int]  # metinde geçen + geçerli (kaynağı var) atıflar
+    hallucinated: list[int]  # metinde geçen ama KAYNAĞI OLMAYAN [n] → uydurma atıf
+    uncited: list[int]  # kaynak var ama özet/bulgularda atıfı yok (kullanılmamış)
+    grounded: bool  # hallucinated boş mu → özet tümüyle kaynaklara dayalı mı
+
+
 class ResearchReport(BaseModel):
     """Otonom ajanın nihai çıktısı."""
 
@@ -441,3 +454,4 @@ class ResearchReport(BaseModel):
     sources: list[ResearchSource]
     subquestions: list[str]
     confidence_score: float  # 0..1
+    citations: CitationAudit  # [n] atıf-doğrulama (grounding denetimi)

@@ -378,3 +378,82 @@ def test_novel_questions_containment_catches_subset():
 
 def test_default_max_hops_is_two():
     assert ResearchConfig(topic="abcde").max_hops == 2  # varsayılan 2-hop
+
+
+# ───────── atıf doğrulama / grounding (FAZ4: /run halüsinasyon-denetimi) ─────────
+
+
+def _srcs(n):
+    from app.models.schemas import ResearchSource
+
+    return [ResearchSource(ref=i + 1, title=f"T{i + 1}", source_id=f"s{i + 1}", snippet="x", relevance=0.8) for i in range(n)]
+
+
+def test_audit_citations_all_grounded():
+    summary = "Özet [1] ve [2]."
+    findings = ["bulgu [1]", "bulgu [2]"]
+    a = ResearchAgent._audit_citations(summary, findings, _srcs(2))
+    assert a.used == [1, 2]
+    assert a.hallucinated == []
+    assert a.uncited == []
+    assert a.grounded is True
+
+
+def test_audit_citations_detects_hallucinated_and_uncited():
+    # [7] var-olmayan kaynağa atıf (uydurma); [3] hiç atıflanmamış (uncited)
+    summary = "Özet [1] ve [7]."  # 7 yok
+    findings = ["bulgu [2]"]
+    a = ResearchAgent._audit_citations(summary, findings, _srcs(3))
+    assert a.used == [1, 2]
+    assert a.hallucinated == [7]
+    assert a.uncited == [3]
+    assert a.grounded is False
+
+
+def test_audit_citations_empty_text_is_grounded():
+    a = ResearchAgent._audit_citations("atıfsız özet", [], _srcs(2))
+    assert a.used == []
+    assert a.hallucinated == []
+    assert a.uncited == [1, 2]
+    assert a.grounded is True  # uydurma atıf yok → grounded (atıfsız ≠ uydurma)
+
+
+def test_ground_penalty_noop_when_grounded():
+    from app.models.schemas import CitationAudit
+
+    clean = CitationAudit(used=[1, 2], hallucinated=[], uncited=[], grounded=True)
+    assert ResearchAgent._ground_penalty(0.8, clean) == 0.8  # ceza yok
+
+
+def test_ground_penalty_reduces_on_hallucination():
+    from app.models.schemas import CitationAudit
+
+    # 1 geçerli + 1 uydurma → grounding=0.5 → faktör 0.75 → 0.8*0.75=0.6
+    half = CitationAudit(used=[1], hallucinated=[9], uncited=[], grounded=False)
+    assert ResearchAgent._ground_penalty(0.8, half) == 0.6
+    # tümü uydurma → grounding=0 → faktör 0.5 (en sert)
+    allbad = CitationAudit(used=[], hallucinated=[9], uncited=[1], grounded=False)
+    assert ResearchAgent._ground_penalty(0.8, allbad) == 0.4
+
+
+def test_run_populates_citations_and_penalizes_hallucination():
+    # Sentez var-olmayan [9]'a atıf yapsın → rapor.citations bunu yakalamalı + güven düşmeli
+    calls = {"n": 0}
+
+    def llm(_p):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "Soru bir?"
+        return "Özet [1] ama uydurma [9].\nÇIKARIMLAR:\n- bulgu [1]"
+
+    def search(q, k, p):
+        return [{"id": "doc-1", "title": q, "score": 0.9, "text": "içerik"}]
+
+    agent = _agent(llm, search)
+    report = agent.run(ResearchConfig(topic="konu testi", max_iterations=1, depth=2, max_hops=1))
+    assert report.citations.hallucinated == [9]
+    assert report.citations.used == [1]
+    assert report.citations.grounded is False
+    # güven cezalandı: ham güven > raporlanan güven
+    raw_conf = ResearchAgent._confidence(report.sources, len(report.subquestions), 2)
+    assert report.confidence_score < raw_conf

@@ -18,7 +18,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from app.models.schemas import ResearchConfig, ResearchReport, ResearchSource
+from app.models.schemas import CitationAudit, ResearchConfig, ResearchReport, ResearchSource
 
 # llm: (prompt) -> metin ; search: (soru, top_k, project) -> [{title,id,score,text,...}]
 LLMFn = Callable[[str], str]
@@ -211,6 +211,34 @@ class ResearchAgent:
         coverage = min(1.0, len(sources) / max(1, n_subq))  # alt-soru başına ≥1 kaynak ideali
         return round(min(1.0, 0.5 * avg_rel + 0.5 * coverage), 3)
 
+    # ── atıf doğrulama (grounding) ──
+    _CITE_NUM_RE = re.compile(r"\[(\d{1,3})\]")  # metin-içi [1],[2]… atıfları
+
+    @classmethod
+    def _audit_citations(cls, summary: str, findings: list[str], sources: list[ResearchSource]) -> CitationAudit:
+        """Özet+bulgulardaki [n] atıflarını kaynak-ref'lerine karşı doğrula. /ask'in
+        [type:id] denetiminin numerik karşılığı: uydurma atıf (kaynağı-olmayan [n]) +
+        kullanılmamış kaynak listele. grounded = uydurma atıf yok."""
+        text = summary + "\n" + "\n".join(findings)
+        cited = {int(m) for m in cls._CITE_NUM_RE.findall(text)}
+        valid = {s.ref for s in sources}
+        return CitationAudit(
+            used=sorted(cited & valid),
+            hallucinated=sorted(cited - valid),  # var-olmayan kaynağa atıf
+            uncited=sorted(valid - cited),  # atıfsız kaynak
+            grounded=not (cited - valid),
+        )
+
+    @staticmethod
+    def _ground_penalty(conf: float, audit: CitationAudit) -> float:
+        """Uydurma atıf varsa güveni grounding-oranıyla düşür (özet kaynak-dışı iddia
+        içeriyor demektir). Hepsi uydurma → en fazla %50 kesinti."""
+        total = len(audit.used) + len(audit.hallucinated)
+        if not audit.hallucinated or not total:
+            return conf
+        grounding = len(audit.used) / total  # geçerli-atıf oranı (0..<1)
+        return round(conf * (0.5 + 0.5 * grounding), 3)
+
     # ── orkestrasyon (FAZ3: multi-hop otonom döngü) ──
     def run(self, config: ResearchConfig) -> ResearchReport:
         subqs_all: list[str] = []
@@ -238,11 +266,14 @@ class ResearchAgent:
                 next_subqs = []
         sources = self._dedup_sources(raw_all)
         summary, findings = self._synthesize(config.topic, sources)
+        audit = self._audit_citations(summary, findings, sources)
+        conf = self._ground_penalty(self._confidence(sources, len(subqs_all), config.depth), audit)
         return ResearchReport(
             topic=config.topic,
             summary=summary,
             findings=findings,
             sources=sources,
             subquestions=subqs_all,
-            confidence_score=self._confidence(sources, len(subqs_all), config.depth),
+            confidence_score=conf,
+            citations=audit,
         )
