@@ -120,3 +120,75 @@ async def test_rag_metrics_validates_days_range(client):
     assert resp.status_code == 422
     resp = await client.get("/api/v1/rag/metrics?days=400")
     assert resp.status_code == 422
+
+
+def _make_ask_mocks():
+    """Return (embed, search, scroll, ollama) mocks for /ask tests.
+    Qdrant'ın iki endpoint'i farklı şekil döndürür: /points/search → result=LİSTE;
+    /points/scroll → result=DICT {points, next_page_offset}. _hybrid_search ikisini de
+    çağırır (dense + keyword), o yüzden iki ayrı mock şart."""
+    embed_resp = MagicMock(ok=True)
+    embed_resp.json.return_value = {"embedding": [0.1] * 10}
+
+    search_resp = MagicMock(ok=True)
+    search_resp.json.return_value = {"result": []}
+
+    scroll_resp = MagicMock(ok=True)
+    scroll_resp.json.return_value = {"result": {"points": [], "next_page_offset": None}}
+
+    ollama_resp = MagicMock(ok=True)
+    ollama_resp.json.return_value = {"response": "test answer", "eval_count": 5, "eval_duration": 1_000_000_000}
+
+    return embed_resp, search_resp, scroll_resp, ollama_resp
+
+
+@pytest.mark.anyio
+async def test_rag_ask_default_model(client):
+    """/ask without model param uses qwen2.5:3b by default; response includes model field."""
+    embed_resp, search_resp, scroll_resp, ollama_resp = _make_ask_mocks()
+
+    def fake_post(url, **_):
+        if "embeddings" in url:
+            return embed_resp
+        if "scroll" in url:  # scroll'u 6333'ten ÖNCE kontrol et (ikisi de 6333 içerir)
+            return scroll_resp
+        if "search" in url or "6333" in url:
+            return search_resp
+        return ollama_resp
+
+    with patch("app.api.rag.requests.post", side_effect=fake_post):
+        resp = await client.post("/api/v1/rag/ask", json={"q": "test question"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["model"] == "qwen2.5:3b"
+    assert body["answer"] == "test answer"
+
+
+@pytest.mark.anyio
+async def test_rag_ask_custom_model(client):
+    """/ask with model=qwen2.5-coder:7b passes that model to Ollama."""
+    embed_resp, search_resp, scroll_resp, ollama_resp = _make_ask_mocks()
+    captured = {}
+
+    def fake_post(url, json=None, **_):
+        if "embeddings" in url:
+            return embed_resp
+        if "scroll" in url:  # scroll'u 6333'ten ÖNCE kontrol et
+            return scroll_resp
+        if "search" in url or "6333" in url:
+            return search_resp
+        captured["model"] = (json or {}).get("model")
+        return ollama_resp
+
+    with patch("app.api.rag.requests.post", side_effect=fake_post):
+        resp = await client.post("/api/v1/rag/ask", json={"q": "code review", "model": "qwen2.5-coder:7b"})
+    assert resp.status_code == 200
+    assert resp.json()["model"] == "qwen2.5-coder:7b"
+    assert captured.get("model") == "qwen2.5-coder:7b"
+
+
+@pytest.mark.anyio
+async def test_rag_ask_invalid_model_rejected(client):
+    """/ask with an unknown model returns 422 without calling Ollama."""
+    resp = await client.post("/api/v1/rag/ask", json={"q": "test", "model": "gpt-4o"})
+    assert resp.status_code == 422
