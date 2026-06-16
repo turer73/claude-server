@@ -271,6 +271,46 @@ def test_synth_llm_ollama_uses_aya():
     assert gen.call_args.kwargs.get("model") == research.LLM_MODEL_HI  # aya:8b
 
 
+def test_anthropic_generate_uses_claude_cli_subscription():
+    """_anthropic_generate artık doğrudan-API değil claude CLI (Max abonelik) üzerinden;
+    _build_env API-key'i strip eder → sıfır API faturası, 'Credit balance' hatası biter."""
+    fake = MagicMock(returncode=0, stdout='{"result":"sentez çıktısı","is_error":false}', stderr="")
+    with (
+        patch("app.api.research.cc_module._find_claude", return_value="/usr/bin/claude"),
+        patch("app.api.research.cc_module._build_env", return_value={"HOME": "/home/x"}),
+        patch("app.api.research.subprocess.run", return_value=fake) as run,
+    ):
+        out = research._anthropic_generate("sys", "user msg", model="claude-sonnet-4-6")
+    assert out == "sentez çıktısı"
+    cmd = run.call_args[0][0]
+    assert cmd[0] == "/usr/bin/claude"
+    assert "-p" in cmd
+    assert "--model" in cmd
+    assert "claude-sonnet-4-6" in cmd
+    assert "ANTHROPIC_API_KEY" not in run.call_args.kwargs["env"]  # strip = abonelik
+
+
+def test_anthropic_generate_cli_error_raises():
+    # is_error (ör. abonelik/CLI hatası) → HTTPException → çağıran (_synth_llm) aya'ya düşer
+    from fastapi import HTTPException
+
+    fake = MagicMock(returncode=0, stdout='{"result":"boom","is_error":true}', stderr="")
+    with (
+        patch("app.api.research.cc_module._find_claude", return_value="/usr/bin/claude"),
+        patch("app.api.research.cc_module._build_env", return_value={}),
+        patch("app.api.research.subprocess.run", return_value=fake),
+        pytest.raises(HTTPException),
+    ):
+        research._anthropic_generate("s", "u")
+
+
+def test_anthropic_generate_no_cli_raises():
+    from fastapi import HTTPException
+
+    with patch("app.api.research.cc_module._find_claude", return_value=None), pytest.raises(HTTPException):
+        research._anthropic_generate("s", "u")
+
+
 def test_synth_llm_haiku_uses_anthropic():
     with patch("app.api.research._anthropic_generate", return_value="haiku-çıktı") as a:
         out = research._synth_llm("haiku")("p")

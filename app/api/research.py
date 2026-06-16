@@ -20,8 +20,10 @@ Auth: verify_key (memory API key). Internal sorgulara yonelik.
 from __future__ import annotations
 
 import html as _htmllib
+import json as _json
 import re
 import sqlite3
+import subprocess
 import time
 from collections.abc import Callable
 
@@ -29,6 +31,7 @@ import requests
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.api import claude_code as cc_module
 from app.api import rag as rag_module
 from app.api.memory import verify_key
 from app.core.config import read_env_var
@@ -208,31 +211,34 @@ def _ollama_generate(prompt: str, model: str = LLM_MODEL) -> str:
     return r.json().get("response", "").strip()
 
 
+CLAUDE_CLI_TIMEOUT = 90  # CLI spawn doğrudan-API'den yavaş; multi-hop için yeterli pencere
+
+
 def _anthropic_generate(system: str, user: str, model: str = ANTHROPIC_MODEL) -> str:
-    """Claude (varsayılan Haiku; model= ile Sonnet seçilebilir). Citation tutarlı."""
-    if not ANTHROPIC_API_KEY:
-        raise HTTPException(503, "ANTHROPIC_API_KEY .env'de tanimli degil")
-    r = requests.post(
-        ANTHROPIC_URL,
-        headers={
-            "x-api-key": ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        json={
-            "model": model,
-            "max_tokens": ANTHROPIC_MAX_TOKENS,
-            "system": system,
-            "messages": [{"role": "user", "content": user}],
-        },
-        timeout=ANTHROPIC_TIMEOUT,
+    """Claude sentezi MAX ABONELİK üzerinden (claude CLI, ~/.claude OAuth) — eskiden
+    doğrudan API (ANTHROPIC_API_KEY) idi; kredi bitince "Credit balance is too low" ile
+    düşüyordu. Artık _build_env() API-key/auth-token'ı strip eder → abonelik kimliği =
+    sıfır API faturası (#156 spawn-fix ile aynı desen). Sync (research /run threadpool'da
+    koşar → subprocess bloklaması event-loop'u kesmez). Tool-suz salt-üretim (-p headless).
+    Fail → çağıran aya:8b'ye düşer (research düşmesin). Ad legacy; transport=CLI."""
+    binary = cc_module._find_claude()
+    if not binary:
+        raise HTTPException(503, "claude CLI bulunamadi (abonelik sentezi icin gerekli)")
+    env = cc_module._build_env()  # ANTHROPIC_API_KEY/AUTH strip → Max abonelik
+    proc = subprocess.run(
+        [binary, "-p", user, "--append-system-prompt", system, "--model", model, "--output-format", "json"],
+        capture_output=True,
+        text=True,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        timeout=CLAUDE_CLI_TIMEOUT,
     )
-    if not r.ok:
-        raise HTTPException(503, f"anthropic fail: {r.status_code} {r.text[:200]}")
-    data = r.json()
-    parts = data.get("content", [])
-    text_parts = [p.get("text", "") for p in parts if p.get("type") == "text"]
-    return "".join(text_parts).strip()
+    if proc.returncode != 0:
+        raise HTTPException(503, f"claude cli rc={proc.returncode}: {(proc.stderr or '')[:200]}")
+    data = _json.loads(proc.stdout or "{}")
+    if data.get("is_error"):
+        raise HTTPException(503, f"claude cli error: {str(data.get('result'))[:200]}")
+    return str(data.get("result", "")).strip()
 
 
 # ── Araştırma-ajanı sentez-modeli (FAZ1) ──
@@ -603,7 +609,10 @@ def research_health():
     except Exception as e:
         out["memory_db"] = {"ok": False, "error": str(e)[:100]}
     out["anthropic"] = {
-        "configured": bool(ANTHROPIC_API_KEY),
+        # Artık MAX ABONELİK (claude CLI, ~/.claude OAuth) — API-key DEĞİL (#156 deseni).
+        # configured = CLI bulunuyor mu (sentez buna bağlı); API-key'e bakmaz.
+        "auth_mode": "subscription-cli",
+        "configured": bool(cc_module._find_claude()),
         "model": ANTHROPIC_MODEL,  # /ask varsayılanı (Haiku) — geriye-uyum
         "synth_models": {"haiku": ANTHROPIC_MODEL, "sonnet": ANTHROPIC_MODEL_SONNET},
         "default_synth_model": "sonnet",
