@@ -45,6 +45,11 @@ DB="${HOOK_DB:-/opt/linux-ai-server/data/claude_memory.db}"
 SETTINGS_FILE="${AUTONOMOUS_SETTINGS:-/opt/linux-ai-server/automation/autonomous-claude-settings.json}"
 GUARDRAILS="${AUTONOMOUS_GUARDRAILS:-/opt/linux-ai-server/automation/autonomous-claude-guardrails.md}"
 MODEL="${AUTONOMOUS_MODEL:-claude-sonnet-4-6}"
+# Max-plan ABONELİK kimliğini zorla (autonomous-claude.sh deseni): ANTHROPIC_API_KEY set'liyken
+# claude CLI pay-as-you-go API kullanır → kredi bitince "Credit balance is too low" ile retry DÜŞER
+# (üstelik bu RETRY scripti → ölü-key'le sonsuz fail-retry döngüsü riski). Strip → ~/.claude OAuth
+# (Max-plan) = sıfır API faturası. Script claude dışında ANTHROPIC_API_KEY kullanmıyor → unset güvenli.
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
 POISON_THRESHOLD="${POISON_THRESHOLD:-3}"
 INTER_SPAWN_SLEEP="${INTER_SPAWN_SLEEP:-5}"
 HOOK_LOG_DIR="${HOOK_LOG_DIR:-/opt/linux-ai-server/data/hook-logs}"

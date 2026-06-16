@@ -16,6 +16,10 @@ LOCAL="/data/projects/$NAME"
 [ "$NAME" = "claude-server" ] && LOCAL="/opt/linux-ai-server"
 SETTINGS="/opt/linux-ai-server/automation/pr-review-settings.json"
 MODEL="${PR_REVIEW_MODEL:-claude-sonnet-4-6}"
+# Max-plan ABONELİK kimliğini zorla (autonomous-claude.sh deseni): ANTHROPIC_API_KEY set'liyken
+# claude CLI pay-as-you-go API kullanır → kredi bitince "Credit balance is too low" ile spawn DÜŞER.
+# Strip → ~/.claude OAuth (Max-plan) = sıfır API faturası. Script claude dışında key kullanmıyor.
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
 LOG="${PR_REVIEW_SPAWN_LOG:-/opt/linux-ai-server/data/hook-logs/pr-review-spawn.log}"
 SPAWN_ENABLED="${SPAWN_ENABLED:-0}"
 mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
