@@ -35,14 +35,20 @@ fi
 declare -a HITS=()
 
 scan() {
-    local label="$1" pattern="$2"
-    local match
-    match=$(grep -aoE "$pattern" "$SPAWN_LOG" 2>/dev/null | head -1)
-    if [ -n "$match" ]; then
-        local short
+    local label="$1" pattern="$2" exclude="${3:-}"
+    # TÜM eşleşmeleri tara (eski head -1 değil): exclude ile eşleşen FP'leri ATLA ama
+    # diğer eşleşmelere bak → localhost'u eleyip gerçek-uzak hit'i kaçırmamak için.
+    local match short
+    while IFS= read -r match; do
+        [ -z "$match" ] && continue
+        # exclude verildiyse ve eşleşme onu da içeriyorsa → FP, atla (ör. 127.0.0.1 ≠ exfil)
+        if [ -n "$exclude" ] && printf '%s' "$match" | grep -qE "$exclude"; then
+            continue
+        fi
         short=$(printf '%s' "$match" | tr -d '\n' | head -c 200)
         HITS+=("$label: $short")
-    fi
+        return  # ilk GERÇEK (exclude-dışı) hit yeter
+    done < <(grep -aoE "$pattern" "$SPAWN_LOG" 2>/dev/null)
 }
 
 # ───── Credential read ─────
@@ -59,7 +65,12 @@ scan "cred-k8s"     'kubectl[[:space:]]+get[[:space:]]+secret[^|]*-o[[:space:]]+
 # ───── Exfiltration ─────
 # (eski scan_remote() bozuktu: local label= pattern= / match= / if [ -n ] → arg'ları hiç
 #  kullanmıyordu, exfil-curl-pipe FİİLEN HİÇ TARANMIYORDU. Normal scan'e çevrildi.)
-scan "exfil-curl-pipe"  '(curl|wget)[[:space:]][^|;]*\|[[:space:]]*(bash|sh|python|python3)'
+# exclude=localhost: kuralın AMACI exfiltration (veri UZAĞA kaçış); 127.0.0.1/localhost'a
+# curl tanım gereği exfil DEĞİL (veri yerelde kalır). FP: spawn'ın meşru not-okundu komutu
+# 'curl 127.0.0.1/api.../read -H X-Memory-Key | python3 -c <json-parse>' URGENT alarm üretmişti
+# (#99963). Artık localhost-hedefli eşleşmeler atlanır. RESIDUAL: 'curl localhost | bash' yerel-
+# exec'i de elenir — kabul: zaten-ele-geçmiş yerel-sunucu gerektirir + exfil değil (kural-amacı dışı).
+scan "exfil-curl-pipe"  '(curl|wget)[[:space:]][^|;]*\|[[:space:]]*(bash|sh|python|python3)'  '127\.0\.0\.1|localhost|::1'
 scan "exfil-base64-net" 'base64[[:space:]][^|;]*\|[[:space:]]*(curl|wget|nc|ncat)'
 scan "exfil-curl-file"  'curl[[:space:]][^;|]*-(F|-data-binary)[[:space:]]@'
 
