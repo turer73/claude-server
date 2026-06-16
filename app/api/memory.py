@@ -50,6 +50,35 @@ def get_db():
     return conn
 
 
+_read_by_ready = False
+
+
+def _ensure_read_by(db):
+    """notes.read_by kolonunu idempotent ekle (per-device okuma izleme — #647).
+    Eski TEK 'read' kolonu GLOBAL'di: bir device okuyunca herkese okundu sayılıyordu →
+    çoğulcu-okuma bozuktu. read_by = '|dev1|dev2|' formatında okuyan-device listesi.
+    Backward-compat: legacy read=1 = herkesçe-okunmuş; device'sız mark-read hâlâ read=1 set eder."""
+    global _read_by_ready
+    if _read_by_ready:
+        return
+    try:
+        cols = [r[1] for r in db.execute("PRAGMA table_info(notes)").fetchall()]
+        if "read_by" not in cols:
+            db.execute("ALTER TABLE notes ADD COLUMN read_by TEXT DEFAULT ''")
+            db.commit()
+    except Exception:
+        pass
+    _read_by_ready = True
+
+
+def _unread_pred(device):
+    """'<device> için okunmamış' SQL parçası + parametreleri. device yoksa legacy global.
+    Legacy read=1 (device'sız okunmuş) tüm device'lar için okundu sayılır (geri-uyum)."""
+    if device:
+        return "read=0 AND (read_by IS NULL OR read_by NOT LIKE ?)", [f"%|{device}|%"]
+    return "read=0", []
+
+
 def _track_read(db, table: str, row_id: int):
     """Read tracking — her okumada sayaç artır"""
     db.execute(f"UPDATE {table} SET read_count=read_count+1, last_read_at=datetime('now') WHERE id=?", (row_id,))
@@ -941,13 +970,17 @@ async def get_project_detail(project_name: str):
 async def list_notes(device: str | None = None, unread_only: bool = False):
     db = get_db()
     try:
+        _ensure_read_by(db)
         query = "SELECT * FROM notes WHERE 1=1"
         params = []
         if device:
             query += " AND (to_device=? OR to_device IS NULL)"
             params.append(device)
         if unread_only:
-            query += " AND read=0"
+            # device verildiyse PER-DEVICE okunmamış, yoksa legacy global (#647)
+            pred, pp = _unread_pred(device)
+            query += f" AND {pred}"
+            params.extend(pp)
         query += " ORDER BY created_at DESC LIMIT 50"
         return [dict(r) for r in db.execute(query, params).fetchall()]
     finally:
@@ -1010,9 +1043,24 @@ async def create_note(data: NoteCreate):
 
 
 @router.put("/notes/{note_id}/read")
-async def mark_note_read(note_id: int):
+async def mark_note_read(note_id: int, device: str | None = None):
+    """Notu okundu işaretle. device verilirse PER-DEVICE (read_by'a eklenir, diğer
+    device'lar için okunmamış kalır — #647). device yoksa LEGACY global read=1
+    (geri-uyum: eski çağıranlar bozulmaz, ama çoğulcu-okuma kaybolur → device gönderin)."""
     db = get_db()
     try:
+        _ensure_read_by(db)
+        if device:
+            row = db.execute("SELECT read_by FROM notes WHERE id=?", (note_id,)).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="note not found")
+            devs = [d for d in (row[0] or "").strip("|").split("|") if d]
+            if device not in devs:
+                devs.append(device)
+            new_rb = "|" + "|".join(devs) + "|" if devs else ""
+            db.execute("UPDATE notes SET read_by=? WHERE id=?", (new_rb, note_id))
+            db.commit()
+            return {"status": "read", "device": device, "read_by": devs}
         db.execute("UPDATE notes SET read=1 WHERE id=?", (note_id,))
         db.commit()
         return {"status": "read"}
@@ -1283,8 +1331,11 @@ async def get_onboard_prompt(device_name: str):
         bugs = db.execute("SELECT project, title, device_name FROM discoveries WHERE type='bug' AND status='active'").fetchall()
         bugs_text = "\n".join(f"  - [{r[0]}] {r[1]} (bulan: {r[2]})" for r in bugs) if bugs else "  Yok"
 
+        _ensure_read_by(db)
+        _pred, _pp = _unread_pred(device_name)  # PER-DEVICE okunmamış (#647)
         notes = db.execute(
-            "SELECT from_device, title, content FROM notes WHERE (to_device=? OR to_device IS NULL) AND read=0", (device_name,)
+            f"SELECT from_device, title, content FROM notes WHERE (to_device=? OR to_device IS NULL) AND {_pred}",
+            (device_name, *_pp),
         ).fetchall()
         notes_text = "\n".join(f"  - {r[0]}: {r[1]} — {r[2]}" for r in notes) if notes else "  Yok"
 

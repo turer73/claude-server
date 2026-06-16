@@ -96,7 +96,7 @@ while IFS=$'\t' read -r ID FROM TO TITLE CONTENT TS; do
 done <<< "$NEW"
 
 echo "Tam icerik icin: bash /opt/linux-ai-server/scripts/claude-memory.sh notes unread"
-echo "Okundu isaretle: curl -X PUT http://127.0.0.1:8420/api/v1/memory/notes/<ID>/read -H \"X-Memory-Key: \$KEY\""
+echo "Okundu isaretle (PER-DEVICE — device sart, yoksa global): curl -X PUT \"http://127.0.0.1:8420/api/v1/memory/notes/<ID>/read?device=$DEV\" -H \"X-Memory-Key: \$KEY\""
 
 # Marker'ı güncelle
 echo "$CURRENT_MAX" > "$MARKER"

@@ -61,12 +61,18 @@ def main() -> int:
     # Broadcast'lar herkese acik notlardir; klipper'in da gormesi gerekir.
     try:
         con = sqlite3.connect(DB_PATH)
+        # PER-DEVICE okunmamış (#647): read_by varsa bu device'a göre filtrele; yoksa legacy.
+        # Kolon-guard: read_by henüz yoksa eski global sorgu (sessiz-fail önlenir).
+        cols = [r[1] for r in con.execute("PRAGMA table_info(notes)").fetchall()]
+        if "read_by" in cols:
+            where = "(to_device=? OR to_device IS NULL) AND read=0 AND (read_by IS NULL OR read_by NOT LIKE ?)"
+            qparams = (DEVICE, f"%|{DEVICE}|%")
+        else:
+            where = "(to_device=? OR to_device IS NULL) AND read=0"
+            qparams = (DEVICE,)
         cur = con.execute(
-            "SELECT id, from_device, title, substr(content, 1, 400) "
-            "FROM notes "
-            "WHERE (to_device=? OR to_device IS NULL) AND read=0 "
-            "ORDER BY id",
-            (DEVICE,),
+            f"SELECT id, from_device, title, substr(content, 1, 400) FROM notes WHERE {where} ORDER BY id",
+            qparams,
         )
         rows = cur.fetchall()
         con.close()
@@ -95,8 +101,8 @@ def main() -> int:
         [
             "Detay icin:",
             f'  sqlite3 {DB_PATH} "SELECT content FROM notes WHERE id IN (...)"',
-            "Okundu isaretle (her not isleminden sonra):",
-            '  curl -X PUT http://127.0.0.1:8420/api/v1/memory/notes/<ID>/read -H "X-Memory-Key: $KEY"',
+            "Okundu isaretle (PER-DEVICE — device parametresi ŞART, yoksa global okundu olur):",
+            f'  curl -X PUT "http://127.0.0.1:8420/api/v1/memory/notes/<ID>/read?device={DEVICE}" -H "X-Memory-Key: $KEY"',
         ]
     )
     reason = "\n".join(lines)
