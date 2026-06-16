@@ -63,6 +63,9 @@
 # + token olurse OUTCOME:fail -> alert => ayri liveness-check gereksiz. ENABLED 2026-06-07.
 15 8 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh seo-audit /opt/linux-ai-server/automation/seo-audit.sh
 30 8 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh seo-gsc /opt/linux-ai-server/automation/seo-gsc.sh
+# seo-plausible (gercek-trafik): GSC'den HEMEN SONRA (08:35) -> davranis tarafi (bounce/sure/kaynak).
+# GSC CTR-bulgusu ile capraz: dusuk-CTR + dusuk-bounce = snippet sorunu; +yuksek-bounce = landing. ENABLED 2026-06-16.
+35 8 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh seo-plausible /opt/linux-ai-server/automation/seo-plausible.sh
 # ad-advisor (reklam-baslatma danismani): GSC->reklam-deger kelime + /claude metin taslagi.
 # seo-gsc'den HEMEN SONRA (08:45) -> taze OAuth+GSC. Salt-okunur, ortak-hafiza, mail yok. ENABLED 2026-06-09.
 45 8 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh ad-advisor /opt/linux-ai-server/automation/ad-advisor.sh
