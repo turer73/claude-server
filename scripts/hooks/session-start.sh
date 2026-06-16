@@ -109,12 +109,18 @@ fi
     sqlite3 "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title FROM discoveries WHERE type='plan' AND status='active' ORDER BY created_at DESC LIMIT 5;" 2>/dev/null
   fi
 
-  # Okunmamis notlar
-  NOTES=$(sqlite3 "$DB" "SELECT COUNT(*) FROM notes WHERE (to_device='$DEV' OR to_device IS NULL) AND read=0;" 2>/dev/null)
+  # Okunmamis notlar — PER-DEVICE (#647): read_by varsa bu cihaza gore filtrele, yoksa legacy.
+  HAS_RB=$(sqlite3 "$DB" "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='read_by';" 2>/dev/null)
+  if [ "${HAS_RB:-0}" -gt 0 ]; then
+    UNREAD_PRED="read=0 AND (read_by IS NULL OR read_by NOT LIKE '%|$DEV|%')"
+  else
+    UNREAD_PRED="read=0"
+  fi
+  NOTES=$(sqlite3 "$DB" "SELECT COUNT(*) FROM notes WHERE (to_device='$DEV' OR to_device IS NULL) AND $UNREAD_PRED;" 2>/dev/null)
   if [ "${NOTES:-0}" -gt 0 ]; then
     echo ""
     echo "Okunmamis Notlar ($NOTES):"
-    sqlite3 "$DB" "SELECT '  ' || from_device || ': ' || title || ' — ' || substr(content,1,80) FROM notes WHERE (to_device='$DEV' OR to_device IS NULL) AND read=0 ORDER BY created_at DESC LIMIT 5;" 2>/dev/null
+    sqlite3 "$DB" "SELECT '  ' || from_device || ': ' || title || ' — ' || substr(content,1,80) FROM notes WHERE (to_device='$DEV' OR to_device IS NULL) AND $UNREAD_PRED ORDER BY created_at DESC LIMIT 5;" 2>/dev/null
   fi
 
   # Son 3 oturum

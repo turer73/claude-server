@@ -76,6 +76,7 @@ CREATE TABLE notes (
     title TEXT NOT NULL,
     content TEXT NOT NULL,
     read INTEGER DEFAULT 0,
+    read_by TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -536,6 +537,54 @@ async def test_notes_crud(client, memory_db):
 
     resp = await client.get("/api/v1/memory/notes?unread_only=true")
     assert len(resp.json()) == 0
+
+
+async def test_notes_per_device_read(client, memory_db):
+    """#647: device-param ile okundu PER-DEVICE — bir device okuyunca diğerleri için
+    okunmamış KALIR (eski global read-flag hatası düzeldi)."""
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={"from_device": "surer", "title": "broadcast", "content": "herkese"},
+    )
+    nid = resp.json()["id"]
+
+    # klipper okudu (device-param) → klipper için okundu, opencode için OKUNMAMIŞ kalmalı
+    resp = await client.put(f"/api/v1/memory/notes/{nid}/read?device=klipper")
+    assert resp.status_code == 200
+    assert resp.json()["read_by"] == ["klipper"]
+
+    resp = await client.get("/api/v1/memory/notes?device=klipper&unread_only=true")
+    assert len(resp.json()) == 0  # klipper için okundu
+    resp = await client.get("/api/v1/memory/notes?device=opencode&unread_only=true")
+    assert len(resp.json()) == 1  # opencode HÂLÂ görür (global-flag hatası yok)
+
+    # opencode da okudu → ikisi de read_by'da, ikisi için de okunmamış kalmaz
+    resp = await client.put(f"/api/v1/memory/notes/{nid}/read?device=opencode")
+    assert set(resp.json()["read_by"]) == {"klipper", "opencode"}
+    resp = await client.get("/api/v1/memory/notes?device=opencode&unread_only=true")
+    assert len(resp.json()) == 0
+
+    # idempotent: aynı device tekrar → çift eklenmez
+    resp = await client.put(f"/api/v1/memory/notes/{nid}/read?device=klipper")
+    assert resp.json()["read_by"].count("klipper") == 1
+
+
+async def test_notes_legacy_read_marks_all_devices(client, memory_db):
+    """Geri-uyum: device'sız mark-read (legacy) → tüm device'lar için okundu (read=1)."""
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={"from_device": "surer", "title": "legacy", "content": "x"},
+    )
+    nid = resp.json()["id"]
+    await client.put(f"/api/v1/memory/notes/{nid}/read")  # device YOK → legacy global
+    for dev in ("klipper", "opencode", "surer"):
+        resp = await client.get(f"/api/v1/memory/notes?device={dev}&unread_only=true")
+        assert len(resp.json()) == 0  # legacy read=1 herkes için okundu
+
+
+async def test_notes_mark_read_missing_device_404(client, memory_db):
+    resp = await client.put("/api/v1/memory/notes/999999/read?device=klipper")
+    assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
