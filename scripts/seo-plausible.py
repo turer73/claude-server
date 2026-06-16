@@ -22,6 +22,7 @@ import json
 import os
 import sys
 import urllib.request
+from typing import Any
 
 ENV_FILE = os.environ.get("NOTIFY_ENV_FILE", "/opt/linux-ai-server/.env")
 API_BASE = os.environ.get("API_BASE", "http://localhost:8420")
@@ -63,19 +64,20 @@ def _date_range() -> list[str]:
     return [str(start), str(end)]
 
 
-def _query(url: str, key: str, body: dict, timeout: int = 30) -> dict:
+def _query(url: str, key: str, body: dict[str, Any], timeout: int = 30) -> dict[str, Any]:
     """Plausible Stats API v2 — POST /api/v2/query, Bearer auth."""
     data = json.dumps(body).encode()
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     req = urllib.request.Request(url, data=data, headers=headers)  # noqa: S310
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-        return json.loads(resp.read().decode() or "{}")
+        result: dict[str, Any] = json.loads(resp.read().decode() or "{}")
+        return result
 
 
 # ── Saf analiz fonksiyonları (mock'la test edilir) ──────────────────────────
 
 
-def analyze_pages(rows: list[dict]) -> list[tuple[str, str]]:
+def analyze_pages(rows: list[dict[str, Any]]) -> list[tuple[str, str]]:
     """Top-sayfa satırları (dimensions=[page], metrics=[visitors,bounce_rate,visit_duration]) →
     yüksek-bounce / düşük-etkileşim bulguları. Eşikler muhafazakâr (gürültü-az):
     bounce ≥%80 + ≥50 ziyaretçi = landing/intent uyumsuzluğu sinyali."""
@@ -96,7 +98,7 @@ def analyze_pages(rows: list[dict]) -> list[tuple[str, str]]:
     return f
 
 
-def analyze_sources(rows: list[dict], total_visitors: int) -> list[tuple[str, str]]:
+def analyze_sources(rows: list[dict[str, Any]], total_visitors: int) -> list[tuple[str, str]]:
     """Kaynak satırları (dimensions=[source], metrics=[visitors]) → organik-pay.
     Düşük organik pay = SEO büyüme fırsatı (yeterli toplam trafik varsa)."""
     f: list[tuple[str, str]] = []
@@ -121,7 +123,7 @@ def analyze_sources(rows: list[dict], total_visitors: int) -> list[tuple[str, st
 # ── Çekim + denetim ─────────────────────────────────────────────────────────
 
 
-def audit_site(url: str, key: str, site: str) -> dict:
+def audit_site(url: str, key: str, site: str) -> dict[str, Any]:
     dr = _date_range()
     findings: list[tuple[str, str]] = []
     qurl = f"{url}/api/v2/query"
@@ -180,7 +182,7 @@ def audit_site(url: str, key: str, site: str) -> dict:
     return {"site": site, "visitors": visitors, "pageviews": pageviews, "bounce": bounce, "duration": dur, "findings": findings}
 
 
-def build_report(results: list[dict]) -> str:
+def build_report(results: list[dict[str, Any]]) -> str:
     lines = [f"📊 Plausible Analytics — Trafik Denetimi ({DAYS}g)\n"]
     for r in results:
         p1 = sum(1 for s, _ in r["findings"] if s == "P1")
@@ -195,11 +197,12 @@ def build_report(results: list[dict]) -> str:
     return "\n".join(lines).strip()
 
 
-def _post_json(url: str, body: dict, headers: dict, timeout: int) -> dict:
+def _post_json(url: str, body: dict[str, Any], headers: dict[str, str], timeout: int) -> dict[str, Any]:
     data = json.dumps(body).encode()
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", **headers})  # noqa: S310
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-        return json.loads(resp.read().decode() or "{}")
+        result: dict[str, Any] = json.loads(resp.read().decode() or "{}")
+        return result
 
 
 def _write_bug(site: str, findings: list[tuple[str, str]]) -> str:
