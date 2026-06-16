@@ -17,6 +17,7 @@ OLLAMA_URL = "http://localhost:11434"
 COLLECTION = "klipper-memory"
 EMBED_MODEL = "bge-m3"
 LLM_MODEL = "qwen2.5:3b"
+ALLOWED_LLM_MODELS = {"qwen2.5:3b", "qwen2.5:7b", "qwen2.5-coder:7b", "aya:8b"}
 METRICS_DB = os.environ.get("RAG_METRICS_DB", "/opt/linux-ai-server/data/rag_metrics.db")
 
 router = APIRouter(prefix="/api/v1/rag", tags=["rag"], dependencies=[Depends(verify_key)])
@@ -226,6 +227,7 @@ def health():
             "ollama": {"ok": True, "version": o.get("version")},
             "embed_model": EMBED_MODEL,
             "llm_model": LLM_MODEL,
+            "allowed_llm_models": sorted(ALLOWED_LLM_MODELS),
             "metrics_db_total_queries": total_queries,
         }
     except Exception as e:
@@ -285,7 +287,10 @@ def ask(
     top_k: int = Body(5, embed=True),
     temperature: float = Body(0.2, embed=True),
     max_tokens: int = Body(400, embed=True),
+    model: str = Body(LLM_MODEL, embed=True),
 ):
+    if model not in ALLOWED_LLM_MODELS:
+        raise HTTPException(422, f"model '{model}' not allowed; use one of: {sorted(ALLOWED_LLM_MODELS)}")
     t0 = time.time()
     vec = _embed(q)
     hits = _hybrid_search(q, vec, top_k=top_k, project=project)
@@ -301,7 +306,7 @@ def ask(
     r = requests.post(
         f"{OLLAMA_URL}/api/generate",
         json={
-            "model": LLM_MODEL,
+            "model": model,
             "prompt": prompt,
             "stream": False,
             "options": {"temperature": temperature, "num_predict": max_tokens, "num_ctx": 8192},
@@ -319,6 +324,7 @@ def ask(
     return {
         "query": q,
         "project": project,
+        "model": model,
         "answer": res.get("response", "").strip(),
         "sources": [
             {
