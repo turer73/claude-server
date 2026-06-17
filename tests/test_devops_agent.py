@@ -885,6 +885,33 @@ async def test_vps_ssh_probe_no_host():
     assert await agent._vps_ssh_probe() is None
 
 
+async def test_local_internet_up_reachable():
+    """First TCP connect succeeds → internet up, no second target tried."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.core.devops_agent import DevOpsAgent
+
+    agent = DevOpsAgent(db=None, interval=60)
+    writer = MagicMock()
+    writer.wait_closed = AsyncMock()
+    with patch("asyncio.open_connection", new_callable=AsyncMock, return_value=(MagicMock(), writer)) as oc:
+        assert await agent._local_internet_up() is True
+    writer.close.assert_called_once()
+    assert oc.await_count == 1  # short-circuits after the first success
+
+
+async def test_local_internet_up_down():
+    """Every target fails (timeout/refused) → internet down."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.core.devops_agent import DevOpsAgent
+
+    agent = DevOpsAgent(db=None, interval=60)
+    with patch("asyncio.open_connection", new_callable=AsyncMock, side_effect=OSError("refused")) as oc:
+        assert await agent._local_internet_up() is False
+    assert oc.await_count == 2  # both anycast targets attempted
+
+
 async def test_devops_vps_metrics_history_route(devops_client, auth_headers):
     resp = await devops_client.get("/api/v1/devops/vps/metrics/history?minutes=60", headers=auth_headers)
     assert resp.status_code == 200
