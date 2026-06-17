@@ -39,8 +39,10 @@ BASE_IMPR = 104
 CHECKPOINTS = [("week1", 7), ("week2", 14), ("week4", 28)]
 CTR_TARGET = 3.0  # surer-realist hedef %; üstü = başarılı
 
-# seo-gsc helper'larını import et (token + _api + _post_json + _envget)
-_spec = importlib.util.spec_from_file_location("seogsc", f"{ROOT}/scripts/seo-gsc.py")
+# seo-gsc helper'larını import et (token + _api + _post_json + _envget).
+# Yol __file__'a göre (CI checkout'u /opt'ta DEĞİL — hardcoded ROOT import'u CI'da patlatır).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_spec = importlib.util.spec_from_file_location("seogsc", os.path.join(_HERE, "seo-gsc.py"))
 assert _spec is not None, "seo-gsc.py spec yüklenemedi"
 assert _spec.loader is not None, "seo-gsc.py loader yok"
 gsc = importlib.util.module_from_spec(_spec)
