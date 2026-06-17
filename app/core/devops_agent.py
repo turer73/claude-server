@@ -1015,6 +1015,28 @@ class DevOpsAgent:
         except Exception:
             pass
 
+    async def _local_internet_up(self) -> bool:
+        """Whether klipper itself has outbound internet right now.
+
+        Used to disambiguate a failed VPS SSH probe: if our own WAN is down, the
+        failure is local, not a VPS outage. Tries a short TCP connect to public
+        anycast resolvers; any success → internet up. ICMP is avoided (often
+        filtered, needs the ping binary); a raw TCP connect needs no privileges.
+        """
+        for host, port in (("1.1.1.1", 443), ("8.8.8.8", 53)):
+            try:
+                fut = asyncio.open_connection(host, port)
+                _, writer = await asyncio.wait_for(fut, timeout=3)
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except OSError:
+                    pass
+                return True
+            except (TimeoutError, OSError):
+                continue
+        return False
+
     async def _check_vps(self) -> None:
         """Collect VPS host metrics + container state via the SSH probe, persist, alert."""
         now = datetime.now(UTC).isoformat()
@@ -1023,6 +1045,23 @@ class DevOpsAgent:
         if probe is None:
             await self._store_vps_metrics({}, online=False)
             self._latest_vps = {"online": False, "timestamp": now}
+            # Disambiguate before blaming the VPS: an SSH-probe failure during a
+            # local internet outage means *klipper's own WAN* dropped, not that the
+            # VPS is down. Without this, every klipper ISP/DNS hiccup produced a
+            # false "vps:offline" alert storm (2026-06-17 ~1h WAN blip incident).
+            if not await self._local_internet_up():
+                source = "klipper:wan-down"
+                if source not in self._active_alerts:
+                    self._active_alerts[source] = Alert(
+                        id=f"{source}-{self._check_count}",
+                        severity="critical",
+                        source=source,
+                        message="klipper has no outbound internet — VPS reachability unknown",
+                        value=0,
+                        threshold=1,
+                        timestamp=now,
+                    )
+                return
             source = "vps:offline"
             if source not in self._active_alerts:
                 self._active_alerts[source] = Alert(
@@ -1039,9 +1078,10 @@ class DevOpsAgent:
         await self._store_vps_metrics(probe, online=True)
         self._latest_vps = {**probe, "online": True, "timestamp": now}
 
-        # Auto-resolve VPS offline alert
-        if "vps:offline" in self._active_alerts:
-            del self._active_alerts["vps:offline"]
+        # Auto-resolve VPS offline / WAN-down alerts: a successful probe proves both
+        # the VPS *and* our own internet are up.
+        for resolved in ("vps:offline", "klipper:wan-down"):
+            self._active_alerts.pop(resolved, None)
 
         # Per-container down/up alerts (exact name match against running set)
         running = set(probe.get("names", []))

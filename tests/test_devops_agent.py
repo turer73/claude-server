@@ -798,14 +798,81 @@ async def test_check_vps_offline(tmp_path, monkeypatch):
     await db.initialize()
     agent = DevOpsAgent(db=db, interval=60)
 
-    with patch.object(agent, "_vps_ssh_probe", new_callable=AsyncMock, return_value=None):
+    # Probe failed but klipper's own internet is up → genuine VPS outage.
+    with (
+        patch.object(agent, "_vps_ssh_probe", new_callable=AsyncMock, return_value=None),
+        patch.object(agent, "_local_internet_up", new_callable=AsyncMock, return_value=True),
+    ):
         await agent._check_vps()
 
     rows = await db.fetch_all("SELECT * FROM vps_metrics_history")
     assert len(rows) == 1
     assert rows[0]["online"] == 0
     assert "vps:offline" in agent._active_alerts
+    assert "klipper:wan-down" not in agent._active_alerts
     assert agent.latest_vps["online"] is False
+    await db.close()
+    get_settings.cache_clear()
+
+
+async def test_check_vps_local_wan_down(tmp_path, monkeypatch):
+    """Probe fails because klipper itself lost internet → blame WAN, not the VPS."""
+    from unittest.mock import AsyncMock, patch
+
+    monkeypatch.setattr("app.core.config.load_yaml_config", lambda path: {})
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    from app.core.devops_agent import DevOpsAgent
+    from app.db.database import Database
+
+    db = Database(str(tmp_path / "vps_wan.db"))
+    await db.initialize()
+    agent = DevOpsAgent(db=db, interval=60)
+
+    with (
+        patch.object(agent, "_vps_ssh_probe", new_callable=AsyncMock, return_value=None),
+        patch.object(agent, "_local_internet_up", new_callable=AsyncMock, return_value=False),
+    ):
+        await agent._check_vps()
+
+    # No false VPS-offline alert; a distinct klipper-WAN alert instead.
+    assert "klipper:wan-down" in agent._active_alerts
+    assert "vps:offline" not in agent._active_alerts
+    assert agent.latest_vps["online"] is False
+    await db.close()
+    get_settings.cache_clear()
+
+
+async def test_check_vps_recovery_clears_wan_alert(tmp_path, monkeypatch):
+    """A successful probe clears a prior klipper:wan-down alert."""
+    from unittest.mock import AsyncMock, patch
+
+    monkeypatch.setattr("app.core.config.load_yaml_config", lambda path: {})
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    from app.core.devops_agent import Alert, DevOpsAgent
+    from app.db.database import Database
+
+    db = Database(str(tmp_path / "vps_recover.db"))
+    await db.initialize()
+    agent = DevOpsAgent(db=db, interval=60)
+    agent._active_alerts["klipper:wan-down"] = Alert(
+        id="klipper:wan-down-0",
+        severity="critical",
+        source="klipper:wan-down",
+        message="stale",
+        value=0,
+        threshold=1,
+        timestamp="2026-06-17T00:00:00+00:00",
+    )
+
+    probe = {"cpu": 10.0, "mem": 20.0, "disk": 30.0, "containers_total": 5, "containers_up": 5, "names": []}
+    with patch.object(agent, "_vps_ssh_probe", new_callable=AsyncMock, return_value=probe):
+        await agent._check_vps()
+
+    assert "klipper:wan-down" not in agent._active_alerts
     await db.close()
     get_settings.cache_clear()
 
@@ -816,6 +883,33 @@ async def test_vps_ssh_probe_no_host():
     agent = DevOpsAgent(db=None, interval=60)
     agent._vps_host = ""
     assert await agent._vps_ssh_probe() is None
+
+
+async def test_local_internet_up_reachable():
+    """First TCP connect succeeds → internet up, no second target tried."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.core.devops_agent import DevOpsAgent
+
+    agent = DevOpsAgent(db=None, interval=60)
+    writer = MagicMock()
+    writer.wait_closed = AsyncMock()
+    with patch("asyncio.open_connection", new_callable=AsyncMock, return_value=(MagicMock(), writer)) as oc:
+        assert await agent._local_internet_up() is True
+    writer.close.assert_called_once()
+    assert oc.await_count == 1  # short-circuits after the first success
+
+
+async def test_local_internet_up_down():
+    """Every target fails (timeout/refused) → internet down."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.core.devops_agent import DevOpsAgent
+
+    agent = DevOpsAgent(db=None, interval=60)
+    with patch("asyncio.open_connection", new_callable=AsyncMock, side_effect=OSError("refused")) as oc:
+        assert await agent._local_internet_up() is False
+    assert oc.await_count == 2  # both anycast targets attempted
 
 
 async def test_devops_vps_metrics_history_route(devops_client, auth_headers):
