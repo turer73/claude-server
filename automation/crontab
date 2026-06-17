@@ -72,6 +72,9 @@
 # adsense-readiness (reklam-alma/monetizasyon): AdSense site-durumu (API) + icerik denetimi ->
 # hazirlik-checklist + durum-degisimi alert. ad-advisor'dan sonra (09:00). Salt-okunur, mail yok. ENABLED 2026-06-09.
 0 9 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh adsense-readiness /opt/linux-ai-server/automation/adsense-readiness.sh
+# seo-ctr-watch (Pzt 09:05): PR#223 'arena yks' title-fix etkisini izle. Merge'e kadar no-op;
+# merge sonrasi +1/+2/+4 hafta GSC CTR/pos vs baseline -> ortak-hafiza NOT. +4hafta sonra emekli. Plan #654. ENABLED 2026-06-17.
+5 9 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh seo-ctr-watch /opt/linux-ai-server/automation/seo-ctr-watch.sh
 # LIVESYS-SENSE alarm-yolu canary (gunluk 05:30) — known-good+known-bad enjekte edip
 # cron_outcomes'ta beklenen satiri dogrular; alarm-pipeline bozuksa OUTCOME:fail.
 # Sentetik enjeksiyonlar CANARY_SUPPRESS_ALERT ile sessiz; kendi sonucu normal akar.
