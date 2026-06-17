@@ -89,3 +89,7 @@
 # RAG haftalik reindex (P0-b, surer) — klipper-memory'yi guncel DB'den yeniden kur (Pazar 02:00).
 # Index manuel-bagimliydi -> 13-May'dan donmustu (878 oturum+239 memory eksik); bu cron tazeler.
 0 2 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh rag-reindex /opt/linux-ai-server/automation/rag-reindex.sh
+# renderhane process-webhooks kuyruk drenaji (*/5) — Vercel Hobby 2-cron+gunluk
+# limiti yuzunden vercel.json'dan cikarildi (PR turer73/renderhane#19); klipper
+# ustlendi. CRON_SECRET .env'den (secure curl-config, ps-sizinti yok). Fail->Telegram.
+*/5 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh rh-process-webhooks /opt/linux-ai-server/automation/rh-process-webhooks.sh
