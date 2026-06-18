@@ -4,7 +4,6 @@ Duplicate koruması, FTS arama, read tracking, lifecycle yönetimi.
 """
 
 import asyncio
-import json
 import re
 import sqlite3
 from typing import Literal
@@ -414,51 +413,6 @@ async def memory_dashboard():
     return await asyncio.to_thread(_dashboard_query)
 
 
-# ============ Devices ============
-
-
-@router.get("/devices")
-async def list_devices():
-    db = get_db()
-    try:
-        return [dict(r) for r in db.execute("SELECT * FROM devices ORDER BY last_seen DESC").fetchall()]
-    finally:
-        db.close()
-
-
-@router.post("/devices")
-async def register_device(data: DeviceRegister):
-    db = get_db()
-    try:
-        db.execute(
-            """
-            INSERT INTO devices (name, platform, hostname, ip, tailscale_ip, os_version, claude_version, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(name) DO UPDATE SET
-                platform=excluded.platform, hostname=excluded.hostname, ip=excluded.ip,
-                tailscale_ip=excluded.tailscale_ip, os_version=excluded.os_version,
-                claude_version=excluded.claude_version, notes=excluded.notes,
-                last_seen=datetime('now')
-        """,
-            (data.name, data.platform, data.hostname, data.ip, data.tailscale_ip, data.os_version, data.claude_version, data.notes),
-        )
-        db.commit()
-        return {"status": "ok", "device": data.name}
-    finally:
-        db.close()
-
-
-@router.post("/devices/{name}/ping")
-async def ping_device(name: str):
-    db = get_db()
-    try:
-        db.execute("UPDATE devices SET last_seen=datetime('now') WHERE name=?", (name,))
-        db.commit()
-        return {"status": "ok"}
-    finally:
-        db.close()
-
-
 # ============ Memories ============
 
 
@@ -626,185 +580,6 @@ async def deactivate_memory(memory_id: int):
         db.execute("UPDATE memories SET active=0, updated_at=datetime('now') WHERE id=?", (memory_id,))
         db.commit()
         return {"status": "deactivated"}
-    finally:
-        db.close()
-
-
-# ============ Sessions ============
-
-
-@router.get("/sessions")
-async def list_sessions(device: str | None = None, platform: str | None = None, limit: int = 20):
-    db = get_db()
-    try:
-        query = "SELECT id, session_num, date, device_name, platform, summary FROM sessions WHERE 1=1"
-        params = []
-        if device:
-            query += " AND device_name=?"
-            params.append(device)
-        if platform:
-            query += " AND platform=?"
-            params.append(platform)
-        query += " ORDER BY id DESC LIMIT ?"
-        params.append(limit)
-        return [dict(r) for r in db.execute(query, params).fetchall()]
-    finally:
-        db.close()
-
-
-@router.get("/sessions/{session_id}")
-async def get_session(session_id: int):
-    db = get_db()
-    try:
-        session = db.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
-        if not session:
-            raise HTTPException(404, "Session not found")
-        result = dict(session)
-        result["tasks"] = [dict(r) for r in db.execute("SELECT * FROM tasks_log WHERE session_id=?", (session_id,)).fetchall()]
-        result["discoveries"] = [dict(r) for r in db.execute("SELECT * FROM discoveries WHERE session_id=?", (session_id,)).fetchall()]
-        return result
-    finally:
-        db.close()
-
-
-@router.post("/sessions")
-async def create_session(data: SessionCreate):
-    db = get_db()
-    try:
-        if not data.session_num:
-            row = db.execute("SELECT COALESCE(MAX(session_num),0)+1 FROM sessions WHERE device_name=?", (data.device_name,)).fetchone()
-            data.session_num = row[0]
-
-        device = db.execute("SELECT id, platform FROM devices WHERE name=?", (data.device_name,)).fetchone()
-        device_id = device[0] if device else None
-        platform = device[1] if device else "unknown"
-
-        cur = db.execute(
-            """
-            INSERT INTO sessions (session_num, date, summary, tasks_completed, files_changed, bugs_found, notes, device_id, platform, device_name)
-            VALUES (?, date('now'), ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                data.session_num,
-                data.summary,
-                json.dumps(data.tasks_completed) if data.tasks_completed else None,
-                json.dumps(data.files_changed) if data.files_changed else None,
-                json.dumps(data.bugs_found) if data.bugs_found else None,
-                data.notes,
-                device_id,
-                platform,
-                data.device_name,
-            ),
-        )
-        db.commit()
-
-        if device_id:
-            db.execute("UPDATE devices SET last_seen=datetime('now') WHERE id=?", (device_id,))
-            db.commit()
-
-        asyncio.create_task(
-            _fire_event(
-                "session_created",
-                {
-                    "session_id": cur.lastrowid,
-                    "device": data.device_name,
-                },
-            )
-        )
-
-        return {"id": cur.lastrowid, "session_num": data.session_num, "status": "created"}
-    finally:
-        db.close()
-
-
-# ============ Tasks Log ============
-
-
-@router.get("/tasks")
-async def list_tasks(project: str | None = None, device: str | None = None, limit: int = 30):
-    db = get_db()
-    try:
-        query = "SELECT id, session_id, device_name, project, task, status, rationale, date(created_at) as date FROM tasks_log WHERE 1=1"
-        params = []
-        if project:
-            query += " AND project=?"
-            params.append(project)
-        if device:
-            query += " AND device_name=?"
-            params.append(device)
-        query += " ORDER BY created_at DESC LIMIT ?"
-        params.append(limit)
-        return [dict(r) for r in db.execute(query, params).fetchall()]
-    finally:
-        db.close()
-
-
-@router.post("/tasks")
-async def create_task_log(data: TaskLogCreate):
-    db = get_db()
-    try:
-        # Duplicate kontrolü — aynı proje + aynı task adı
-        existing = db.execute("SELECT id FROM tasks_log WHERE project=? AND task=?", (data.project, data.task)).fetchone()
-        if existing:
-            return {"id": existing[0], "status": "already_exists"}
-
-        cur = db.execute(
-            """
-            INSERT INTO tasks_log (session_id, device_name, project, task, status, files_changed, details, rationale)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                data.session_id,
-                data.device_name,
-                data.project,
-                data.task,
-                data.status,
-                json.dumps(data.files_changed) if data.files_changed else None,
-                data.details,
-                data.rationale,
-            ),
-        )
-        db.commit()
-
-        asyncio.create_task(
-            _fire_event(
-                "task_created",
-                {
-                    "id": cur.lastrowid,
-                    "project": data.project,
-                    "task": data.task,
-                    "status": data.status,
-                    "device": data.device_name,
-                },
-            )
-        )
-
-        return {"id": cur.lastrowid, "status": "created"}
-    finally:
-        db.close()
-
-
-@router.patch("/tasks/{task_id}")
-async def update_task_log(task_id: int, data: TaskLogUpdate):
-    if data.status is None and data.rationale is None:
-        raise HTTPException(400, "En az status veya rationale gönderin")
-    db = get_db()
-    try:
-        row = db.execute("SELECT id, status FROM tasks_log WHERE id=?", (task_id,)).fetchone()
-        if not row:
-            raise HTTPException(404, f"Task {task_id} bulunamadı")
-        sets, params = [], []
-        if data.status is not None:
-            sets.append("status=?")
-            params.append(data.status)
-        if data.rationale is not None:
-            sets.append("rationale=?")
-            params.append(data.rationale)
-        params.append(task_id)
-        db.execute(f"UPDATE tasks_log SET {', '.join(sets)} WHERE id=?", params)
-        db.commit()
-        new_status = data.status if data.status is not None else row["status"]
-        return {"id": task_id, "new_status": new_status, "status": "updated"}
     finally:
         db.close()
 
@@ -1919,3 +1694,11 @@ async def get_session_context(device_name: str):
     """SessionStart hook için JSON context — budget: ~2000 token.
     Faz 2: sync DB to_thread'e offload (event-loop blokmaz)."""
     return await asyncio.to_thread(_session_context_query, device_name)
+
+
+# ── Domain router submodule'leri (Faz 3) ──
+# Import = handler'ların router'a kaydı + app.api.memory.* re-export'u.
+# Kernel (DB_PATH/keys/verify_key/get_db/router'lar/helpers/models) yukarıda kalır.
+from app.api.memory import devices as devices  # noqa: E402, F401
+from app.api.memory import sessions as sessions  # noqa: E402, F401
+from app.api.memory import tasks as tasks  # noqa: E402, F401
