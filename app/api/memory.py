@@ -87,6 +87,7 @@ _WEBHOOK_TIMEOUT = 5
 _TOKEN_BUDGET = 2000
 _TELEGRAM_BOT_TOKEN = read_env_var("TELEGRAM_BOT_TOKEN")
 _TELEGRAM_CHAT_ID = read_env_var("TELEGRAM_CHAT_ID")
+_TELEGRAM_EVENTS = read_env_var("MEMORY_TELEGRAM_EVENTS")  # bos: kapali, "bug,fix,task,note" gibi
 
 
 def _ensure_webhooks_table(db):
@@ -130,10 +131,21 @@ async def _fire_event(event: str, payload: dict):
                         h["X-Webhook-Secret"] = secret
                     tasks.append(client.post(url, json=payload, headers=h))
                 await asyncio.gather(*tasks, return_exceptions=True)
-        if event in ("bug_created", "fix_created"):
-            emoji = "\U0001f41b" if event == "bug_created" else "\U0001f527"
+        allowed = _TELEGRAM_EVENTS.split(",") if _TELEGRAM_EVENTS else []
+        if not allowed:
+            return
+        event_name = event.removesuffix("_created")
+        if event_name not in allowed:
+            return
+        if event == "bug_created":
             await _send_telegram(
-                f"<b>{emoji} Yeni {event.split('_')[0]}!</b>\n"
+                f"<b>\U0001f41b Yeni Bug!</b>\n"
+                f"Proje: <code>{payload.get('project', '?')}</code>\n"
+                f"Ba\u015fl\u0131k: {payload.get('title', '?')[:200]}"
+            )
+        elif event == "fix_created":
+            await _send_telegram(
+                f"<b>\U0001f527 Yeni Fix</b>\n"
                 f"Proje: <code>{payload.get('project', '?')}</code>\n"
                 f"Ba\u015fl\u0131k: {payload.get('title', '?')[:200]}"
             )
