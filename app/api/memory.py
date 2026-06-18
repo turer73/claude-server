@@ -5,7 +5,6 @@ Duplicate koruması, FTS arama, read tracking, lifecycle yönetimi.
 
 import asyncio
 import json
-import os
 import re
 import sqlite3
 from typing import Literal
@@ -86,8 +85,9 @@ def _unread_pred(device):
 
 _WEBHOOK_TIMEOUT = 5
 _TOKEN_BUDGET = 2000
-_TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-_TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+_TELEGRAM_BOT_TOKEN = read_env_var("TELEGRAM_BOT_TOKEN")
+_TELEGRAM_CHAT_ID = read_env_var("TELEGRAM_CHAT_ID")
+
 
 def _ensure_webhooks_table(db):
     db.execute("""CREATE TABLE IF NOT EXISTS webhooks (
@@ -101,6 +101,7 @@ def _ensure_webhooks_table(db):
     db.execute("""CREATE INDEX IF NOT EXISTS idx_webhooks_event ON webhooks(event)""")
     db.commit()
 
+
 async def _send_telegram(message: str, parse_mode: str = "HTML"):
     if not _TELEGRAM_BOT_TOKEN or not _TELEGRAM_CHAT_ID:
         return
@@ -108,19 +109,17 @@ async def _send_telegram(message: str, parse_mode: str = "HTML"):
         async with httpx.AsyncClient(timeout=5) as client:
             await client.post(
                 f"https://api.telegram.org/bot{_TELEGRAM_BOT_TOKEN}/sendMessage",
-                json={"chat_id": _TELEGRAM_CHAT_ID, "text": message,
-                      "parse_mode": parse_mode, "disable_web_page_preview": True},
+                json={"chat_id": _TELEGRAM_CHAT_ID, "text": message, "parse_mode": parse_mode, "disable_web_page_preview": True},
             )
     except Exception:
         pass
+
 
 async def _fire_event(event: str, payload: dict):
     try:
         db = get_db()
         _ensure_webhooks_table(db)
-        hooks = db.execute(
-            "SELECT url, secret FROM webhooks WHERE event=? AND active=1", (event,)
-        ).fetchall()
+        hooks = db.execute("SELECT url, secret FROM webhooks WHERE event=? AND active=1", (event,)).fetchall()
         db.close()
         if hooks:
             async with httpx.AsyncClient(timeout=_WEBHOOK_TIMEOUT) as client:
@@ -136,25 +135,28 @@ async def _fire_event(event: str, payload: dict):
             await _send_telegram(
                 f"<b>{emoji} Yeni {event.split('_')[0]}!</b>\n"
                 f"Proje: <code>{payload.get('project', '?')}</code>\n"
-                f"Ba\u015fl\u0131k: {payload.get('title', '?')[:200]}")
+                f"Ba\u015fl\u0131k: {payload.get('title', '?')[:200]}"
+            )
         elif event == "task_created":
             await _send_telegram(
-                f"<b>\U0001f4cb Yeni Task</b>\n"
-                f"Proje: <code>{payload.get('project', '?')}</code>\n"
-                f"Task: {payload.get('task', '?')[:200]}")
+                f"<b>\U0001f4cb Yeni Task</b>\nProje: <code>{payload.get('project', '?')}</code>\nTask: {payload.get('task', '?')[:200]}"
+            )
         elif event == "note_created":
             await _send_telegram(
                 f"<b>\U0001f4dd Yeni Not</b>\n"
                 f"G\u00f6nderen: <code>{payload.get('from_device', '?')}</code>\n"
-                f"{payload.get('title', '?')[:200]}")
+                f"{payload.get('title', '?')[:200]}"
+            )
     except Exception:
         pass
 
 
 # ============ Context Helpers ============
 
+
 def _estimate_tokens(text: str) -> int:
     return len(text) // 4 + 1
+
 
 def _truncate_context(items: list[tuple[str, str, int]], budget: int = _TOKEN_BUDGET) -> str:
     parts = []
@@ -666,9 +668,15 @@ async def create_session(data: SessionCreate):
             db.execute("UPDATE devices SET last_seen=datetime('now') WHERE id=?", (device_id,))
             db.commit()
 
-        asyncio.create_task(_fire_event("session_created", {
-            "session_id": cur.lastrowid, "device": data.device_name,
-        }))
+        asyncio.create_task(
+            _fire_event(
+                "session_created",
+                {
+                    "session_id": cur.lastrowid,
+                    "device": data.device_name,
+                },
+            )
+        )
 
         return {"id": cur.lastrowid, "session_num": data.session_num, "status": "created"}
     finally:
@@ -724,10 +732,18 @@ async def create_task_log(data: TaskLogCreate):
         )
         db.commit()
 
-        asyncio.create_task(_fire_event("task_created", {
-            "id": cur.lastrowid, "project": data.project, "task": data.task,
-            "status": data.status, "device": data.device_name,
-        }))
+        asyncio.create_task(
+            _fire_event(
+                "task_created",
+                {
+                    "id": cur.lastrowid,
+                    "project": data.project,
+                    "task": data.task,
+                    "status": data.status,
+                    "device": data.device_name,
+                },
+            )
+        )
 
         return {"id": cur.lastrowid, "status": "created"}
     finally:
@@ -865,10 +881,18 @@ async def create_discovery(data: DiscoveryCreate):
         new_id = cur.lastrowid
 
         event_type = f"{data.type}_created" if data.type in ("bug", "fix") else "discovery_created"
-        asyncio.create_task(_fire_event(event_type, {
-            "id": new_id, "project": data.project, "type": data.type,
-            "title": data.title, "device": data.device_name,
-        }))
+        asyncio.create_task(
+            _fire_event(
+                event_type,
+                {
+                    "id": new_id,
+                    "project": data.project,
+                    "type": data.type,
+                    "title": data.title,
+                    "device": data.device_name,
+                },
+            )
+        )
 
         return {"id": new_id, "status": "created", "secrets_redacted": redacted_labels}
     finally:
@@ -1148,10 +1172,17 @@ async def create_note(data: NoteCreate):
         )
         db.commit()
 
-        asyncio.create_task(_fire_event("note_created", {
-            "id": cur.lastrowid, "from_device": data.from_device,
-            "to_device": data.to_device, "title": data.title,
-        }))
+        asyncio.create_task(
+            _fire_event(
+                "note_created",
+                {
+                    "id": cur.lastrowid,
+                    "from_device": data.from_device,
+                    "to_device": data.to_device,
+                    "title": data.title,
+                },
+            )
+        )
 
         return {"id": cur.lastrowid, "status": "created", "secrets_redacted": redacted_labels}
     finally:
@@ -1237,6 +1268,7 @@ async def register_device_project(data: DeviceProjectCreate):
 
 # ============ Webhooks ============
 
+
 @router.get("/webhooks")
 async def list_webhooks():
     db = get_db()
@@ -1245,6 +1277,7 @@ async def list_webhooks():
         return [dict(r) for r in db.execute("SELECT * FROM webhooks ORDER BY event, id").fetchall()]
     finally:
         db.close()
+
 
 @router.post("/webhooks")
 async def register_webhook(event: str, url: str, secret: str = ""):
@@ -1260,6 +1293,7 @@ async def register_webhook(event: str, url: str, secret: str = ""):
     finally:
         db.close()
 
+
 @router.delete("/webhooks/{webhook_id}")
 async def delete_webhook(webhook_id: int):
     db = get_db()
@@ -1270,6 +1304,7 @@ async def delete_webhook(webhook_id: int):
         return {"status": "deleted"}
     finally:
         db.close()
+
 
 @router.get("/webhooks/telegram-status")
 async def telegram_status():
@@ -1453,19 +1488,26 @@ async def auto_cleanup(days: int = 60, dry_run: bool = False):
     finally:
         db.close()
 
+
 @router.get("/maintenance/detect-conflicts")
 async def detect_conflicts():
     db = get_db()
     try:
-        stale_bugs = [dict(r) for r in db.execute(
-            "SELECT id, project, title, status FROM discoveries "
-            "WHERE type='bug' AND status='active' AND title LIKE '%COZULDU%' ORDER BY project"
-        ).fetchall()]
+        stale_bugs = [
+            dict(r)
+            for r in db.execute(
+                "SELECT id, project, title, status FROM discoveries "
+                "WHERE type='bug' AND status='active' AND title LIKE '%COZULDU%' ORDER BY project"
+            ).fetchall()
+        ]
 
-        dups = [dict(r) for r in db.execute(
-            "SELECT project, type, title, COUNT(*) as cnt, GROUP_CONCAT(id) as ids "
-            "FROM discoveries GROUP BY project, type, title HAVING cnt > 1 ORDER BY cnt DESC LIMIT 20"
-        ).fetchall()]
+        dups = [
+            dict(r)
+            for r in db.execute(
+                "SELECT project, type, title, COUNT(*) as cnt, GROUP_CONCAT(id) as ids "
+                "FROM discoveries GROUP BY project, type, title HAVING cnt > 1 ORDER BY cnt DESC LIMIT 20"
+            ).fetchall()
+        ]
 
         return {
             "stale_bugs_cozuldu": stale_bugs,
@@ -1636,9 +1678,14 @@ Status: active, completed, obsolete, superseded
         # RAG context (aktif projeler için)
         _RAG_BASE = "http://localhost:8420/api/v1/rag"
         try:
-            active_projects = list({r[0] for r in db.execute(
-                "SELECT project FROM discoveries WHERE status='active' ORDER BY created_at DESC LIMIT 10"
-            ).fetchall()})
+            active_projects = list(
+                {
+                    r[0]
+                    for r in db.execute(
+                        "SELECT project FROM discoveries WHERE status='active' ORDER BY created_at DESC LIMIT 10"
+                    ).fetchall()
+                }
+            )
             rag_sections = []
             for proj in active_projects[:3]:
                 async with httpx.AsyncClient(timeout=5) as client:
@@ -1755,33 +1802,43 @@ async def get_session_context(device_name: str):
         if not device:
             raise HTTPException(404, f"Device '{device_name}' not found")
 
-        recent = [dict(r) for r in db.execute(
-            "SELECT session_num, date, device_name, substr(summary,1,120) as summary "
-            "FROM sessions ORDER BY id DESC LIMIT 3"
-        ).fetchall()]
+        recent = [
+            dict(r)
+            for r in db.execute(
+                "SELECT session_num, date, device_name, substr(summary,1,120) as summary FROM sessions ORDER BY id DESC LIMIT 3"
+            ).fetchall()
+        ]
 
-        active_bugs = [dict(r) for r in db.execute(
-            "SELECT project, title FROM discoveries WHERE status='active' AND type='bug' ORDER BY created_at DESC LIMIT 10"
-        ).fetchall()]
+        active_bugs = [
+            dict(r)
+            for r in db.execute(
+                "SELECT project, title FROM discoveries WHERE status='active' AND type='bug' ORDER BY created_at DESC LIMIT 10"
+            ).fetchall()
+        ]
 
         _ensure_read_by(db)
         _pred, _pp = _unread_pred(device_name)
-        unread_notes = [dict(r) for r in db.execute(
-            f"SELECT from_device, title, substr(content,1,200) as content "
-            f"FROM notes WHERE (to_device=? OR to_device IS NULL) AND {_pred} ORDER BY created_at DESC LIMIT 5",
-            (device_name, *_pp),
-        ).fetchall()]
+        unread_notes = [
+            dict(r)
+            for r in db.execute(
+                f"SELECT from_device, title, substr(content,1,200) as content "
+                f"FROM notes WHERE (to_device=? OR to_device IS NULL) AND {_pred} ORDER BY created_at DESC LIMIT 5",
+                (device_name, *_pp),
+            ).fetchall()
+        ]
 
-        projects = [dict(r) for r in db.execute(
-            "SELECT project, COUNT(*) as total, "
-            "SUM(CASE WHEN type='bug' THEN 1 ELSE 0 END) as bug_count "
-            "FROM discoveries WHERE status='active' GROUP BY project ORDER BY total DESC LIMIT 10"
-        ).fetchall()]
+        projects = [
+            dict(r)
+            for r in db.execute(
+                "SELECT project, COUNT(*) as total, "
+                "SUM(CASE WHEN type='bug' THEN 1 ELSE 0 END) as bug_count "
+                "FROM discoveries WHERE status='active' GROUP BY project ORDER BY total DESC LIMIT 10"
+            ).fetchall()
+        ]
 
         never_read = db.execute("SELECT COUNT(*) FROM discoveries WHERE read_count=0").fetchone()[0]
         stale_60 = db.execute(
-            "SELECT COUNT(*) FROM discoveries WHERE status='active' AND read_count=0 "
-            "AND created_at < datetime('now', '-60 days')"
+            "SELECT COUNT(*) FROM discoveries WHERE status='active' AND read_count=0 AND created_at < datetime('now', '-60 days')"
         ).fetchone()[0]
 
         return {
