@@ -1413,7 +1413,12 @@ async def memory_health():
     db = get_db()
     try:
         total = db.execute("SELECT COUNT(*) FROM discoveries").fetchone()[0]
+        active_total = db.execute("SELECT COUNT(*) FROM discoveries WHERE status='active'").fetchone()[0]
         never_read = db.execute("SELECT COUNT(*) FROM discoveries WHERE read_count=0").fetchone()[0]
+        # Sağlık metriği YALNIZ aktif kayıtlara dayanır. Obsolete/closed kayıtların
+        # okunmamış olması beklenir ve aksiyonluk değildir — ham never_read/total
+        # oranı bu yüzden yanıltıcı (~%86) çıkıyordu. Gerçek temizlik sinyali = aktif okunmamış.
+        active_never_read = db.execute("SELECT COUNT(*) FROM discoveries WHERE status='active' AND read_count=0").fetchone()[0]
         stale_60 = db.execute(
             "SELECT COUNT(*) FROM discoveries WHERE status='active' AND created_at < datetime('now', '-60 days')"
         ).fetchone()[0]
@@ -1421,14 +1426,17 @@ async def memory_health():
             dict(r)
             for r in db.execute("SELECT id, project, type, title, read_count FROM discoveries ORDER BY read_count DESC LIMIT 5").fetchall()
         ]
+        never_read_pct = round(active_never_read / active_total * 100, 1) if active_total > 0 else 0
 
         return {
             "total_discoveries": total,
+            "active_discoveries": active_total,
             "never_read": never_read,
-            "never_read_pct": round(never_read / total * 100, 1) if total > 0 else 0,
+            "active_never_read": active_never_read,
+            "never_read_pct": never_read_pct,
             "stale_60_days": stale_60,
             "most_read": most_read,
-            "recommendation": "Sistem sağlıklı" if never_read / max(total, 1) < 0.5 else "Çok fazla okunmayan kayıt — temizlik gerekiyor",
+            "recommendation": "Sistem sağlıklı" if never_read_pct < 50 else "Çok fazla okunmayan aktif kayıt — temizlik gerekiyor",
         }
     finally:
         db.close()
@@ -1476,16 +1484,21 @@ async def auto_cleanup(days: int = 60, dry_run: bool = False):
             db.commit()
 
         total = db.execute("SELECT COUNT(*) FROM discoveries").fetchone()[0]
+        active_total = db.execute("SELECT COUNT(*) FROM discoveries WHERE status='active'").fetchone()[0]
         never_read = db.execute("SELECT COUNT(*) FROM discoveries WHERE read_count=0").fetchone()[0]
+        active_never_read = db.execute("SELECT COUNT(*) FROM discoveries WHERE status='active' AND read_count=0").fetchone()[0]
         active_bugs = db.execute("SELECT COUNT(*) FROM discoveries WHERE type='bug' AND status='active'").fetchone()[0]
 
         report = {
             "action": "dry_run" if dry_run else "cleanup",
             "stale_archived": stale_count,
             "total_discoveries": total,
+            "active_discoveries": active_total,
             "never_read": never_read,
+            "active_never_read": active_never_read,
             "active_bugs": active_bugs,
-            "never_read_pct": round(never_read / max(total, 1) * 100, 1),
+            # Aktif-kapsamlı oran (yanıltıcı ham %86 yerine gerçek temizlik sinyali)
+            "never_read_pct": round(active_never_read / max(active_total, 1) * 100, 1),
         }
 
         if not dry_run:
