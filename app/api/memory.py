@@ -333,8 +333,7 @@ class SpawnFailureRetryResponse(BaseModel):
 # ============ Dashboard ============
 
 
-@router.get("/dashboard")
-async def memory_dashboard():
+def _dashboard_query():
     """Akıllı dashboard — stale detection, proje health, action items"""
     db = get_db()
     try:
@@ -409,6 +408,12 @@ async def memory_dashboard():
         db.close()
 
 
+@router.get("/dashboard")
+async def memory_dashboard():
+    """Akıllı dashboard — Faz 2: sync DB to_thread'e offload (event-loop blokmaz)."""
+    return await asyncio.to_thread(_dashboard_query)
+
+
 # ============ Devices ============
 
 
@@ -480,15 +485,7 @@ def _has_merged_into(db) -> bool:
     return "merged_into" in [r[1] for r in db.execute("PRAGMA table_info(memories)").fetchall()]
 
 
-@router.get("/surface")
-async def memory_surface(
-    type: str | None = None,
-    limit: int = Query(100, ge=1, le=500),
-    offset: int = Query(0, ge=0),
-):
-    """Sentez-sonrası YÜZEY: aktif + canonical (merged olmayan) memory'ler (LIVESYS-MEMSYN).
-    P0-c (surer): SAYFALANMIŞ — default 100 (max 500). 629-korpus limit'siz ~48K-token bomba
-    (LLM-context'i doldurur). Yanıt {total, count, limit, offset, items}; items kapalı-uçlu."""
+def _surface_query(type: str | None, limit: int, offset: int):
     db = get_db()
     try:
         cond = "active=1" + (" AND merged_into IS NULL" if _has_merged_into(db) else "")
@@ -505,6 +502,19 @@ async def memory_surface(
         return {"total": total, "count": len(items), "limit": limit, "offset": offset, "items": items}
     finally:
         db.close()
+
+
+@router.get("/surface")
+async def memory_surface(
+    type: str | None = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """Sentez-sonrası YÜZEY: aktif + canonical (merged olmayan) memory'ler (LIVESYS-MEMSYN).
+    P0-c (surer): SAYFALANMIŞ — default 100 (max 500). 629-korpus limit'siz ~48K-token bomba
+    (LLM-context'i doldurur). Yanıt {total, count, limit, offset, items}; items kapalı-uçlu.
+    Faz 2: sync DB to_thread'e offload (event-loop blokmaz)."""
+    return await asyncio.to_thread(_surface_query, type, limit, offset)
 
 
 @router.get("/world-model")
@@ -1843,9 +1853,7 @@ Başla.
         db.close()
 
 
-@public_router.get("/onboard/{device_name}/session-context")
-async def get_session_context(device_name: str):
-    """SessionStart hook için JSON context — budget: ~2000 token."""
+def _session_context_query(device_name: str):
     db = get_db()
     try:
         device = db.execute("SELECT * FROM devices WHERE name=?", (device_name,)).fetchone()
@@ -1904,3 +1912,10 @@ async def get_session_context(device_name: str):
         }
     finally:
         db.close()
+
+
+@public_router.get("/onboard/{device_name}/session-context")
+async def get_session_context(device_name: str):
+    """SessionStart hook için JSON context — budget: ~2000 token.
+    Faz 2: sync DB to_thread'e offload (event-loop blokmaz)."""
+    return await asyncio.to_thread(_session_context_query, device_name)

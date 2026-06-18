@@ -772,6 +772,27 @@ async def test_onboard_project_scan_prompt(client, memory_db):
     assert "alpha" in resp.text
 
 
+async def test_session_context_returns_structured_json(client, memory_db):
+    # Faz 2 (to_thread offload): davranış korunmalı + bu endpoint daha önce testsizdi.
+    await client.post("/api/v1/memory/devices", json={"name": "k", "platform": "linux"})
+    await client.post("/api/v1/memory/sessions", json={"device_name": "k", "summary": "son oturum"})
+    await client.post("/api/v1/memory/discoveries", json={"project": "alpha", "type": "bug", "title": "açık bug"})
+    resp = await client.get("/api/v1/memory/onboard/k/session-context")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["device"] == "k"
+    assert body["platform"] == "linux"
+    assert "recent_sessions" in body
+    assert "active_bugs" in body
+    assert "token_budget" in body
+    assert any(b["title"] == "açık bug" for b in body["active_bugs"])
+
+
+async def test_session_context_unknown_device_404(client, memory_db):
+    resp = await client.get("/api/v1/memory/onboard/ghost-device/session-context")
+    assert resp.status_code == 404
+
+
 async def test_onboard_project_scan_unknown_device_404(client, memory_db):
     resp = await client.get("/api/v1/memory/onboard/no-device/project-scan")
     assert resp.status_code == 404
