@@ -11,7 +11,6 @@ import sqlite3
 from typing import Literal
 
 import httpx
-
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, field_validator
@@ -754,7 +753,8 @@ async def update_task_log(task_id: int, data: TaskLogUpdate):
         params.append(task_id)
         db.execute(f"UPDATE tasks_log SET {', '.join(sets)} WHERE id=?", params)
         db.commit()
-        return {"id": task_id, "status": "updated"}
+        new_status = data.status if data.status is not None else row["status"]
+        return {"id": task_id, "new_status": new_status, "status": "updated"}
     finally:
         db.close()
 
@@ -1636,9 +1636,9 @@ Status: active, completed, obsolete, superseded
         # RAG context (aktif projeler için)
         _RAG_BASE = "http://localhost:8420/api/v1/rag"
         try:
-            active_projects = list(set(r[0] for r in db.execute(
+            active_projects = list({r[0] for r in db.execute(
                 "SELECT project FROM discoveries WHERE status='active' ORDER BY created_at DESC LIMIT 10"
-            ).fetchall()))
+            ).fetchall()})
             rag_sections = []
             for proj in active_projects[:3]:
                 async with httpx.AsyncClient(timeout=5) as client:
