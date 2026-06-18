@@ -48,6 +48,10 @@ public_router = APIRouter(prefix="/api/v1/memory", tags=["memory-public"], depen
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    # busy_timeout WAL'DEN ÖNCE: kilitliyse hata yerine 5sn bekle. Eksikliği
+    # gerçek olay üretti (server.db corruption→45 Telegram spam, #517 kilit-
+    # çekişmesi). app/db/database.py + research.py aynı deseni kullanır.
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
@@ -184,9 +188,17 @@ def _truncate_context(items: list[tuple[str, str, int]], budget: int = _TOKEN_BU
     return "\n\n".join(parts)
 
 
+# _track_read'in {table} f-string'i SQL'e gömülüyor. Şu an tüm çağrılar
+# hardcoded literal (exploit yok) ama savunma-derinliği: değer her zaman
+# bu allowlist'ten gelsin, gelecekte user-input sızması imkânsız olsun.
+_READ_TRACK_TABLES = frozenset({"memories", "discoveries"})
+
+
 def _track_read(db, table: str, row_id: int):
     """Read tracking — her okumada sayaç artır"""
-    db.execute(f"UPDATE {table} SET read_count=read_count+1, last_read_at=datetime('now') WHERE id=?", (row_id,))
+    if table not in _READ_TRACK_TABLES:
+        raise ValueError(f"Invalid read-tracking table: {table!r}")
+    db.execute(f"UPDATE {table} SET read_count=read_count+1, last_read_at=datetime('now') WHERE id=?", (row_id,))  # noqa: S608 (table allowlist-doğrulamalı)
     db.commit()
 
 

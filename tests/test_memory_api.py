@@ -896,3 +896,31 @@ async def test_memory_surface_type_filter(client, memory_db):
     empty = (await client.get("/api/v1/memory/surface?type=user")).json()
     assert empty["total"] == 0
     assert empty["items"] == []
+
+
+def test_track_read_rejects_unknown_table(memory_db):
+    """Savunma-derinliği: _track_read tablo allowlist'i dışını reddeder."""
+    from app.api.memory import _track_read
+
+    con = sqlite3.connect(memory_db)
+    # Geçerli tablolar sorunsuz çalışır
+    con.execute("INSERT INTO memories (type,name,description,content) VALUES ('project','p','d','c')")
+    con.commit()
+    _track_read(con, "memories", 1)
+    assert con.execute("SELECT read_count FROM memories WHERE id=1").fetchone()[0] == 1
+    # Allowlist dışı (örn. user-input sızması) ValueError ile reddedilir
+    with pytest.raises(ValueError, match="Invalid read-tracking table"):
+        _track_read(con, "sqlite_master; DROP TABLE memories", 1)
+    con.close()
+
+
+def test_get_db_sets_busy_timeout(memory_db):
+    """get_db busy_timeout ayarlar (kilit-çekişmesinde hata yerine bekleme)."""
+    from app.api import memory as memory_mod
+
+    db = memory_mod.get_db()
+    try:
+        # 0 = sınırsız değil; pozitif bir timeout set edilmiş olmalı (#517 deseni)
+        assert db.execute("PRAGMA busy_timeout").fetchone()[0] >= 5000
+    finally:
+        db.close()
