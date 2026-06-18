@@ -1422,6 +1422,14 @@ async def memory_health():
         stale_60 = db.execute(
             "SELECT COUNT(*) FROM discoveries WHERE status='active' AND created_at < datetime('now', '-60 days')"
         ).fetchone()[0]
+        # Gerçek temizlik sinyali = auto-cleanup'ın FİİLEN arşivlediği küme:
+        # aktif + okunmamış + bug-DEĞİL + 60g'den eski. never_read_pct açık bug'ları
+        # ve taze kayıtları da sayar (yanıltıcı kırmızı) — recommendation buna değil
+        # actionable_stale'e bağlı.
+        actionable_stale = db.execute(
+            "SELECT COUNT(*) FROM discoveries WHERE status='active' AND read_count=0 "
+            "AND type NOT IN ('bug') AND created_at < datetime('now', '-60 days')"
+        ).fetchone()[0]
         most_read = [
             dict(r)
             for r in db.execute("SELECT id, project, type, title, read_count FROM discoveries ORDER BY read_count DESC LIMIT 5").fetchall()
@@ -1435,8 +1443,13 @@ async def memory_health():
             "active_never_read": active_never_read,
             "never_read_pct": never_read_pct,
             "stale_60_days": stale_60,
+            "actionable_stale": actionable_stale,
             "most_read": most_read,
-            "recommendation": "Sistem sağlıklı" if never_read_pct < 50 else "Çok fazla okunmayan aktif kayıt — temizlik gerekiyor",
+            "recommendation": (
+                "Sistem sağlıklı — arşivlenecek eski okunmamış kayıt yok"
+                if actionable_stale == 0
+                else f"{actionable_stale} eski okunmamış kayıt arşivlenebilir — auto-cleanup çalıştır"
+            ),
         }
     finally:
         db.close()
