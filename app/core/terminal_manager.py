@@ -45,18 +45,17 @@ class TerminalSession:
         if not _HAS_PTY:
             return  # Fallback to per-command mode
 
-        pid, fd = pty.openpty()
+        # pty.openpty() -> (master_fd, slave_fd). Parent keeps the MASTER to
+        # read/write the terminal; the child runs the shell on the SLAVE.
+        master_fd, slave_fd = pty.openpty()
         shell = os.environ.get("SHELL", "/bin/bash")
 
         child_pid = os.fork()
         if child_pid == 0:
-            # Child process — become the session leader
+            # Child process — become the session leader on the slave side
             os.setsid()
-            # Open the slave side
-            slave_fd = os.open(os.ttyname(pid), os.O_RDWR)
-            os.close(pid)
-            os.close(fd)
-            # Redirect stdin/stdout/stderr
+            os.close(master_fd)
+            # Redirect stdin/stdout/stderr to the PTY slave
             os.dup2(slave_fd, 0)
             os.dup2(slave_fd, 1)
             os.dup2(slave_fd, 2)
@@ -66,8 +65,8 @@ class TerminalSession:
                 os.chdir(self._cwd)
             os.execvp(shell, [shell, "-l"])
         else:
-            os.close(pid)
-            self._pty_fd = fd
+            os.close(slave_fd)
+            self._pty_fd = master_fd
             self._pid = child_pid
             self._is_pty = True
             # Set window size
@@ -75,8 +74,8 @@ class TerminalSession:
             # Make non-blocking
             import fcntl
 
-            flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-            fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+            flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+            fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
     def resize(self, cols: int, rows: int) -> None:
         """Resize the PTY terminal."""

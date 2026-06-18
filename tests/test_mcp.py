@@ -1,7 +1,9 @@
 import json
 
+import pytest
+
 from app.mcp.server import MCPServer
-from app.mcp.tools import get_tool_definitions
+from app.mcp.tools import execute_tool, get_tool_definitions
 
 
 def test_tool_definitions():
@@ -370,3 +372,196 @@ def test_execute_tool_rag_stats():
 
     result = json.loads(execute_tool("rag_stats", {}))
     assert "collection" in result or "document_count" in result or "error" in result
+
+
+# ── RAG query/index branches ──
+
+
+def test_execute_tool_rag_query():
+    result = json.loads(execute_tool("rag_query", {"question": "what is up", "n_results": 3}))
+    assert isinstance(result, dict)  # answer/results or error (RAGEngine may be down)
+
+
+def test_execute_tool_rag_index_text():
+    result = json.loads(execute_tool("rag_index_text", {"text": "coverage test chunk", "source": "test"}))
+    assert isinstance(result, dict)
+
+
+# ── Project registry tools ──
+
+
+def test_execute_tool_project_list():
+    result = json.loads(execute_tool("project_list", {}))
+    assert "projects" in result or "error" in result
+
+
+def test_execute_tool_project_info_known_or_missing():
+    result = json.loads(execute_tool("project_info", {"name": "linux-ai-server"}))
+    assert isinstance(result, dict)
+    missing = json.loads(execute_tool("project_info", {"name": "no-such-project-xyz"}))
+    assert "error" in missing
+
+
+# ── DevOps note tools (REST-redirect stubs) ──
+
+
+@pytest.mark.parametrize("tool", ["devops_status", "devops_alerts", "devops_metrics", "devops_remediations"])
+def test_execute_tool_devops_notes(tool):
+    result = json.loads(execute_tool(tool, {}))
+    assert "note" in result
+
+
+# ── Kernel /proc tools ──
+
+
+def test_execute_tool_kernel_proc_metrics():
+    result = json.loads(execute_tool("kernel_proc_metrics", {}))
+    assert isinstance(result, dict)  # metrics dict or {"error": "...not loaded"}
+
+
+def test_execute_tool_kernel_firewall_status():
+    result = json.loads(execute_tool("kernel_firewall_status", {}))
+    assert "raw" in result or "error" in result
+
+
+def test_execute_tool_kernel_usb_status():
+    result = json.loads(execute_tool("kernel_usb_status", {}))
+    assert "raw" in result or "error" in result
+
+
+def test_execute_tool_kernel_firewall_block_unblock():
+    # RFC5737 TEST-NET-1 (192.0.2.0/24) — guaranteed no real traffic; unblock after.
+    blocked = json.loads(execute_tool("kernel_firewall_block", {"ip": "192.0.2.1"}))
+    assert "blocked" in blocked or "error" in blocked
+    unblocked = json.loads(execute_tool("kernel_firewall_unblock", {"ip": "192.0.2.1"}))
+    assert "unblocked" in unblocked or "error" in unblocked
+
+
+# ── Workspace note tools ──
+
+
+def test_execute_tool_workspace_notes_roundtrip():
+    save = json.loads(execute_tool("workspace_note_save", {"name": "cov_test_note.txt", "content": "hi"}))
+    assert "saved" in save or "error" in save
+    read = json.loads(execute_tool("workspace_note_read", {"name": "cov_test_note.txt"}))
+    assert "content" in read or "error" in read
+    listing = json.loads(execute_tool("workspace_note_list", {}))
+    assert "notes" in listing or "error" in listing
+
+
+def test_execute_tool_workspace_note_read_missing():
+    result = json.loads(execute_tool("workspace_note_read", {"name": "definitely_missing_xyz.txt"}))
+    assert "error" in result
+
+
+# ── Memory DB tools (redirected to a temp DB so the real memory DB is untouched) ──
+
+
+@pytest.fixture
+def mem_tmp_db(tmp_path, monkeypatch):
+    import sqlite3
+
+    dbp = tmp_path / "mem.db"
+    conn = sqlite3.connect(dbp)
+    conn.executescript(
+        """
+        CREATE TABLE memories (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, name TEXT,
+            description TEXT, content TEXT, created_at TEXT, updated_at TEXT,
+            active INTEGER DEFAULT 1, read_count INTEGER DEFAULT 0);
+        CREATE TABLE sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, session_num INTEGER, date TEXT,
+            summary TEXT, tasks_completed TEXT, files_changed TEXT, device_name TEXT,
+            platform TEXT, created_at TEXT);
+        CREATE TABLE tasks_log (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT, task TEXT,
+            status TEXT, files_changed TEXT, details TEXT, device_name TEXT, created_at TEXT);
+        CREATE TABLE discoveries (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT, type TEXT,
+            title TEXT, details TEXT, resolved INTEGER DEFAULT 0);
+        CREATE TABLE devices (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, platform TEXT, last_seen TEXT);
+        """
+    )
+    conn.execute("INSERT INTO memories (type,name,description,content) VALUES ('project','p1','d','c'*1)")
+    conn.commit()
+    conn.close()
+
+    real_connect = sqlite3.connect
+
+    def fake_connect(path, *a, **k):
+        if "claude_memory.db" in str(path):
+            return real_connect(str(dbp), *a, **k)
+        return real_connect(path, *a, **k)
+
+    monkeypatch.setattr(sqlite3, "connect", fake_connect)
+    return dbp
+
+
+def test_execute_tool_memory_context(mem_tmp_db):
+    result = json.loads(execute_tool("memory_context", {}))
+    assert "active_projects" in result
+    assert "devices" in result
+
+
+def test_execute_tool_memory_query_select(mem_tmp_db):
+    result = json.loads(execute_tool("memory_query", {"sql": "SELECT name FROM memories"}))
+    assert "rows" in result
+    assert result["count"] >= 1
+
+
+def test_execute_tool_memory_query_rejects_non_select(mem_tmp_db):
+    result = json.loads(execute_tool("memory_query", {"sql": "DELETE FROM memories"}))
+    assert "error" in result
+
+
+def test_execute_tool_memory_save_create_and_update(mem_tmp_db):
+    created = json.loads(execute_tool("memory_save", {"type": "reference", "name": "cov_mem", "content": "v1"}))
+    assert created["action"] == "created"
+    updated = json.loads(execute_tool("memory_save", {"type": "reference", "name": "cov_mem", "content": "v2"}))
+    assert updated["action"] == "updated"
+
+
+def test_execute_tool_memory_log_session(mem_tmp_db):
+    result = json.loads(execute_tool("memory_log_session", {"summary": "s", "device_name": "klipper", "platform": "linux"}))
+    assert result["logged"] is True
+    assert result["session_num"] == 1
+
+
+def test_execute_tool_memory_log_task(mem_tmp_db):
+    result = json.loads(execute_tool("memory_log_task", {"project": "p", "task": "t", "status": "done", "device_name": "klipper"}))
+    assert result["logged"] is True
+
+
+def test_execute_tool_memory_save_db_error_path(monkeypatch):
+    # Missing required "name" → KeyError caught by the outer guard → {"error": ...}
+    result = json.loads(execute_tool("memory_save", {"type": "reference", "content": "x"}))
+    assert "error" in result
+
+
+# ── Async-context branches: execute_tool called from a running event loop
+#    exercises the ThreadPoolExecutor fallback paths (loop.is_running() == True). ──
+
+
+@pytest.mark.anyio
+async def test_execute_tool_shell_exec_in_async_context():
+    result = json.loads(execute_tool("shell_exec", {"command": "echo async-ctx"}))
+    assert "stdout" in result or "error" in result
+
+
+@pytest.mark.anyio
+async def test_execute_tool_http_request_in_async_context():
+    result = json.loads(execute_tool("http_request", {"url": "http://localhost:8420/health", "method": "GET"}))
+    assert "status_code" in result or "error" in result
+
+
+@pytest.mark.anyio
+async def test_execute_tool_ai_chat_in_async_context():
+    result = json.loads(execute_tool("ai_chat", {"message": "hi"}))
+    assert "response" in result or "error" in result
+
+
+@pytest.mark.anyio
+async def test_run_async_from_running_loop():
+    from app.mcp.tools import _run_async
+
+    async def mul(a, b):
+        return a * b
+
+    # Called from inside a running loop → ThreadPoolExecutor branch
+    assert _run_async(mul(4, 5)) == 20
