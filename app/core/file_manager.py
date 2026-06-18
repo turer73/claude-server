@@ -11,7 +11,10 @@ from app.exceptions import AuthorizationError, NotFoundError
 
 class FileManager:
     def __init__(self, allowed_paths: list[str], max_file_size_mb: int = 10) -> None:
-        self._allowed = [os.path.realpath(p.rstrip("/")) for p in allowed_paths]
+        # NOT: rstrip("/") tek başına "/" kökünü "" yapıp realpath("")=cwd'ye
+        # düşürüyordu (allowed_paths=["/"] sessizce cwd'ye iniyordu). "or os.sep"
+        # ile kök korunur; ayraç-sınırlı alt-yol kontrolü aşağıda kökü ayrıca ele alır.
+        self._allowed = [os.path.realpath(p.rstrip("/") or os.sep) for p in allowed_paths]
         self._max_size = max_file_size_mb * 1024 * 1024
 
     def validate_path(self, path: str) -> str:
@@ -19,7 +22,8 @@ class FileManager:
         for allowed in self._allowed:
             # GÜVENLIK: salt-prefix BUG'lıydı — /tmp/foo izinliyse /tmp/foobar/secret de
             # geçerdi (sibling-prefix). Tam-eşleşme VEYA ayraç-sınırlı alt-yol şart.
-            if real == allowed or real.startswith(allowed + os.sep):
+            # Kök ("/"): allowed+os.sep "//" olur, startswith tutmaz → ayrıca ele al.
+            if allowed == os.sep or real == allowed or real.startswith(allowed + os.sep):
                 return real
         raise AuthorizationError(f"Path {path} not in allowed paths")
 

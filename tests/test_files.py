@@ -24,6 +24,34 @@ def test_validate_path_traversal_dotdot(fm, tmp_path):
         fm.validate_path(str(tmp_path / ".." / ".." / "etc" / "passwd"))
 
 
+def test_root_allowed_path_honors_filesystem():
+    """allowed_paths=['/'] must mean the whole FS, not collapse to cwd.
+
+    Regression: '/'.rstrip('/') == '' → realpath('') == cwd, which silently
+    restricted a '/'-scoped manager to the working directory.
+    """
+    fm_root = FileManager(allowed_paths=["/"], max_file_size_mb=10)
+    assert fm_root.validate_path("/etc/hostname") == "/etc/hostname"
+    assert fm_root.validate_path("/tmp") == "/tmp"
+
+
+def test_trailing_slash_normalized():
+    fm_slash = FileManager(allowed_paths=["/tmp/"], max_file_size_mb=10)
+    assert fm_slash.validate_path("/tmp/x.txt") == "/tmp/x.txt"
+
+
+def test_sibling_prefix_not_allowed():
+    """/tmp must not authorize /tmpfoo (separator-bounded prefix only)."""
+    import os
+
+    fm_tmp = FileManager(allowed_paths=["/tmp"], max_file_size_mb=10)
+    sibling = os.path.realpath("/") + "tmpfoo_sibling"
+    with pytest.raises(AuthorizationError):
+        fm_tmp.validate_path(sibling)
+    # but a real child is fine
+    assert fm_tmp.validate_path("/tmp/child.txt") == "/tmp/child.txt"
+
+
 def test_read_file(fm, tmp_path):
     f = tmp_path / "hello.txt"
     f.write_text("line1\nline2\nline3\n")

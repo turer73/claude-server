@@ -10,6 +10,11 @@ from app.core.log_manager import LogManager
 from app.core.monitor_agent import MonitorAgent
 from app.core.system_manager import SystemManager
 
+# MCP file araçlarının kök kapsamı. Bilinçli scope — "/" (tam dosya sistemi)
+# DEĞİL: file_write shell-whitelist'i bypass ettiği için /etc, /root vb. yazımı
+# açmaz. Proje + log + geçici dizinlerle sınırlı (güvenlik kararı, 2026-06-18).
+_MCP_FILE_ROOTS = ["/opt/linux-ai-server", "/var/log", "/tmp"]  # noqa: S108 (kasıtlı kök kapsamı, geçici-dosya değil)
+
 
 def get_tool_definitions() -> list[dict]:
     """Return all available MCP tools in MCP protocol format."""
@@ -482,7 +487,7 @@ def execute_tool(name: str, arguments: dict) -> str:
         elif name == "file_read":
             from app.core.file_manager import FileManager
 
-            fm = FileManager(allowed_paths=["/"], max_file_size_mb=10)
+            fm = FileManager(allowed_paths=_MCP_FILE_ROOTS, max_file_size_mb=10)
             result = fm.read_file(
                 arguments["path"],
                 offset=arguments.get("offset", 0),
@@ -493,7 +498,7 @@ def execute_tool(name: str, arguments: dict) -> str:
         elif name == "file_write":
             from app.core.file_manager import FileManager
 
-            fm = FileManager(allowed_paths=["/"], max_file_size_mb=10)
+            fm = FileManager(allowed_paths=_MCP_FILE_ROOTS, max_file_size_mb=10)
             result = fm.write_file(
                 arguments["path"],
                 arguments["content"],
@@ -504,14 +509,14 @@ def execute_tool(name: str, arguments: dict) -> str:
         elif name == "file_list":
             from app.core.file_manager import FileManager
 
-            fm = FileManager(allowed_paths=["/"], max_file_size_mb=10)
+            fm = FileManager(allowed_paths=_MCP_FILE_ROOTS, max_file_size_mb=10)
             entries = fm.list_directory(arguments["path"])
             return json.dumps({"path": arguments["path"], "entries": entries})
 
         elif name == "file_search":
             from app.core.file_manager import FileManager
 
-            fm = FileManager(allowed_paths=["/"], max_file_size_mb=10)
+            fm = FileManager(allowed_paths=_MCP_FILE_ROOTS, max_file_size_mb=10)
             results = fm.search_files(
                 arguments["path"],
                 arguments["pattern"],
