@@ -90,6 +90,8 @@ ignore = [
 # F811: pytest fixture imported then re-bound as function parameter (memory_db
 # imported from test_memory_api.py) — yaygın pytest pattern, ruff false positive.
 "tests/test_memory_dedup_privacy.py" = ["S105", "S106", "S107", "S108", "S311", "F841", "F811"]
+# F811: memory_db fixture'ı test_memory_api'den import edilip param olarak re-bind (pytest deseni)
+"tests/test_error_handlers.py" = ["F811"]
 # Inline shell/SQL snippets and compact scoring blocks — wrapping hurts readability
 "app/mcp/tools.py" = ["E501"]
 "app/api/memory/*.py" = ["E501", "E701"]  # paket: __init__ + domain router submodule'leri (inline SQL snippet'leri)

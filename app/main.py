@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBearer
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+logger = logging.getLogger(__name__)
 
 from app import __version__
 from app.api.admin import router as admin_router
@@ -233,6 +239,35 @@ def create_app() -> FastAPI:
                 "message": exc.message,
                 "detail": exc.detail,
             },
+        )
+
+    # ── Tutarlı hata zarfı (#4): HTTPException + validation + unhandled hepsi
+    # ServerError ile AYNI {error, message, detail} şeklini döner. `detail` her
+    # zaman KORUNUR (geri-uyum — mevcut detail-okuyan test/UI bozulmaz), `error`+
+    # `message` eklenir. HTTPException header'ları (Retry-After/WWW-Authenticate)
+    # korunur. Unhandled → consistent 500 + traceback LOGLANIR (eskiden sessiz).
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": "HTTPException", "message": exc.detail, "detail": exc.detail},
+            headers=getattr(exc, "headers", None),
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        errors = jsonable_encoder(exc.errors())
+        return JSONResponse(
+            status_code=422,
+            content={"error": "ValidationError", "message": "Request validation failed", "detail": errors},
+        )
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("Unhandled exception: %s %s", request.method, request.url.path)
+        return JSONResponse(
+            status_code=500,
+            content={"error": "InternalError", "message": "Internal server error", "detail": None},
         )
 
     # ---- Health (no auth, public, monitoring) ----
