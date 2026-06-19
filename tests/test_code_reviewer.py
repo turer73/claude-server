@@ -111,6 +111,64 @@ async def test_ask_coder_empty_on_llm_fail(monkeypatch):
     assert await cr._ask_coder("p") == []
 
 
+# ── #4 Adversarial-verify (FP-eleme) ──
+
+_F1 = {"severity": "P1", "title": "injection", "line": 5, "detail": "os.system"}
+
+
+async def test_verify_one_real_kept(monkeypatch):
+    _stub_llm(monkeypatch, "REAL")
+    assert await cr._verify_one("x.py", "code", _F1) is True
+
+
+async def test_verify_one_fp_dropped(monkeypatch):
+    """Yanıt 'FP' ile başlıyor → net-FP → elenir (False)."""
+    _stub_llm(monkeypatch, "FP — yakında shlex.quote var, mitige")
+    assert await cr._verify_one("x.py", "code", _F1) is False
+
+
+async def test_verify_one_uncertain_kept(monkeypatch):
+    """Belirsiz/garbage (FP ile başlamıyor) → KORUNUR (gerçek-kaçırma > FP-survivor; insan review eder)."""
+    _stub_llm(monkeypatch, "emin değilim, belki")
+    assert await cr._verify_one("x.py", "code", _F1) is True
+
+
+async def test_verify_one_empty_kept(monkeypatch):
+    """claude-down → boş → KORU (kör-bırakma yok)."""
+    _stub_llm(monkeypatch, "")
+    assert await cr._verify_one("x.py", "code", _F1) is True
+
+
+async def test_verify_findings_filters_p1p2_keeps_p3(monkeypatch):
+    async def fake_verify(rel, code, f):
+        return f["title"] == "real-bug"
+
+    monkeypatch.setattr(cr, "_verify_one", fake_verify)
+    findings = [
+        {"severity": "P1", "title": "real-bug", "line": 1, "detail": ""},
+        {"severity": "P2", "title": "fake-bug", "line": 2, "detail": ""},
+        {"severity": "P3", "title": "nit", "line": 3, "detail": ""},  # P3 → verify atlanır, kalır
+    ]
+    kept = await cr._verify_findings("x.py", "code", findings)
+    assert {f["title"] for f in kept} == {"real-bug", "nit"}  # fake-bug elendi
+
+
+async def test_review_source_applies_verify(monkeypatch):
+    """review_source verify'ı uygular: bulgu var ama hepsi FP-elenirse boş döner."""
+    monkeypatch.setattr(cr, "_ENABLED", True)
+    monkeypatch.setattr(cr, "_VERIFY_ENABLED", True)
+
+    async def fake_ask(p):
+        return [dict(_F1)]
+
+    async def fake_vf(rel, code, findings):
+        return []  # tümü FP elendi
+
+    monkeypatch.setattr(cr, "_ask_coder", fake_ask)
+    monkeypatch.setattr(cr, "_verify_findings", fake_vf)
+    assert await cr.review_source("x.py", "kod var") == []
+
+
 async def test_review_source_disabled_returns_empty(monkeypatch):
     monkeypatch.setattr(cr, "_ENABLED", False)
     assert await cr.review_source("x.py", "code") == []

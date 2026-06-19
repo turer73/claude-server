@@ -40,6 +40,7 @@ _TASK_ROUTES: dict[str, tuple[str, str]] = {
     "classify": ("ollama", "qwen2.5:7b"),  # classifier.classify_note (DEFAULT_MODEL)
     "rag": ("ollama", "qwen2.5:3b"),  # rag.ask (model çağrıcıdan; complete_sync)
     "escalate": ("claude", "claude-haiku-4-5-20251001"),  # hızlı/ucuz Claude (Max-abonelik)
+    "verify": ("claude", "claude-haiku-4-5-20251001"),  # #4 adversarial-verify: qwen-coder kendi FP'sini çürütemiyor → güçlü model
     "synthesis": ("claude", "claude-sonnet-4-6"),  # derin sentez
     "default": ("ollama", "qwen2.5:3b"),
 }

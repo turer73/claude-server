@@ -31,6 +31,8 @@ _ENABLED = (read_env_var("CODE_REVIEW_ENABLED") or "1").strip().lower() not in (
 _MODEL = read_env_var("CODE_REVIEW_MODEL") or "qwen2.5-coder:7b"
 _TIMEOUT = int(read_env_var("CODE_REVIEW_TIMEOUT") or "60")
 _MAX_BYTES = 12000  # dosya başına LLM'e gönderilecek max (büyük dosyada baş kısmı)
+# #4 Adversarial-verify: her P1/P2 bulgu bağımsız skeptik 2. pass'ten geçer (FP'yi sistem eler).
+_VERIFY_ENABLED = (read_env_var("CODE_REVIEW_VERIFY_ENABLED") or "1").strip().lower() not in ("0", "false", "no", "off")
 
 _SEVERITIES = {"P1", "P2", "P3"}
 
@@ -54,6 +56,23 @@ Dosya: {path}
 ```{lang}
 {code}
 ```"""
+
+# #4 Adversarial-verify prompt — ŞÜPHECİ 2. denetçi, görevi bulguyu ÇÜRÜTMEK. Mitigation/yanlış-satır
+# ararsa FP. Belirsizde FP (bu ajan FP-eğilimli; gerçek-kaçırma > FP-spam değil ama şüpheci kalsın).
+_VERIFY_PROMPT = """Sen ŞÜPHECİ bir kıdemli güvenlik+correctness denetçisisin. Bir junior gözden geçirici aşağıdaki bulguyu raporladı. Görevin onu ÇÜRÜTMEK (yanlış-pozitif mi).
+
+DOSYA: {path}
+BULGU: [{sev}] {title} — satır {line}
+GEREKÇE: {detail}
+
+KOD:
+```{lang}
+{code}
+```
+
+Kontrol et: (1) Bu GERÇEK, exploit-edilebilir/somut bir sorun mu? (2) Yakında bir mitigation VAR MI — shlex.quote / parametreli-sorgu (?/%s placeholder) / regex-validation / allowlist / try-except / None-kontrol / busy_timeout? (3) Satır-no gerçek soruna mı işaret ediyor (yorum/import/test değil)?
+Mitigation varsa, satır yanlışsa, ya da emin değilsen → FP.
+SADECE tek kelime yanıt: REAL veya FP"""
 
 
 def _lang(path: str) -> str:
@@ -96,7 +115,38 @@ async def review_source(rel_path: str, code: str) -> list[dict]:
         return []
     snippet = code[:_MAX_BYTES]
     prompt = _REVIEW_PROMPT.format(lang=_lang(rel_path) or "text", path=rel_path, code=snippet)
-    return await _ask_coder(prompt)
+    findings = await _ask_coder(prompt)
+    if _VERIFY_ENABLED and findings:
+        findings = await _verify_findings(rel_path, snippet, findings)
+    return findings
+
+
+async def _verify_one(rel_path: str, code: str, f: dict) -> bool:
+    """Bağımsız skeptik 2. pass (güçlü model = claude, task='verify'). SADECE net-FP eler:
+    yanıt 'FP' ile başlarsa → FP (ele). REAL / boş / belirsiz → KORU (claude-down kör-bırakmasın,
+    gerçek-kaçırma > FP-survivor; insan zaten review eder). qwen-coder kendi blind-spot'unu çürütemediği
+    için verify güçlü-modele yönlendirilir."""
+    prompt = _VERIFY_PROMPT.format(
+        lang=_lang(rel_path) or "text",
+        path=rel_path,
+        sev=f["severity"],
+        title=f["title"],
+        line=f["line"],
+        detail=f.get("detail", ""),
+        code=code,
+    )
+    out = (await llm_core.generate(prompt, task="verify", temperature=0.1, timeout=_TIMEOUT) or "").strip().upper()
+    first = out.split()[0] if out.split() else ""
+    return first != "FP"  # yalnız net-FP elenir; gerisi (REAL/boş/belirsiz) korunur
+
+
+async def _verify_findings(rel_path: str, code: str, findings: list[dict]) -> list[dict]:
+    """P1/P2 bulgularını skeptik-pass'ten geçir (FP ele). P3 düşük-stake → verify atla."""
+    kept = []
+    for f in findings:
+        if f["severity"] == "P3" or await _verify_one(rel_path, code, f):
+            kept.append(f)
+    return kept
 
 
 async def review_file(abs_path: Path) -> list[dict]:
