@@ -40,7 +40,7 @@ def _emit(db, *args):
 
 def test_bash_emit_is_readable_by_python(monkeypatch, tmp_path):
     db = _events_db(tmp_path)
-    monkeypatch.setattr(ev, "DB_PATH", db)
+    monkeypatch.setenv("DB_PATH", db)
     # warning -> warn (notifyable); bash uretici Python okuyucuyla tutarli olmali
     r = _emit(db, "job-outcome", "cron:demo-reset", "warning", "cron demo-reset partial", "rc=0 119/123")
     assert r.returncode == 0

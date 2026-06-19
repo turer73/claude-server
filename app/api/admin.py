@@ -15,17 +15,17 @@ import subprocess
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, field_validator
 
+from app.db.data_layer import MEMORY_DB, get_conn
 from app.middleware.dependencies import require_admin, require_auth
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
-DB_PATH = "/opt/linux-ai-server/data/claude_memory.db"
+DB_PATH = MEMORY_DB
 
 
 def _get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    # Kanonik data_layer (busy_timeout'lu — eskiden çıplaktı, autonomous_timeline yazıyor).
+    return get_conn(DB_PATH)
 
 
 # P1.1: memory.name prefix -> (event_type, label, severity)

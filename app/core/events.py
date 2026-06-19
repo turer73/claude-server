@@ -12,15 +12,10 @@ emit_event(): üreticiler çağırır (Python). Bash üreticiler sqlite3-direct 
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 
-from app.db.database import DEFAULT_DB_PATH
+from app.db.data_layer import get_conn, server_db_path
 
-# Tek runtime gerçeği os.environ["DB_PATH"] (prod systemd set eder). Env yoksa
-# main.py schema'yı DEFAULT_DB_PATH'e kurar -> emit/read AYNI sabiti kullanmalı,
-# yoksa events farklı/tablosuz path'e yazıp sessizce drop olur (Codex #18 P2).
-DB_PATH = DEFAULT_DB_PATH
 SEVERITIES = ("info", "warn", "critical")
 # Mevcut alert üreticileri (devops_agent.py, alert-check.sh) "warning"/"error"
 # vocabulary'si kullanıyor. Bunları kanonik severity'ye eşle; aksi halde
@@ -29,7 +24,7 @@ _SEVERITY_ALIAS = {"warning": "warn", "error": "critical", "err": "critical", "c
 
 
 def _db_path() -> str:
-    return os.environ.get("DB_PATH") or DB_PATH
+    return server_db_path()
 
 
 def _normalize_severity(severity: str | None) -> str:
@@ -63,7 +58,7 @@ def emit_event(
     if not type or not source or not title:
         return None
     try:
-        con = sqlite3.connect(_db_path())
+        con = get_conn(_db_path())  # busy_timeout'lu (lock-flap önler) — eskiden çıplak writer'dı
         try:
             cur = con.execute(
                 "INSERT INTO events (type, source, severity, title, detail, payload) VALUES (?,?,?,?,?,?)",
@@ -88,8 +83,7 @@ def recent_events(hours: int = 24, min_severity: str | None = None) -> list[dict
     sevs = _sev_at_least(min_severity) if min_severity else list(SEVERITIES)
     placeholders = ",".join("?" * len(sevs))
     try:
-        con = sqlite3.connect(f"file:{_db_path()}?mode=ro", uri=True)
-        con.row_factory = sqlite3.Row
+        con = get_conn(_db_path(), readonly=True)
         try:
             rows = con.execute(
                 f"SELECT id, timestamp, type, source, severity, title, detail, notified "
@@ -107,8 +101,7 @@ def recent_events(hours: int = 24, min_severity: str | None = None) -> list[dict
 def pending_notifications() -> list[dict]:
     """notified=0 + severity>=warn olaylar (bildirilecekler). Hata → []."""
     try:
-        con = sqlite3.connect(f"file:{_db_path()}?mode=ro", uri=True)
-        con.row_factory = sqlite3.Row
+        con = get_conn(_db_path(), readonly=True)
         try:
             rows = con.execute(
                 "SELECT id, timestamp, type, source, severity, title, detail FROM events "
@@ -126,7 +119,7 @@ def mark_notified(ids: list[int]) -> int:
     if not ids:
         return 0
     try:
-        con = sqlite3.connect(_db_path())
+        con = get_conn(_db_path())  # busy_timeout'lu writer
         try:
             cur = con.executemany("UPDATE events SET notified=1 WHERE id=?", [(i,) for i in ids])
             con.commit()

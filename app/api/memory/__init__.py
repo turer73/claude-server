@@ -5,7 +5,6 @@ Duplicate koruması, FTS arama, read tracking, lifecycle yönetimi.
 
 import asyncio
 import re
-import sqlite3
 from typing import Literal
 
 import httpx
@@ -13,8 +12,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, field_validator
 
 from app.core.config import read_env_var
+from app.db.data_layer import MEMORY_DB, get_conn
 
-DB_PATH = "/opt/linux-ai-server/data/claude_memory.db"
+DB_PATH = MEMORY_DB
 
 MEMORY_API_KEY = read_env_var("MEMORY_API_KEY")
 
@@ -43,14 +43,9 @@ public_router = APIRouter(prefix="/api/v1/memory", tags=["memory-public"], depen
 
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    # busy_timeout WAL'DEN ÖNCE: kilitliyse hata yerine 5sn bekle. Eksikliği
-    # gerçek olay üretti (server.db corruption→45 Telegram spam, #517 kilit-
-    # çekişmesi). app/db/database.py + research.py aynı deseni kullanır.
-    conn.execute("PRAGMA busy_timeout=5000")
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+    # Kanonik data_layer'a delege (tek-kaynak: busy_timeout=5000 + WAL + Row).
+    # Eskiden inline'dı; lock-flap dersi (server.db corruption→45 spam) artık tek yerde.
+    return get_conn(DB_PATH)
 
 
 _read_by_ready = False

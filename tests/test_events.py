@@ -22,7 +22,7 @@ def _events_db(tmp_path):
 
 
 def test_emit_event_inserts_and_validates(monkeypatch, tmp_path):
-    monkeypatch.setattr(ev, "DB_PATH", _events_db(tmp_path))
+    monkeypatch.setenv("DB_PATH", _events_db(tmp_path))
     eid = ev.emit_event("job-outcome", "cron:demo-reset", "demo-reset partial", severity="warn", detail="119/123")
     assert isinstance(eid, int)
     # geçersiz severity -> info'ya düşer; eksik alan -> None
@@ -36,7 +36,7 @@ def test_payload_non_json_native_does_not_crash(monkeypatch, tmp_path):
     # ETMEMELI (best-effort sözleşmesi). default=str ile serialize edilmeli.
     import datetime as _dt
 
-    monkeypatch.setattr(ev, "DB_PATH", _events_db(tmp_path))
+    monkeypatch.setenv("DB_PATH", _events_db(tmp_path))
     eid = ev.emit_event(
         "job-outcome",
         "cron:x",
@@ -47,24 +47,25 @@ def test_payload_non_json_native_does_not_crash(monkeypatch, tmp_path):
     assert isinstance(eid, int)  # crash yok, satır yazıldı
     import sqlite3 as _sq
 
-    con = _sq.connect(ev.DB_PATH)
+    con = _sq.connect(ev._db_path())
     row = con.execute("SELECT payload FROM events WHERE id=?", (eid,)).fetchone()
     con.close()
     assert "2026-06-03" in row[0]  # datetime str'e serialize oldu
 
 
-def test_db_path_default_matches_app_init():
+def test_db_path_default_matches_app_init(monkeypatch):
     # events.py emit/read, main.py'ın schema kurduğu AYNI fallback'i kullanmalı;
     # aksi halde DB_PATH-set-olmayan ortamda events sessizce drop olur (Codex #18 P2).
     from app.db.database import DEFAULT_DB_PATH
 
-    assert ev.DB_PATH == DEFAULT_DB_PATH
+    monkeypatch.delenv("DB_PATH", raising=False)
+    assert ev._db_path() == DEFAULT_DB_PATH
 
 
 def test_severity_alias_warning_is_notifyable(monkeypatch, tmp_path):
     # Mevcut alert vocabulary'si "warning"/"error" -> kanonik warn/critical olmalı;
     # aksi halde pending_notifications (warn/critical) bunları sessizce eler.
-    monkeypatch.setattr(ev, "DB_PATH", _events_db(tmp_path))
+    monkeypatch.setenv("DB_PATH", _events_db(tmp_path))
     ev.emit_event("alert", "devops_agent", "esik asimi", severity="warning")
     ev.emit_event("alert", "alert-check", "kritik", severity="error")
     pend = ev.pending_notifications()
@@ -73,7 +74,7 @@ def test_severity_alias_warning_is_notifyable(monkeypatch, tmp_path):
 
 
 def test_recent_events_severity_filter(monkeypatch, tmp_path):
-    monkeypatch.setattr(ev, "DB_PATH", _events_db(tmp_path))
+    monkeypatch.setenv("DB_PATH", _events_db(tmp_path))
     ev.emit_event("a", "s", "info-evt", severity="info")
     ev.emit_event("b", "s", "warn-evt", severity="warn")
     ev.emit_event("c", "s", "crit-evt", severity="critical")
@@ -84,7 +85,7 @@ def test_recent_events_severity_filter(monkeypatch, tmp_path):
 
 
 def test_pending_notifications_and_mark(monkeypatch, tmp_path):
-    monkeypatch.setattr(ev, "DB_PATH", _events_db(tmp_path))
+    monkeypatch.setenv("DB_PATH", _events_db(tmp_path))
     ev.emit_event("a", "s", "info", severity="info")  # bildirilmez
     w = ev.emit_event("b", "s", "warn", severity="warn")
     c = ev.emit_event("c", "s", "crit", severity="critical")
@@ -95,7 +96,7 @@ def test_pending_notifications_and_mark(monkeypatch, tmp_path):
 
 
 def test_recent_events_empty_on_missing_db(monkeypatch, tmp_path):
-    monkeypatch.setattr(ev, "DB_PATH", str(tmp_path / "none.db"))
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "none.db"))
     assert ev.recent_events(24) == []
     assert ev.pending_notifications() == []
     assert ev.emit_event("x", "s", "t") is None  # yazılamaz
