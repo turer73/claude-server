@@ -226,6 +226,13 @@ class DevOpsAgent:
         self._diag_memory_db = "/opt/linux-ai-server/data/claude_memory.db"
         self._diagnosed: set[str] = set()
 
+        # VPS-probe sustained-gate: tek geçici SSH-blip'i (probe None) ANINDA vps:offline'a
+        # çevirme — N ardışık-fail gerek (metrik _sustained_high felsefesi). WAN-fix yalnız
+        # local-internet-down'ı ayırıyordu; geçici-VPS-probe-blip (local up) yine false
+        # vps:offline üretiyordu (2026-06-19 restart-yoğunluğu + WAN-blip kaskadı).
+        self._vps_probe_fails = 0
+        self._vps_fail_threshold = int(read_env_var("VPS_FAIL_THRESHOLD") or "2")
+
     # ── Lifecycle ──────────────────────────────────────
 
     def start(self) -> None:
@@ -1142,8 +1149,14 @@ class DevOpsAgent:
         probe = await self._vps_ssh_probe()
 
         if probe is None:
+            self._vps_probe_fails += 1
             await self._store_vps_metrics({}, online=False)
             self._latest_vps = {"online": False, "timestamp": now}
+            # SUSTAINED-GATE: tek geçici probe-fail (SSH timeout / anlık blip / VPS-busy)
+            # ANINDA alert üretmesin — N ardışık-fail = gerçek kesinti. Tek-blip → bekle,
+            # sıradaki tick'te retry. (metrik-alarmlarındaki _sustained_high simetrisi.)
+            if self._vps_probe_fails < self._vps_fail_threshold:
+                return
             # Disambiguate before blaming the VPS: an SSH-probe failure during a
             # local internet outage means *klipper's own WAN* dropped, not that the
             # VPS is down. Without this, every klipper ISP/DNS hiccup produced a
@@ -1174,6 +1187,7 @@ class DevOpsAgent:
                 )
             return
 
+        self._vps_probe_fails = 0  # başarılı probe → ardışık-fail sayacı sıfır
         await self._store_vps_metrics(probe, online=True)
         self._latest_vps = {**probe, "online": True, "timestamp": now}
 

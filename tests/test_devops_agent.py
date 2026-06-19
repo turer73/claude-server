@@ -797,6 +797,7 @@ async def test_check_vps_offline(tmp_path, monkeypatch):
     db = Database(str(tmp_path / "vps3.db"))
     await db.initialize()
     agent = DevOpsAgent(db=db, interval=60)
+    agent._vps_fail_threshold = 1  # alert-mantığını izole test et (sustained-gate ayrı testte)
 
     # Probe failed but klipper's own internet is up → genuine VPS outage.
     with (
@@ -829,6 +830,7 @@ async def test_check_vps_local_wan_down(tmp_path, monkeypatch):
     db = Database(str(tmp_path / "vps_wan.db"))
     await db.initialize()
     agent = DevOpsAgent(db=db, interval=60)
+    agent._vps_fail_threshold = 1  # alert-mantığını izole test et (sustained-gate ayrı testte)
 
     with (
         patch.object(agent, "_vps_ssh_probe", new_callable=AsyncMock, return_value=None),
@@ -840,6 +842,43 @@ async def test_check_vps_local_wan_down(tmp_path, monkeypatch):
     assert "klipper:wan-down" in agent._active_alerts
     assert "vps:offline" not in agent._active_alerts
     assert agent.latest_vps["online"] is False
+    await db.close()
+    get_settings.cache_clear()
+
+
+async def test_check_vps_sustained_gate(tmp_path, monkeypatch):
+    """Tek geçici probe-fail vps:offline ÜRETMEZ — N-ardışık-fail gerek (2026-06-19 fix).
+    Başarılı probe sayacı sıfırlar → tek-blip'ler birikmez."""
+    from unittest.mock import AsyncMock, patch
+
+    monkeypatch.setattr("app.core.config.load_yaml_config", lambda path: {})
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    from app.core.devops_agent import DevOpsAgent
+    from app.db.database import Database
+
+    db = Database(str(tmp_path / "vps_gate.db"))
+    await db.initialize()
+    agent = DevOpsAgent(db=db, interval=60)
+    agent._vps_fail_threshold = 2  # default
+
+    with (
+        patch.object(agent, "_vps_ssh_probe", new_callable=AsyncMock, return_value=None),
+        patch.object(agent, "_local_internet_up", new_callable=AsyncMock, return_value=True),
+    ):
+        await agent._check_vps()  # 1. fail → gate altında, alert YOK
+        assert "vps:offline" not in agent._active_alerts
+        assert agent._vps_probe_fails == 1
+        await agent._check_vps()  # 2. ardışık fail → eşik → alert
+        assert "vps:offline" in agent._active_alerts
+
+    # Başarılı probe → sayaç sıfır + alert temizlenir
+    probe = {"names": [], "cpu_percent": 5, "memory_percent": 10, "disk_percent": 20}
+    with patch.object(agent, "_vps_ssh_probe", new_callable=AsyncMock, return_value=probe):
+        await agent._check_vps()
+    assert agent._vps_probe_fails == 0
+    assert "vps:offline" not in agent._active_alerts
     await db.close()
     get_settings.cache_clear()
 
