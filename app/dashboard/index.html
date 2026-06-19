@@ -257,6 +257,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
     <div class="nav-item" onclick="nav('graphs',this)"><span class="icon">&#9650;</span> Grafikler</div>
     <div class="nav-item" onclick="nav('alerts',this)"><span class="icon">&#9888;</span> Uyarilar</div>
     <div class="nav-item" onclick="nav('autonomous',this)"><span class="icon">&#8678;</span> Otonom Akis</div>
+    <div class="nav-item" onclick="nav('agents',this)"><span class="icon">&#9881;</span> Ajanlar</div>
     <div class="nav-section">Yonetim</div>
     <div class="nav-item" onclick="nav('containers',this)"><span class="icon">&#9881;</span> Konteynerler</div>
     <div class="nav-item" onclick="nav('services',this)"><span class="icon">&#9733;</span> Servisler</div>
@@ -615,6 +616,14 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
         </div>
       </div>
 
+      <div id="page-agents" class="page">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <p style="font-size:12px;color:var(--dim);margin:0">Canli arka-plan ajanlari — en son ne zaman calisti, hangi is, bulgular, model, basari orani.</p>
+          <button class="vault-btn" onclick="loadAgents()">Yenile</button>
+        </div>
+        <div id="agentsContent"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
+      </div>
+
       <div id="page-secrets" class="page">
         <div class="card">
           <div class="card-title">.env Secrets <span class="badge">Sunucu</span></div>
@@ -784,6 +793,7 @@ function nav(page, el) {
   if (page==='projects') loadProjects();
   if (page==='services') { loadServices(); loadN8n(); }
   if (page==='operations') loadOperations();
+  if (page==='agents') loadAgents();
   if (page==='llm') loadLLM();
   if (page==='vps') setTimeout(() => { const i = document.getElementById('vpsCmd'); if (i) i.focus(); }, 50);
 }
@@ -1097,6 +1107,72 @@ async function loadDevOps() {
   document.getElementById('devopsInfo').innerHTML =
     mt('Durum', d.running ? '<span style="color:var(--green)">&#9679; Aktif</span>' : '<span style="color:var(--red)">&#9675; Durdu</span>') + mt('Kontrol',d.check_count) +
     mt('Aktif Uyari',d.active_alerts) + mt('Iyilestirme',d.total_remediations) + mt('Aralik',d.interval_seconds+'s');
+}
+
+// ── Ajanlar (canli arka-plan worker'lari) ───────────────────────
+function _agAgo(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso); if (isNaN(d)) return iso;
+  const s = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (s < 0) return 'az once';
+  if (s < 60) return s + 'sn once';
+  if (s < 3600) return Math.floor(s / 60) + 'dk once';
+  if (s < 86400) return Math.floor(s / 3600) + 'sa once';
+  return Math.floor(s / 86400) + 'g once';
+}
+function _agSevColor(s) { return s === 'P1' ? 'var(--red)' : s === 'P2' ? 'var(--yellow)' : 'var(--dim)'; }
+async function loadAgents() {
+  const el = document.getElementById('agentsContent');
+  const d = await api('/agents/runtime');
+  if (!d || !d.agents) { el.innerHTML = '<span style="color:var(--dim);font-size:12px">Erisim hatasi</span>'; return; }
+  if (!d.agents.length) { el.innerHTML = '<span style="color:var(--dim);font-size:12px">Aktif ajan yok</span>'; return; }
+  el.innerHTML = d.agents.map(a => {
+    const stats = Object.entries(a.stats || {}).map(([k, v]) =>
+      `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 10px;text-align:center">
+        <div style="font-size:18px;font-weight:700;color:var(--text)">${v}</div>
+        <div style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.04em">${esc(k)}</div></div>`).join('');
+    let sr;
+    if (a.success_rate) {
+      const pct = Math.round(a.success_rate.value * 100);
+      const col = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--yellow)' : 'var(--red)';
+      sr = `<div style="margin:12px 0 4px">
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-bottom:4px">
+          <span>${esc(a.success_rate.label)}</span><span style="color:${col};font-weight:600">${pct}% &middot; ${a.success_rate.n} ornek</span></div>
+        <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${col}"></div></div></div>`;
+    } else { sr = '<div style="font-size:11px;color:var(--dim);margin:12px 0 4px">Basari orani: henuz veri yok</div>'; }
+    const finds = (a.findings || []).length ? a.findings.map(f =>
+      `<div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;align-items:center">
+        <span style="flex:0 0 26px;color:${_agSevColor(f.severity)};font-weight:700">${esc(f.severity || '')}</span>
+        <span style="flex:1;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.title)}</span>
+        <span style="flex:0 0 auto;color:${f.status === 'fail' ? 'var(--red)' : f.status === 'pass' || f.status === 'active' ? 'var(--green)' : 'var(--dim)'};font-size:10px">${esc(f.status || '')}</span>
+        <span style="flex:0 0 auto;color:var(--dim);font-size:10px">${_agAgo(f.time)}</span></div>`).join('')
+      : '<div style="font-size:12px;color:var(--dim);padding:6px 0">Bulgu yok</div>';
+    return `<div class="card" style="margin-bottom:16px">
+      <div class="card-title"><span>${esc(a.name)} <span class="badge">${esc(a.role)}</span></span>
+        <span style="display:flex;gap:10px;align-items:center">
+          <button class="vault-btn" style="font-size:11px;padding:4px 10px" onclick="triggerAgent('${esc(a.key)}', this)">&#9654; Tetikle</button>
+          <span style="color:${a.running ? 'var(--green)' : 'var(--red)'};font-size:12px">${a.running ? '&#9679; Aktif' : '&#9675; Durdu'}</span></span></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;margin-bottom:12px">${stats}</div>
+      <div style="font-size:12px;color:var(--dim);line-height:1.8;margin-bottom:4px">
+        <div>Son calisma: <b style="color:var(--text)">${_agAgo(a.last_run)}</b> &middot; Aralik: ${a.interval_s || '?'}s</div>
+        <div>Su anki is: <b style="color:var(--text)">${esc(a.current_task || '—')}</b></div>
+        <div>Model: <b style="color:var(--text)">${(a.models || []).map(esc).join(', ')}</b></div></div>
+      ${sr}
+      <div style="margin-top:12px"><div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Son Bulgular / Islemler</div>${finds}</div>
+    </div>`;
+  }).join('');
+}
+
+async function triggerAgent(key, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Tetiklendi...'; }
+  const r = await apiPost('/agents/runtime/' + key + '/trigger', {});
+  if (r && r.triggered) {
+    toast('Ajan tetiklendi: ' + (r.task || key) + ' — birkac saniye sonra yenilenecek', 'success');
+    setTimeout(loadAgents, 5000);
+  } else {
+    toast('Tetikleme basarisiz', 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = '&#9654; Tetikle'; }
+  }
 }
 
 // ── Recent Alerts ───────────────────────
