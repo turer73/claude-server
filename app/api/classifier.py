@@ -18,15 +18,14 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.api.memory import verify_key
+from app.core.agents.llmcore import llm_core
 
 router = APIRouter(prefix="/api/v1/classify", tags=["classify"])
 
-OLLAMA_URL = "http://127.0.0.1:11434"
 DEFAULT_MODEL = "qwen2.5:7b"
 
 CLASSIFIER_PROMPT_TEMPLATE = (
@@ -84,22 +83,13 @@ async def classify_note(
 
     started = time.monotonic()
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.post(
-                f"{OLLAMA_URL}/api/generate",
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 10},
-                },
-            )
-        resp.raise_for_status()
-    except httpx.HTTPError as e:
+        raw_text = (
+            await llm_core.generate(prompt, task="classify", model=model, temperature=0.1, num_predict=10, timeout=20, raise_on_error=True)
+        ).upper()
+    except Exception as e:
         raise HTTPException(status_code=502, detail=f"ollama upstream error: {e}") from e
 
     duration_ms = int((time.monotonic() - started) * 1000)
-    raw_text = resp.json().get("response", "").strip().upper()
 
     label = "DISCUSSION"  # default safe fallback
     for candidate in VALID_LABELS:

@@ -196,19 +196,15 @@ def _compose_context(chunks: list[dict]) -> str:
 
 
 def _ollama_generate(prompt: str, model: str = LLM_MODEL) -> str:
-    r = requests.post(
-        f"{OLLAMA_URL}/api/generate",
-        json={
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": 0.2, "num_predict": LLM_NUM_PREDICT},
-        },
-        timeout=LLM_TIMEOUT,
-    )
-    if not r.ok:
-        raise HTTPException(503, f"ollama generate fail: {r.status_code}")
-    return r.json().get("response", "").strip()
+    """LLMCore.generate_sync üzerinden (tek transport/routing noktası). 503 kontratı korunur."""
+    from app.core.agents.llmcore import llm_core
+
+    try:
+        return llm_core.generate_sync(
+            prompt, task="research", model=model, num_predict=LLM_NUM_PREDICT, timeout=LLM_TIMEOUT, raise_on_error=True
+        )
+    except Exception as e:
+        raise HTTPException(503, f"ollama generate fail: {e}") from e
 
 
 CLAUDE_CLI_TIMEOUT = 90  # CLI spawn doğrudan-API'den yavaş; multi-hop için yeterli pencere

@@ -35,7 +35,7 @@ async def test_generate_ollama_backend(monkeypatch):
     async def fake_ollama(self, prompt, model, system, temperature, num_predict, timeout):
         return f"OLLAMA:{model}"
 
-    monkeypatch.setattr(LLMCore, "_ollama_generate", fake_ollama)
+    monkeypatch.setattr(LLMCore, "_ollama_async", fake_ollama)
     assert await LLMCore().generate("p", task="diagnosis") == "OLLAMA:qwen2.5:3b"
 
 
@@ -43,7 +43,7 @@ async def test_generate_model_override_beats_route(monkeypatch):
     async def fake_ollama(self, prompt, model, *a):
         return model
 
-    monkeypatch.setattr(LLMCore, "_ollama_generate", fake_ollama)
+    monkeypatch.setattr(LLMCore, "_ollama_async", fake_ollama)
     assert await LLMCore().generate("p", task="diagnosis", model="custom:1b") == "custom:1b"
 
 
@@ -63,8 +63,53 @@ async def test_generate_fail_silent(monkeypatch):
     async def boom(self, *a, **k):
         raise RuntimeError("ollama down")
 
-    monkeypatch.setattr(LLMCore, "_ollama_generate", boom)
+    monkeypatch.setattr(LLMCore, "_ollama_async", boom)
     assert await LLMCore().generate("p", task="diagnosis") == ""
+
+
+async def test_generate_raise_on_error_propagates(monkeypatch):
+    """raise_on_error=True → istisna yükselir (API endpoint 502/503'e çevirir)."""
+
+    async def boom(self, *a, **k):
+        raise RuntimeError("ollama down")
+
+    monkeypatch.setattr(LLMCore, "_ollama_async", boom)
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        await LLMCore().generate("p", task="diagnosis", raise_on_error=True)
+
+
+def test_generate_sync_ollama(monkeypatch):
+    """generate_sync ollama-route → _ollama_sync, ham yanıt döner (research/classifier yolu)."""
+
+    def fake_sync(self, prompt, model, *a):
+        return f"SYNC:{model}"
+
+    monkeypatch.setattr(LLMCore, "_ollama_sync", fake_sync)
+    assert LLMCore().generate_sync("p", task="research") == "SYNC:qwen2.5:3b"
+
+
+def test_generate_sync_fail_silent_and_raise(monkeypatch):
+    """generate_sync: default fail-silent '', raise_on_error=True → propagate."""
+
+    def boom(self, *a, **k):
+        raise RuntimeError("requests fail")
+
+    monkeypatch.setattr(LLMCore, "_ollama_sync", boom)
+    assert LLMCore().generate_sync("p", task="research") == ""
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        LLMCore().generate_sync("p", task="research", raise_on_error=True)
+
+
+def test_generate_sync_claude_backend(monkeypatch):
+    """generate_sync claude-route → research._anthropic_generate (sync) reuse."""
+    import app.api.research as research
+
+    monkeypatch.setattr(research, "_anthropic_generate", lambda system, user, model: f"C:{model}")
+    assert LLMCore().generate_sync("p", task="synthesis") == "C:claude-sonnet-4-6"
 
 
 def test_singleton_exported():

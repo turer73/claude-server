@@ -29,6 +29,7 @@ _TASK_ROUTES: dict[str, tuple[str, str]] = {
     "diagnosis": ("ollama", "qwen2.5:3b"),  # devops_agent._ask_diagnosis
     "research": ("ollama", "qwen2.5:3b"),  # research._ollama_generate
     "reasoning": ("ollama", "qwen2.5:7b"),  # daha güçlü yerel akıl-yürütme
+    "classify": ("ollama", "qwen2.5:7b"),  # classifier.classify_note (DEFAULT_MODEL)
     "escalate": ("claude", "claude-haiku-4-5-20251001"),  # hızlı/ucuz Claude (Max-abonelik)
     "synthesis": ("claude", "claude-sonnet-4-6"),  # derin sentez
     "default": ("ollama", "qwen2.5:3b"),
@@ -36,7 +37,12 @@ _TASK_ROUTES: dict[str, tuple[str, str]] = {
 
 
 class LLMCore:
-    """Tek arayüz: task → backend+model yönlendirir, fail-silent üretir."""
+    """Tek arayüz: task → backend+model yönlendirir.
+
+    İki giriş: ``generate`` (async, ajanlar) + ``generate_sync`` (sync, FastAPI threadpool
+    çağrıcıları: research/classifier). ``raise_on_error=False`` (default) → fail-silent ("",
+    ajanlar bozulmaz); ``raise_on_error=True`` → istisna yükselir (API endpoint'i 502/503'e çevirir).
+    """
 
     def __init__(self, ollama_url: str | None = None) -> None:
         self._ollama = (ollama_url or read_env_var("OLLAMA_URL") or "http://localhost:11434").rstrip("/")
@@ -50,6 +56,16 @@ class LLMCore:
                 return backend.strip(), model.strip()
         return _TASK_ROUTES.get(task, _TASK_ROUTES["default"])
 
+    @staticmethod
+    def _payload(prompt: str, model: str, system: str | None, temperature: float, num_predict: int | None) -> dict:
+        options: dict = {"temperature": temperature}
+        if num_predict:
+            options["num_predict"] = num_predict
+        payload: dict = {"model": model, "prompt": prompt, "stream": False, "options": options}
+        if system:
+            payload["system"] = system
+        return payload
+
     async def generate(
         self,
         prompt: str,
@@ -60,38 +76,67 @@ class LLMCore:
         temperature: float = 0.2,
         num_predict: int | None = None,
         timeout: int = 60,
+        raise_on_error: bool = False,
     ) -> str:
-        """Prompt → ham yanıt metni. Hata/timeout → "" (fail-silent). model verilirse routing'i ezer."""
+        """Async üretim. Hata → "" (fail-silent) veya raise_on_error ise istisna. model routing'i ezer."""
         backend, route_model = self.route(task)
         model = model or route_model
         try:
             if backend == "claude":
                 return await self._claude(system or "", prompt, model)
-            return await self._ollama_generate(prompt, model, system, temperature, num_predict, timeout)
+            return await self._ollama_async(prompt, model, system, temperature, num_predict, timeout)
         except Exception:
+            if raise_on_error:
+                raise
             logger.debug("LLMCore generate failed (task=%s)", task, exc_info=True)
             return ""
 
-    async def _ollama_generate(
+    async def _ollama_async(self, prompt, model, system, temperature, num_predict, timeout) -> str:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(
+                f"{self._ollama}/api/generate",
+                json=self._payload(prompt, model, system, temperature, num_predict),
+            )
+        r.raise_for_status()
+        return ((r.json() or {}).get("response") or "").strip()
+
+    def generate_sync(
         self,
         prompt: str,
-        model: str,
-        system: str | None,
-        temperature: float,
-        num_predict: int | None,
-        timeout: int,
+        *,
+        task: str = "default",
+        model: str | None = None,
+        system: str | None = None,
+        temperature: float = 0.2,
+        num_predict: int | None = None,
+        timeout: int = 60,
+        raise_on_error: bool = False,
     ) -> str:
-        options: dict = {"temperature": temperature}
-        if num_predict:
-            options["num_predict"] = num_predict
-        payload: dict = {"model": model, "prompt": prompt, "stream": False, "options": options}
-        if system:
-            payload["system"] = system
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            r = await client.post(f"{self._ollama}/api/generate", json=payload)
-        if r.status_code != 200:
+        """Sync üretim (requests) — FastAPI threadpool çağrıcıları için. Aynı routing/raise semantiği."""
+        backend, route_model = self.route(task)
+        model = model or route_model
+        try:
+            if backend == "claude":
+                from app.api.research import _anthropic_generate
+
+                return (_anthropic_generate(system or "", prompt, model) or "").strip()
+            return self._ollama_sync(prompt, model, system, temperature, num_predict, timeout)
+        except Exception:
+            if raise_on_error:
+                raise
+            logger.debug("LLMCore generate_sync failed (task=%s)", task, exc_info=True)
             return ""
-        return ((r.json() or {}).get("response") or "").strip()
+
+    def _ollama_sync(self, prompt, model, system, temperature, num_predict, timeout) -> str:
+        import requests
+
+        r = requests.post(
+            f"{self._ollama}/api/generate",
+            json=self._payload(prompt, model, system, temperature, num_predict),
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        return (r.json().get("response") or "").strip()
 
     async def _claude(self, system: str, user: str, model: str) -> str:
         """Max-abonelik CLI yolu reuse (research._anthropic_generate, sync → to_thread)."""
