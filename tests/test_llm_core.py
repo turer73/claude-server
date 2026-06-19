@@ -112,6 +112,48 @@ def test_generate_sync_claude_backend(monkeypatch):
     assert LLMCore().generate_sync("p", task="synthesis") == "C:claude-sonnet-4-6"
 
 
+def test_complete_sync_returns_raw_dict(monkeypatch):
+    """complete_sync ham ollama dict'i döndürür (response + eval metrikleri) — rag /ask yolu."""
+    import app.core.agents.llmcore as lcmod
+
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"response": "cevap", "eval_count": 5, "eval_duration": 1_000_000_000}
+
+    captured = {}
+
+    def fake_post(url, json=None, timeout=None):
+        captured["model"] = (json or {}).get("model")
+        captured["options"] = (json or {}).get("options")
+        return FakeResp()
+
+    import requests
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    out = lcmod.LLMCore().complete_sync("p", task="rag", model="qwen2.5:7b", options={"num_ctx": 8192})
+    assert out["response"] == "cevap"
+    assert out["eval_count"] == 5
+    assert captured["model"] == "qwen2.5:7b"
+    assert captured["options"] == {"num_ctx": 8192}
+
+
+def test_complete_sync_fail_silent_and_raise(monkeypatch):
+    import requests
+
+    def boom(*a, **k):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(requests, "post", boom)
+    assert LLMCore().complete_sync("p", task="rag") == {}
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        LLMCore().complete_sync("p", task="rag", raise_on_error=True)
+
+
 async def test_chat_extracts_message_content(monkeypatch):
     """chat() → /api/chat yanıtından message.content çıkarır (rol'lü messages)."""
 

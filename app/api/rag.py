@@ -303,19 +303,20 @@ def ask(
         f"Kaynaklarda bulunmuyorsa 'Hafizamda yetersiz bilgi' de. Madde madde yaz.\n\n"
         f"KAYNAKLAR:\n{context}\n\nSORU: {q}\n\nCEVAP (Turkce, kaynaklara dayali):"
     )
-    r = requests.post(
-        f"{OLLAMA_URL}/api/generate",
-        json={
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": temperature, "num_predict": max_tokens, "num_ctx": 8192},
-        },
-        timeout=300,
-    )
-    if not r.ok:
-        raise HTTPException(503, f"ollama fail: {r.status_code}")
-    res = r.json()
+    # LLMCore.complete_sync (tek transport/routing; num_ctx+metrik passthrough). 503 kontratı korunur.
+    from app.core.agents.llmcore import llm_core
+
+    try:
+        res = llm_core.complete_sync(
+            prompt,
+            task="rag",
+            model=model,
+            options={"temperature": temperature, "num_predict": max_tokens, "num_ctx": 8192},
+            timeout=300,
+            raise_on_error=True,
+        )
+    except Exception as e:
+        raise HTTPException(503, f"ollama fail: {e}") from e
     eval_count = res.get("eval_count", 0)
     eval_duration = res.get("eval_duration", 1) / 1e9
     tps = round(eval_count / max(eval_duration, 0.001), 1)

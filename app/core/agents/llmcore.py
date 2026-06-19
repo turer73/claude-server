@@ -30,6 +30,7 @@ _TASK_ROUTES: dict[str, tuple[str, str]] = {
     "research": ("ollama", "qwen2.5:3b"),  # research._ollama_generate
     "reasoning": ("ollama", "qwen2.5:7b"),  # daha güçlü yerel akıl-yürütme
     "classify": ("ollama", "qwen2.5:7b"),  # classifier.classify_note (DEFAULT_MODEL)
+    "rag": ("ollama", "qwen2.5:3b"),  # rag.ask (model çağrıcıdan; complete_sync)
     "escalate": ("claude", "claude-haiku-4-5-20251001"),  # hızlı/ucuz Claude (Max-abonelik)
     "synthesis": ("claude", "claude-sonnet-4-6"),  # derin sentez
     "default": ("ollama", "qwen2.5:3b"),
@@ -137,6 +138,34 @@ class LLMCore:
         )
         r.raise_for_status()
         return (r.json().get("response") or "").strip()
+
+    def complete_sync(
+        self,
+        prompt: str,
+        *,
+        task: str = "default",
+        model: str | None = None,
+        options: dict | None = None,
+        timeout: int = 300,
+        raise_on_error: bool = False,
+    ) -> dict:
+        """HAM yanıt dict'i (response + eval_count/eval_duration metrikleri) — metrik+özel-options
+        isteyen sync çağrıcılar için (rag /ask: num_ctx, tps). generate_sync string döndürür; bu dict.
+        Routing/env-override yine geçerli. Hata → {} (veya raise_on_error)."""
+        import requests
+
+        backend, route_model = self.route(task)
+        model = model or route_model
+        try:
+            payload = {"model": model, "prompt": prompt, "stream": False, "options": options or {}}
+            r = requests.post(f"{self._ollama}/api/generate", json=payload, timeout=timeout)
+            r.raise_for_status()
+            return r.json() or {}
+        except Exception:
+            if raise_on_error:
+                raise
+            logger.debug("LLMCore complete_sync failed (task=%s)", task, exc_info=True)
+            return {}
 
     async def chat(
         self,
