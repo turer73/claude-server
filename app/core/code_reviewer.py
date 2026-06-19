@@ -42,6 +42,13 @@ _REVIEW_PROMPT = """Sen kıdemli bir güvenlik+correctness odaklı kod gözden g
 
 SADECE gerçek, somut sorunları bildir: güvenlik açığı (injection/auth-bypass/secret-sızıntı), correctness-bug (race/None-deref/yanlış-mantık), kaynak-sızıntı (OOM/handle), veri-kaybı. Stil/isimlendirme/biçim/öneri YAZMA. Emin değilsen ATLA — yanlış-pozitif yasak.
 
+MITIGATION-FARKINDALIĞI (yanlış-pozitif önle — KRİTİK): Kod sorunu ZATEN azaltıyorsa FLAG'LEME, çünkü güvenli:
+- shlex.quote(...) / parametreli-sorgu (? veya %s placeholder, değer params'ta) / kaçışlama → injection MITIGATED, flag'leme.
+- input-validation (regex fullmatch / allowlist / izinli-değer kontrolü) ve SONRA kullanım → MITIGATED.
+- try/except, None/boş kontrolü, timeout/busy_timeout, with-context → ilgili risk MITIGATED.
+f-string'de komut/SQL görmen TEK BAŞINA açık değildir — yakında bir guard (quote/validate/param) var mı BAK; varsa GÜVENLİDİR.
+Aynı sorunu TEK kez bildir (P1+P2 olarak tekrarlama). Satır-no'yu yorum/import değil, sorunun GERÇEK satırına ver.
+
 Yanıtı YALNIZ şu JSON dizisi olarak ver (başka metin yok), sorun yoksa boş dizi []:
 [{{"line": <satır-no>, "severity": "P1|P2|P3", "title": "<=60 kar özet", "detail": "<niçin sorun + somut kanıt, 1-2 cümle>"}}]
 
