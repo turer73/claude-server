@@ -1,0 +1,168 @@
+"""Read-only kod-mühendisi ajanı testleri. LLM mock'lu; tmp-DB (prod kirletilmez)."""
+
+import sqlite3
+
+import pytest
+
+from app.core import code_reviewer as cr
+
+DISCOVERIES_SCHEMA = """
+CREATE TABLE discoveries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER, project TEXT,
+    type TEXT CHECK(type IN ('bug','fix','learning','config','workaround','architecture','plan')),
+    title TEXT NOT NULL, details TEXT, resolved INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')), device_name TEXT DEFAULT 'klipper',
+    status TEXT DEFAULT 'active' CHECK(status IN ('active','completed','obsolete','superseded')),
+    last_read_at TEXT, read_count INTEGER DEFAULT 0, rationale TEXT);
+CREATE UNIQUE INDEX idx_disc_unique_active ON discoveries(project, type, title) WHERE status='active';
+"""
+
+
+@pytest.fixture
+def tmp_db(tmp_path, monkeypatch):
+    db = tmp_path / "mem.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(DISCOVERIES_SCHEMA)
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(cr, "MEMORY_DB", str(db))
+    monkeypatch.setattr(cr, "_ENABLED", True)
+    return db
+
+
+def _rows(db, **w):
+    conn = sqlite3.connect(db)
+    q = "SELECT type, title, details FROM discoveries WHERE 1=1"
+    p = []
+    for k, v in w.items():
+        q += f" AND {k}=?"
+        p.append(v)
+    out = conn.execute(q, p).fetchall()
+    conn.close()
+    return out
+
+
+def test_record_findings_dedup(tmp_db):
+    """Aynı bulgu 2 kez → 1 new + 1 dup (unique-active index)."""
+    f = [{"line": 42, "severity": "P1", "title": "SQL injection", "detail": "user input concat"}]
+    r1 = cr.record_findings("app/x.py", f)
+    assert r1 == {"new": 1, "dup": 0, "p1_titles": ["app/x.py:42 SQL injection"]}
+    r2 = cr.record_findings("app/x.py", f)  # tekrar
+    assert r2["new"] == 0
+    assert r2["dup"] == 1
+    assert len(_rows(tmp_db, type="bug")) == 1  # tek kayıt
+
+
+def test_record_findings_p1_surfaced(tmp_db):
+    f = [
+        {"line": 1, "severity": "P3", "title": "minor", "detail": "x"},
+        {"line": 2, "severity": "P1", "title": "auth bypass", "detail": "y"},
+    ]
+    r = cr.record_findings("app/y.py", f)
+    assert r["new"] == 2
+    assert r["p1_titles"] == ["app/y.py:2 auth bypass"]  # yalnız P1 yüzeye çıkar
+
+
+def test_synthesize_lesson_recurring(tmp_db):
+    """Aynı sorun-türü ≥3 yerde → 'learning' dersi (read-only sentez)."""
+    for i in range(3):
+        cr.record_findings(f"app/f{i}.py", [{"line": i, "severity": "P2", "title": "missing busy_timeout", "detail": "d"}])
+    assert cr.synthesize_lesson() is True
+    lessons = _rows(tmp_db, type="learning")
+    assert len(lessons) == 1
+    assert "missing busy_timeout" in lessons[0][1].lower()
+    # idempotent: tekrar çağrı yeni-ders üretmez
+    assert cr.synthesize_lesson() is False
+
+
+def test_synthesize_lesson_below_threshold(tmp_db):
+    cr.record_findings("app/a.py", [{"line": 1, "severity": "P2", "title": "rare issue", "detail": "d"}])
+    assert cr.synthesize_lesson() is False  # <3 → ders yok
+    assert len(_rows(tmp_db, type="learning")) == 0
+
+
+async def test_ask_coder_parses_and_filters(monkeypatch):
+    """Mock Ollama yanıtı → katı-JSON parse + alan-filtre (read-only LLM boundary)."""
+
+    class FakeResp:
+        status_code = 200
+
+        def json(self):
+            return {"response": 'blah ```json\n[{"line": 5, "severity": "P1", "title": "race", "detail": "concurrent insert"}]\n``` end'}
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            return FakeResp()
+
+    monkeypatch.setattr(cr.httpx, "AsyncClient", FakeClient)
+    out = await cr._ask_coder("prompt")
+    assert len(out) == 1
+    assert out[0]["severity"] == "P1"
+    assert out[0]["line"] == 5
+    assert out[0]["title"] == "race"
+
+
+async def test_ask_coder_empty_on_no_json(monkeypatch):
+    class FakeResp:
+        status_code = 200
+
+        def json(self):
+            return {"response": "Kod temiz, sorun yok."}  # JSON-dizi yok
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            return FakeResp()
+
+    monkeypatch.setattr(cr.httpx, "AsyncClient", FakeClient)
+    assert await cr._ask_coder("p") == []
+
+
+async def test_review_source_disabled_returns_empty(monkeypatch):
+    monkeypatch.setattr(cr, "_ENABLED", False)
+    assert await cr.review_source("x.py", "code") == []
+
+
+async def test_agent_drain_queue(tmp_db, tmp_path, monkeypatch):
+    """Agent commit-kuyruğunu okur, inceler, temizler (event-trigger)."""
+    from app.core import code_review_agent as cra
+
+    monkeypatch.setattr(cra.cr, "_ENABLED", True)
+    agent = cra.CodeReviewAgent()
+    # kuyruk + sahte dosya
+    qf = tmp_path / "queue.txt"
+    target = cr.ROOT  # gerçek root; var olan bir dosyayı kuyruğa koy
+    agent._queue = qf
+    qf.write_text("app/main.py\napp/main.py\n")  # dup → uniq
+
+    seen = []
+
+    async def fake_review_file(p):
+        seen.append(str(p))
+        return [{"line": 1, "severity": "P2", "title": "test", "detail": "d"}]
+
+    monkeypatch.setattr(cra.cr, "review_file", fake_review_file)
+    monkeypatch.setattr(cra.cr, "record_findings", lambda rel, f: {"new": 1, "dup": 0, "p1_titles": []})
+
+    await agent._drain_queue()
+    assert len(seen) == 1  # dup-dosya tek kez incelendi
+    assert "app/main.py" in seen[0]
+    assert qf.read_text() == ""  # kuyruk drenaj edildi
+    _ = target

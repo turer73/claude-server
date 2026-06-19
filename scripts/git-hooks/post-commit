@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Code-reviewer commit-tetiği: değişen kod-dosyalarını inceleme kuyruğuna ekle.
+# Read-only ajan (CodeReviewAgent) kuyruğu drenaj edip qwen2.5-coder ile inceler.
+# Non-blocking (sadece path append) → commit'i yavaşlatmaz. Fail-silent.
+QUEUE=/opt/linux-ai-server/data/code-review-queue.txt
+git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null \
+  | grep -E '\.(py|sh|ts|tsx|js|sql)$' >> "$QUEUE" 2>/dev/null || true
+exit 0

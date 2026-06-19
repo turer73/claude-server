@@ -135,6 +135,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.devops_agent = devops
     devops.start()
 
+    # Read-only kod-mühendisi ajanı (qwen2.5-coder): commit-diff + idle-sweep ile
+    # sürekli inceleme → discoveries (dedup'lı) + P1 Telegram. KOD DEĞİŞTİRMEZ.
+    # CODE_REVIEW_ENABLED=0 ile kapatılır. start() yalnız enabled ise task açar.
+    from app.core.code_review_agent import CodeReviewAgent
+
+    code_reviewer = CodeReviewAgent(interval=300)
+    app.state.code_review_agent = code_reviewer
+    code_reviewer.start()
+
     # Klipper telemetry: app fully initialized, fire-and-forget event POST.
     # CLAUDE.md zorunlu kayit kurali -- service-start event'i tasks_log'a dusmeli.
     # subprocess.Popen non-blocking; start_new_session=True ile parent kapanirsa
@@ -172,6 +181,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Graceful shutdown
     await devops.stop()
+    await code_reviewer.stop()
     await db.close()
 
 
