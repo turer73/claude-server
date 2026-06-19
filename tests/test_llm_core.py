@@ -112,5 +112,57 @@ def test_generate_sync_claude_backend(monkeypatch):
     assert LLMCore().generate_sync("p", task="synthesis") == "C:claude-sonnet-4-6"
 
 
+async def test_chat_extracts_message_content(monkeypatch):
+    """chat() → /api/chat yanıtından message.content çıkarır (rol'lü messages)."""
+
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"message": {"content": "  merhaba  "}}
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            return FakeResp()
+
+    monkeypatch.setattr(lc.httpx, "AsyncClient", FakeClient)
+    out = await LLMCore().chat([{"role": "user", "content": "selam"}], model="qwen2.5:7b")
+    assert out == "merhaba"
+
+
+async def test_chat_fail_silent_and_raise(monkeypatch):
+    """chat(): default fail-silent '', raise_on_error=True → propagate."""
+
+    class BoomClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            raise RuntimeError("chat down")
+
+    monkeypatch.setattr(lc.httpx, "AsyncClient", BoomClient)
+    assert await LLMCore().chat([{"role": "user", "content": "x"}]) == ""
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        await LLMCore().chat([{"role": "user", "content": "x"}], raise_on_error=True)
+
+
 def test_singleton_exported():
     assert isinstance(llm_core, LLMCore)

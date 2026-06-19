@@ -138,6 +138,34 @@ class LLMCore:
         r.raise_for_status()
         return (r.json().get("response") or "").strip()
 
+    async def chat(
+        self,
+        messages: list[dict],
+        *,
+        task: str = "default",
+        model: str | None = None,
+        timeout: int = 120,
+        raise_on_error: bool = False,
+    ) -> str:
+        """Mesaj-listesi (/api/chat) → asistan içeriği (str). Yerel ollama chat (generate'in
+        sohbet-eşi: rol'lü messages, /no_think çağrıcıda). Fail-silent "" veya raise_on_error.
+        NOT: claude-chat YOK (3 çağrıcı da yerel-model RAG/dispatch/inference); gerekirse eklenir."""
+        backend, route_model = self.route(task)
+        model = model or route_model
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                r = await client.post(
+                    f"{self._ollama}/api/chat",
+                    json={"model": model, "messages": messages, "stream": False},
+                )
+            r.raise_for_status()
+            return ((r.json() or {}).get("message") or {}).get("content", "").strip()
+        except Exception:
+            if raise_on_error:
+                raise
+            logger.debug("LLMCore chat failed (task=%s)", task, exc_info=True)
+            return ""
+
     async def _claude(self, system: str, user: str, model: str) -> str:
         """Max-abonelik CLI yolu reuse (research._anthropic_generate, sync → to_thread)."""
         from app.api.research import _anthropic_generate

@@ -23,8 +23,7 @@ except ImportError:
 
 router = APIRouter(prefix="/api/v1/dispatch", tags=["dispatch"])
 
-OLLAMA_URL = "http://127.0.0.1:11434"
-MODEL = "qwen2.5:7b"
+MODEL = "qwen2.5:7b"  # LLMCore.chat'e model= ile geçer
 
 # GUVENLIK (Codex P1b): whitelist'te olsa da arg'iyla keyfi kod calistiran yorumlayici/
 # wrapper komutlar — LLM-uretimi girdide _run_klipper_cmd bunlari reddeder.
@@ -91,18 +90,13 @@ class DispatchResult(BaseModel):
 
 
 async def _ollama_chat(user_msg: str, system: str = "") -> str:
+    from app.core.agents.llmcore import llm_core
+
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": user_msg})
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            f"{OLLAMA_URL}/api/chat",
-            json={"model": MODEL, "stream": False, "messages": messages},
-        )
-        resp.raise_for_status()
-        content: str = resp.json()["message"]["content"]
-        return content.strip()
+    return await llm_core.chat(messages, model=MODEL, timeout=30, raise_on_error=True)
 
 
 def _quick_route(task: str) -> str:

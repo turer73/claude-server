@@ -165,17 +165,14 @@ Question: {question}
 
 Answer:"""
 
-        async with httpx.AsyncClient(timeout=300) as client:
-            resp = await client.post(
-                f"{self._ollama}/api/chat",
-                json={
-                    "model": self._chat_model,
-                    "messages": [{"role": "user", "content": f"/no_think {prompt}"}],
-                    "stream": False,
-                },
-            )
-        ai_data = resp.json()
-        answer = ai_data.get("message", {}).get("content", "")
+        from app.core.agents.llmcore import llm_core
+
+        # LLMCore.chat üzerinden (tek choke-point); fail-silent → answer="" (lenient davranış korunur).
+        answer = await llm_core.chat(
+            [{"role": "user", "content": f"/no_think {prompt}"}],
+            model=self._chat_model,
+            timeout=300,
+        )
 
         return {
             "question": question,
