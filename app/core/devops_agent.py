@@ -728,29 +728,12 @@ class DevOpsAgent:
             pass
 
     def _gather_diag_context(self) -> str:
-        """Read-only: son 7 günde memory'ye kaydedilen değişiklikler (fix/arch/workaround +
-        task) — alert'le korelasyon için. Salt SELECT; yazma yok."""
-        import sqlite3
+        """Son 7 günde memory'ye kaydedilen değişiklikler (alert-korelasyonu).
+        Logic paylaşılan RecentChangesProvider'a çıkarıldı (code-research de aynı
+        kaynağı kullanır — duplikasyon-önleme); güncel _diag_memory_db ile delege."""
+        from app.core.agents import RecentChangesProvider
 
-        try:
-            conn = sqlite3.connect(self._diag_memory_db)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA busy_timeout=3000")
-            disc = conn.execute(
-                "SELECT project, type, title, date(created_at) d FROM discoveries "
-                "WHERE type IN ('fix','architecture','workaround') AND created_at > datetime('now','-7 days') "
-                "ORDER BY created_at DESC LIMIT 10"
-            ).fetchall()
-            tasks = conn.execute(
-                "SELECT project, task, date(created_at) d FROM tasks_log "
-                "WHERE created_at > datetime('now','-7 days') ORDER BY created_at DESC LIMIT 10"
-            ).fetchall()
-            conn.close()
-            lines = [f"- [{r['d']}] {r['project']}/{r['type']}: {r['title']}" for r in disc]
-            lines += [f"- [{r['d']}] {r['project']} task: {r['task']}" for r in tasks]
-            return "\n".join(lines) if lines else "Son 7 günde kayıtlı değişiklik yok."
-        except Exception:
-            return "(context okunamadı)"
+        return RecentChangesProvider(self._diag_memory_db)._query()
 
     async def _ask_diagnosis(self, alert: Alert, context: str) -> str | None:
         """Ollama'ya kök-neden hipotezi sordur (timeout'lu, fail→None). Salt-okuma."""

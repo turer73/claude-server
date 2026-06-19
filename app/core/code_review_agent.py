@@ -33,6 +33,10 @@ class CodeReviewAgent:
         self._ticks = 0
         self.last_run: str | None = None
         self.total_findings = 0
+        # Action/Provider deseni: yetenekler (review/learn/research) registry'den dispatch.
+        from app.core.agents.code_actions import build_code_review_registry
+
+        self._registry = build_code_review_registry()
 
     def start(self) -> None:
         if cr._ENABLED:
@@ -76,14 +80,14 @@ class CodeReviewAgent:
         if await self._is_idle():  # idle-trigger (sadece boştayken)
             await self._sweep()
         self._ticks += 1
-        if self._ticks % 12 == 0:  # ~her saat (12×5dk) ders sentezle
-            await asyncio.to_thread(cr.synthesize_lesson)
+        if self._ticks % 12 == 0:  # ~her saat (12×5dk) ders sentezle (Action)
+            await self._registry.run("learn")
         # Faz 3: internet/yeni-yapı — ~her 4h (48×5dk) sıradaki stack-topic'i araştır
         # (rotating, bounded; tüm topic'ler ~1.3 günde kapsanır). Yalnız idle'da.
         if cr._RESEARCH_ENABLED and self._ticks % 48 == 0 and await self._is_idle():
             topic = cr.STACK_TOPICS[self._research_pos % len(cr.STACK_TOPICS)]
             self._research_pos += 1
-            await cr.research_new_structure(topic)
+            await self._registry.run("research", topic=topic)
 
     async def _is_idle(self) -> bool:
         try:
@@ -126,11 +130,11 @@ class CodeReviewAgent:
         return [p for p in out if "__pycache__" not in str(p) and "/venv/" not in str(p)]
 
     async def _review_one(self, abs_path: Path, source: str) -> None:
-        findings = await cr.review_file(abs_path)
-        if not findings:
+        # 'review' Action: incele + bulguları dedup'lı kaydet (registry dispatch).
+        res = await self._registry.run("review", path=abs_path)
+        if not res or not res.get("new"):
             return
-        rel = str(abs_path.relative_to(cr.ROOT)) if abs_path.is_relative_to(cr.ROOT) else abs_path.name
-        res = await asyncio.to_thread(cr.record_findings, rel, findings)
+        rel = res.get("rel", abs_path.name)
         self.total_findings += res["new"]
         if res["p1_titles"]:
             # P1 → emit_event (teşhis-asistanı deseni; notify-cron Telegram'a çevirir)
