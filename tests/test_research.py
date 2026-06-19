@@ -125,8 +125,7 @@ async def test_engine_claude_uses_anthropic_when_requested(client, monkeypatch):
     monkeypatch.setattr("app.api.research._qdrant_chunks", lambda *a, **kw: [])
     monkeypatch.setattr("app.api.research._discovery_chunks", lambda *a, **kw: [chunk])
     monkeypatch.setattr("app.api.research._memory_chunks", lambda *a, **kw: [])
-    # ANTHROPIC_API_KEY'i mock'la (modul yuklemesinde okunmus olabilir bos)
-    monkeypatch.setattr("app.api.research.ANTHROPIC_API_KEY", "sk-test-fake")
+    # engine='claude' explicit → gate (auto) atlanır; CLI çağrısı _anthropic_generate mock'lu
     with (
         patch("app.api.research._anthropic_generate", return_value="cevap [discovery:5]") as cl,
         patch("app.api.research._ollama_generate") as ol,
@@ -145,12 +144,12 @@ async def test_engine_claude_uses_anthropic_when_requested(client, monkeypatch):
 
 @pytest.mark.anyio
 async def test_engine_auto_picks_claude_when_chunks_high(client, monkeypatch):
-    """8+ kaynak ve ANTHROPIC_API_KEY varsa auto -> claude."""
+    """8+ kaynak ve claude CLI mevcutsa auto -> claude."""
     many = [{"type": "discovery", "id": str(i), "title": "x", "text": "y"} for i in range(10)]
     monkeypatch.setattr("app.api.research._qdrant_chunks", lambda *a, **kw: [])
     monkeypatch.setattr("app.api.research._discovery_chunks", lambda *a, **kw: many)
     monkeypatch.setattr("app.api.research._memory_chunks", lambda *a, **kw: [])
-    monkeypatch.setattr("app.api.research.ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setattr("app.api.research._claude_available", lambda: True)
     with patch("app.api.research._anthropic_generate", return_value="ok") as cl, patch("app.api.research._ollama_generate") as ol:
         resp = await client.post(
             "/api/v1/research/ask",
@@ -163,11 +162,11 @@ async def test_engine_auto_picks_claude_when_chunks_high(client, monkeypatch):
 
 @pytest.mark.anyio
 async def test_engine_auto_falls_back_to_local_without_key(client, monkeypatch):
-    """ANTHROPIC_API_KEY yoksa auto -> local."""
+    """claude CLI yoksa auto -> local."""
     many = [{"type": "discovery", "id": str(i), "title": "x", "text": "y"} for i in range(10)]
     monkeypatch.setattr("app.api.research._discovery_chunks", lambda *a, **kw: many)
     monkeypatch.setattr("app.api.research._memory_chunks", lambda *a, **kw: [])
-    monkeypatch.setattr("app.api.research.ANTHROPIC_API_KEY", "")  # key yok
+    monkeypatch.setattr("app.api.research._claude_available", lambda: False)  # CLI yok
     with patch("app.api.research._ollama_generate", return_value="ok") as ol, patch("app.api.research._anthropic_generate") as cl:
         resp = await client.post(
             "/api/v1/research/ask",

@@ -34,7 +34,6 @@ from pydantic import BaseModel
 from app.api import claude_code as cc_module
 from app.api import rag as rag_module
 from app.api.memory import verify_key
-from app.core.config import read_env_var
 from app.core.research_agent import ResearchAgent
 from app.models.schemas import ResearchConfig, ResearchReport
 
@@ -45,9 +44,8 @@ OLLAMA_URL = "http://localhost:11434"
 LLM_TIMEOUT = 90
 LLM_NUM_PREDICT = 300  # 3B model @ ~35 tok/s -> 300 token ~9sn
 
-# Anthropic fallback — daha hizli + daha iyi citation
-ANTHROPIC_API_KEY = read_env_var("ANTHROPIC_API_KEY")
-ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+# Claude sentezi — MAX-ABONELİK CLI üzerinden (_anthropic_generate). Doğrudan API (API-key)
+# KULLANILMAZ (kullanıcı standing tercihi "API istemiyorum"). Gate de CLI-varlığına bakar.
 ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"  # hızlı/ucuz (Haiku)
 ANTHROPIC_MODEL_SONNET = "claude-sonnet-4-6"  # derin sentez (daha güçlü akıl-yürütme)
 ANTHROPIC_MAX_TOKENS = 600
@@ -208,6 +206,11 @@ def _ollama_generate(prompt: str, model: str = LLM_MODEL) -> str:
 
 
 CLAUDE_CLI_TIMEOUT = 90  # CLI spawn doğrudan-API'den yavaş; multi-hop için yeterli pencere
+
+
+def _claude_available() -> bool:
+    """Max-abonelik claude CLI mevcut mu — auto-engine gate'i (API-key DEĞİL; çağrı zaten CLI)."""
+    return bool(cc_module._find_claude())
 
 
 def _anthropic_generate(system: str, user: str, model: str = ANTHROPIC_MODEL) -> str:
@@ -448,8 +451,9 @@ def research_ask(req: AskRequest):
     # Engine secimi
     engine = req.engine
     if engine == "auto":
-        # Yuksek kaynak yoğunluğu = Claude (qwen yavaş + citation tutarsız)
-        engine = "claude" if len(chunks) >= 8 and ANTHROPIC_API_KEY else "local"
+        # Yuksek kaynak yoğunluğu = Claude (qwen yavaş + citation tutarsız). Gate CLI-varlığına
+        # bakar (API-key DEĞİL): çağrı zaten _anthropic_generate=CLI; key silinse de CLI çalışır.
+        engine = "claude" if len(chunks) >= 8 and _claude_available() else "local"
 
     t1 = time.time()
     context = _compose_context(chunks)
