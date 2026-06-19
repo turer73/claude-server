@@ -29,12 +29,27 @@ CFG="$(mktemp)"; chmod 600 "$CFG"; trap 'rm -f "$CFG"' EXIT
 printf 'header = "Authorization: Bearer %s"\n' "$SECRET" > "$CFG"
 
 BODY="$(curl -sS --max-time 90 -w $'\n__HTTP_%{http_code}__' --config "$CFG" "$URL" 2>&1)"
+CURL_RC=$?
 CODE="$(printf '%s' "$BODY" | sed -nE 's/.*__HTTP_([0-9]+)__$/\1/p')"
 JSON="$(printf '%s' "$BODY" | sed -E 's/__HTTP_[0-9]+__$//' | tr -d '\n' | head -c 300)"
 
+# Codex PR#162 P2: curl exit-status'u http_code'dan ÖNCE kontrol et. 200 yanıt +
+# transfer-timeout (partial body) durumunda http_code 200 yakalanmış ama curl rc≠0
+# olur → false-pass. Önce transfer-bütünlüğü.
+if [ "${CURL_RC}" -ne 0 ]; then
+  echo "OUTCOME: fail | curl rc=${CURL_RC} (transfer hatası/timeout) http=${CODE:-000} resp=$(printf '%s' "$JSON" | head -c 120)"
+  exit 1
+fi
+
 if [ "${CODE}" = "200" ]; then
+  # Codex PR#162 P2: 200 ama beklenen {processed:N} gövdesi YOKSA (örn Vercel/CF HTML
+  # hata-sayfası) başarı SAYMA — sed eşleşmezse N boş kalır → fail (false-pass önle).
   N="$(printf '%s' "$JSON" | sed -nE 's/.*"processed"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p')"
-  echo "OUTCOME: pass | processed=${N:-0} http=200"
+  if [ -z "${N}" ]; then
+    echo "OUTCOME: fail | http=200 ama 'processed' alanı yok (beklenmeyen gövde) resp=$(printf '%s' "$JSON" | head -c 150)"
+    exit 1
+  fi
+  echo "OUTCOME: pass | processed=${N} http=200"
   exit 0
 else
   echo "OUTCOME: fail | http=${CODE:-000} resp=$(printf '%s' "$JSON" | head -c 150)"
