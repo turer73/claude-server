@@ -169,6 +169,61 @@ async def test_review_source_applies_verify(monkeypatch):
     assert await cr.review_source("x.py", "kod var") == []
 
 
+# ── #3 Gerçek-öğrenme (ders→prompt oto-besleme) ──
+
+
+def _insert_learning(db, title, status="active"):
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO discoveries (project, type, title, status) VALUES (?, 'learning', ?, ?)", (cr.PROJECT, title, status))
+    conn.commit()
+    conn.close()
+
+
+def test_recent_lessons_only_active_codereview(tmp_db, monkeypatch):
+    _insert_learning(tmp_db, "Tekrar-eden bulgu: sql injection")
+    _insert_learning(tmp_db, "Tekrar-eden bulgu: eski-ders", status="obsolete")  # obsolete → dahil değil
+    lessons = cr._recent_lessons()
+    assert "Tekrar-eden bulgu: sql injection" in lessons
+    assert "Tekrar-eden bulgu: eski-ders" not in lessons
+
+
+def test_lessons_block_disabled_empty(tmp_db, monkeypatch):
+    monkeypatch.setattr(cr, "_LEARN_FEEDBACK_ENABLED", False)
+    _insert_learning(tmp_db, "x")
+    assert cr._lessons_block() == ""
+
+
+def test_lessons_block_includes_lessons_and_fp_guard(tmp_db, monkeypatch):
+    monkeypatch.setattr(cr, "_LEARN_FEEDBACK_ENABLED", True)
+    _insert_learning(tmp_db, "Tekrar-eden bulgu: race condition")
+    block = cr._lessons_block()
+    assert "ÖĞRENİLEN DERSLER" in block
+    assert "race condition" in block
+    assert "FP-guard" in block  # ders FP-guard'ı ezmez uyarısı (gürültü-koruması)
+
+
+def test_lessons_block_empty_when_none(tmp_db, monkeypatch):
+    monkeypatch.setattr(cr, "_LEARN_FEEDBACK_ENABLED", True)
+    assert cr._lessons_block() == ""
+
+
+async def test_review_source_injects_lessons(tmp_db, monkeypatch):
+    """Uçtan-uca: ajan kendi dersini review-prompt'a oto-enjekte eder."""
+    monkeypatch.setattr(cr, "_LEARN_FEEDBACK_ENABLED", True)
+    monkeypatch.setattr(cr, "_VERIFY_ENABLED", False)
+    _insert_learning(tmp_db, "Tekrar-eden bulgu: None-deref")
+    captured = {}
+
+    async def fake_ask(p):
+        captured["prompt"] = p
+        return []
+
+    monkeypatch.setattr(cr, "_ask_coder", fake_ask)
+    await cr.review_source("x.py", "kod var")
+    assert "None-deref" in captured["prompt"]
+    assert "ÖĞRENİLEN DERSLER" in captured["prompt"]
+
+
 async def test_review_source_disabled_returns_empty(monkeypatch):
     monkeypatch.setattr(cr, "_ENABLED", False)
     assert await cr.review_source("x.py", "code") == []

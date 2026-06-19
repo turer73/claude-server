@@ -33,6 +33,10 @@ _TIMEOUT = int(read_env_var("CODE_REVIEW_TIMEOUT") or "60")
 _MAX_BYTES = 12000  # dosya başına LLM'e gönderilecek max (büyük dosyada baş kısmı)
 # #4 Adversarial-verify: her P1/P2 bulgu bağımsız skeptik 2. pass'ten geçer (FP'yi sistem eler).
 _VERIFY_ENABLED = (read_env_var("CODE_REVIEW_VERIFY_ENABLED") or "1").strip().lower() not in ("0", "false", "no", "off")
+# #3 Gerçek-öğrenme: learn-mode'un sentezlediği dersler review-prompt'a oto-beslenir (ajan kendi
+# derslerini uygular). Gürültü-korumalı: sadece aktif code-review 'learning', cap'li, geri-alınabilir.
+_LEARN_FEEDBACK_ENABLED = (read_env_var("CODE_REVIEW_LEARN_FEEDBACK_ENABLED") or "1").strip().lower() not in ("0", "false", "no", "off")
+_LEARN_FEEDBACK_MAX = int(read_env_var("CODE_REVIEW_LEARN_FEEDBACK_MAX") or "5")
 
 _SEVERITIES = {"P1", "P2", "P3"}
 
@@ -47,7 +51,7 @@ MITIGATION-FARKINDALIĞI (yanlış-pozitif önle — KRİTİK): Kod sorunu ZATEN
 - input-validation (regex fullmatch / allowlist / izinli-değer kontrolü) ve SONRA kullanım → MITIGATED.
 - try/except, None/boş kontrolü, timeout/busy_timeout, with-context → ilgili risk MITIGATED.
 f-string'de komut/SQL görmen TEK BAŞINA açık değildir — yakında bir guard (quote/validate/param) var mı BAK; varsa GÜVENLİDİR.
-Aynı sorunu TEK kez bildir (P1+P2 olarak tekrarlama). Satır-no'yu yorum/import değil, sorunun GERÇEK satırına ver.
+Aynı sorunu TEK kez bildir (P1+P2 olarak tekrarlama). Satır-no'yu yorum/import değil, sorunun GERÇEK satırına ver.{lessons}
 
 Yanıtı YALNIZ şu JSON dizisi olarak ver (başka metin yok), sorun yoksa boş dizi []:
 [{{"line": <satır-no>, "severity": "P1|P2|P3", "title": "<=60 kar özet", "detail": "<niçin sorun + somut kanıt, 1-2 cümle>"}}]
@@ -114,7 +118,7 @@ async def review_source(rel_path: str, code: str) -> list[dict]:
     if not _ENABLED or not code.strip():
         return []
     snippet = code[:_MAX_BYTES]
-    prompt = _REVIEW_PROMPT.format(lang=_lang(rel_path) or "text", path=rel_path, code=snippet)
+    prompt = _REVIEW_PROMPT.format(lang=_lang(rel_path) or "text", path=rel_path, code=snippet, lessons=_lessons_block())
     findings = await _ask_coder(prompt)
     if _VERIFY_ENABLED and findings:
         findings = await _verify_findings(rel_path, snippet, findings)
@@ -147,6 +151,39 @@ async def _verify_findings(rel_path: str, code: str, findings: list[dict]) -> li
         if f["severity"] == "P3" or await _verify_one(rel_path, code, f):
             kept.append(f)
     return kept
+
+
+# ── #3 Gerçek-öğrenme: learn-mode dersleri → review-prompt oto-besleme ──
+
+
+def _recent_lessons(limit: int = _LEARN_FEEDBACK_MAX) -> list[str]:
+    """Aktif code-review 'learning' dersleri (tekrar-eden sistemik desenler). Read-only."""
+    try:
+        conn = sqlite3.connect(MEMORY_DB)
+        conn.execute("PRAGMA busy_timeout=5000")
+        rows = conn.execute(
+            "SELECT title FROM discoveries WHERE project=? AND type='learning' AND status='active' ORDER BY id DESC LIMIT ?",
+            (PROJECT, limit),
+        ).fetchall()
+        conn.close()
+        return [t for (t,) in rows]
+    except Exception:
+        return []
+
+
+def _lessons_block() -> str:
+    """Dersleri review-prompt'a enjekte edilecek blok (boş = ders yok / kapalı). Gürültü-korumalı:
+    cap'li, sadece aktif code-review learning'i; ders FP-guard'ını EZMEZ (prompt'ta açıkça belirtilir)."""
+    if not _LEARN_FEEDBACK_ENABLED:
+        return ""
+    lessons = _recent_lessons()
+    if not lessons:
+        return ""
+    items = "\n".join(f"- {t}" for t in lessons)
+    return (
+        "\n\nÖĞRENİLEN DERSLER (bu codebase'de TEKRAR etti — bu desenlere ÖZELLİKLE dikkat, "
+        "AMA yine de mitigation-farkındalığını uygula; ders FP-guard'ı EZMEZ):\n" + items
+    )
 
 
 async def review_file(abs_path: Path) -> list[dict]:
