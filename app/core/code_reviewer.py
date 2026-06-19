@@ -18,8 +18,7 @@ import logging
 import sqlite3
 from pathlib import Path
 
-import httpx
-
+from app.core.agents.llmcore import llm_core
 from app.core.config import read_env_var
 
 logger = logging.getLogger(__name__)
@@ -29,7 +28,6 @@ MEMORY_DB = "/opt/linux-ai-server/data/claude_memory.db"
 PROJECT = "code-review"  # tüm ajan-bulguları bu proje altında (dedup + filtre)
 
 _ENABLED = (read_env_var("CODE_REVIEW_ENABLED") or "1").strip().lower() not in ("0", "false", "no", "off")
-_OLLAMA = (read_env_var("OLLAMA_URL") or "http://localhost:11434").rstrip("/")
 _MODEL = read_env_var("CODE_REVIEW_MODEL") or "qwen2.5-coder:7b"
 _TIMEOUT = int(read_env_var("CODE_REVIEW_TIMEOUT") or "60")
 _MAX_BYTES = 12000  # dosya başına LLM'e gönderilecek max (büyük dosyada baş kısmı)
@@ -64,16 +62,11 @@ def _lang(path: str) -> str:
 
 
 async def _ask_coder(prompt: str) -> list[dict]:
-    """qwen-coder'a sor, katı-JSON parse et. Hata/timeout → [] (fail-silent)."""
+    """qwen-coder'a sor (LLMCore), katı-JSON parse et. Hata/timeout → [] (fail-silent)."""
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            r = await client.post(
-                f"{_OLLAMA}/api/generate",
-                json={"model": _MODEL, "prompt": prompt, "stream": False, "options": {"temperature": 0.1}},
-            )
-        if r.status_code != 200:
+        raw = await llm_core.generate(prompt, task="code-review", model=_MODEL, temperature=0.1, timeout=_TIMEOUT)
+        if not raw:
             return []
-        raw = (r.json() or {}).get("response", "").strip()
         # JSON dizisini ayıkla (model bazen ```json sarması ekler)
         start, end = raw.find("["), raw.rfind("]")
         if start == -1 or end == -1 or end < start:

@@ -220,8 +220,7 @@ class DevOpsAgent:
         # (notify-cron Telegram'a çevirir). KOMUT ÇALIŞTIRMAZ — yalnız okur+öneri. Fail-silent;
         # alert akışını asla bozmaz. once/incident (auto-resolve'da sıfırlanır → tekrarda yeniden).
         self._diagnostic_enabled = (read_env_var("DEVOPS_DIAGNOSTIC_ENABLED") or "1").strip().lower() not in ("0", "false", "no", "off")
-        self._diag_ollama_url = (read_env_var("OLLAMA_URL") or "http://localhost:11434").rstrip("/")
-        self._diag_model = read_env_var("DEVOPS_DIAGNOSTIC_MODEL") or "qwen2.5:3b"
+        self._diag_model = read_env_var("DEVOPS_DIAGNOSTIC_MODEL") or "qwen2.5:3b"  # LLMCore'a task=diagnosis ile geçer
         self._diag_timeout = 25
         self._diag_memory_db = "/opt/linux-ai-server/data/claude_memory.db"
         self._diagnosed: set[str] = set()
@@ -736,8 +735,8 @@ class DevOpsAgent:
         return RecentChangesProvider(self._diag_memory_db)._query()
 
     async def _ask_diagnosis(self, alert: Alert, context: str) -> str | None:
-        """Ollama'ya kök-neden hipotezi sordur (timeout'lu, fail→None). Salt-okuma."""
-        import httpx
+        """LLMCore ile kök-neden hipotezi sordur (timeout'lu, fail→None). Salt-okuma."""
+        from app.core.agents.llmcore import llm_core
 
         prompt = (
             f"Sistem uyarısı: {alert.source} = {alert.value} (eşik {alert.threshold}). {alert.message}\n\n"
@@ -746,17 +745,8 @@ class DevOpsAgent:
             "değişikliklerden biriyle korelasyon görüyorsan açıkça belirt. Komut/aksiyon "
             "ÖNERME, sadece hipotez ver. Emin değilsen 'belirsiz' yaz."
         )
-        try:
-            async with httpx.AsyncClient(timeout=self._diag_timeout) as client:
-                r = await client.post(
-                    f"{self._diag_ollama_url}/api/generate",
-                    json={"model": self._diag_model, "prompt": prompt, "stream": False},
-                )
-            if r.status_code == 200:
-                return ((r.json() or {}).get("response") or "").strip()[:600] or None
-        except Exception:
-            return None
-        return None
+        out = await llm_core.generate(prompt, task="diagnosis", model=self._diag_model, timeout=self._diag_timeout)
+        return (out.strip()[:600] or None) if out else None
 
     # ── LIVESYS Faz 5 Slice-2: verify -> escalate ──────────────
 

@@ -81,29 +81,18 @@ def test_synthesize_lesson_below_threshold(tmp_db):
     assert len(_rows(tmp_db, type="learning")) == 0
 
 
+def _stub_llm(monkeypatch, raw: str):
+    """cr.llm_core.generate'i sabit ham-yanıtla değiştir (LLMCore boundary mock)."""
+
+    async def fake_generate(prompt, **kw):
+        return raw
+
+    monkeypatch.setattr(cr.llm_core, "generate", fake_generate)
+
+
 async def test_ask_coder_parses_and_filters(monkeypatch):
-    """Mock Ollama yanıtı → katı-JSON parse + alan-filtre (read-only LLM boundary)."""
-
-    class FakeResp:
-        status_code = 200
-
-        def json(self):
-            return {"response": 'blah ```json\n[{"line": 5, "severity": "P1", "title": "race", "detail": "concurrent insert"}]\n``` end'}
-
-    class FakeClient:
-        def __init__(self, *a, **k):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def post(self, *a, **k):
-            return FakeResp()
-
-    monkeypatch.setattr(cr.httpx, "AsyncClient", FakeClient)
+    """Mock LLM yanıtı → katı-JSON parse + alan-filtre (read-only LLM boundary)."""
+    _stub_llm(monkeypatch, 'blah ```json\n[{"line": 5, "severity": "P1", "title": "race", "detail": "concurrent insert"}]\n``` end')
     out = await cr._ask_coder("prompt")
     assert len(out) == 1
     assert out[0]["severity"] == "P1"
@@ -112,26 +101,13 @@ async def test_ask_coder_parses_and_filters(monkeypatch):
 
 
 async def test_ask_coder_empty_on_no_json(monkeypatch):
-    class FakeResp:
-        status_code = 200
+    _stub_llm(monkeypatch, "Kod temiz, sorun yok.")  # JSON-dizi yok
+    assert await cr._ask_coder("p") == []
 
-        def json(self):
-            return {"response": "Kod temiz, sorun yok."}  # JSON-dizi yok
 
-    class FakeClient:
-        def __init__(self, *a, **k):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def post(self, *a, **k):
-            return FakeResp()
-
-    monkeypatch.setattr(cr.httpx, "AsyncClient", FakeClient)
+async def test_ask_coder_empty_on_llm_fail(monkeypatch):
+    """LLMCore fail-silent → '' → _ask_coder boş döner (ajan döngüsü bozulmaz)."""
+    _stub_llm(monkeypatch, "")
     assert await cr._ask_coder("p") == []
 
 
