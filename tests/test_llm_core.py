@@ -32,7 +32,7 @@ def test_route_env_override_malformed_ignored(monkeypatch):
 async def test_generate_ollama_backend(monkeypatch):
     """ollama-route → _ollama_generate çağrılır, ham yanıt döner."""
 
-    async def fake_ollama(self, prompt, model, system, temperature, num_predict, timeout):
+    async def fake_ollama(self, prompt, model, *a):
         return f"OLLAMA:{model}"
 
     monkeypatch.setattr(LLMCore, "_ollama_async", fake_ollama)
@@ -258,6 +258,36 @@ async def test_claude_exempt_from_ollama_sem(monkeypatch):
     monkeypatch.setattr(LLMCore, "_claude", fake_claude)
     out = await _aio.wait_for(core.generate("p", task="synthesis"), timeout=1.0)
     assert out == "CLAUDE-OK"  # tükenmiş ollama-vanasına takılmadı
+
+
+def test_resolve_priority():
+    core = LLMCore()
+    assert core._resolve_priority("diagnosis", "normal") == "high"  # incident task → otomatik high
+    assert core._resolve_priority("code-review", "normal") == "normal"
+    assert core._resolve_priority("code-review", "high") == "high"  # çağrıcı override
+
+
+async def test_priority_high_bypasses_lowprio_reserve():
+    """N=2, low-prio rezerv=1: 1 normal-iş çalışırken high-prio kalan permit'i kapar (beklemez);
+    yeni normal-iş ise low-prio tükendiği için bloklanır."""
+    import asyncio as _aio
+
+    import pytest
+
+    core = LLMCore()
+    core._async_ollama_sem = _aio.Semaphore(2)
+    core._async_lowprio_sem = _aio.Semaphore(1)
+    # 1 normal-call simüle: lowprio(→0) + 1 ollama-permit tutuluyor
+    await core._async_lowprio_sem.acquire()
+    await core._async_ollama_sem.acquire()
+
+    async def enter(prio):
+        async with core._ollama_gate_async(prio):
+            return True
+
+    assert await _aio.wait_for(enter("high"), timeout=0.5) is True  # high → kalan permit'i kapar
+    with pytest.raises(TimeoutError):  # normal → lowprio tükendi → bloklanır
+        await _aio.wait_for(enter("normal"), timeout=0.2)
 
 
 def test_singleton_exported():

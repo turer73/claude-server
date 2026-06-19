@@ -17,12 +17,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from contextlib import asynccontextmanager, contextmanager
 
 import httpx
 
 from app.core.config import read_env_var
 
 logger = logging.getLogger(__name__)
+
+# #2 Öncelik: bu task'lar incident/interaktif → rutin-işi geçer (rezerv-permit ile). Çağrıcı
+# `priority="high"` ile de zorlayabilir. (Tam-scheduler DEĞİL — vanaya rezerv-lane, bounded.)
+_HIGH_PRIORITY_TASKS = {"diagnosis"}
 
 # Kaynak-vanası (AIOS scheduler'ın kernel-DIŞI bounded parçası): aynı anda en çok N YEREL-ollama
 # çağrısı (CPU-saturate önler — 14 ajan bağımsız ateşliyor, hafıza: recursive-grep/zombie/cpu-FP).
@@ -60,6 +65,11 @@ class LLMCore:
         # bağlanır (import-zamanı singleton güvenli, py3.10+). Sync yol için thread-semafor.
         self._async_ollama_sem = asyncio.Semaphore(_OLLAMA_CONCURRENCY)
         self._sync_ollama_sem = threading.Semaphore(_OLLAMA_CONCURRENCY)
+        # #2 Öncelik: düşük-öncelik en çok N-1 permit kullanır → high-priority'ye HER ZAMAN ≥1 permit
+        # kalır (rutin-iş doldursa bile incident-teşhisi beklemez). N=1'de rezerv yok (tek-slot=FIFO).
+        _lp = max(1, _OLLAMA_CONCURRENCY - 1)
+        self._async_lowprio_sem = asyncio.Semaphore(_lp)
+        self._sync_lowprio_sem = threading.Semaphore(_lp)
 
     def route(self, task: str) -> tuple[str, str]:
         """task → (backend, model). Env ``LLM_ROUTE_<TASK>`` öncelikli, sonra tablo, sonra default."""
@@ -69,6 +79,29 @@ class LLMCore:
             if backend.strip() and model.strip():
                 return backend.strip(), model.strip()
         return _TASK_ROUTES.get(task, _TASK_ROUTES["default"])
+
+    @staticmethod
+    def _resolve_priority(task: str, priority: str) -> str:
+        return "high" if priority == "high" or task in _HIGH_PRIORITY_TASKS else "normal"
+
+    @asynccontextmanager
+    async def _ollama_gate_async(self, priority: str):
+        """Yerel-CPU vanası + öncelik. high → tam N permit; normal → önce low-prio(N-1) sonra ana."""
+        if priority == "high":
+            async with self._async_ollama_sem:
+                yield
+        else:
+            async with self._async_lowprio_sem, self._async_ollama_sem:
+                yield
+
+    @contextmanager
+    def _ollama_gate_sync(self, priority: str):
+        if priority == "high":
+            with self._sync_ollama_sem:
+                yield
+        else:
+            with self._sync_lowprio_sem, self._sync_ollama_sem:
+                yield
 
     @staticmethod
     def _payload(prompt: str, model: str, system: str | None, temperature: float, num_predict: int | None) -> dict:
@@ -91,22 +124,25 @@ class LLMCore:
         num_predict: int | None = None,
         timeout: int = 60,
         raise_on_error: bool = False,
+        priority: str = "normal",
     ) -> str:
-        """Async üretim. Hata → "" (fail-silent) veya raise_on_error ise istisna. model routing'i ezer."""
+        """Async üretim. Hata → "" (fail-silent) veya raise_on_error ise istisna. model routing'i ezer.
+        priority='high' (veya task∈_HIGH_PRIORITY_TASKS) → rutin-işi geçer (rezerv-permit)."""
         backend, route_model = self.route(task)
         model = model or route_model
+        prio = self._resolve_priority(task, priority)
         try:
             if backend == "claude":
                 return await self._claude(system or "", prompt, model)
-            return await self._ollama_async(prompt, model, system, temperature, num_predict, timeout)
+            return await self._ollama_async(prompt, model, system, temperature, num_predict, timeout, prio)
         except Exception:
             if raise_on_error:
                 raise
             logger.debug("LLMCore generate failed (task=%s)", task, exc_info=True)
             return ""
 
-    async def _ollama_async(self, prompt, model, system, temperature, num_predict, timeout) -> str:
-        async with self._async_ollama_sem:  # yerel-CPU vanası
+    async def _ollama_async(self, prompt, model, system, temperature, num_predict, timeout, priority="normal") -> str:
+        async with self._ollama_gate_async(priority):  # yerel-CPU vanası + öncelik
             async with httpx.AsyncClient(timeout=timeout) as client:
                 r = await client.post(
                     f"{self._ollama}/api/generate",
@@ -126,26 +162,28 @@ class LLMCore:
         num_predict: int | None = None,
         timeout: int = 60,
         raise_on_error: bool = False,
+        priority: str = "normal",
     ) -> str:
-        """Sync üretim (requests) — FastAPI threadpool çağrıcıları için. Aynı routing/raise semantiği."""
+        """Sync üretim (requests) — FastAPI threadpool çağrıcıları için. Aynı routing/raise/öncelik."""
         backend, route_model = self.route(task)
         model = model or route_model
+        prio = self._resolve_priority(task, priority)
         try:
             if backend == "claude":
                 from app.api.research import _anthropic_generate
 
                 return (_anthropic_generate(system or "", prompt, model) or "").strip()
-            return self._ollama_sync(prompt, model, system, temperature, num_predict, timeout)
+            return self._ollama_sync(prompt, model, system, temperature, num_predict, timeout, prio)
         except Exception:
             if raise_on_error:
                 raise
             logger.debug("LLMCore generate_sync failed (task=%s)", task, exc_info=True)
             return ""
 
-    def _ollama_sync(self, prompt, model, system, temperature, num_predict, timeout) -> str:
+    def _ollama_sync(self, prompt, model, system, temperature, num_predict, timeout, priority="normal") -> str:
         import requests
 
-        with self._sync_ollama_sem:  # yerel-CPU vanası (thread)
+        with self._ollama_gate_sync(priority):  # yerel-CPU vanası (thread) + öncelik
             r = requests.post(
                 f"{self._ollama}/api/generate",
                 json=self._payload(prompt, model, system, temperature, num_predict),
@@ -171,9 +209,10 @@ class LLMCore:
 
         backend, route_model = self.route(task)
         model = model or route_model
+        prio = self._resolve_priority(task, "normal")
         try:
             payload = {"model": model, "prompt": prompt, "stream": False, "options": options or {}}
-            with self._sync_ollama_sem:  # yerel-CPU vanası (thread)
+            with self._ollama_gate_sync(prio):  # yerel-CPU vanası (thread) + öncelik
                 r = requests.post(f"{self._ollama}/api/generate", json=payload, timeout=timeout)
                 r.raise_for_status()
                 return r.json() or {}
@@ -191,14 +230,16 @@ class LLMCore:
         model: str | None = None,
         timeout: int = 120,
         raise_on_error: bool = False,
+        priority: str = "normal",
     ) -> str:
         """Mesaj-listesi (/api/chat) → asistan içeriği (str). Yerel ollama chat (generate'in
         sohbet-eşi: rol'lü messages, /no_think çağrıcıda). Fail-silent "" veya raise_on_error.
         NOT: claude-chat YOK (3 çağrıcı da yerel-model RAG/dispatch/inference); gerekirse eklenir."""
         backend, route_model = self.route(task)
         model = model or route_model
+        prio = self._resolve_priority(task, priority)
         try:
-            async with self._async_ollama_sem:  # yerel-CPU vanası
+            async with self._ollama_gate_async(prio):  # yerel-CPU vanası + öncelik
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     r = await client.post(
                         f"{self._ollama}/api/chat",
