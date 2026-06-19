@@ -13,7 +13,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from app.core.config import get_settings
+from app.core.config import get_settings, read_env_var
 from app.core.events import emit_event
 from app.core.monitor_agent import MonitorAgent
 from app.core.provenance import provenance_json
@@ -214,6 +214,18 @@ class DevOpsAgent:
         self._last_escalation: dict[str, float] = {}
         self._escalation_interval = 1800  # 30 dk
 
+        # ── Read-only teşhis asistanı (vizyon B-bulgusu: playbook semptom-bastırır, kök-neden
+        # teşhisi yok). Sustained-critical alert'te memory'deki son değişiklikleri + alert'i
+        # Ollama'ya verip MUHTEMEL kök-neden hipotezi üretir, diagnosis event'i emit eder
+        # (notify-cron Telegram'a çevirir). KOMUT ÇALIŞTIRMAZ — yalnız okur+öneri. Fail-silent;
+        # alert akışını asla bozmaz. once/incident (auto-resolve'da sıfırlanır → tekrarda yeniden).
+        self._diagnostic_enabled = (read_env_var("DEVOPS_DIAGNOSTIC_ENABLED") or "1").strip().lower() not in ("0", "false", "no", "off")
+        self._diag_ollama_url = (read_env_var("OLLAMA_URL") or "http://localhost:11434").rstrip("/")
+        self._diag_model = read_env_var("DEVOPS_DIAGNOSTIC_MODEL") or "qwen2.5:3b"
+        self._diag_timeout = 25
+        self._diag_memory_db = "/opt/linux-ai-server/data/claude_memory.db"
+        self._diagnosed: set[str] = set()
+
     # ── Lifecycle ──────────────────────────────────────
 
     def start(self) -> None:
@@ -274,10 +286,11 @@ class DevOpsAgent:
         # 3b. Persistent-critical re-eskalasyon (çözülmeyen critical'i pingle)
         await self._escalate_persistent()
 
-        # 4. Remediate
+        # 4. Remediate (+ read-only teşhis hipotezi — komut çalıştırmaz, fail-silent)
         for alert in new_alerts:
             if alert.severity == "critical":
                 await self._remediate(alert)
+                self._maybe_diagnose(alert)
 
         # 5. Check services
         await self._check_services()
@@ -399,6 +412,7 @@ class DevOpsAgent:
         for source in resolved:
             del self._active_alerts[source]
             self._last_escalation.pop(source, None)  # çözüldü -> eskalasyon-saati sıfırla
+            self._diagnosed.discard(source)  # çözüldü -> tekrarında yeniden teşhis et
 
     async def _store_alert(self, alert: Alert) -> None:
         if not self._db:
@@ -668,6 +682,91 @@ class DevOpsAgent:
             return bool(row and row.get("acked"))
         except Exception:
             return False
+
+    # ── Read-only teşhis asistanı ──────────────────────────────
+
+    def _maybe_diagnose(self, alert: Alert) -> None:
+        """Sustained-critical alert için read-only LLM teşhis hipotezi spawn et (once/incident).
+        KOMUT ÇALIŞTIRMAZ. Fail-silent — alert akışını asla bozmaz. asyncio.create_task ile
+        tick'i bloklamaz (Ollama ~saniyeler sürebilir)."""
+        if not self._diagnostic_enabled or alert.source in self._diagnosed:
+            return
+        self._diagnosed.add(alert.source)
+        try:
+            asyncio.create_task(self._diagnose_and_emit(alert))
+        except RuntimeError:
+            # event-loop yok (senkron test bağlamı) — sessizce atla
+            self._diagnosed.discard(alert.source)
+
+    async def _diagnose_and_emit(self, alert: Alert) -> None:
+        """Read-only context topla → Ollama'ya kök-neden sor → diagnosis event'i emit et."""
+        try:
+            context = await asyncio.to_thread(self._gather_diag_context)
+            hypothesis = await self._ask_diagnosis(alert, context)
+            if not hypothesis:
+                return
+            await asyncio.to_thread(
+                emit_event,
+                type="alert",
+                source=f"diagnosis:{alert.source}",
+                title=f"🔍 Teşhis ({alert.source}): {hypothesis[:160]}",
+                severity="warning",
+                detail=(
+                    f"Read-only LLM hipotezi ({self._diag_model}). "
+                    f"Alert: {alert.message} (={alert.value}, eşik {alert.threshold}). "
+                    f"KOMUT ÇALIŞTIRILMADI — doğrula.\n\n{hypothesis}"
+                ),
+            )
+        except Exception:
+            pass
+
+    def _gather_diag_context(self) -> str:
+        """Read-only: son 7 günde memory'ye kaydedilen değişiklikler (fix/arch/workaround +
+        task) — alert'le korelasyon için. Salt SELECT; yazma yok."""
+        import sqlite3
+
+        try:
+            conn = sqlite3.connect(self._diag_memory_db)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout=3000")
+            disc = conn.execute(
+                "SELECT project, type, title, date(created_at) d FROM discoveries "
+                "WHERE type IN ('fix','architecture','workaround') AND created_at > datetime('now','-7 days') "
+                "ORDER BY created_at DESC LIMIT 10"
+            ).fetchall()
+            tasks = conn.execute(
+                "SELECT project, task, date(created_at) d FROM tasks_log "
+                "WHERE created_at > datetime('now','-7 days') ORDER BY created_at DESC LIMIT 10"
+            ).fetchall()
+            conn.close()
+            lines = [f"- [{r['d']}] {r['project']}/{r['type']}: {r['title']}" for r in disc]
+            lines += [f"- [{r['d']}] {r['project']} task: {r['task']}" for r in tasks]
+            return "\n".join(lines) if lines else "Son 7 günde kayıtlı değişiklik yok."
+        except Exception:
+            return "(context okunamadı)"
+
+    async def _ask_diagnosis(self, alert: Alert, context: str) -> str | None:
+        """Ollama'ya kök-neden hipotezi sordur (timeout'lu, fail→None). Salt-okuma."""
+        import httpx
+
+        prompt = (
+            f"Sistem uyarısı: {alert.source} = {alert.value} (eşik {alert.threshold}). {alert.message}\n\n"
+            f"Son 7 günde sistemde kaydedilen değişiklikler:\n{context}\n\n"
+            "Bu uyarının MUHTEMEL kök nedenini 2-3 cümlede Türkçe tahmin et. Yukarıdaki "
+            "değişikliklerden biriyle korelasyon görüyorsan açıkça belirt. Komut/aksiyon "
+            "ÖNERME, sadece hipotez ver. Emin değilsen 'belirsiz' yaz."
+        )
+        try:
+            async with httpx.AsyncClient(timeout=self._diag_timeout) as client:
+                r = await client.post(
+                    f"{self._diag_ollama_url}/api/generate",
+                    json={"model": self._diag_model, "prompt": prompt, "stream": False},
+                )
+            if r.status_code == 200:
+                return ((r.json() or {}).get("response") or "").strip()[:600] or None
+        except Exception:
+            return None
+        return None
 
     # ── LIVESYS Faz 5 Slice-2: verify -> escalate ──────────────
 
