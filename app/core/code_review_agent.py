@@ -29,6 +29,7 @@ class CodeReviewAgent:
         self._queue = cr.ROOT / "data" / "code-review-queue.txt"
         self._sweep_files: list[Path] = []
         self._pos = 0
+        self._research_pos = 0
         self._ticks = 0
         self.last_run: str | None = None
         self.total_findings = 0
@@ -77,6 +78,12 @@ class CodeReviewAgent:
         self._ticks += 1
         if self._ticks % 12 == 0:  # ~her saat (12×5dk) ders sentezle
             await asyncio.to_thread(cr.synthesize_lesson)
+        # Faz 3: internet/yeni-yapı — ~her 4h (48×5dk) sıradaki stack-topic'i araştır
+        # (rotating, bounded; tüm topic'ler ~1.3 günde kapsanır). Yalnız idle'da.
+        if cr._RESEARCH_ENABLED and self._ticks % 48 == 0 and await self._is_idle():
+            topic = cr.STACK_TOPICS[self._research_pos % len(cr.STACK_TOPICS)]
+            self._research_pos += 1
+            await cr.research_new_structure(topic)
 
     async def _is_idle(self) -> bool:
         try:

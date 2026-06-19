@@ -12,6 +12,7 @@ dedup (unique-active index BEDAVA), conservative-prompt (FP-sel önlenir), bound
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sqlite3
@@ -172,5 +173,67 @@ def synthesize_lesson() -> bool:
         conn.commit()
         conn.close()
         return new
+    except Exception:
+        return False
+
+
+# ── Faz 3: internet/yeni-yapı tespiti (research-agent reuse) ──
+
+_RESEARCH_ENABLED = (read_env_var("CODE_REVIEW_RESEARCH_ENABLED") or "1").strip().lower() not in ("0", "false", "no", "off")
+# Codebase stack'i — her research-tick'inde sıradaki topic araştırılır (rotating, bounded).
+STACK_TOPICS = [
+    "Python FastAPI",
+    "Pydantic v2",
+    "uvicorn asyncio",
+    "aiosqlite SQLite WAL",
+    "httpx async client",
+    "structlog logging",
+    "Ollama local LLM serving",
+    "Qdrant vector search",
+]
+
+
+def _record_research(topic: str, headline: str, detail: str) -> bool:
+    """Yeni-yapı bulgusunu 'architecture' kaydı olarak yaz (dedup: unique-active)."""
+    title = f"Yeni-yapı [{topic}]: {headline}"[:120]
+    try:
+        conn = sqlite3.connect(MEMORY_DB)
+        conn.execute("PRAGMA busy_timeout=5000")
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO discoveries (project, type, title, details, device_name, rationale, status) "
+            "VALUES (?, 'architecture', ?, ?, 'klipper', 'auto: code-reviewer internet-research (web+LLM) — read-only, DEĞERLENDİR', 'active')",
+            (PROJECT, title, detail[:600]),
+        )
+        conn.commit()
+        new = cur.rowcount > 0
+        conn.close()
+        return new
+    except Exception:
+        return False
+
+
+async def research_new_structure(topic: str) -> bool:
+    """Bir stack-topic için web-araştır → benimsenmesi gereken yeni pattern/güvenlik var mı?
+    → 'architecture' bulgusu (read-only, dedup'lı). research-agent web+LLM reuse. Yeni ise True."""
+    if not _RESEARCH_ENABLED:
+        return False
+    try:
+        from app.api.research import _ollama_generate, _web_search
+
+        results = await asyncio.to_thread(_web_search, f"{topic} security best practices new pattern 2025 2026 CVE", 5)
+        if not results:
+            return False
+        web = "\n".join(f"- {r.get('title', '')}: {r.get('text', '')[:200]}" for r in results[:5])
+        prompt = (
+            f"Projemiz {topic} kullanan tek-sahip Python admin-server. Aşağıdaki GÜNCEL web sonuçlarına göre: "
+            f"benimsenmesi GEREKEN somut yeni bir güvenlik-güncellemesi / pattern / best-practice VAR MI? "
+            f"Varsa İLK satıra <=60 karakter başlık, sonra 1-2 cümle neden yaz. Yoksa sadece 'YOK' yaz. "
+            f"Spekülasyon/genel-tavsiye/var-olanı-tekrar YAZMA.\n\n{web}"
+        )
+        answer = (await asyncio.to_thread(_ollama_generate, prompt) or "").strip()
+        if not answer or answer.upper().startswith("YOK") or len(answer) < 25:
+            return False
+        lines = [ln for ln in answer.splitlines() if ln.strip()]
+        return await asyncio.to_thread(_record_research, topic, lines[0][:70], answer)
     except Exception:
         return False

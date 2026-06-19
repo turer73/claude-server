@@ -140,6 +140,39 @@ async def test_review_source_disabled_returns_empty(monkeypatch):
     assert await cr.review_source("x.py", "code") == []
 
 
+async def test_research_records_architecture_finding(tmp_db, monkeypatch):
+    """Faz 3: web+LLM yeni-yapı önerirse 'architecture' bulgusu yazılır (read-only)."""
+    import app.api.research as research
+
+    monkeypatch.setattr(cr, "_RESEARCH_ENABLED", True)
+    monkeypatch.setattr(research, "_web_search", lambda q, n=5: [{"title": "FastAPI 0.115 lifespan DB pool", "text": "new pattern"}])
+    monkeypatch.setattr(
+        research, "_ollama_generate", lambda p, **k: "Lifespan-scoped DB havuzu benimse\nBağlantı-başı yerine havuz daha verimli."
+    )
+    assert await cr.research_new_structure("FastAPI") is True
+    arch = _rows(tmp_db, type="architecture")
+    assert len(arch) == 1
+    assert "FastAPI" in arch[0][1]
+
+
+async def test_research_yok_no_finding(tmp_db, monkeypatch):
+    import app.api.research as research
+
+    monkeypatch.setattr(cr, "_RESEARCH_ENABLED", True)
+    monkeypatch.setattr(research, "_web_search", lambda q, n=5: [{"title": "x", "text": "y"}])
+    monkeypatch.setattr(research, "_ollama_generate", lambda p, **k: "YOK")
+    assert await cr.research_new_structure("FastAPI") is False
+    assert len(_rows(tmp_db, type="architecture")) == 0
+
+
+async def test_research_no_web_results(tmp_db, monkeypatch):
+    import app.api.research as research
+
+    monkeypatch.setattr(cr, "_RESEARCH_ENABLED", True)
+    monkeypatch.setattr(research, "_web_search", lambda q, n=5: [])
+    assert await cr.research_new_structure("X") is False
+
+
 async def test_agent_drain_queue(tmp_db, tmp_path, monkeypatch):
     """Agent commit-kuyruğunu okur, inceler, temizler (event-trigger)."""
     from app.core import code_review_agent as cra
