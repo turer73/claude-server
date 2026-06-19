@@ -4,6 +4,8 @@
 0 3 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh daily-backup /opt/linux-ai-server/automation/daily-backup.sh
 # Backup restore-test — "yedek alindi" != "yedek calisir"; en yeni backup'i acip SQLite integrity dogrula (gunluk 03:20, daily-backup sonrasi). Fail -> Telegram + cron_outcomes.
 20 3 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh restore-test /opt/linux-ai-server/automation/backup-restore-test.sh
+# Artifact cleanup — yas-temelli (logrotate uymaz, benzersiz-isimli dosyalar): hook-logs + logs/e2e + self-pentest + nuclei, 30g retention (haftalik Pazar 03:45). OUTCOME marker.
+45 3 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh artifact-cleanup /opt/linux-ai-server/automation/cleanup-artifacts.sh
 # Daily test runner — tüm projeler
 0 6 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh test-runner /opt/linux-ai-server/automation/test-runner.sh
 # Haftalık dependency audit — Pazartesi 09:00
