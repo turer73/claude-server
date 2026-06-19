@@ -164,27 +164,6 @@ async def _fire_event(event: str, payload: dict):
         pass
 
 
-# ============ Context Helpers ============
-
-
-def _estimate_tokens(text: str) -> int:
-    return len(text) // 4 + 1
-
-
-def _truncate_context(items: list[tuple[str, str, int]], budget: int = _TOKEN_BUDGET) -> str:
-    parts = []
-    used = 0
-    for label, content, _score in sorted(items, key=lambda x: -x[2]):
-        t = _estimate_tokens(content)
-        if used + t > budget:
-            chars = (budget - used) * 4
-            parts.append(f"## {label}\n{content[:chars]}...")
-            break
-        parts.append(f"## {label}\n{content}")
-        used += t
-    return "\n\n".join(parts)
-
-
 # _track_read'in {table} f-string'i SQL'e gömülüyor. Şu an tüm çağrılar
 # hardcoded literal (exploit yok) ama savunma-derinliği: değer her zaman
 # bu allowlist'ten gelsin, gelecekte user-input sızması imkânsız olsun.
