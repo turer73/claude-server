@@ -16,12 +16,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 
 import httpx
 
 from app.core.config import read_env_var
 
 logger = logging.getLogger(__name__)
+
+# Kaynak-vanası (AIOS scheduler'ın kernel-DIŞI bounded parçası): aynı anda en çok N YEREL-ollama
+# çağrısı (CPU-saturate önler — 14 ajan bağımsız ateşliyor, hafıza: recursive-grep/zombie/cpu-FP).
+# Claude CLI MUAF (abonelik, yerel-CPU yemiyor). Async + sync yol AYRI semafor (worst-case 2N;
+# pratikte düşük çünkü code-review/research kendi içlerinde sıralı). NOT: doğrudan ollama'ya curl
+# atan bash-cron ajanları (ad-advisor vb.) LLMCore'dan geçmez → bu vana onları KAPSAMAZ.
+_OLLAMA_CONCURRENCY = max(1, int(read_env_var("LLM_OLLAMA_CONCURRENCY") or "2"))
 
 # Task → (backend, model). Mevcut çağrı-yerlerindeki gerçek modeller (spekülasyon değil).
 _TASK_ROUTES: dict[str, tuple[str, str]] = {
@@ -47,6 +55,10 @@ class LLMCore:
 
     def __init__(self, ollama_url: str | None = None) -> None:
         self._ollama = (ollama_url or read_env_var("OLLAMA_URL") or "http://localhost:11434").rstrip("/")
+        # Yerel-ollama eşzamanlılık vanaları (claude muaf). asyncio.Semaphore loop'a ilk-kullanımda
+        # bağlanır (import-zamanı singleton güvenli, py3.10+). Sync yol için thread-semafor.
+        self._async_ollama_sem = asyncio.Semaphore(_OLLAMA_CONCURRENCY)
+        self._sync_ollama_sem = threading.Semaphore(_OLLAMA_CONCURRENCY)
 
     def route(self, task: str) -> tuple[str, str]:
         """task → (backend, model). Env ``LLM_ROUTE_<TASK>`` öncelikli, sonra tablo, sonra default."""
@@ -93,13 +105,14 @@ class LLMCore:
             return ""
 
     async def _ollama_async(self, prompt, model, system, temperature, num_predict, timeout) -> str:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            r = await client.post(
-                f"{self._ollama}/api/generate",
-                json=self._payload(prompt, model, system, temperature, num_predict),
-            )
-        r.raise_for_status()
-        return ((r.json() or {}).get("response") or "").strip()
+        async with self._async_ollama_sem:  # yerel-CPU vanası
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                r = await client.post(
+                    f"{self._ollama}/api/generate",
+                    json=self._payload(prompt, model, system, temperature, num_predict),
+                )
+            r.raise_for_status()
+            return ((r.json() or {}).get("response") or "").strip()
 
     def generate_sync(
         self,
@@ -131,13 +144,14 @@ class LLMCore:
     def _ollama_sync(self, prompt, model, system, temperature, num_predict, timeout) -> str:
         import requests
 
-        r = requests.post(
-            f"{self._ollama}/api/generate",
-            json=self._payload(prompt, model, system, temperature, num_predict),
-            timeout=timeout,
-        )
-        r.raise_for_status()
-        return (r.json().get("response") or "").strip()
+        with self._sync_ollama_sem:  # yerel-CPU vanası (thread)
+            r = requests.post(
+                f"{self._ollama}/api/generate",
+                json=self._payload(prompt, model, system, temperature, num_predict),
+                timeout=timeout,
+            )
+            r.raise_for_status()
+            return (r.json().get("response") or "").strip()
 
     def complete_sync(
         self,
@@ -158,9 +172,10 @@ class LLMCore:
         model = model or route_model
         try:
             payload = {"model": model, "prompt": prompt, "stream": False, "options": options or {}}
-            r = requests.post(f"{self._ollama}/api/generate", json=payload, timeout=timeout)
-            r.raise_for_status()
-            return r.json() or {}
+            with self._sync_ollama_sem:  # yerel-CPU vanası (thread)
+                r = requests.post(f"{self._ollama}/api/generate", json=payload, timeout=timeout)
+                r.raise_for_status()
+                return r.json() or {}
         except Exception:
             if raise_on_error:
                 raise
@@ -182,13 +197,14 @@ class LLMCore:
         backend, route_model = self.route(task)
         model = model or route_model
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                r = await client.post(
-                    f"{self._ollama}/api/chat",
-                    json={"model": model, "messages": messages, "stream": False},
-                )
-            r.raise_for_status()
-            return ((r.json() or {}).get("message") or {}).get("content", "").strip()
+            async with self._async_ollama_sem:  # yerel-CPU vanası
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    r = await client.post(
+                        f"{self._ollama}/api/chat",
+                        json={"model": model, "messages": messages, "stream": False},
+                    )
+                r.raise_for_status()
+                return ((r.json() or {}).get("message") or {}).get("content", "").strip()
         except Exception:
             if raise_on_error:
                 raise

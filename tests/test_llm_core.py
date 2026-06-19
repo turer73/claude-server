@@ -206,5 +206,59 @@ async def test_chat_fail_silent_and_raise(monkeypatch):
         await LLMCore().chat([{"role": "user", "content": "x"}], raise_on_error=True)
 
 
+async def test_ollama_concurrency_bounded(monkeypatch):
+    """Async ollama vanası: 6 eşzamanlı çağrı, N=2 → aynı anda en çok 2 inference (CPU-saturate önler)."""
+    import asyncio as _aio
+
+    core = LLMCore()
+    core._async_ollama_sem = _aio.Semaphore(2)
+    state = {"active": 0, "peak": 0}
+
+    class SlowResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"response": "x"}
+
+    class SlowClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            state["active"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+            await _aio.sleep(0.03)
+            state["active"] -= 1
+            return SlowResp()
+
+    monkeypatch.setattr(lc.httpx, "AsyncClient", SlowClient)
+    await _aio.gather(*[core.generate("p", task="diagnosis") for _ in range(6)])
+    assert state["peak"] <= 2  # vana sınırladı
+    assert state["peak"] >= 1  # ama akış durmadı
+
+
+async def test_claude_exempt_from_ollama_sem(monkeypatch):
+    """Claude (abonelik CLI) yerel-CPU yemiyor → ollama-vanası tükense bile bloklanmaz."""
+    import asyncio as _aio
+
+    core = LLMCore()
+    core._async_ollama_sem = _aio.Semaphore(1)
+    await core._async_ollama_sem.acquire()  # vanayı tüket
+
+    async def fake_claude(self, system, user, model):
+        return "CLAUDE-OK"
+
+    monkeypatch.setattr(LLMCore, "_claude", fake_claude)
+    out = await _aio.wait_for(core.generate("p", task="synthesis"), timeout=1.0)
+    assert out == "CLAUDE-OK"  # tükenmiş ollama-vanasına takılmadı
+
+
 def test_singleton_exported():
     assert isinstance(llm_core, LLMCore)
