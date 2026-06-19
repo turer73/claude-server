@@ -1,6 +1,44 @@
 """Ajan-runtime dashboard endpoint testleri — last-run/iş/bulgu/model/başarı kartları."""
 
-from app.api.agents import _codereview_card, _devops_card, _sev_from_details
+from app.api.agents import (
+    _AGENT_MANIFEST,
+    _CRON_SCRIPTS,
+    _codereview_card,
+    _cron_card,
+    _devops_card,
+    _research_card,
+    _sev_from_details,
+)
+
+
+def test_manifest_covers_decision_agents():
+    keys = {a["key"] for a in _AGENT_MANIFEST}
+    # SEO/ads/data-analiz/research/memory ajanları manifeste dahil mi
+    for k in ("research", "ad-advisor", "data-analyst", "seo-gsc", "memory-triage", "autonomous-daily-summary"):
+        assert k in keys, f"{k} manifeste eksik"
+    # cron ajanları allowlist'li script'e sahip (manuel-tetikleme güvenliği)
+    for a in _AGENT_MANIFEST:
+        if a["type"] == "cron":
+            assert a["key"] in _CRON_SCRIPTS
+
+
+def test_cron_card_no_log_no_events():
+    spec = {"key": "x", "name": "X", "role": "r", "schedule": "günlük", "models": ["m"], "log": None, "evsrc": None}
+    card = _cron_card(spec)
+    assert card["type"] == "cron"
+    assert card["last_run"] is None  # log+event yok → dürüst None (uydurma yok)
+    assert card["running"] is False
+    assert card["triggerable"] is True
+
+
+def test_research_card_ondemand_not_triggerable():
+    spec = {"key": "research", "name": "Araştırma", "role": "r", "schedule": "istek-üzerine", "models": ["qwen", "claude CLI"]}
+    card = _research_card(
+        spec, {"findings": [{"time": "t", "title": "[araştırma] FastAPI", "severity": "", "status": "active", "kind": "research"}], "n": 1}
+    )
+    assert card["type"] == "ondemand"
+    assert card["triggerable"] is False  # topic gerekir → API'den
+    assert "FastAPI" in card["current_task"]
 
 
 def test_sev_from_details():
