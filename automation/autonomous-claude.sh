@@ -486,10 +486,10 @@ Result: <bir-iki cumle>"
         if [ -f "$spawn_log" ] && grep -q '"api_error_status":401' "$spawn_log" 2>/dev/null; then
             log "OAUTH 401 detected note=#$NOTE_ID — possible refresh race"
             set +e
-            MK401=
-            curl -sf http://127.0.0.1:8420/api/v1/memory/discoveries 
-                -X POST -H "X-Memory-Key: " -H 'Content-Type: application/json' 
-                -d '{"device_name":"klipper","project":"linux-ai-server","type":"bug","title":"oauth-race #","details":"spawn 401"}' >> "" 2>&1 || true
+            MK401=$(get_key)
+            curl -sf http://127.0.0.1:8420/api/v1/memory/discoveries \
+                -X POST -H "X-Memory-Key: $MK401" -H 'Content-Type: application/json' \
+                -d "{\"device_name\":\"klipper\",\"project\":\"linux-ai-server\",\"type\":\"bug\",\"title\":\"oauth-race #$NOTE_ID\",\"details\":\"spawn 401 — possible refresh race\"}" >> "$spawn_log" 2>&1 || true
             set -e
         fi
         # P1.6: Threat scan rc!=0'da da; fail olsa bile suspicious pattern
