@@ -267,10 +267,14 @@ async def test_agent_drain_queue(tmp_db, tmp_path, monkeypatch):
     from app.core import code_review_agent as cra
 
     monkeypatch.setattr(cra.cr, "_ENABLED", True)
+    # CI-TAŞINABİLİR: ROOT'u tmp'ye al + gerçek dosya tmp'de yarat. (Eskiden cr.ROOT=
+    # /opt/linux-ai-server gerçek-yolunu kullanıyordu → CI runner'da o yol yok, is_file()
+    # False, dosya incelenmiyordu = CI-kırmızı. Mutlak-makine-yoluna bağlı test footgun'u.)
+    monkeypatch.setattr(cra.cr, "ROOT", tmp_path)
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "main.py").write_text("x = 1\n")
     agent = cra.CodeReviewAgent()
-    # kuyruk + sahte dosya
     qf = tmp_path / "queue.txt"
-    target = cr.ROOT  # gerçek root; var olan bir dosyayı kuyruğa koy
     agent._queue = qf
     qf.write_text("app/main.py\napp/main.py\n")  # dup → uniq
 
@@ -285,6 +289,5 @@ async def test_agent_drain_queue(tmp_db, tmp_path, monkeypatch):
 
     await agent._drain_queue()
     assert len(seen) == 1  # dup-dosya tek kez incelendi
-    assert "app/main.py" in seen[0]
+    assert "main.py" in seen[0]
     assert qf.read_text() == ""  # kuyruk drenaj edildi
-    _ = target
