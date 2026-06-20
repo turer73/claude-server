@@ -13,8 +13,11 @@ KURULUM (kullanıcı, Google-tarafı): (1) GCP'de Search Console API etkinleşti
 account + JSON key, (3) her GSC property'sinde Settings→Users'a SA e-postasını ekle.
 
 Kullanım: seo-gsc.py [property...]   (default GSC_PROPERTIES; ör. 'sc-domain:panola.app')
-Salt-okunur (webmasters.readonly). Bulgular ortak-hafızaya (type=bug → SessionStart) yazılır. P1 bulgular aynı zamanda
-Telegram'a da iletilir (telegram-alert.sh generic); P2 yalnız hafızada kalır.
+Salt-okunur (webmasters.readonly). Bulgular İKİ kanala ayrılır:
+  • HATA (sitemap/index/coverage/auth) → type=bug discovery (SessionStart bug listesi); P1 ek Telegram.
+  • FIRSAT (CTR/pozisyon SEO) → type=learning discovery (KIRIK DEĞİL → bug listesinde GÖRÜNMEZ).
+urlInspection cron'da da çalışır (inspect_urls verilmezse anasayfa+top-sayfalar oto-türetilir) →
+gerçek kapsama hataları yüzeye çıkar; CTR/pozisyon 'fırsat' olarak işaretlenir, 'hata' DEĞİL.
 """
 
 from __future__ import annotations
@@ -113,84 +116,110 @@ def _api(token: str, path: str, body: dict | None = None) -> dict:
 # ── Saf analiz fonksiyonları (mock'la test edilir) ──────────────────────────
 
 
-def analyze_search(rows: list[dict]) -> list[tuple[str, str]]:
-    """searchAnalytics satırları (keys=[query], clicks/impressions/ctr/position) → bulgular.
-    Striking-distance (poz 5-20) + yüksek-gösterim-düşük-CTR = başlık/meta fırsatı."""
-    f: list[tuple[str, str]] = []
+# Bulgu = (severity, kind, msg). kind ∈ {"error", "opportunity"}:
+#   error       = teknik/kapsama sorunu (sitemap/index/coverage/auth) → düzeltilmesi gereken HATA (type=bug).
+#   opportunity = SEO iyileştirme (CTR/pozisyon) → kırık değil, FIRSAT (type=learning; bug listesini kirletmez).
+Finding = tuple[str, str, str]
+
+
+def analyze_search(rows: list[dict]) -> list[Finding]:
+    """searchAnalytics satırları (keys=[query], clicks/impressions/ctr/position) → FIRSAT'lar.
+    Striking-distance (poz 5-20) + yüksek-gösterim-düşük-CTR = başlık/meta fırsatı (hata DEĞİL)."""
+    f: list[Finding] = []
     for r in sorted(rows, key=lambda x: -x.get("impressions", 0))[:10]:
         q = (r.get("keys") or ["?"])[0]
         imp = r.get("impressions", 0)
         ctr = r.get("ctr", 0) * 100
         pos = r.get("position", 0)
         if imp >= 50 and 5 <= pos <= 20:
-            f.append(("P2", f"'{q}': poz {pos:.1f} (striking-distance), {imp} gösterim → içerik/başlık güçlendir, ilk-5'e taşı"))
+            f.append(
+                ("P2", "opportunity", f"'{q}': poz {pos:.1f} (striking-distance), {imp} gösterim → içerik/başlık güçlendir, ilk-5'e taşı")
+            )
         elif imp >= 100 and ctr < 2:
-            f.append(("P2", f"'{q}': {imp} gösterim ama CTR %{ctr:.1f} → başlık/meta-description çekici yap"))
+            f.append(("P2", "opportunity", f"'{q}': {imp} gösterim ama CTR %{ctr:.1f} → başlık/meta-description çekici yap"))
     return f
 
 
-def analyze_sitemaps(sitemaps: list[dict]) -> list[tuple[str, str]]:
-    f: list[tuple[str, str]] = []
+def analyze_sitemaps(sitemaps: list[dict]) -> list[Finding]:
+    f: list[Finding] = []
     if not sitemaps:
-        f.append(("P2", "GSC'ye sitemap GÖNDERİLMEMİŞ → Sitemaps'ten ekle"))
+        f.append(("P2", "error", "GSC'ye sitemap GÖNDERİLMEMİŞ → Sitemaps'ten ekle"))
         return f
     for s in sitemaps:
         path = s.get("path", "?")
         errs = int(s.get("errors", 0))
         warns = int(s.get("warnings", 0))
         if errs:
-            f.append(("P1", f"sitemap {path}: {errs} HATA → düzelt"))
+            f.append(("P1", "error", f"sitemap {path}: {errs} HATA → düzelt"))
         elif warns:
-            f.append(("P3", f"sitemap {path}: {warns} uyarı"))
+            f.append(("P3", "error", f"sitemap {path}: {warns} uyarı"))
     return f
 
 
-def analyze_inspection(result: dict, url: str) -> list[tuple[str, str]]:
-    """urlInspection sonucu → index/coverage hatası."""
-    f: list[tuple[str, str]] = []
+def analyze_inspection(result: dict, url: str) -> list[Finding]:
+    """urlInspection sonucu → index/coverage HATASI (gerçek kapsama sorunu)."""
+    f: list[Finding] = []
     idx = (result.get("inspectionResult") or {}).get("indexStatusResult") or {}
     verdict = idx.get("verdict", "")
     cov = idx.get("coverageState", "")
     if verdict and verdict != "PASS":
-        f.append(("P1", f"{url}: index VERDICT={verdict} ({cov}) → coverage hatası, incele"))
+        f.append(("P1", "error", f"{url}: index VERDICT={verdict} ({cov}) → coverage hatası, incele"))
     elif cov and "indexed" not in cov.lower() and "submitted and indexed" not in cov.lower():
-        f.append(("P2", f"{url}: {cov}"))
+        f.append(("P2", "error", f"{url}: {cov}"))
     return f
 
 
-def audit_property(token: str, prop: str, inspect_urls: list[str] | None = None) -> dict:
-    enc = urllib.parse.quote(prop, safe="")
-    findings: list[tuple[str, str]] = []
-    # Search Analytics (son DAYS gün, sorgu bazında)
-    try:
-        from datetime import UTC, datetime, timedelta
+def _property_root(prop: str) -> str:
+    """'sc-domain:bilgearena.com' → 'https://bilgearena.com/'; URL-prefix property zaten URL."""
+    if prop.startswith("sc-domain:"):
+        return f"https://{prop.split(':', 1)[1].strip('/')}/"
+    return prop if prop.endswith("/") else prop + "/"
 
-        end = datetime.now(UTC).date()
-        start = end - timedelta(days=DAYS)
+
+def _top_pages(token: str, enc: str, start: str, end: str, limit: int = 4) -> list[str]:
+    """searchAnalytics dimensions=[page] → en çok gösterim alan sayfa URL'leri (urlInspection için)."""
+    try:
         sa = _api(
             token,
             f"sites/{enc}/searchAnalytics/query",
-            {
-                "startDate": str(start),
-                "endDate": str(end),
-                "dimensions": ["query"],
-                "rowLimit": 25,
-            },
+            {"startDate": start, "endDate": end, "dimensions": ["page"], "rowLimit": limit},
+        )
+        return [(r.get("keys") or [""])[0] for r in sa.get("rows", []) if (r.get("keys") or [""])[0]]
+    except Exception:
+        return []
+
+
+def audit_property(token: str, prop: str, inspect_urls: list[str] | None = None) -> dict:
+    from datetime import UTC, datetime, timedelta
+
+    enc = urllib.parse.quote(prop, safe="")
+    findings: list[Finding] = []
+    end = datetime.now(UTC).date()
+    start = end - timedelta(days=DAYS)
+    # Search Analytics (son DAYS gün, sorgu bazında) → SEO fırsatları
+    try:
+        sa = _api(
+            token,
+            f"sites/{enc}/searchAnalytics/query",
+            {"startDate": str(start), "endDate": str(end), "dimensions": ["query"], "rowLimit": 25},
         )
         findings += analyze_search(sa.get("rows", []))
         total_clicks = sum(r.get("clicks", 0) for r in sa.get("rows", []))
         total_imp = sum(r.get("impressions", 0) for r in sa.get("rows", []))
     except Exception as e:
-        findings.append(("P1", f"Search Analytics çekilemedi: {str(e)[:100]}"))
+        findings.append(("P1", "error", f"Search Analytics çekilemedi: {str(e)[:100]}"))
         total_clicks = total_imp = 0
-    # Sitemaps
+    # Sitemaps → gönderim/hata
     try:
         sm = _api(token, f"sites/{enc}/sitemaps")
         findings += analyze_sitemaps(sm.get("sitemap", []))
     except Exception as e:
-        findings.append(("P2", f"Sitemaps çekilemedi: {str(e)[:100]}"))
-    # URL Inspection (anahtar sayfalar, opsiyonel — rate-limit'li)
-    for u in (inspect_urls or [])[:5]:
+        findings.append(("P2", "error", f"Sitemaps çekilemedi: {str(e)[:100]}"))
+    # URL Inspection → GERÇEK index/coverage hataları. inspect_urls verilmezse oto-türet
+    # (anasayfa + en çok gösterim alan sayfalar); böylece cron'da da kapsama-hatası yüzeye çıkar.
+    if inspect_urls is None:
+        inspect_urls = list(dict.fromkeys([_property_root(prop), *_top_pages(token, enc, str(start), str(end))]))
+    for u in inspect_urls[:5]:
         try:
             ins = _http(
                 URLINSPECT_URI,
@@ -206,13 +235,19 @@ def audit_property(token: str, prop: str, inspect_urls: list[str] | None = None)
 def build_report(results: list[dict]) -> str:
     lines = ["🔍 Google Search Console — Denetim\n"]
     for r in results:
-        p1 = sum(1 for s, _ in r["findings"] if s == "P1")
+        errs = [(s, m) for s, k, m in r["findings"] if k == "error"]
+        opps = [(s, m) for s, k, m in r["findings"] if k == "opportunity"]
+        p1 = sum(1 for s, _ in errs if s == "P1")
         emoji = "🔴" if p1 else ("🟡" if r["findings"] else "🟢")
         lines.append(f"{emoji} {r['property']} — {r['clicks']} tık / {r['impressions']} gösterim ({DAYS}g)")
-        for sev, msg in r["findings"][:12]:
-            lines.append(f"   [{sev}] {msg}")
+        if errs:
+            lines.append("   ⚠️ Hatalar (düzelt):")
+            lines += [f"      [{s}] {m}" for s, m in errs[:8]]
+        if opps:
+            lines.append("   💡 Fırsatlar (SEO iyileştirme):")
+            lines += [f"      [{s}] {m}" for s, m in opps[:8]]
         if not r["findings"]:
-            lines.append("   ✓ belirgin GSC hatası/fırsatı yok")
+            lines.append("   ✓ hata yok, belirgin fırsat yok")
         lines.append("")
     return "\n".join(lines).strip()
 
@@ -224,23 +259,33 @@ def _post_json(url: str, body: dict, headers: dict, timeout: int) -> dict:
         return json.loads(resp.read().decode() or "{}")
 
 
-def _write_bug(prop: str, findings: list[tuple[str, str]]) -> str:
-    """Hata içeren property → type=bug discovery (SessionStart-görünür → düzeltilir).
-    Telegram/mail YOK (kullanıcı kararı). Dedup: 'GSC: <property>' başlığı."""
+def _write_findings(prop: str, items: list[tuple[str, str]], kind: str) -> str:
+    """Bulguları ortak-hafızaya yaz, HATA/FIRSAT ayrı kanalda:
+    - kind='error'       → type=bug,      başlık 'GSC hata: <prop>'    (SessionStart bug listesi, düzeltilir).
+    - kind='opportunity' → type=learning, başlık 'GSC fırsatı: <prop>' (bug DEĞİL → bug listesini kirletmez).
+    Telegram/mail YOK (P1-error Telegram'ı _send_telegram_p1'de). Dedup: başlık."""
+    if not items:
+        return ""
     mkey = _envget("MEMORY_API_KEY")
     if not mkey:
         return "no MEMORY_API_KEY"
-    body = "🔍 Search Console hataları (seo-gsc):\n" + "\n".join(f"[{s}] {m}" for s, m in findings)
+    if kind == "error":
+        dtype, title, header = "bug", f"GSC hata: {prop}", "⚠️ Search Console HATALARI (seo-gsc) — düzelt:"
+        rationale = "seo-gsc.py — teknik/kapsama HATASI (sitemap/index/coverage). P1→Telegram+hafıza, P2/P3→hafıza."
+    else:
+        dtype, title, header = "learning", f"GSC fırsatı: {prop}", "💡 Search Console SEO FIRSATLARI (seo-gsc) — iyileştirme:"
+        rationale = "seo-gsc.py — kırık DEĞİL, SEO fırsatı (CTR/pozisyon). type=learning → bug listesinde GÖRÜNMEZ."
+    body = header + "\n" + "\n".join(f"[{s}] {m}" for s, m in items)
     try:
         _post_json(
             f"{API_BASE}/api/v1/memory/discoveries",
             {
                 "device_name": "klipper",
                 "project": "linux-ai-server",
-                "type": "bug",
-                "title": f"GSC: {prop}",
+                "type": dtype,
+                "title": title,
                 "details": body[:3800],
-                "rationale": "seo-gsc.py — P1→Telegram+ortak-hafıza, P2→yalnız ortak-hafıza.",
+                "rationale": rationale,
             },
             {"X-Memory-Key": mkey},
             15,
@@ -254,7 +299,8 @@ def _send_telegram_p1(results: list[dict]) -> bool:
     """P1 bulguları Telegram'a ilet. Best-effort; başarısız olsa memory kaydı korunur."""
     p1_lines: list[str] = []
     for r in results:
-        p1 = [(s, m) for s, m in r["findings"] if s == "P1"]
+        # Yalnız HATA-P1 Telegram'a (fırsatlar asla bildirim üretmez)
+        p1 = [(s, m) for s, k, m in r["findings"] if s == "P1" and k == "error"]
         if p1:
             p1_lines.append(f"🔴 {r['property']}")
             for _, msg in p1[:5]:
@@ -311,19 +357,23 @@ def main() -> int:
     report = build_report(results)
     print(report)
 
-    # Hatalar (P1+P2) → ortak hafıza (type=bug → SessionStart). P1 → Telegram da.
-    raised, errs = 0, []
+    # HATA → type=bug (SessionStart, P1→Telegram); FIRSAT → type=learning (bug listesini kirletmez).
+    bugs, opps, errs = 0, 0, []
     for r in results:
-        actionable = [(s, m) for s, m in r["findings"] if s in ("P1", "P2")]
-        if actionable:
-            e = _write_bug(r["property"], actionable)
+        prop = r["property"]
+        err_items = [(s, m) for s, k, m in r["findings"] if k == "error" and s in ("P1", "P2", "P3")]
+        opp_items = [(s, m) for s, k, m in r["findings"] if k == "opportunity"]
+        if err_items:
+            e = _write_findings(prop, err_items, "error")
             errs.append(e) if e else None
-            raised += 0 if e else 1
+            bugs += 0 if e else 1
+        if opp_items:
+            e = _write_findings(prop, opp_items, "opportunity")
+            errs.append(e) if e else None
+            opps += 0 if e else 1
     tg = _send_telegram_p1(results)
-    if errs:
-        print(f"\nOUTCOME: partial | {len(props)} property, {raised} bug→ortak-hafıza, telegram={tg}, MEMORY-FAIL: {errs[0]}")
-    else:
-        print(f"\nOUTCOME: pass | {len(props)} property, {raised} bug→ortak-hafıza, telegram={tg}")
+    tail = f"{len(props)} property, {bugs} hata→bug, {opps} fırsat→learning, telegram={tg}"
+    print(f"\nOUTCOME: {'partial' if errs else 'pass'} | {tail}" + (f", MEMORY-FAIL: {errs[0]}" if errs else ""))
     return 0
 
 
