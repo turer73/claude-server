@@ -212,6 +212,8 @@ async def test_ollama_concurrency_bounded(monkeypatch):
 
     core = LLMCore()
     core._async_ollama_sem = _aio.Semaphore(2)
+    core._async_lowprio_sem = _aio.Semaphore(1)
+    core._async_sem_loop = _aio.get_running_loop()  # _ensure overwrite'ı engelle
     state = {"active": 0, "peak": 0}
 
     class SlowResp:
@@ -277,6 +279,7 @@ async def test_priority_high_bypasses_lowprio_reserve():
     core = LLMCore()
     core._async_ollama_sem = _aio.Semaphore(2)
     core._async_lowprio_sem = _aio.Semaphore(1)
+    core._async_sem_loop = _aio.get_running_loop()  # _ensure overwrite'ı engelle
     # 1 normal-call simüle: lowprio(→0) + 1 ollama-permit tutuluyor
     await core._async_lowprio_sem.acquire()
     await core._async_ollama_sem.acquire()

@@ -61,15 +61,27 @@ class LLMCore:
 
     def __init__(self, ollama_url: str | None = None) -> None:
         self._ollama = (ollama_url or read_env_var("OLLAMA_URL") or "http://localhost:11434").rstrip("/")
-        # Yerel-ollama eşzamanlılık vanaları (claude muaf). asyncio.Semaphore loop'a ilk-kullanımda
-        # bağlanır (import-zamanı singleton güvenli, py3.10+). Sync yol için thread-semafor.
-        self._async_ollama_sem = asyncio.Semaphore(_OLLAMA_CONCURRENCY)
-        self._sync_ollama_sem = threading.Semaphore(_OLLAMA_CONCURRENCY)
+        # Yerel-ollama eşzamanlılık vanaları (claude muaf). asyncio.Semaphore loop'a BAĞLANIR — modül-
+        # singleton import-zamanında loop-suz yaratırsa, çok-loop'lu ortamda (pytest test-başı-loop)
+        # "Event loop is closed" verir. Bu yüzden async semaforlar LOOP-BAŞINA lazy yaratılır
+        # (_ensure_async_sems); prod tek-loop'ta bir kez. Sync yol thread-semafor (loop-bağımsız).
+        self._async_ollama_sem: asyncio.Semaphore | None = None
+        self._async_lowprio_sem: asyncio.Semaphore | None = None
+        self._async_sem_loop = None
         # #2 Öncelik: düşük-öncelik en çok N-1 permit kullanır → high-priority'ye HER ZAMAN ≥1 permit
         # kalır (rutin-iş doldursa bile incident-teşhisi beklemez). N=1'de rezerv yok (tek-slot=FIFO).
         _lp = max(1, _OLLAMA_CONCURRENCY - 1)
-        self._async_lowprio_sem = asyncio.Semaphore(_lp)
+        self._sync_ollama_sem = threading.Semaphore(_OLLAMA_CONCURRENCY)
         self._sync_lowprio_sem = threading.Semaphore(_lp)
+
+    def _ensure_async_sems(self) -> None:
+        """Async semaforları ÇALIŞAN loop'a bağlı tut (loop değişince yeniden yarat). Modül-singleton
+        + çok-loop güvenliği. Manuel-set'li testler _async_sem_loop'u set ederse ezilmez."""
+        loop = asyncio.get_running_loop()
+        if self._async_sem_loop is not loop or self._async_ollama_sem is None:
+            self._async_ollama_sem = asyncio.Semaphore(_OLLAMA_CONCURRENCY)
+            self._async_lowprio_sem = asyncio.Semaphore(max(1, _OLLAMA_CONCURRENCY - 1))
+            self._async_sem_loop = loop
 
     def route(self, task: str) -> tuple[str, str]:
         """task → (backend, model). Env ``LLM_ROUTE_<TASK>`` öncelikli, sonra tablo, sonra default."""
@@ -87,6 +99,7 @@ class LLMCore:
     @asynccontextmanager
     async def _ollama_gate_async(self, priority: str):
         """Yerel-CPU vanası + öncelik. high → tam N permit; normal → önce low-prio(N-1) sonra ana."""
+        self._ensure_async_sems()  # loop-başına lazy (Event-loop-closed footgun fix)
         if priority == "high":
             async with self._async_ollama_sem:
                 yield
