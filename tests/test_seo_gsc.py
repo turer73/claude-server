@@ -60,9 +60,23 @@ def test_build_report_orders_and_marks():
     assert "🔴" in rep
 
 
-def test_write_bug_type_bug_dedup_and_no_telegram():
-    """Hatalar Telegram yerine type=bug discovery (SessionStart); _send_telegram kaldırıldı."""
+def test_no_legacy_send_telegram():
+    """Eski _send_telegram yok; P1 bildirimleri _send_telegram_p1 ile yapılır."""
     assert not hasattr(gsc, "_send_telegram")
+    assert hasattr(gsc, "_send_telegram_p1")
+
+
+def test_send_telegram_p1_no_p1_returns_false():
+    """P1 bulugusu yoksa Telegram gönderilmez."""
+    results = [{"property": "sc-domain:x", "findings": [("P2", "P2 mesajı")], "clicks": 0, "impressions": 0}]
+    assert gsc._send_telegram_p1(results) is False
+
+
+def test_send_telegram_p1_no_helper_returns_false(monkeypatch):
+    """TG_HELPER dosyası yoksa False döner."""
+    monkeypatch.setattr(gsc, "TG_HELPER", "/nonexistent/telegram-alert.sh")
+    results = [{"property": "sc-domain:x", "findings": [("P1", "sitemap hata")], "clicks": 0, "impressions": 0}]
+    assert gsc._send_telegram_p1(results) is False
 
 
 def test_write_bug_posts_bug(monkeypatch):

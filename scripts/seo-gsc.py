@@ -13,14 +13,15 @@ KURULUM (kullanıcı, Google-tarafı): (1) GCP'de Search Console API etkinleşti
 account + JSON key, (3) her GSC property'sinde Settings→Users'a SA e-postasını ekle.
 
 Kullanım: seo-gsc.py [property...]   (default GSC_PROPERTIES; ör. 'sc-domain:panola.app')
-Salt-okunur (webmasters.readonly). HATALAR Telegram YERİNE ortak-hafızaya (type=bug →
-SessionStart'ta görünür → açılan oturumda düzeltilir) yazılır — mail/Telegram yok.
+Salt-okunur (webmasters.readonly). Bulgular ortak-hafızaya (type=bug → SessionStart) yazılır. P1 bulgular aynı zamanda
+Telegram'a da iletilir (telegram-alert.sh generic); P2 yalnız hafızada kalır.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.parse
@@ -30,6 +31,7 @@ from jose import jwt  # python-jose (pyproject'te DECLARED dep — fresh-install
 
 ENV_FILE = os.environ.get("NOTIFY_ENV_FILE", "/opt/linux-ai-server/.env")
 API_BASE = os.environ.get("API_BASE", "http://localhost:8420")
+TG_HELPER = os.environ.get("GSC_TG_HELPER", "/opt/linux-ai-server/automation/telegram-alert.sh")
 TOKEN_URI = "https://oauth2.googleapis.com/token"  # noqa: S105 (URL, parola değil)
 GSC_BASE = "https://searchconsole.googleapis.com/webmasters/v3"
 # Codex P2: URL Inspection webmasters/v3'te DEĞİL, v1 altında ayrı endpoint.
@@ -238,7 +240,7 @@ def _write_bug(prop: str, findings: list[tuple[str, str]]) -> str:
                 "type": "bug",
                 "title": f"GSC: {prop}",
                 "details": body[:3800],
-                "rationale": "seo-gsc.py — Telegram yok; düzeltme açılan oturumda (ortak-hafıza).",
+                "rationale": "seo-gsc.py — P1→Telegram+ortak-hafıza, P2→yalnız ortak-hafıza.",
             },
             {"X-Memory-Key": mkey},
             15,
@@ -246,6 +248,31 @@ def _write_bug(prop: str, findings: list[tuple[str, str]]) -> str:
         return ""
     except Exception as e:
         return str(e)[:150]
+
+
+def _send_telegram_p1(results: list[dict]) -> bool:
+    """P1 bulguları Telegram'a ilet. Best-effort; başarısız olsa memory kaydı korunur."""
+    p1_lines: list[str] = []
+    for r in results:
+        p1 = [(s, m) for s, m in r["findings"] if s == "P1"]
+        if p1:
+            p1_lines.append(f"🔴 {r['property']}")
+            for _, msg in p1[:5]:
+                p1_lines.append(f"  • {msg}")
+    if not p1_lines or not os.path.exists(TG_HELPER):
+        return False
+    safe = "\n".join(p1_lines).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    text = f"🔍 <b>GSC P1 Bulgular</b>\n<pre>{safe[:3500]}</pre>"
+    try:
+        r = subprocess.run(
+            [TG_HELPER, "--kind", "generic", "--text", text],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
 
 
 def _acquire_token() -> tuple[str, str]:
@@ -284,7 +311,7 @@ def main() -> int:
     report = build_report(results)
     print(report)
 
-    # Hatalar (P1+P2) → ortak hafıza (type=bug → SessionStart). MAIL/Telegram YOK.
+    # Hatalar (P1+P2) → ortak hafıza (type=bug → SessionStart). P1 → Telegram da.
     raised, errs = 0, []
     for r in results:
         actionable = [(s, m) for s, m in r["findings"] if s in ("P1", "P2")]
@@ -292,10 +319,11 @@ def main() -> int:
             e = _write_bug(r["property"], actionable)
             errs.append(e) if e else None
             raised += 0 if e else 1
+    tg = _send_telegram_p1(results)
     if errs:
-        print(f"\nOUTCOME: partial | {len(props)} property, {raised} bug→ortak-hafıza, MEMORY-FAIL: {errs[0]}")
+        print(f"\nOUTCOME: partial | {len(props)} property, {raised} bug→ortak-hafıza, telegram={tg}, MEMORY-FAIL: {errs[0]}")
     else:
-        print(f"\nOUTCOME: pass | {len(props)} property, {raised} bug→ortak-hafıza (SessionStart, mail yok)")
+        print(f"\nOUTCOME: pass | {len(props)} property, {raised} bug→ortak-hafıza, telegram={tg}")
     return 0
 
 
