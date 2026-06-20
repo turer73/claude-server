@@ -85,9 +85,11 @@ def _lang(path: str) -> str:
 
 
 async def _ask_coder(prompt: str) -> list[dict]:
-    """qwen-coder'a sor (LLMCore), katı-JSON parse et. Hata/timeout → [] (fail-silent)."""
+    """Tarama modeline sor (LLMCore route='code-review'), katı-JSON parse et. Hata/timeout → [] (fail-silent).
+    NOT: model'i explicit GEÇME — route backend'i (ollama/claude) kendi modelini seçer. Explicit ``model=_MODEL``
+    (qwen2.5-coder:7b) geçilirse claude backend'ine qwen adı gider → ``claude cli rc=1`` → sessiz boş (tarama ölür)."""
     try:
-        raw = await llm_core.generate(prompt, task="code-review", model=_MODEL, temperature=0.1, timeout=_TIMEOUT)
+        raw = await llm_core.generate(prompt, task="code-review", temperature=0.1, timeout=_TIMEOUT)
         if not raw:
             return []
         # JSON dizisini ayıkla (model bazen ```json sarması ekler)
@@ -126,10 +128,14 @@ async def review_source(rel_path: str, code: str) -> list[dict]:
 
 
 async def _verify_one(rel_path: str, code: str, f: dict) -> bool:
-    """Bağımsız skeptik 2. pass (güçlü model = claude, task='verify'). SADECE net-FP eler:
-    yanıt 'FP' ile başlarsa → FP (ele). REAL / boş / belirsiz → KORU (claude-down kör-bırakmasın,
-    gerçek-kaçırma > FP-survivor; insan zaten review eder). qwen-coder kendi blind-spot'unu çürütemediği
-    için verify güçlü-modele yönlendirilir."""
+    """Bağımsız skeptik 2. pass (güçlü model = claude/Sonnet, task='verify'). Üç sonuç:
+    - yanıt 'FP' ile başlar → net-FP → ELE (False).
+    - yanıt geldi ama FP değil (REAL/belirsiz/boş-yanıt) → KORU (True; gerçek-kaçırma > FP-survivor).
+    - verify ÇALIŞAMADI (claude-down/kota → generate istisna) → **FAIL-CLOSED, ELE (False)**.
+      Gerekçe (2026-06-20 incident): eski fail-open'da claude-503'te HER qwen-FP korundu → 245-FP
+      seli gerçek-sinyali boğdu, "insan zaten review eder" varsayımı çöktü (kimse 245 girdiyi elemez).
+      Doğrulanamayan bulgu persist EDİLMEZ; claude geri gelince sonraki commit-review'da yeniden bulunur.
+    qwen-coder kendi blind-spot'unu çürütemediği için verify güçlü-modele yönlendirilir."""
     prompt = _VERIFY_PROMPT.format(
         lang=_lang(rel_path) or "text",
         path=rel_path,
@@ -139,9 +145,14 @@ async def _verify_one(rel_path: str, code: str, f: dict) -> bool:
         detail=f.get("detail", ""),
         code=code,
     )
-    out = (await llm_core.generate(prompt, task="verify", temperature=0.1, timeout=_TIMEOUT) or "").strip().upper()
+    try:
+        raw = await llm_core.generate(prompt, task="verify", temperature=0.1, timeout=_TIMEOUT, raise_on_error=True)
+    except Exception:
+        logger.warning("verify modeli erişilemez (claude-down/kota?) → fail-closed ELE: %s '%s'", rel_path, f.get("title"))
+        return False
+    out = (raw or "").strip().upper()
     first = out.split()[0] if out.split() else ""
-    return first != "FP"  # yalnız net-FP elenir; gerisi (REAL/boş/belirsiz) korunur
+    return first != "FP"  # yanıt-geldi: yalnız net-FP elenir; gerisi (REAL/boş/belirsiz) korunur
 
 
 async def _verify_findings(rel_path: str, code: str, findings: list[dict]) -> list[dict]:
