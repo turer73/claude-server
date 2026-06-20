@@ -149,6 +149,9 @@ async def update_discovery(discovery_id: int, data: DiscoveryUpdate):
             params.append(data.status)
             if data.status == "completed":
                 fields.append("resolved=1")
+        if data.rationale:
+            fields.append("rationale=?")
+            params.append(data.rationale)
         if not fields:
             raise HTTPException(400, "No fields to update")
         params.append(discovery_id)
