@@ -1,9 +1,10 @@
 """classifier.classify_note testleri — LLMCore migrasyonu sonrası label-parse + 502 kontratı."""
 
-import app.api.classifier as clf
 import pytest
-from app.api.classifier import ClassifyRequest, classify_note
 from fastapi import HTTPException
+
+import app.api.classifier as clf
+from app.api.classifier import ClassifyRequest, classify_note
 
 
 def _stub(monkeypatch, raw):
