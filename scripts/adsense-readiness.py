@@ -108,11 +108,12 @@ def readiness_checklist(audit: dict[str, Any]) -> dict[str, Any]:
     return {"score": score, "total": checks_total, "gaps": gaps, "ready": not gaps}
 
 
-def detect_state_changes(prev: dict[str, str], cur: dict[str, str]) -> list[dict[str, str]]:
+def detect_state_changes(prev: dict[str, str], cur: dict[str, dict[str, str]]) -> list[dict[str, str]]:
     """Önceki↔şimdiki AdSense durumları → geçişler (saf). READY'e dönüş = onay (good),
     READY'den çıkış/yeni-NEEDS_ATTENTION = regresyon (bad)."""
     changes: list[dict[str, str]] = []
-    for domain, state in cur.items():
+    for domain, info in cur.items():
+        state = info["state"] if isinstance(info, dict) else info
         old = prev.get(domain)
         if old is None or old == state:
             continue
@@ -160,10 +161,11 @@ def _fetch(url: str, timeout: int = 12) -> tuple[int | None, str]:
         return None, ""
 
 
-def fetch_sites(token: str, account: str) -> dict[str, str]:
-    """AdSense hesabındaki siteler → {domain: state}. Codex P2: nextPageToken ile
-    sayfalama (>50 site olan hesapta eksik çekmeyi önle)."""
-    sites: dict[str, str] = {}
+def fetch_sites(token: str, account: str) -> dict[str, dict[str, str]]:
+    """AdSense hesabındaki siteler → {domain: {state, reason}}. Codex P2: nextPageToken ile
+    sayfalama (>50 site olan hesapta eksik çekmeyi önle). reason = API'den gelen durum-nedeni
+    (low-value-content vs ads.txt vs policy); API dönmezse boş string."""
+    sites: dict[str, dict[str, str]] = {}
     page_token = ""
     for _ in range(20):  # güvenlik üst-sınırı (≤1000 site); sonsuz-döngü koruması
         path = f"{account}/sites?pageSize=50"
@@ -172,7 +174,10 @@ def fetch_sites(token: str, account: str) -> dict[str, str]:
         data = _adsense_get(token, path)
         for s in data.get("sites", []):
             if s.get("domain"):
-                sites[s["domain"]] = s.get("state", "STATE_UNSPECIFIED")
+                sites[s["domain"]] = {
+                    "state": s.get("state", "STATE_UNSPECIFIED"),
+                    "reason": s.get("reason", "") or s.get("approvalState", "") or "",
+                }
         page_token = data.get("nextPageToken", "")
         if not page_token:
             break
@@ -270,15 +275,17 @@ def _load_state() -> dict[str, str]:
         return {}
 
 
-def _save_state(state: dict[str, str]) -> None:
+def _save_state(state: dict) -> None:
+    """Durum dosyasına yaz. {domain: dict} veya {domain: str} kabul eder; state string olarak kaydeder."""
+    flat = {d: (info["state"] if isinstance(info, dict) else info) for d, info in state.items()}
     parent = os.path.dirname(STATE_FILE)
     if parent:
         os.makedirs(parent, exist_ok=True)
     with open(STATE_FILE, "w") as fh:
-        json.dump(state, fh)
+        json.dump(flat, fh)
 
 
-def build_report(sites: dict[str, str], audits: dict[str, dict[str, Any]], changes: list[dict[str, str]]) -> str:
+def build_report(sites: dict[str, dict[str, str]], audits: dict[str, dict[str, Any]], changes: list[dict[str, str]]) -> str:
     out = ["📈 AdSense Hazırlık Denetçisi — monetizasyon durumu\n"]
     if changes:
         out.append("🔔 DURUM DEĞİŞİMİ:")
@@ -286,11 +293,14 @@ def build_report(sites: dict[str, str], audits: dict[str, dict[str, Any]], chang
             mark = "✅" if c["kind"] == "good" else "⚠️"
             out.append(f"  {mark} {c['domain']}: {c['from']} → {c['to']}")
         out.append("")
-    for domain, state in sites.items():
+    for domain, info in sites.items():
+        state = info["state"] if isinstance(info, dict) else info
+        reason = info.get("reason", "") if isinstance(info, dict) else ""
         a = audits.get(domain, {})
         cl: dict[str, Any] = readiness_checklist(a) if a else {"gaps": ["denetlenemedi"], "score": 0, "total": 6}
         flag = "🟢" if state == "READY" else "🔴"
-        out.append(f"{flag} {domain} — durum: {state} | hazırlık: {cl['score']}/{cl['total']}")
+        state_label = f"{state} ({reason})" if reason else state
+        out.append(f"{flag} {domain} — durum: {state_label} | hazırlık: {cl['score']}/{cl['total']}")
         ax = "✓" if a.get("ads_txt") else "✗"
         sn = "✓" if a.get("snippet") else "✗"
         out.append(f"   sayfa:{a.get('pages', '?')} anasayfa:{a.get('home_chars', '?')}c ads.txt:{ax} snippet:{sn}")
@@ -367,21 +377,32 @@ def main() -> int:
     save_state = dict(sites)
     for c in changes:
         kind = "ONAY" if c["kind"] == "good" else "REGRESYON"
+        a = audits.get(c["domain"], {})
+        info = sites.get(c["domain"], {})
+        reason = info.get("reason", "") if isinstance(info, dict) else ""
+        if c["kind"] == "good":
+            detail_suffix = "Reklam serve etmeye başladı olabilir — gelir izle."
+        else:
+            reason_note = f" Konsol-neden: {reason}." if reason else ""
+            # (b) stale ads.txt FP'yi ayırt et: canlı HTTP check ile teyit
+            if "ads_txt" in a:
+                if a["ads_txt"]:
+                    ads_note = "ads.txt canlı-HTTP: SAĞLAM (konsol stale olabilir — Google re-check bekle)"
+                else:
+                    ads_note = "ads.txt canlı-HTTP: SORUNLU — köke HTTP 200 + pub-ID DIRECT satırı gerekli"
+            else:
+                ads_note = "ads.txt denetlenemedi"
+            detail_suffix = f"Reklam durdu/red — konsolda sebep kontrol et.{reason_note} {ads_note}"
         werr = _write_discovery(
             f"AdSense {kind}: {c['domain']} {c['from']}→{c['to']}",
-            f"AdSense site durumu değişti: {c['domain']} {c['from']} → {c['to']}. "
-            + (
-                "Reklam serve etmeye başladı olabilir — gelir izle."
-                if c["kind"] == "good"
-                else "Reklam durdu/red — konsolda sebep kontrol et."
-            ),
+            f"AdSense site durumu değişti: {c['domain']} {c['from']} → {c['to']}. {detail_suffix}",
             dtype="bug",
         )
         if werr and c["domain"] in prev:
             save_state[c["domain"]] = prev[c["domain"]]  # alert yazılamadı → eski state koru
     _save_state(save_state)
 
-    ready = sum(1 for s in sites.values() if s == "READY")
+    ready = sum(1 for info in sites.values() if (info.get("state") if isinstance(info, dict) else info) == "READY")
     note = f"{len(changes)} durum-değişimi" if changes else "değişim yok"
     if derr:
         print(f"\nOUTCOME: partial | {len(sites)} site ({ready} READY), {note}, DISCOVERY-FAIL: {derr}")

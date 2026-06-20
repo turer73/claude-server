@@ -96,7 +96,12 @@ def test_readiness_checklist_missing_trust():
 
 def test_detect_state_changes():
     prev = {"a.com": "NEEDS_ATTENTION", "b.com": "READY", "c.com": "READY"}
-    cur = {"a.com": "READY", "b.com": "READY", "c.com": "NEEDS_ATTENTION", "d.com": "REQUIRES_REVIEW"}
+    cur = {
+        "a.com": {"state": "READY", "reason": ""},
+        "b.com": {"state": "READY", "reason": ""},
+        "c.com": {"state": "NEEDS_ATTENTION", "reason": "low-value-content"},
+        "d.com": {"state": "REQUIRES_REVIEW", "reason": ""},
+    }
     changes = ar.detect_state_changes(prev, cur)
     by = {c["domain"]: c for c in changes}
     assert by["a.com"]["kind"] == "good"  # onay
@@ -107,4 +112,4 @@ def test_detect_state_changes():
 
 def test_detect_state_changes_empty_prev():
     # ilk koşu: önceki durum yok → değişim raporlanmaz (gürültü önle)
-    assert ar.detect_state_changes({}, {"a.com": "READY"}) == []
+    assert ar.detect_state_changes({}, {"a.com": {"state": "READY", "reason": ""}}) == []
