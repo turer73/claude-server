@@ -18,6 +18,8 @@ import json
 import logging
 import math
 import os
+import sqlite3
+from typing import Any, cast
 
 import requests
 
@@ -53,7 +55,7 @@ _SIGNAL_COLUMNS = {
 }
 
 
-def ensure_signal_columns(db) -> None:
+def ensure_signal_columns(db: sqlite3.Connection) -> None:
     """discoveries'e bi-temporal/decay kolonlarını idempotent ekle + valid_at backfill.
 
     _ensure_read_by ile aynı sözleşme: PRAGMA table_info → eksik kolonu ALTER,
@@ -93,13 +95,13 @@ def embed_safe(text: str) -> list[float] | None:
         if not vec or len(vec) != VECTOR_SIZE:
             _degraded("embed", f"bad vector len={len(vec) if vec else 0}")
             return None
-        return vec
+        return cast("list[float]", vec)
     except Exception as e:  # noqa: BLE001
         _degraded("embed", repr(e))
         return None
 
 
-def _ollama_json_safe(prompt: str, *, op: str) -> dict | None:
+def _ollama_json_safe(prompt: str, *, op: str) -> dict[str, Any] | None:
     """qwen2.5'ten JSON cevap iste (format=json). Fail/parse-hatası → None."""
     try:
         r = requests.post(
@@ -114,7 +116,8 @@ def _ollama_json_safe(prompt: str, *, op: str) -> dict | None:
         if not raw:
             _degraded(op, "empty response")
             return None
-        return json.loads(raw)
+        result = json.loads(raw)
+        return cast("dict[str, Any]", result) if isinstance(result, dict) else None
     except Exception as e:  # noqa: BLE001
         _degraded(op, repr(e))
         return None
@@ -140,7 +143,7 @@ def ensure_collection() -> bool:
         return False
 
 
-def upsert_discovery(disc_id: int, vec: list[float], payload: dict) -> None:
+def upsert_discovery(disc_id: int, vec: list[float], payload: dict[str, Any]) -> None:
     """Discovery vektörünü `discoveries` collection'a yaz. Fail → sessiz-atla (görünür-log)."""
     if not vec:
         return
@@ -154,8 +157,30 @@ def upsert_discovery(disc_id: int, vec: list[float], payload: dict) -> None:
         _degraded("qdrant_upsert", repr(e))
 
 
-def search_similar(vec: list[float], project: str, top_k: int = 5) -> list[dict]:
-    """Aynı project'te aktif benzer discovery'ler (cosine skorlu). Fail → []."""
+def set_payload_status(disc_id: int, status: str) -> None:
+    """Qdrant payload.status'u güncelle — status terminal'e geçince active-search'ten çıksın.
+
+    Codex/klipper: status DB'de değişince Qdrant payload BAYAT kalıyordu → çözülmüş kayıt
+    'active' görünüp yeni-bug'a yanlış-merge (data-loss) riski. Bu sync onu kapatır.
+    Fail-safe — Qdrant down → atla (görünür-log). Gate kapalıysa no-op (vektör zaten yok).
+    """
+    if os.environ.get("SIGNAL_SEMANTIC_DEDUP", "1") != "1":
+        return
+    try:
+        requests.post(
+            f"{QDRANT_URL}/collections/{DISCO_COLLECTION}/points/payload?wait=true",
+            json={"payload": {"status": status}, "points": [disc_id]},
+            timeout=15,
+        )
+    except Exception as e:  # noqa: BLE001
+        _degraded("qdrant_set_payload", repr(e))
+
+
+def search_similar(vec: list[float], project: str, dtype: str, top_k: int = 5) -> list[dict[str, Any]]:
+    """Aynı project + AYNI type'ta aktif benzer discovery'ler (cosine skorlu). Fail → [].
+
+    Codex P2: type-scope — bir 'bug' bir 'architecture' kaydıyla dedup edilmemeli.
+    """
     if not vec:
         return []
     try:
@@ -166,6 +191,7 @@ def search_similar(vec: list[float], project: str, top_k: int = 5) -> list[dict]
             "filter": {
                 "must": [
                     {"key": "project", "match": {"value": project}},
+                    {"key": "type", "match": {"value": dtype}},
                     {"key": "status", "match": {"value": "active"}},
                 ]
             },
@@ -194,7 +220,7 @@ def score_importance(title: str, details: str | None) -> int:
     if not data:
         return DEFAULT_IMPORTANCE
     try:
-        val = int(data.get("importance"))
+        val = int(data.get("importance", 0))
         if 1 <= val <= 10:
             return val
         _degraded("score_importance", f"out of range: {val}")
@@ -209,7 +235,7 @@ def score_importance(title: str, details: str | None) -> int:
 _VALID_OPS = {"ADD", "UPDATE", "NOOP", "SUPERSEDE"}
 
 
-def dedup_decision(candidate: dict, matches: list[dict]) -> dict:
+def dedup_decision(candidate: dict[str, Any], matches: list[dict[str, Any]]) -> dict[str, Any]:
     """qwen2.5'e aday + benzer-aktif kayıtları verip operasyon seçtir (mem0 deseni).
 
     Dönen: {"operation": ADD|UPDATE|NOOP|SUPERSEDE, "target_id": int|None, "reason": str}
@@ -244,10 +270,14 @@ def dedup_decision(candidate: dict, matches: list[dict]) -> dict:
     if target is None:
         _degraded("dedup_decision", f"{op} target_id yok → ADD")
         return {"operation": "ADD", "degraded": True}
+    # Codex P2: LLM, dönen matches-DIŞI bir id hayal edebilir → reddet (ADD).
+    if target not in {m.get("id") for m in matches}:
+        _degraded("dedup_decision", f"{op} target {target} matches-dışı → ADD")
+        return {"operation": "ADD", "degraded": True}
     return {"operation": op, "target_id": target, "reason": str(data.get("reason", ""))[:200]}
 
 
-def semantic_dedup(*, project: str, title: str, details: str | None) -> dict:
+def semantic_dedup(*, project: str, dtype: str, title: str, details: str | None) -> dict[str, Any]:
     """Tam akış: embed → Qdrant ara → eşik üstü benzer varsa op-kararı.
 
     Dönen: {"operation": ..., "target_id"?, "vector"?, "degraded"?}
@@ -262,7 +292,7 @@ def semantic_dedup(*, project: str, title: str, details: str | None) -> dict:
     if vec is None:
         # Embed yok → semantik-dedup atla, exact-title-dedup (mevcut) devralır.
         return {"operation": "ADD", "vector": None, "degraded": "embed"}
-    matches = [m for m in search_similar(vec, project) if m.get("score", 0) >= DEDUP_COSINE_THRESHOLD]
+    matches = [m for m in search_similar(vec, project, dtype) if m.get("score", 0) >= DEDUP_COSINE_THRESHOLD]
     if not matches:
         return {"operation": "ADD", "vector": vec}
     decision = dedup_decision({"title": title, "details": details}, matches)
@@ -275,7 +305,7 @@ def semantic_dedup(*, project: str, title: str, details: str | None) -> dict:
 # ----------------------------------------------------------------------------
 def recency_weight(hours_since_access: float) -> float:
     """0.995^saat üstel çürüme. Negatif saat (gelecek) → 1.0 clamp."""
-    return _DECAY_BASE ** max(0.0, hours_since_access)
+    return float(_DECAY_BASE ** max(0.0, hours_since_access))
 
 
 def decay_score(importance: int | None, hours_since_access: float, relevance: float) -> float:
