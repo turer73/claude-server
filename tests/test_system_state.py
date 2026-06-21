@@ -112,3 +112,35 @@ def test_main_outcome_partial_on_write_fail(dbs, monkeypatch, capsys):
     monkeypatch.setattr(ss.sys, "argv", ["system-state.py"])
     ss.main()
     assert "OUTCOME: partial" in capsys.readouterr().out
+
+
+def test_envget_env_file_fallback(tmp_path, monkeypatch):
+    envf = tmp_path / ".env"
+    envf.write_text("FOO_KEY='gizli123'\nOTHER=x\n")
+    monkeypatch.setattr(ss, "ENV_FILE", str(envf))
+    monkeypatch.delenv("FOO_KEY", raising=False)
+    assert ss._envget("FOO_KEY") == "gizli123"  # .env-dosyasından okur (tırnak strip)
+    monkeypatch.setenv("FOO_KEY", "ortamdan")
+    assert ss._envget("FOO_KEY") == "ortamdan"  # os.environ önceliklidir
+    assert ss._envget("YOK_KEY") == ""  # bulunamayan → boş
+
+
+def test_q_error_returns_empty(tmp_path):
+    assert ss._q(str(tmp_path / "olmayan.db"), "SELECT 1") == []  # bozuk/yok DB → fail-safe []
+
+
+def test_render_with_last_review():
+    st = {
+        "days": 7,
+        "events_by_sev": {},
+        "cron_result": {},
+        "cron_recurring_fail": [],
+        "alerts_fired": [],
+        "alerts_open_aging": [],
+        "new_discoveries": [],
+        "open_bugs_aging": [],
+        "code_review_findings": [],
+        "last_review": {"clean": False, "findings": 2, "files": 1, "ts": "2026-06-21T18:00:00"},
+    }
+    txt = ss.render_data(st)
+    assert "2 bulgu" in txt  # last_review verdict (temiz değil) render edildi
