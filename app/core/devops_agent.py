@@ -457,8 +457,8 @@ class DevOpsAgent:
             return
         try:
             await self._db.execute(
-                "UPDATE alerts SET resolved = 1, resolved_at = ? WHERE source = ? AND resolved = 0",
-                (alert.resolved_at, alert.source),
+                "UPDATE alerts SET resolved = 1, resolved_at = ?, invalid_at = ? WHERE source = ? AND resolved = 0",
+                (alert.resolved_at, alert.resolved_at, alert.source),
             )
         except Exception:
             pass

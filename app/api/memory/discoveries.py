@@ -8,13 +8,23 @@ import asyncio
 from fastapi import HTTPException
 
 from app.api.memory import DiscoveryCreate, DiscoveryUpdate, _fire_event, _sync_fts, _track_read, get_db, router
+from app.api.memory import signal_quality as sq
 from app.core.privacy import redact
 
 
 @router.get("/discoveries")
-async def list_discoveries(project: str | None = None, type: str | None = None, status: str | None = None, limit: int = 30):
+async def list_discoveries(
+    project: str | None = None,
+    type: str | None = None,
+    status: str | None = None,
+    as_of: str | None = None,
+    limit: int = 30,
+):
+    """Discovery listele. as_of=<ISO ts> verilirse bi-temporal 'o an aktif' sorgu:
+    valid_at <= as_of AND (invalid_at IS NULL OR invalid_at > as_of) = 'X tarihinde aktif sinyaller'."""
     db = get_db()
     try:
+        sq.ensure_signal_columns(db)
         query = (
             "SELECT id, session_id, device_name, project, type, title, status, "
             "rationale, read_count, date(created_at) as date FROM discoveries WHERE 1=1"
@@ -29,6 +39,9 @@ async def list_discoveries(project: str | None = None, type: str | None = None, 
         if status:
             query += " AND status=?"
             params.append(status)
+        if as_of:
+            query += " AND valid_at <= ? AND (invalid_at IS NULL OR invalid_at > ?)"
+            params.extend([as_of, as_of])
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
         return [dict(r) for r in db.execute(query, params).fetchall()]
@@ -44,6 +57,11 @@ async def get_discovery(discovery_id: int):
         if not row:
             raise HTTPException(404, "Discovery not found")
         _track_read(db, "discoveries", discovery_id)
+        try:  # decay-recency: son-erişim bump (yoksa recency sessizce 'yaş'a döner — klipper notu)
+            db.execute("UPDATE discoveries SET last_accessed=datetime('now') WHERE id=?", (discovery_id,))
+            db.commit()
+        except Exception:
+            pass
         return dict(row)
     finally:
         db.close()
@@ -51,20 +69,22 @@ async def get_discovery(discovery_id: int):
 
 @router.post("/discoveries")
 async def create_discovery(data: DiscoveryCreate):
-    """Duplicate korumalı discovery oluştur — aynı project+type+title aktif kayıt varsa günceller.
+    """Duplicate korumalı discovery oluştur — bi-temporal + semantik-dedup + importance.
 
-    Sadece status='active' kayıtları duplicate olarak kabul edilir. completed/
-    obsolete/superseded kayıtlar yeni POST'ları bloklamaz; aynı title ile yeni
-    bulgu gelirse regression olarak yeni active row oluşur.
-
-    Iki ekstra koruma:
-    - Privacy: details icindeki secret/token redact edilir (app.core.privacy).
-    - 5dk dedup window: ayni project+title+details son 5dk icinde varsa skip.
+    Koruma katmanları (sırayla, HEPSİ fail-safe — yazma yolu Ollama/Qdrant'a bağımlı değil):
+    - Privacy: details secret/token redact (app.core.privacy).
+    - 5dk exact-window: ayni project+type+title+details son 5dk → skip.
+    - Semantik-dedup (signal_quality): embed→Qdrant→qwen2.5 op-kararı
+      (ADD/UPDATE/NOOP/SUPERSEDE). Ollama/Qdrant down/garbage → ADD'e düşer, exact-title devralır.
+    - Exact-title fallback: ayni project+type+title aktif kayıt → güncelle.
+    - importance (1-10, fail→5) + valid_at (bi-temporal) + Qdrant upsert (fail-safe).
     """
     details_clean, redacted_labels = redact(data.details)
 
     db = get_db()
     try:
+        sq.ensure_signal_columns(db)  # idempotent bi-temporal/decay migration
+
         # 5-dakika exact-match dedup window
         recent_dup = db.execute(
             "SELECT id FROM discoveries WHERE project=? AND type=? AND title=? "
@@ -73,39 +93,57 @@ async def create_discovery(data: DiscoveryCreate):
             (data.project, data.type, data.title, details_clean or ""),
         ).fetchone()
         if recent_dup:
-            return {
-                "id": recent_dup[0],
-                "status": "duplicate_skipped_5min",
-                "secrets_redacted": redacted_labels,
-            }
+            return {"id": recent_dup[0], "status": "duplicate_skipped_5min", "secrets_redacted": redacted_labels}
 
-        existing = db.execute(
-            "SELECT id FROM discoveries WHERE project=? AND type=? AND title=? AND status='active'", (data.project, data.type, data.title)
-        ).fetchone()
-        if existing:
-            # Var olanı güncelle (details veya rationale değiştiyse)
+        # Semantik-dedup (fail-safe → ADD). NOOP/UPDATE erken-döner; SUPERSEDE eskiyi geçersizler.
+        decision = sq.semantic_dedup(project=data.project, title=data.title, details=details_clean)
+        op = decision.get("operation", "ADD")
+        vec = decision.get("vector")
+        if op == "NOOP" and decision.get("target_id"):
+            return {"id": decision["target_id"], "status": "duplicate_skipped_semantic", "secrets_redacted": redacted_labels}
+        if op == "UPDATE" and decision.get("target_id"):
+            tid = decision["target_id"]
             if details_clean or data.rationale:
                 db.execute(
                     "UPDATE discoveries SET details=COALESCE(?, details), device_name=?, rationale=COALESCE(?, rationale) WHERE id=?",
-                    (details_clean, data.device_name, data.rationale, existing[0]),
+                    (details_clean, data.device_name, data.rationale, tid),
                 )
                 db.commit()
-            return {"id": existing[0], "status": "already_exists", "secrets_redacted": redacted_labels}
+            return {"id": tid, "status": "merged_semantic", "secrets_redacted": redacted_labels}
+        superseded_id = None
+        if op == "SUPERSEDE" and decision.get("target_id"):
+            superseded_id = decision["target_id"]
+            db.execute(
+                "UPDATE discoveries SET status='superseded', invalid_at=datetime('now') WHERE id=? AND status='active'",
+                (superseded_id,),
+            )
+            db.commit()
 
+        # Exact-title fallback (semantik ADD/degrade yolu — ayni-baslik aktif kayit → guncelle).
+        # SUPERSEDE'de bilerek YENİ row istiyoruz, fallback'i atla.
+        if not superseded_id:
+            existing = db.execute(
+                "SELECT id FROM discoveries WHERE project=? AND type=? AND title=? AND status='active'",
+                (data.project, data.type, data.title),
+            ).fetchone()
+            if existing:
+                if details_clean or data.rationale:
+                    db.execute(
+                        "UPDATE discoveries SET details=COALESCE(?, details), device_name=?, rationale=COALESCE(?, rationale) WHERE id=?",
+                        (details_clean, data.device_name, data.rationale, existing[0]),
+                    )
+                    db.commit()
+                return {"id": existing[0], "status": "already_exists", "secrets_redacted": redacted_labels}
+
+        # importance (fail-safe → 5) + INSERT (valid_at=now bi-temporal, supersedes_id linkage)
+        importance = sq.score_importance(data.title, details_clean)
         cur = db.execute(
-            """
-            INSERT INTO discoveries (session_id, device_name, project, type, title, details, status, rationale)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
+            "INSERT INTO discoveries "
+            "(session_id, device_name, project, type, title, details, status, rationale, valid_at, importance, supersedes_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)",
             (
-                data.session_id,
-                data.device_name,
-                data.project,
-                data.type,
-                data.title,
-                details_clean,
-                data.status or "active",
-                data.rationale,
+                data.session_id, data.device_name, data.project, data.type, data.title,
+                details_clean, data.status or "active", data.rationale, importance, superseded_id,
             ),
         )
         db.commit()
@@ -113,21 +151,24 @@ async def create_discovery(data: DiscoveryCreate):
         db.commit()
         new_id = cur.lastrowid
 
+        # Qdrant upsert (fail-safe; vec yoksa atlanir — semantik-dedup ileride exact-title'a düşer)
+        sq.ensure_collection()
+        sq.upsert_discovery(new_id, vec, {"project": data.project, "type": data.type, "title": data.title, "status": "active"})
+
         event_type = f"{data.type}_created" if data.type in ("bug", "fix") else "discovery_created"
         asyncio.create_task(
             _fire_event(
                 event_type,
-                {
-                    "id": new_id,
-                    "project": data.project,
-                    "type": data.type,
-                    "title": data.title,
-                    "device": data.device_name,
-                },
+                {"id": new_id, "project": data.project, "type": data.type, "title": data.title, "device": data.device_name},
             )
         )
 
-        return {"id": new_id, "status": "created", "secrets_redacted": redacted_labels}
+        result = {"id": new_id, "status": "created", "importance": importance, "secrets_redacted": redacted_labels}
+        if superseded_id:
+            result["supersedes_id"] = superseded_id
+        if decision.get("degraded"):
+            result["signal_degraded"] = decision["degraded"]  # görünür: dedup/embed atlandıysa BİL
+        return result
     finally:
         db.close()
 
@@ -149,6 +190,8 @@ async def update_discovery(discovery_id: int, data: DiscoveryUpdate):
             params.append(data.status)
             if data.status == "completed":
                 fields.append("resolved=1")
+            if data.status in ("completed", "obsolete", "superseded"):
+                fields.append("invalid_at=datetime('now')")  # bi-temporal: gerçek-dünya geçersizleşme
         if data.rationale:
             fields.append("rationale=?")
             params.append(data.rationale)
@@ -166,7 +209,10 @@ async def update_discovery(discovery_id: int, data: DiscoveryUpdate):
 async def resolve_discovery(discovery_id: int):
     db = get_db()
     try:
-        db.execute("UPDATE discoveries SET resolved=1, status='completed' WHERE id=?", (discovery_id,))
+        db.execute(
+            "UPDATE discoveries SET resolved=1, status='completed', invalid_at=datetime('now') WHERE id=?",
+            (discovery_id,),
+        )
         db.commit()
         return {"status": "resolved"}
     finally:
@@ -190,9 +236,16 @@ async def list_discoveries_by_type(dtype: str, project: str | None = None, statu
             params.append(status)
         query += " ORDER BY project, created_at DESC"
         rows = db.execute(query, params).fetchall()
-        # Toplu read tracking
+        # Toplu read tracking + decay-recency bump
         for r in rows:
             _track_read(db, "discoveries", r["id"])
+        try:
+            db.executemany(
+                "UPDATE discoveries SET last_accessed=datetime('now') WHERE id=?", [(r["id"],) for r in rows]
+            )
+            db.commit()
+        except Exception:
+            pass
         return [dict(r) for r in rows]
     finally:
         db.close()

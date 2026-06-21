@@ -214,6 +214,23 @@ class Database:
             if "provenance" not in rcols:
                 await self._conn.execute("ALTER TABLE remediation_log ADD COLUMN provenance TEXT")
 
+        # SİNYAL-BÜTÜNLÜĞÜ: alerts'e bi-temporal kolonlar (discoveries ile aynı ilke).
+        # transaction-time (resolved/resolved_at) ZATEN var; VALID-time ekliyoruz.
+        cur = await self._conn.execute("PRAGMA table_info(alerts)")
+        acols = {row[1] for row in await cur.fetchall()}
+        if acols:
+            if "valid_at" not in acols:
+                await self._conn.execute("ALTER TABLE alerts ADD COLUMN valid_at TEXT")
+                await self._conn.execute("UPDATE alerts SET valid_at = timestamp WHERE valid_at IS NULL")
+            if "invalid_at" not in acols:
+                await self._conn.execute("ALTER TABLE alerts ADD COLUMN invalid_at TEXT")
+                # backfill: zaten resolved olanların gerçek-dünya geçersizliği = resolved_at
+                await self._conn.execute(
+                    "UPDATE alerts SET invalid_at = resolved_at WHERE invalid_at IS NULL AND resolved=1"
+                )
+            if "supersedes_id" not in acols:
+                await self._conn.execute("ALTER TABLE alerts ADD COLUMN supersedes_id INTEGER")
+
     async def close(self) -> None:
         if self._conn:
             await self._conn.close()
