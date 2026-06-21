@@ -380,6 +380,30 @@ async def test_drain_isolates_review_one_failure(tmp_db, tmp_path, monkeypatch):
     assert json.loads(hb.read_text())["files"] == 2
 
 
+async def test_review_one_p1_emits_event(tmp_path, monkeypatch):
+    """P1 bulgu → emit_event çağrılır + model defansif çözülür (route patlasa 'Haiku' fallback)."""
+    from app.core import code_review_agent as cra
+
+    monkeypatch.setattr(cra.cr, "ROOT", tmp_path)
+    agent = cra.CodeReviewAgent()
+
+    async def fake_run(action, **kw):
+        return {"new": 1, "rel": "x.py", "p1_titles": ["P1 SQLi şüphe"]}
+
+    monkeypatch.setattr(agent._registry, "run", fake_run)
+    monkeypatch.setattr(agent, "status", lambda: (_ for _ in ()).throw(RuntimeError("route")))  # route patlar
+    captured = {}
+
+    def fake_emit(**kw):
+        captured.update(kw)
+
+    monkeypatch.setattr(cra, "emit_event", fake_emit)
+    await agent._review_one(tmp_path / "x.py", "commit")
+    assert captured.get("severity") == "warning"
+    assert "P1 SQLi şüphe" in captured.get("title", "")
+    assert "Haiku" in captured.get("detail", "")  # route patladı → defansif 'Haiku' fallback
+
+
 def test_heartbeat_survives_route_failure(tmp_path, monkeypatch):
     """route/status() patlasa BİLE heartbeat yazılır (model=None) — fail-safe (LSA Faz-1).
     'Temiz dedi haberim olmalı'ın izi route-hatasında KAYBOLMAMALI."""
