@@ -63,10 +63,22 @@ def test_garbage_job_excluded(srv_db):
     assert "90.7" not in jobs  # sayısal/garbage job elenir
 
 
-def test_retired_job_excluded(srv_db):
-    # Codex#5: cron_outcomes'ta var ama expected-listede YOK → rapordan dışlanır (retired/renamed)
-    jobs = {a["job"] for a in ahr.agent_freshness(srv_db, expected={"daily-ok"})}
-    assert jobs == {"daily-ok"}  # daily-stale/weekly-fail/dormant expected-dışı → atlandı
+def test_non_expected_kept_not_stale_alarmed(srv_db):
+    # Codex#5+#176: expected-dışı job (retired/relay) rapordan DIŞLANMAZ (relay-koru) ama STALE-alarm
+    # ALMAZ (managed-ajan değil). daily-stale expected-dışı → dahil ama stale değil.
+    agents = ahr.agent_freshness(srv_db, expected={"daily-ok"})
+    jobs = {a["job"] for a in agents}
+    assert "daily-stale" in jobs  # relay/retired DIŞLANMADI (Codex#176)
+    assert _status(agents, "daily-stale") != "stale"  # ama STALE-alarm yok (Codex#5)
+    assert _status(agents, "daily-ok") == "healthy"  # expected → normal sınıflama
+
+
+def test_parse_wrap_jobs_skips_comments():
+    # Codex#176: yorum-satırındaki klipper-cron-wrap job'ı expected-sayılmamalı (retired→yanlış-STALE önle)
+    text = "0 1 * * * /x/klipper-cron-wrap.sh aktif-job /x/a.sh\n# 0 2 * * * /x/klipper-cron-wrap.sh retired-job /x/r.sh\n"
+    jobs = ahr._parse_wrap_jobs(text)
+    assert "aktif-job" in jobs
+    assert "retired-job" not in jobs  # yorum-satırı atlandı
 
 
 def test_expected_but_never_ran_is_stale(srv_db):

@@ -56,8 +56,6 @@ def expected_agents() -> set[str]:
     """BEKLENEN cron-ajanları = automation/crontab + canlı crontab'ta klipper-cron-wrap.sh ile
     sarılan job adları. Codex#5: retired/renamed job (cron_outcomes'ta var ama crontab'da yok)
     rapordan dışlanır; Codex#2: beklenen-ama-sessiz olan STALE gösterilir (45g-pencere düşürmez)."""
-    import re
-
     names: set[str] = set()
     texts: list[str] = []
     try:
@@ -70,8 +68,23 @@ def expected_agents() -> set[str]:
     except Exception:
         pass
     for txt in texts:
-        names.update(re.findall(r"klipper-cron-wrap\.sh\s+(\S+)", txt))
+        names.update(_parse_wrap_jobs(txt))
     return names
+
+
+def _parse_wrap_jobs(text: str) -> set[str]:
+    """crontab metninden klipper-cron-wrap.sh job adları — YORUM satırları atlanır (Codex#176:
+    retired/yorumlu cron expected-sayılmamalı → yanlış-STALE önle)."""
+    import re
+
+    out: set[str] = set()
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        m = re.search(r"klipper-cron-wrap\.sh\s+(\S+)", line)
+        if m:
+            out.add(m.group(1))
+    return out
 
 
 def agent_freshness(db: str, expected: set[str] | None = None) -> list[dict]:
@@ -96,8 +109,8 @@ def agent_freshness(db: str, expected: set[str] | None = None) -> list[dict]:
     for r in rows:
         if r["job"] in GARBAGE:
             continue
-        if expected and r["job"] not in expected:
-            continue  # Codex#5: retired/renamed job — rapordan dışla
+        # Codex#176: relay'lenen job'ları (klipper-cron-wrap DIŞI, ör. vps-backup-push direkt-INSERT)
+        # DIŞLAMA — rapordan kaybolmasınlar. STALE-alarm aşağıda yalnız EXPECTED'e uygulanır.
         by_job.setdefault(r["job"], []).append(r)
     out = []
     for job, recs in by_job.items():
@@ -112,9 +125,12 @@ def agent_freshness(db: str, expected: set[str] | None = None) -> list[dict]:
         reliable = cadence_s if (len(recs) >= 3 and cadence_s and cadence_s > 60) else None
         last_ok = str(last["result"]).lower() == "pass"
         # stale = GERÇEK SORUN (periyodunda KOŞMAMIŞ → cron bozuk/kapalı). Az-veri + 14g sessiz = dormant.
+        # Codex#5+#176: STALE-alarm yalnız EXPECTED (crontab) ajanlara — retired/relay job overdue olsa
+        # da false-alarm vermez (managed-ajan değil); expected boşsa (cross-ref yok) eski davranış.
+        stale_eligible = (not expected) or (job in expected)
         overdue = bool(reliable and age_s > reliable * STALE_TOLERANCE)
         dormant = len(recs) < 3 and age_s > 14 * 86400
-        if overdue or dormant:
+        if (overdue or dormant) and stale_eligible:
             status = "stale"
         elif not last_ok:
             # periyodunda koştu ama son-sonuç pass değil → geçici/fixli olabilir (bayat-fail dersi)
