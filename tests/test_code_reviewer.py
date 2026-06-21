@@ -244,11 +244,12 @@ async def test_research_records_architecture_finding(tmp_db, monkeypatch):
     """Faz 3: web+LLM yeni-yapı önerirse 'architecture' bulgusu yazılır (read-only)."""
     import app.api.research as research
 
+    async def _synth(prompt, **k):
+        return "Lifespan-scoped DB havuzu benimse\nBağlantı-başı yerine havuz daha verimli."
+
     monkeypatch.setattr(cr, "_RESEARCH_ENABLED", True)
     monkeypatch.setattr(research, "_web_search", lambda q, n=5: [{"title": "FastAPI 0.115 lifespan DB pool", "text": "new pattern"}])
-    monkeypatch.setattr(
-        research, "_ollama_generate", lambda p, **k: "Lifespan-scoped DB havuzu benimse\nBağlantı-başı yerine havuz daha verimli."
-    )
+    monkeypatch.setattr(cr.llm_core, "generate", _synth)  # sentez = Sonnet route (task='synthesis')
     assert await cr.research_new_structure("FastAPI") is True
     arch = _rows(tmp_db, type="architecture")
     assert len(arch) == 1
@@ -258,9 +259,12 @@ async def test_research_records_architecture_finding(tmp_db, monkeypatch):
 async def test_research_yok_no_finding(tmp_db, monkeypatch):
     import app.api.research as research
 
+    async def _synth(prompt, **k):
+        return "YOK"
+
     monkeypatch.setattr(cr, "_RESEARCH_ENABLED", True)
     monkeypatch.setattr(research, "_web_search", lambda q, n=5: [{"title": "x", "text": "y"}])
-    monkeypatch.setattr(research, "_ollama_generate", lambda p, **k: "YOK")
+    monkeypatch.setattr(cr.llm_core, "generate", _synth)
     assert await cr.research_new_structure("FastAPI") is False
     assert len(_rows(tmp_db, type="architecture")) == 0
 

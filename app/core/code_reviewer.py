@@ -316,7 +316,7 @@ async def research_new_structure(topic: str) -> bool:
     if not _RESEARCH_ENABLED:
         return False
     try:
-        from app.api.research import _ollama_generate, _web_search
+        from app.api.research import _web_search
 
         results = await asyncio.to_thread(_web_search, f"{topic} security best practices new pattern 2025 2026 CVE", 5)
         if not results:
@@ -328,7 +328,8 @@ async def research_new_structure(topic: str) -> bool:
             f"Varsa İLK satıra <=60 karakter başlık, sonra 1-2 cümle neden yaz. Yoksa sadece 'YOK' yaz. "
             f"Spekülasyon/genel-tavsiye/var-olanı-tekrar YAZMA.\n\n{web}"
         )
-        answer = (await asyncio.to_thread(_ollama_generate, prompt) or "").strip()
+        # SENTEZ = güçlü model (task='synthesis' → Sonnet); web-sonuçlarını derleyip karar verir.
+        answer = (await llm_core.generate(prompt, task="synthesis", timeout=120) or "").strip()
         if not answer or answer.upper().startswith("YOK") or len(answer) < 25:
             return False
         lines = [ln for ln in answer.splitlines() if ln.strip()]

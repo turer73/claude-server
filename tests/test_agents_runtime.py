@@ -88,7 +88,9 @@ class _FakeCRA:
     def status(self):
         return {
             "enabled": True,
-            "model": "qwen2.5-coder:7b",
+            "model": "claude-haiku-4-5-20251001",  # tarama route (LLM_ROUTE_CODE_REVIEW)
+            "verify_model": "claude-sonnet-4-6",  # kontrol/sentez route (LLM_ROUTE_VERIFY)
+            "synthesis_model": "claude-sonnet-4-6",
             "interval_s": 300,
             "ticks": 7,
             "total_findings": 9,
@@ -107,7 +109,8 @@ def test_codereview_card_signal_rate():
     assert card["key"] == "code-review"
     assert card["success_rate"] == {"label": "Sinyal (FP-değil)", "value": 0.75, "n": 12}  # 9/(9+3)
     assert card["current_task"] == "Son inceleme: app/api/dev.py:48"
-    assert "qwen2.5-coder:7b (review)" in card["models"]
+    assert "claude-haiku-4-5-20251001 (tarama)" in card["models"]
+    assert "claude-sonnet-4-6 (kontrol/sentez)" in card["models"]
 
 
 def test_codereview_card_empty():

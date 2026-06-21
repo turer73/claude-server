@@ -51,9 +51,15 @@ class CodeReviewAgent:
                 pass
 
     def status(self) -> dict:
+        # Display GERÇEK route'u yansıtsın (cr._MODEL sabiti DEĞİL) — LLM_ROUTE_* override'ları
+        # tarama=Haiku / kontrol+sentez=Sonnet'i gösterir.
+        from app.core.agents.llmcore import llm_core
+
         return {
             "enabled": cr._ENABLED,
-            "model": cr._MODEL,
+            "model": llm_core.route("code-review")[1],  # tarama (LLM_ROUTE_CODE_REVIEW)
+            "verify_model": llm_core.route("verify")[1],  # bulgu-kontrol (LLM_ROUTE_VERIFY)
+            "synthesis_model": llm_core.route("synthesis")[1],  # research sentezi
             "interval_s": self._interval,
             "sweep_k": self._k,
             "idle_cpu_threshold": self._idle_cpu,
