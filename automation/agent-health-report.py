@@ -52,15 +52,55 @@ def _post_json(url: str, body: dict, headers: dict, timeout: int) -> dict:
         return json.loads(resp.read().decode() or "{}")
 
 
-def agent_freshness(db: str) -> list[dict]:
+def expected_agents() -> set[str]:
+    """BEKLENEN cron-ajanları = automation/crontab + canlı crontab'ta klipper-cron-wrap.sh ile
+    sarılan job adları. Codex#5: retired/renamed job (cron_outcomes'ta var ama crontab'da yok)
+    rapordan dışlanır; Codex#2: beklenen-ama-sessiz olan STALE gösterilir (45g-pencere düşürmez)."""
+    names: set[str] = set()
+    texts: list[str] = []
+    try:
+        with open("/opt/linux-ai-server/automation/crontab") as fh:
+            texts.append(fh.read())
+    except OSError:
+        pass
+    try:
+        texts.append(subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=5).stdout)
+    except Exception:
+        pass
+    for txt in texts:
+        names.update(_parse_wrap_jobs(txt))
+    return names
+
+
+def _parse_wrap_jobs(text: str) -> set[str]:
+    """crontab metninden klipper-cron-wrap.sh job adları — YORUM satırları atlanır (Codex#176:
+    retired/yorumlu cron expected-sayılmamalı → yanlış-STALE önle)."""
+    import re
+
+    out: set[str] = set()
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        m = re.search(r"klipper-cron-wrap\.sh\s+(\S+)", line)
+        if m:
+            out.add(m.group(1))
+    return out
+
+
+def agent_freshness(db: str, expected: set[str] | None = None) -> list[dict]:
     """Her cron-ajanı için son-çalışma + DATA-DRIVEN cadence (geçmiş aralıkların medyanı) →
-    status: healthy / stale (periyodunda koşmadı) / failing (son sonuç pass değil)."""
+    status: healthy / stale (periyodunda koşmadı=gerçek sorun) / son-fail (son sonuç pass değil).
+    Codex#2+#5: BEKLENEN ajan-listesi (crontab) ile çapraz-referans — retired-dışla, sessiz-beklenen=STALE."""
+    if expected is None:
+        expected = expected_agents()
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
+    # Codex#2: 45g-pencere uzun-sessiz ajanı düşürüyordu; 180g'e genişlet (beklenen-ajan yine de
+    # hiç-satırı yoksa aşağıda STALE eklenir). Codex#5: beklenen-listede olmayan job atlanır.
     rows = conn.execute(
         "SELECT job, result, julianday(timestamp) AS jd, "
         "(julianday('now')-julianday(timestamp))*86400 AS age_s "
-        "FROM cron_outcomes WHERE timestamp > datetime('now','-45 days') "
+        "FROM cron_outcomes WHERE timestamp > datetime('now','-180 days') "
         "AND job GLOB '*[a-z]*' AND job NOT GLOB '*[0-9].[0-9]*' "
         "ORDER BY job, jd"
     ).fetchall()
@@ -69,6 +109,8 @@ def agent_freshness(db: str) -> list[dict]:
     for r in rows:
         if r["job"] in GARBAGE:
             continue
+        # Codex#176: relay'lenen job'ları (klipper-cron-wrap DIŞI, ör. vps-backup-push direkt-INSERT)
+        # DIŞLAMA — rapordan kaybolmasınlar. STALE-alarm aşağıda yalnız EXPECTED'e uygulanır.
         by_job.setdefault(r["job"], []).append(r)
     out = []
     for job, recs in by_job.items():
@@ -83,9 +125,12 @@ def agent_freshness(db: str) -> list[dict]:
         reliable = cadence_s if (len(recs) >= 3 and cadence_s and cadence_s > 60) else None
         last_ok = str(last["result"]).lower() == "pass"
         # stale = GERÇEK SORUN (periyodunda KOŞMAMIŞ → cron bozuk/kapalı). Az-veri + 14g sessiz = dormant.
+        # Codex#5+#176: STALE-alarm yalnız EXPECTED (crontab) ajanlara — retired/relay job overdue olsa
+        # da false-alarm vermez (managed-ajan değil); expected boşsa (cross-ref yok) eski davranış.
+        stale_eligible = (not expected) or (job in expected)
         overdue = bool(reliable and age_s > reliable * STALE_TOLERANCE)
         dormant = len(recs) < 3 and age_s > 14 * 86400
-        if overdue or dormant:
+        if (overdue or dormant) and stale_eligible:
             status = "stale"
         elif not last_ok:
             # periyodunda koştu ama son-sonuç pass değil → geçici/fixli olabilir (bayat-fail dersi)
@@ -102,6 +147,11 @@ def agent_freshness(db: str) -> list[dict]:
                 "runs": len(recs),
             }
         )
+    # Codex#2: BEKLENEN ama 180g'de HİÇ-satırı-yok ajan = bozuk/kapalı → STALE (raporun asıl amacı
+    # bu — haftalarca sessiz/kırık ajanı yakalamak; eski pencere onu görünmez yapıyordu).
+    seen = {a["job"] for a in out}
+    for name in sorted(expected - seen):
+        out.append({"job": name, "status": "stale", "last_result": None, "age_h": None, "cadence_h": None, "runs": 0})
     return sorted(out, key=lambda a: (a["status"] == "healthy", a["job"]))
 
 
@@ -137,7 +187,14 @@ def build_summary(agents: list[dict], findings: dict) -> str:
         "",
         "⏰ STALE (KOŞMUYOR — incele):",
     ]
-    lines += [f"  - {a['job']}: son {a['age_h']}h önce, cadence ~{a['cadence_h']}h ({a['runs']} çalışma)" for a in stale] or ["  (yok)"]
+    lines += [
+        (
+            f"  - {a['job']}: HİÇ koşmadı (180g+, beklenen-ama-sessiz = bozuk/kapalı)"
+            if a["age_h"] is None
+            else f"  - {a['job']}: son {a['age_h']}h önce, cadence ~{a['cadence_h']}h ({a['runs']} çalışma)"
+        )
+        for a in stale
+    ] or ["  (yok)"]
     lines += ["", "⚠️ SON-FAIL (son çalışma başarısız — sonraki turda doğrulanır):"]
     lines += [f"  - {a['job']}: son-sonuç={a['last_result']}, {a['age_h']}h önce (cadence ~{a['cadence_h']}h)" for a in sonfail] or [
         "  (yok)"
@@ -177,7 +234,13 @@ def synthesize(summary: str, ikey: str) -> str:
 def write_report(summary: str, narrative: str, n_problem: int, mkey: str) -> str:
     if not mkey:
         return "no MEMORY_API_KEY"
-    body = (f"📊 Haftalık Ajan Sağlık Raporu\n\n{narrative}\n\n--- Ham veri ---\n{summary}")[:3800]
+    # Codex#170: başlık SABİT olursa memory-dedup (project+type+title) her hafta ÜZERİNE yazıyor →
+    # geçmiş kayboluyor. ISO-hafta ekle → her hafta UNIQUE kayıt (history korunur).
+    from datetime import UTC, datetime
+
+    iso = datetime.now(UTC).isocalendar()
+    week_tag = f"{iso[0]}-W{iso[1]:02d}"
+    body = (f"📊 Haftalık Ajan Sağlık Raporu ({week_tag})\n\n{narrative}\n\n--- Ham veri ---\n{summary}")[:3800]
     try:
         _post_json(
             f"{API_BASE}/api/v1/memory/discoveries",
@@ -185,7 +248,8 @@ def write_report(summary: str, narrative: str, n_problem: int, mkey: str) -> str
                 "device_name": "klipper",
                 "project": "linux-ai-server",
                 "type": "learning",
-                "title": "Haftalık Ajan Sağlık Raporu",
+                "skip_dedup": True,  # Codex#176: haftalık-log; semantic-dedup ardışık raporları merge etmesin
+                "title": f"Haftalık Ajan Sağlık Raporu — {week_tag}",
                 "details": body,
                 "rationale": f"agent-health-report.py — {n_problem} stale/failing ajan; Haiku-sentez; salt-okunur.",
             },
@@ -221,8 +285,12 @@ def main() -> int:
     tg = send_telegram(stale, narrative)  # yalnız STALE (gerçek-koşmuyor) Telegram; son-fail spam-değil
     print(narrative or summary)
     n_h = sum(1 for a in agents if a["status"] == "healthy")
+    # Codex#225: STALE-ajan var ama Telegram TESLİM-EDİLEMEDİ → partial (kritik alert sessizce
+    # cron-loga gömülmesin; tam o stale-senaryo direkt-Telegram'a bağımlı).
+    tg_fail = bool(stale) and not tg
+    bad = err or (tg_fail and "telegram-teslim-fail (stale-ajan var)")
     tail = f"{len(agents)} ajan ({n_h} healthy, {len(stale)} stale, {len(sonfail)} son-fail), telegram={tg}"
-    print(f"\nOUTCOME: {'partial' if err else 'pass'} | {tail}" + (f", MEMORY-FAIL: {err}" if err else ""))
+    print(f"\nOUTCOME: {'partial' if bad else 'pass'} | {tail}" + (f", FAIL: {bad}" if bad else ""))
     return 0
 
 

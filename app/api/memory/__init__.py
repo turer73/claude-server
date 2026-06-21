@@ -246,6 +246,10 @@ class DiscoveryCreate(BaseModel):
     details: str | None = None
     status: str | None = "active"
     rationale: str | None = None
+    # Codex#176: tekrarlayan-LOG kayıtları (ör. haftalık ajan-sağlık raporu) semantic-dedup'ı
+    # ATLAMALI — ardışık raporlar cosine≥0.90 (0.972 ölçüldü) → dedup onları MERGE eder, hafta-unique
+    # başlık yetmez, geçmiş kaybolur. skip_dedup=True → semantic-dedup atla (exact-title yine korur).
+    skip_dedup: bool = False
 
     @field_validator("type")
     @classmethod

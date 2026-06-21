@@ -372,6 +372,28 @@ async def test_task_log_patch_validation(client, memory_db):
 # ---------------------------------------------------------------------------
 
 
+async def test_discovery_skip_dedup_bypasses_semantic(client, memory_db, monkeypatch):
+    # Codex#176: skip_dedup=True → semantic-dedup ATLANIR (recurring-log; ardışık benzer raporlar
+    # cosine≥0.90 ile yanlış-merge olmasın). semantic_dedup çağrılmamalı.
+    import app.api.memory.signal_quality as sq
+
+    called = {"n": 0}
+
+    def _boom(*a, **k):
+        called["n"] += 1
+        return {"operation": "ADD"}
+
+    monkeypatch.setenv("SIGNAL_SEMANTIC_DEDUP", "1")  # dedup açık olsa BİLE
+    monkeypatch.setattr(sq, "semantic_dedup", _boom)
+    resp = await client.post(
+        "/api/v1/memory/discoveries",
+        json={"project": "p1", "type": "learning", "title": "Haftalık Rapor — W25", "skip_dedup": True},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "created"
+    assert called["n"] == 0  # skip_dedup → semantic_dedup HİÇ çağrılmadı
+
+
 async def test_discovery_crud_and_lifecycle(client, memory_db):
     # Create
     resp = await client.post(
