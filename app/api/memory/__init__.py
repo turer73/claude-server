@@ -269,6 +269,7 @@ class DiscoveryUpdate(BaseModel):
     title: str | None = None
     details: str | None = None
     status: str | None = None
+    rationale: str | None = None
 
     @field_validator("status")
     @classmethod

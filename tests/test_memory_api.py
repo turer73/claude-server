@@ -406,6 +406,11 @@ async def test_discovery_crud_and_lifecycle(client, memory_db):
     resp = await client.put(f"/api/v1/memory/discoveries/{did}", json={"details": "new details"})
     assert resp.status_code == 200
 
+    # Update — rationale persist edilmeli (eski silent-fail bug: model'de alan yoktu, 200 dönüp yazmazdı)
+    resp = await client.put(f"/api/v1/memory/discoveries/{did}", json={"rationale": "triage: FP, obsolete"})
+    assert resp.status_code == 200
+    assert (await client.get(f"/api/v1/memory/discoveries/{did}")).json()["rationale"] == "triage: FP, obsolete"
+
     # Empty update -> 400
     resp = await client.put(f"/api/v1/memory/discoveries/{did}", json={})
     assert resp.status_code == 400
