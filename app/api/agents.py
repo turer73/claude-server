@@ -252,7 +252,7 @@ def _codereview_card(cra, crdb: dict) -> dict:
         "type": "continuous",
         "schedule": "5dk döngü",
         "running": bool(st.get("enabled")),
-        "models": [f"{st.get('model')} (review)", "qwen2.5:3b (research)"],
+        "models": [f"{st.get('model')} (tarama)", f"{st.get('verify_model', '?')} (kontrol/sentez)"],
         "last_run": st.get("last_run"),
         "interval_s": st.get("interval_s"),
         "current_task": (f"Son inceleme: {last_file}" if last_file else "Kuyruk/sweep bekliyor"),
