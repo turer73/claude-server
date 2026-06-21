@@ -380,6 +380,33 @@ async def test_drain_isolates_review_one_failure(tmp_db, tmp_path, monkeypatch):
     assert json.loads(hb.read_text())["files"] == 2
 
 
+async def test_sweep_isolates_review_one_failure(tmp_db, tmp_path, monkeypatch):
+    """discovery #1130: _sweep'te bir dosyanın _review_one hatası for-loop'u kırmamalı —
+    kalan dosyalar denenir (drain'deki #1128 simetrisi)."""
+    from pathlib import Path
+
+    from app.core import code_review_agent as cra
+
+    monkeypatch.setattr(cra.cr, "_ENABLED", True)
+    monkeypatch.setattr(cra.cr, "ROOT", tmp_path)
+    agent = cra.CodeReviewAgent()
+    agent._sweep_files = [Path("a.py"), Path("b.py")]
+    agent._pos = 0
+    agent._k = 2
+
+    seen = []
+
+    async def boom_then_ok(p, src):
+        seen.append(p.name)
+        if p.name == "a.py":
+            raise RuntimeError("emit_event patladı")  # ilk dosya patlar
+
+    monkeypatch.setattr(agent, "_review_one", boom_then_ok)
+
+    await agent._sweep()  # exception YUTULMALI, propagate ETMEMELİ
+    assert seen == ["a.py", "b.py"]  # ikinci dosya da denendi (loop kırılmadı)
+
+
 async def test_review_one_p1_emits_event(tmp_path, monkeypatch):
     """P1 bulgu → emit_event çağrılır + model defansif çözülür (route patlasa 'Haiku' fallback)."""
     from app.core import code_review_agent as cra
