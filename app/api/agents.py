@@ -130,6 +130,17 @@ _AGENT_MANIFEST = [
         "script": "weekly-audit.sh",
     },
     {
+        "key": "agent-health-report",
+        "name": "Ajan Sağlık Raporu",
+        "role": "Tüm ajanların çalışırlığı + bulgu sentezi (meta-monitor)",
+        "type": "cron",
+        "schedule": "haftalık",
+        "models": ["claude-haiku-4-5 (CLI)"],
+        "log": "agent-health-report.log",
+        "evsrc": "agent-health-report",
+        "script": "agent-health-report.sh",
+    },
+    {
         "key": "intent-liveness-audit",
         "name": "Niyet-Canlılık Denetçi",
         "role": "Cron/intent canlılık denetimi",
