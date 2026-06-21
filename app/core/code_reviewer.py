@@ -330,6 +330,10 @@ async def research_new_structure(topic: str) -> bool:
         )
         # SENTEZ = güçlü model (task='synthesis' → Sonnet); web-sonuçlarını derleyip karar verir.
         answer = (await llm_core.generate(prompt, task="synthesis", timeout=120) or "").strip()
+        if not answer:
+            # Codex#168: Claude-CLI down → sentez boş döner; ollama'ya (task=reasoning→qwen) düş
+            # ki research her tick web-sonucu sessizce DÜŞÜRMESİN (degrade, fail-değil).
+            answer = (await llm_core.generate(prompt, task="reasoning", timeout=60) or "").strip()
         if not answer or answer.upper().startswith("YOK") or len(answer) < 25:
             return False
         lines = [ln for ln in answer.splitlines() if ln.strip()]
