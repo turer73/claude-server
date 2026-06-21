@@ -23,7 +23,17 @@ from typing import Any, cast
 
 import requests
 
+from app.core.config import read_env_var
+
 log = logging.getLogger("signal_quality")
+
+
+def _gate_on() -> bool:
+    """SIGNAL_SEMANTIC_DEDUP gate — read_env_var (.env-dosyası + os.environ), os.environ.get DEĞİL.
+    KRİTİK: systemd .env'i os.environ'a YÜKLEMEZ (EnvironmentFile yok) → os.environ.get hep
+    default'a düşer = kill-switch SERVİSTE çalışmaz. read_env_var .env'i okur (codebase deseni)."""
+    return (read_env_var("SIGNAL_SEMANTIC_DEDUP") or "1") == "1"
+
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
@@ -164,7 +174,7 @@ def set_payload_status(disc_id: int, status: str) -> None:
     'active' görünüp yeni-bug'a yanlış-merge (data-loss) riski. Bu sync onu kapatır.
     Fail-safe — Qdrant down → atla (görünür-log). Gate kapalıysa no-op (vektör zaten yok).
     """
-    if os.environ.get("SIGNAL_SEMANTIC_DEDUP", "1") != "1":
+    if not _gate_on():
         return
     try:
         requests.post(
@@ -286,7 +296,7 @@ def semantic_dedup(*, project: str, dtype: str, title: str, details: str | None)
     Env-gate SIGNAL_SEMANTIC_DEDUP=0 → tamamen atla (ADD). Ops kill-switch + testlerde
     deterministik (canlı Ollama/Qdrant'a bağımlı değil). Default '1' (açık).
     """
-    if os.environ.get("SIGNAL_SEMANTIC_DEDUP", "1") != "1":
+    if not _gate_on():
         return {"operation": "ADD", "vector": None, "degraded": "disabled"}
     vec = embed_safe(f"{title}\n{details or ''}")
     if vec is None:
