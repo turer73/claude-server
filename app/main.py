@@ -144,6 +144,48 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.code_review_agent = code_reviewer
     code_reviewer.start()
 
+    # Boot-config-log (#3 silent-fail verify): runtime aktif-olu gate tespiti.
+    # T1 static-lint PR-zamani yakalar; bu runtime backstop T1'i kacirani yakalar
+    # (savunma-derinligi). Fail-safe: audit/discovery ASLA startup'i bozmaz.
+    try:
+        from app.core.config import DEFAULT_ENV_FILE
+        from app.core.dead_gate import audit_runtime_dead_gates
+
+        _repo_root = Path(__file__).resolve().parent.parent
+        dead_gates = audit_runtime_dead_gates(DEFAULT_ENV_FILE, [_repo_root / "app", _repo_root / "automation"])
+        for dg in dead_gates:
+            logger.warning(
+                "[DEAD-GATE] %s serviste no-op — .env'de tanimli, process-env'de yok, "
+                "reader %s os.environ.get kullaniyor. read_env_var'a gec "
+                "(bkz app/core/dead_gate.py).",
+                dg.name,
+                dg.reader,
+            )
+            # Q3: verification-failure -> signal/discoveries+alert pipeline (dedup'li,
+            # bi-temporal FP-flood'u onler). best-effort; emit-hatasi warn'i etkilemez.
+            try:
+                from app.api.memory import DiscoveryCreate
+                from app.api.memory.discoveries import create_discovery
+
+                await create_discovery(
+                    DiscoveryCreate(
+                        project="claude-server",
+                        type="bug",
+                        title=f"[DEAD-GATE] {dg.name} serviste no-op (.env okunmuyor)",
+                        details=(
+                            f"{dg.name} `.env`'de tanimli ama systemd process-env'e "
+                            f"gecirmiyor; reader {dg.reader} os.environ.get kullaniyor "
+                            f"-> gate serviste sessizce olu. Fix: read_env_var('{dg.name}'). "
+                            "#3 silent-fail-verify boot-config-log (runtime backstop)."
+                        ),
+                        rationale="boot-config-log runtime dead-gate detection",
+                    )
+                )
+            except Exception:
+                logger.exception("[DEAD-GATE] discovery emit basarisiz (warn dustu)")
+    except Exception:
+        logger.exception("boot-config-log dead-gate audit basarisiz (startup etkilenmedi)")
+
     # Klipper telemetry: app fully initialized, fire-and-forget event POST.
     # CLAUDE.md zorunlu kayit kurali -- service-start event'i tasks_log'a dusmeli.
     # subprocess.Popen non-blocking; start_new_session=True ile parent kapanirsa
