@@ -210,38 +210,46 @@ def scan_source_for_dead_gates(roots: Iterable[str | Path]) -> list[Violation]:
     return violations
 
 
-def _gate_keys_in_env_file(env_file: str) -> dict[str, str]:
-    """`.env`'deki gate-isimli KEY=VALUE ciftlerini dondur (yorum/bos satir atlanir)."""
-    out: dict[str, str] = {}
+def _env_file_keys(env_file: str) -> set[str]:
+    """`.env`'deki TUM KEY'leri dondur (gate-filtresi YOK; yorum/bos satir atlanir).
+
+    is_gate_name burada UYGULANMAZ — gate-karari scanner'a (AXIS-1 isim + AXIS-2
+    bool-usage) birakilir. Aksi halde _KEY-sonekli AXIS-2 gate'leri (SSH_STRICT_HOST_KEY)
+    env-tarafinda elenir, runtime backstop onlari kacirir (klipper #100103 / Codex L227).
+    """
+    keys: set[str] = set()
     if not os.path.exists(env_file):
-        return out
+        return keys
     try:
         with open(env_file) as f:
             for raw in f:
                 line = raw.strip()
                 if not line or line.startswith("#") or "=" not in line:
                     continue
-                key, val = line.split("=", 1)
-                key = key.strip()
-                if is_gate_name(key):
-                    out[key] = val.strip()
+                keys.add(line.split("=", 1)[0].strip())
     except OSError:
-        return {}
-    return out
+        return set()
+    return keys
 
 
 def audit_runtime_dead_gates(env_file: str, source_roots: Iterable[str | Path]) -> list[DeadGate]:
     """Boot-time aktif-olu gate tespiti (T1'i kacirani yakalar — savunma-derinligi).
 
-    Olu kosulu (UCU birden): gate `.env`'de tanimli + process-env'de YOK +
-    kodda os.environ.get-reader'i var. Yaygin durum (`.env`'de gate-key yok) ->
-    kaynak-tarama HIC calismaz (sifir-maliyet startup).
+    Olu kosulu (UCU birden): key `.env`'de tanimli + process-env'de YOK + kodda
+    gate-reader'i var (scanner AXIS-1 isim VEYA AXIS-2 bool-usage). Gate-karari
+    SCANNER'a birakilir (env-tarafinda is_gate_name ON-SUZGECI YOK -> AXIS-2
+    _KEY-sonekli gate'ler de yakalanir; klipper #100103). Yaygin durum (`.env`'de
+    candidate-key yok / hepsi process-env'de) -> kaynak-tarama HIC calismaz.
     """
-    env_gates = _gate_keys_in_env_file(env_file)
-    suspects = [k for k in env_gates if k not in os.environ]
-    if not suspects:
+    # candidate = .env'de tanimli ama process-env'de YOK (systemd .env'i gecirmiyorsa hepsi).
+    candidates = {k for k in _env_file_keys(env_file) if k not in os.environ}
+    if not candidates:
         return []
-    readers: dict[str, str] = {}
+    # olu = candidate ∩ scanner-reader (AXIS-1+AXIS-2 gate-kararini zaten kodluyor).
+    dead: list[DeadGate] = []
+    seen: set[str] = set()
     for v in scan_source_for_dead_gates(source_roots):
-        readers.setdefault(v.name, f"{v.file}:{v.line}")
-    return [DeadGate(name=k, reader=readers[k]) for k in suspects if k in readers]
+        if v.name in candidates and v.name not in seen:
+            seen.add(v.name)
+            dead.append(DeadGate(name=v.name, reader=f"{v.file}:{v.line}"))
+    return dead

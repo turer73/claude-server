@@ -184,5 +184,24 @@ def test_audit_runtime_clean_when_no_env_gate(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     env_file = tmp_path / ".env"
-    env_file.write_text("SOME_PATH=/x\n", encoding="utf-8")  # gate-key yok -> kaynak-tarama bile yok
+    env_file.write_text("SOME_PATH=/x\n", encoding="utf-8")  # SOME_PATH gate-reader degil -> intersection bos
     assert audit_runtime_dead_gates(str(env_file), [src]) == []
+
+
+def test_audit_runtime_detects_axis2_key_suffix_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Klipper #100103 / Codex L227 regresyon-kaniti: _KEY-sonekli AXIS-2 bool-gate
+    (.env'de var + process-env'de yok + os.environ.get+bool-compare reader) runtime
+    audit'te YAKALANMALI. Eski is_gate_name env-on-suzgeci bunu 0 donduruyordu (asimetri:
+    statik AXIS-2 yakaliyor ama runtime backstop kaciriyordu)."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "m.py").write_text(
+        'import os\n\ndef f():\n    return os.environ.get("SSH_STRICT_HOST_KEY", "").strip().lower() in ("1", "true")\n',
+        encoding="utf-8",
+    )
+    env_file = tmp_path / ".env"
+    env_file.write_text("SSH_STRICT_HOST_KEY=1\n", encoding="utf-8")
+    monkeypatch.delenv("SSH_STRICT_HOST_KEY", raising=False)  # process-env'de YOK -> olu
+    dead = audit_runtime_dead_gates(str(env_file), [src])
+    assert len(dead) == 1
+    assert dead[0].name == "SSH_STRICT_HOST_KEY"
