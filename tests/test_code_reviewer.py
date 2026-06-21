@@ -344,3 +344,21 @@ async def test_agent_drain_heartbeat_clean(tmp_db, tmp_path, monkeypatch):
     d = json.loads((tmp_path / "data" / "hook-state" / "last-code-review.json").read_text())
     assert d["findings"] == 0
     assert d["clean"] is True  # temiz verdict İZ BIRAKIR (early-return yok)
+
+
+def test_heartbeat_survives_route_failure(tmp_path, monkeypatch):
+    """route/status() patlasa BİLE heartbeat yazılır (model=None) — fail-safe (LSA Faz-1).
+    'Temiz dedi haberim olmalı'ın izi route-hatasında KAYBOLMAMALI."""
+    from app.core import code_review_agent as cra
+
+    monkeypatch.setattr(cra.cr, "ROOT", tmp_path)
+    agent = cra.CodeReviewAgent()
+    monkeypatch.setattr(agent, "status", lambda: (_ for _ in ()).throw(RuntimeError("route patladı")))
+    agent._write_heartbeat("commit", 2, 0)
+
+    import json
+
+    d = json.loads((tmp_path / "data" / "hook-state" / "last-code-review.json").read_text())
+    assert d["model"] is None  # route-hatası → model boş ama heartbeat YAZILDI
+    assert d["files"] == 2
+    assert d["clean"] is True
