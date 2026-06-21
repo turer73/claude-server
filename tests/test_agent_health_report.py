@@ -46,8 +46,12 @@ def _status(agents, job):
     return next((a["status"] for a in agents if a["job"] == job), None)
 
 
+# expected= ile çağır (yoksa gerçek crontab okunur, test-jobları dışlanır)
+_EXP = {"daily-ok", "daily-stale", "weekly-fail", "dormant"}
+
+
 def test_freshness_classification(srv_db):
-    agents = ahr.agent_freshness(srv_db)
+    agents = ahr.agent_freshness(srv_db, expected=_EXP)
     assert _status(agents, "daily-ok") == "healthy"
     assert _status(agents, "daily-stale") == "stale"  # periyodunda koşmadı = gerçek sorun
     assert _status(agents, "weekly-fail") == "son-fail"  # koştu ama son fail (haftalık → acil değil)
@@ -55,12 +59,27 @@ def test_freshness_classification(srv_db):
 
 
 def test_garbage_job_excluded(srv_db):
-    jobs = {a["job"] for a in ahr.agent_freshness(srv_db)}
+    jobs = {a["job"] for a in ahr.agent_freshness(srv_db, expected=_EXP)}
     assert "90.7" not in jobs  # sayısal/garbage job elenir
 
 
+def test_retired_job_excluded(srv_db):
+    # Codex#5: cron_outcomes'ta var ama expected-listede YOK → rapordan dışlanır (retired/renamed)
+    jobs = {a["job"] for a in ahr.agent_freshness(srv_db, expected={"daily-ok"})}
+    assert jobs == {"daily-ok"}  # daily-stale/weekly-fail/dormant expected-dışı → atlandı
+
+
+def test_expected_but_never_ran_is_stale(srv_db):
+    # Codex#2: beklenen ama cron_outcomes'ta HİÇ-satırı yok → STALE (bozuk/kapalı ajan yakalanır)
+    agents = ahr.agent_freshness(srv_db, expected=_EXP | {"never-ran-agent"})
+    a = next(x for x in agents if x["job"] == "never-ran-agent")
+    assert a["status"] == "stale"
+    assert a["runs"] == 0
+    assert a["age_h"] is None
+
+
 def test_build_summary_separates_stale_and_sonfail(srv_db):
-    agents = ahr.agent_freshness(srv_db)
+    agents = ahr.agent_freshness(srv_db, expected=_EXP)
     findings = {"discoveries_active_total": 5, "discoveries_bug_by_project": {}, "alerts_unresolved": {}, "cron_fails_7d": {}}
     rep = ahr.build_summary(agents, findings)
     assert "STALE" in rep

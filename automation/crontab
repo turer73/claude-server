@@ -95,3 +95,8 @@
 # limiti yuzunden vercel.json'dan cikarildi (PR turer73/renderhane#19); klipper
 # ustlendi. CRON_SECRET .env'den (secure curl-config, ps-sizinti yok). Fail->Telegram.
 */5 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh rh-process-webhooks /opt/linux-ai-server/automation/rh-process-webhooks.sh
+
+# Haftalık Ajan Sağlık Raporu (meta-monitor) — Pzt 10:00, sabah haftalık ajanlardan sonra (2026-06-21)
+0 10 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh agent-health-report /opt/linux-ai-server/automation/agent-health-report.sh
+# Merge edilen kodu Haiku-review kuyruğuna ekle (post-commit boşluğu) — her 15dk (2026-06-21)
+*/15 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh queue-merge-review /opt/linux-ai-server/scripts/queue-merged-for-review.sh
