@@ -950,3 +950,50 @@ def test_get_db_sets_busy_timeout(memory_db):
         assert db.execute("PRAGMA busy_timeout").fetchone()[0] >= 5000
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Sinyal-bütünlüğü #2: create_discovery semantic-dedup dalları (NOOP/UPDATE/SUPERSEDE).
+# Autouse-gate kapalıyken bu dallar çalışmaz → semantic_dedup'u mock'layıp kapsa (Codecov).
+# ---------------------------------------------------------------------------
+async def _post_disc(client, title, *, details="d", dtype="bug", project="p"):
+    return await client.post(
+        "/api/v1/memory/discoveries",
+        json={"project": project, "type": dtype, "title": title, "details": details},
+    )
+
+
+async def test_create_dedup_noop_branch(client, memory_db, monkeypatch):
+    target = (await _post_disc(client, "ozgun bulgu noop")).json()["id"]
+    monkeypatch.setattr(
+        "app.api.memory.signal_quality.semantic_dedup",
+        lambda **k: {"operation": "NOOP", "target_id": target, "vector": None},
+    )
+    r2 = await _post_disc(client, "farkli baslik dedup-noop")
+    assert r2.json()["status"] == "duplicate_skipped_semantic"
+    assert r2.json()["id"] == target
+
+
+async def test_create_dedup_update_branch(client, memory_db, monkeypatch):
+    target = (await _post_disc(client, "bulgu update", details="ilk")).json()["id"]
+    monkeypatch.setattr(
+        "app.api.memory.signal_quality.semantic_dedup",
+        lambda **k: {"operation": "UPDATE", "target_id": target, "vector": None},
+    )
+    r2 = await _post_disc(client, "bulgu update evrildi", details="guncel")
+    assert r2.json()["status"] == "merged_semantic"
+    assert r2.json()["id"] == target
+
+
+async def test_create_dedup_supersede_branch(client, memory_db, monkeypatch):
+    old_id = (await _post_disc(client, "eski bulgu supersede")).json()["id"]
+    monkeypatch.setattr(
+        "app.api.memory.signal_quality.semantic_dedup",
+        lambda **k: {"operation": "SUPERSEDE", "target_id": old_id, "vector": None},
+    )
+    body = (await _post_disc(client, "bulgu tekrar nuksetti")).json()
+    assert body["status"] == "created"
+    assert body["supersedes_id"] == old_id
+    # eski kayıt superseded oldu (bi-temporal regression linkage)
+    r3 = await client.get(f"/api/v1/memory/discoveries/{old_id}")
+    assert r3.json()["status"] == "superseded"

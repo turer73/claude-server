@@ -429,8 +429,8 @@ class DevOpsAgent:
             return
         try:
             await self._db.execute(
-                "INSERT INTO alerts (timestamp, severity, source, message, resolved) VALUES (?, ?, ?, ?, ?)",
-                (alert.timestamp, alert.severity, alert.source, alert.message, False),
+                "INSERT INTO alerts (timestamp, severity, source, message, resolved, valid_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (alert.timestamp, alert.severity, alert.source, alert.message, False, alert.timestamp),
             )
         except Exception:
             pass

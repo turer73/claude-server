@@ -34,11 +34,12 @@ dev = [
     "ruff>=0.7.0",
     "mypy>=1.11.0",
     "bandit>=1.7.0",
-    # Type stub'ları — mypy "Library stubs not installed" gürültüsünü keser (psutil/yaml/jose/paramiko)
+    # Type stub'ları — mypy "Library stubs not installed" gürültüsünü keser (psutil/yaml/jose/paramiko/requests)
     "types-psutil",
     "types-PyYAML",
     "types-python-jose",
     "types-paramiko",
+    "types-requests",
 ]
 
 [project.scripts]

@@ -40,7 +40,8 @@ async def list_discoveries(
             query += " AND status=?"
             params.append(status)
         if as_of:
-            query += " AND valid_at <= ? AND (invalid_at IS NULL OR invalid_at > ?)"
+            # Codex P2: as_of'u datetime() ile normalize (ISO 'T' vs ' ' string-compare tutarsızlığı).
+            query += " AND valid_at <= datetime(?) AND (invalid_at IS NULL OR invalid_at > datetime(?))"
             params.extend([as_of, as_of])
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
@@ -96,7 +97,7 @@ async def create_discovery(data: DiscoveryCreate):
             return {"id": recent_dup[0], "status": "duplicate_skipped_5min", "secrets_redacted": redacted_labels}
 
         # Semantik-dedup (fail-safe → ADD). NOOP/UPDATE erken-döner; SUPERSEDE eskiyi geçersizler.
-        decision = sq.semantic_dedup(project=data.project, title=data.title, details=details_clean)
+        decision = sq.semantic_dedup(project=data.project, dtype=data.type, title=data.title, details=details_clean)
         op = decision.get("operation", "ADD")
         vec = decision.get("vector")
         if op == "NOOP" and decision.get("target_id"):
@@ -118,6 +119,7 @@ async def create_discovery(data: DiscoveryCreate):
                 (superseded_id,),
             )
             db.commit()
+            sq.set_payload_status(superseded_id, "superseded")  # Qdrant payload-sync (data-loss önle)
 
         # Exact-title fallback (semantik ADD/degrade yolu — ayni-baslik aktif kayit → guncelle).
         # SUPERSEDE'de bilerek YENİ row istiyoruz, fallback'i atla.
@@ -209,6 +211,8 @@ async def update_discovery(discovery_id: int, data: DiscoveryUpdate):
         params.append(discovery_id)
         db.execute(f"UPDATE discoveries SET {', '.join(fields)} WHERE id=?", params)
         db.commit()
+        if data.status:  # Qdrant payload-sync (status değişti → active-search'ten çıksın)
+            sq.set_payload_status(discovery_id, data.status)
         return {"status": "updated"}
     finally:
         db.close()
@@ -224,6 +228,7 @@ async def resolve_discovery(discovery_id: int):
             (discovery_id,),
         )
         db.commit()
+        sq.set_payload_status(discovery_id, "completed")  # Qdrant payload-sync
         return {"status": "resolved"}
     finally:
         db.close()

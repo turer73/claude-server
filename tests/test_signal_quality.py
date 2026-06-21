@@ -63,7 +63,7 @@ def test_embed_fail_safe_none(monkeypatch):
 def test_semantic_dedup_fail_safe_add(monkeypatch):
     monkeypatch.setenv("SIGNAL_SEMANTIC_DEDUP", "1")  # autouse gate'i bu test icin ac (gercek embed-fail yolu)
     monkeypatch.setattr(sq, "requests", _Boom)
-    out = sq.semantic_dedup(project="x", title="t", details="d")
+    out = sq.semantic_dedup(project="x", dtype="bug", title="t", details="d")
     assert out["operation"] == "ADD"  # embed yok → ADD'e düş
     assert out["vector"] is None
     assert out.get("degraded")  # GÖRÜNÜR degrade
@@ -72,7 +72,7 @@ def test_semantic_dedup_fail_safe_add(monkeypatch):
 def test_qdrant_helpers_fail_safe(monkeypatch):
     monkeypatch.setattr(sq, "requests", _Boom)
     assert sq.ensure_collection() is False
-    assert sq.search_similar([0.1] * sq.VECTOR_SIZE, "x") == []
+    assert sq.search_similar([0.1] * sq.VECTOR_SIZE, "x", "bug") == []
     sq.upsert_discovery(1, [0.1] * sq.VECTOR_SIZE, {"project": "x"})  # raise YOK
 
 
@@ -89,6 +89,13 @@ def test_dedup_decision_parsing(monkeypatch):
     assert sq.dedup_decision({"title": "y"}, matches)["operation"] == "ADD"
     # UPDATE ama target_id yok → güvenli ADD
     monkeypatch.setattr(sq, "_ollama_json_safe", lambda *a, **k: {"operation": "UPDATE", "target_id": None})
+    assert sq.dedup_decision({"title": "y"}, matches)["operation"] == "ADD"
+
+
+def test_dedup_decision_rejects_target_outside_matches(monkeypatch):
+    # Codex P2: LLM, dönen matches-DIŞI bir id (99) hayal ederse → güvenli ADD.
+    matches = [{"id": 7, "score": 0.95, "payload": {}}]
+    monkeypatch.setattr(sq, "_ollama_json_safe", lambda *a, **k: {"operation": "UPDATE", "target_id": 99})
     assert sq.dedup_decision({"title": "y"}, matches)["operation"] == "ADD"
 
 
