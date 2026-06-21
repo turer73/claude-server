@@ -86,3 +86,19 @@ def test_run_watchdog_emits_and_respects_autokill(tmp_path: Path, monkeypatch: p
     assert summary["runaways"] == 1  # legit -> ignore, sadece runaway sayildi
     assert summary["killed"] == 0  # autokill OFF -> dry_run
     assert any(c["severity"] == "critical" for c in captured)  # runaway critical emit
+
+
+def test_heartbeat_stall_skips_non_dict_json(tmp_path):
+    """hook-state'te heartbeat-OLMAYAN json (ör. pending-notes.json=LIST) stall-taramayı ÇÖKERTMEMELI
+    (klipper: cron-wire canlı tetikledi; data.get('ts') AttributeError tüm-taramayı düşürüyordu)."""
+    import json as _json
+
+    from app.core import agent_watchdog as w
+
+    (tmp_path / "pending-notes.json").write_text(_json.dumps([1, 2, 3]))  # LIST (dict değil)
+    (tmp_path / "bad.json").write_text("{not json")  # bozuk
+    (tmp_path / "last-code-review.json").write_text(_json.dumps({"ts": "2020-01-01T00:00:00"}))  # bayat heartbeat
+    stalls = w.check_heartbeat_stalls(str(tmp_path))  # ÇÖKMEMELI
+    agents = {s.agent for s in stalls}
+    assert "last-code-review" in agents  # gerçek bayat-heartbeat yakalandı
+    assert "pending-notes" not in agents  # list-json atlandı (çökmedi)
