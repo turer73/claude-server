@@ -149,11 +149,15 @@ def check_heartbeat_stalls(
     for hb in sorted(base.glob("*.json")):
         try:
             data = json.loads(hb.read_text(encoding="utf-8"))
+            # hook-state'te heartbeat-OLMAYAN json da var (ör. pending-notes.json = LIST) → dict
+            # değilse atla; yoksa data.get('ts') AttributeError → TÜM stall-tarama çöker (fail-safe yutar).
+            if not isinstance(data, dict):
+                continue
             ts_raw = data.get("ts")
             if not ts_raw:
                 continue
             ts = datetime.fromisoformat(str(ts_raw)).timestamp()
-        except (OSError, ValueError, json.JSONDecodeError):
+        except (OSError, ValueError, AttributeError, json.JSONDecodeError):
             continue
         age_min = (now - ts) / 60.0
         if age_min >= max_age_minutes:
