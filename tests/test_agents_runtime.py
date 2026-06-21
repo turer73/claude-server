@@ -31,6 +31,28 @@ def test_cron_card_no_log_no_events():
     assert card["triggerable"] is True
 
 
+def test_cron_card_success_rate_from_outcomes(tmp_path, monkeypatch):
+    """cron-kart success_rate + son-koşu cron_outcomes'tan gelir (hardcoded None DEĞİL — 'süs' algısı fix)."""
+    import sqlite3
+
+    from app.api import agents
+
+    db = tmp_path / "srv.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY, job TEXT, result TEXT, timestamp TEXT)")
+    for r in ("pass", "pass", "fail", "pass"):
+        con.execute("INSERT INTO cron_outcomes (job,result,timestamp) VALUES ('data-analyst',?,datetime('now'))", (r,))
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(db))
+    spec = {"key": "data-analyst", "name": "Veri", "role": "r", "schedule": "haftalık", "models": ["m"], "log": None, "evsrc": None}
+    card = agents._cron_card(spec)
+    assert card["success_rate"]["value"] == 0.75  # 3/4 pass — GERÇEK oran (henüz-veri-yok DEĞİL)
+    assert card["success_rate"]["n"] == 4
+    assert card["last_run"] is not None  # cron_outcomes'tan son-koşu
+    assert card["running"] is True
+
+
 def test_research_card_ondemand_not_triggerable():
     spec = {"key": "research", "name": "Araştırma", "role": "r", "schedule": "istek-üzerine", "models": ["qwen", "claude CLI"]}
     card = _research_card(

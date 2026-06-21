@@ -312,9 +312,35 @@ def _events_for(evsrc: str | None, limit: int = 5) -> list[dict]:
         return []
 
 
+def _cron_success(spec: dict) -> tuple:
+    """cron_outcomes'tan (job=spec['key']) son-koşu zamanı + başarı-oranı. Read-only, fail-safe.
+    Dashboard 'success_rate: None' hardcode'u script-ajanları SÜS gibi gösteriyordu — gerçek
+    pass/fail oranı cron_outcomes'ta var. (job adı = spec['key'], ör. data-analyst/seo-audit.)"""
+    job = spec.get("key")
+    if not job:
+        return None, None
+    try:
+        con = get_conn(server_db_path(), readonly=True)
+        try:
+            rows = con.execute(
+                "SELECT result, timestamp FROM cron_outcomes WHERE job=? ORDER BY timestamp DESC LIMIT 20",
+                (job,),
+            ).fetchall()
+        finally:
+            con.close()
+    except Exception:
+        return None, None
+    if not rows:
+        return None, None
+    ok = sum(1 for r in rows if r["result"] == "pass")
+    rate = {"label": "Cron başarısı", "value": round(ok / len(rows), 3), "n": len(rows)}
+    return rows[0]["timestamp"], rate
+
+
 def _cron_card(spec: dict) -> dict:
     findings = _events_for(spec.get("evsrc"))
-    last_run = _cron_last_run(spec) or (findings[0]["time"] if findings else None)
+    cron_last, success_rate = _cron_success(spec)
+    last_run = cron_last or _cron_last_run(spec) or (findings[0]["time"] if findings else None)
     return {
         "key": spec["key"],
         "name": spec["name"],
@@ -327,7 +353,7 @@ def _cron_card(spec: dict) -> dict:
         "interval_s": None,
         "current_task": spec["role"],
         "stats": {"Son olay": len(findings)},
-        "success_rate": None,
+        "success_rate": success_rate,
         "findings": findings,
         "triggerable": True,
     }

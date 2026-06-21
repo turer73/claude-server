@@ -126,6 +126,13 @@ def run() -> dict:
     # geçerli tipler: bug/fix/learning/config/workaround/architecture/plan — "note" YOK).
     # Hata SESSİZ yutulmaz: sonuçta görünür yapılır (bu sistemin teması = sessiz-arıza yok).
     disc_err = ""
+    # Statik başlık + SEMANTIC_DEDUP=1 + unique-active-index → ardışık haftalık analizler dedup-yutulur
+    # (06-08/06-15 koştu pass AMA discovery 06-05'te kaldı). ISO-hafta-unique başlık + skip_dedup → her
+    # hafta yeni kayıt (agent-health-report/system-state ile aynı desen; Codex#176 dersi).
+    from datetime import UTC, datetime
+
+    iso = datetime.now(UTC).isocalendar()
+    week_tag = f"{iso[0]}-W{iso[1]:02d}"
     try:
         _post_json(
             f"{API_BASE}/api/v1/memory/discoveries",
@@ -133,7 +140,8 @@ def run() -> dict:
                 "device_name": "klipper",
                 "project": "linux-ai-server",
                 "type": "learning",
-                "title": "Haftalık veri analizi (data-analyst)",
+                "skip_dedup": True,  # haftalık-log; ardışık raporlar semantic/exact-dedup'la merge olmasın
+                "title": f"Haftalık veri analizi (data-analyst) — {week_tag}",
                 "details": f"📊 Otonom haftalık analiz ({DAYS}g):\n{report[:3800]}",
                 "rationale": "data-analyst.py (zamanlanmış, salt-okunur /claude + db-query.sh).",
             },
