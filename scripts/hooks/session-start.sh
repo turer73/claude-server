@@ -94,6 +94,35 @@ fi
     fi
   fi
 
+  # ─── 🌡️ Açık sistem alarmları + canlı termal ───────────────────
+  # Kullanıcı (2026-06-21): "bu alarmları direk görmen gerek" — CPU 88°C'yi kullanıcı söyledi,
+  # oysa server.db'de critical-temperature alarmı vardı ama hook çekmiyordu. Şimdi çekiyor.
+  # Çözülmemiş critical/warning, son 6h, kaynak+mesaj dedup (2-worker uvicorn çift-yazar).
+  # FAIL-SAFE: hata/eksik DB -> sessiz atla (oturum-start ASLA bozulmaz).
+  if [ -r "$SRV_DB" ]; then
+    ALARMS=$(sqlite3 "$SRV_DB" "SELECT '  [' || severity || '] ' || source || ': ' || substr(message,1,48) || '  (×' || COUNT(*) || ', son ' || datetime(MAX(timestamp),'localtime') || ')' FROM alerts WHERE resolved=0 AND timestamp > datetime('now','-6 hours') GROUP BY source, message ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, MAX(timestamp) DESC LIMIT 6;" 2>/dev/null)
+    if [ -n "$ALARMS" ]; then
+      echo ""
+      echo "🌡️ Acik Sistem Alarmlari (server.db, cozulmemis, son 6h):"
+      echo "$ALARMS"
+    fi
+  fi
+  # Canlı CPU sıcaklığı (k10temp Tctl) — alarm-satırı olmasa bile mevcut durumu + runaway erken-uyarı.
+  K10=$(for h in /sys/class/hwmon/hwmon*; do [ "$(cat "$h/name" 2>/dev/null)" = "k10temp" ] && echo "$h" && break; done)
+  if [ -n "$K10" ]; then
+    TCTL=""
+    for t in "$K10"/temp*_input; do
+      [ "$(cat "${t%_input}_label" 2>/dev/null)" = "Tctl" ] && TCTL=$(awk '{printf "%.0f",$1/1000}' "$t") && break
+    done
+    if [ -n "$TCTL" ]; then
+      LOAD=$(awk '{print $1}' /proc/loadavg 2>/dev/null)
+      WARN=""
+      [ "${TCTL:-0}" -ge 75 ] && WARN="  ⚠️ YUKSEK — runaway proses kontrol et: ps -eo pid,%cpu,etime,comm --sort=-%cpu | head"
+      echo ""
+      echo "🌡️ Canli: CPU ${TCTL}°C | yuk ${LOAD}${WARN}"
+    fi
+  fi
+
   # ─── Aktif planlar — aynı project relevance ─────────────────────
   PLANS_TOTAL=$(sqlite3 "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='plan' AND status='active';" 2>/dev/null)
   if [ "${PLANS_TOTAL:-0}" -gt 0 ] && [ -n "$PROJECT_PREFIX" ]; then
