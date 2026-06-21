@@ -20,10 +20,13 @@ genisletir. gate-sonek ICERIR + path/secret-sonek ile BITMEZ.
 from __future__ import annotations
 
 import ast
+import logging
 import os
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Boolean feature-gate sonekleri (ICERIR). CI_SIGNAL_DEDUP_ENABLED, X_GATE, ...
 GATE_SUFFIXES: tuple[str, ...] = ("_ENABLED", "_DEDUP", "_GATE", "_FLAG", "_ON", "_DISABLED")
@@ -188,14 +191,64 @@ def _scan_text(src: str) -> list[tuple[int, str]]:
     return scanner.found
 
 
+# Kaynak-tarama guardlari (klipper #100114 / 88°C-runaway): rglob agir-dizinleri
+# (venv/site-packages/node_modules/...) yuruyup 25dk-spin yapabiliyordu. os.walk-prune
+# ile bunlara HIC inilmez + file-count cap pathological-root'a karsi tek-instance hard-stop.
+_EXCLUDE_DIRS: frozenset[str] = frozenset(
+    {
+        "venv",
+        ".venv",
+        "env",
+        ".env.d",
+        "site-packages",
+        "node_modules",
+        "__pycache__",
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".tox",
+        "build",
+        "dist",
+        ".eggs",
+    }
+)
+_MAX_FILES = 5000
+
+
+def _iter_py_files(root: Path) -> Iterator[Path]:
+    """root altindaki .py'leri uret; agir-dizinleri (venv/site-packages/...) ATLAR
+    (os.walk-prune -> ICINE INMEZ) + _MAX_FILES cap. Deterministik (sirali)."""
+    count = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in _EXCLUDE_DIRS)  # prune + deterministik
+        for fn in sorted(filenames):
+            if not fn.endswith(".py"):
+                continue
+            count += 1
+            if count > _MAX_FILES:
+                logger.warning(
+                    "[dead-gate] %s altinda >%d .py -> tarama kesildi (pathological-root? "
+                    "venv/site-packages dislanmis olmali, bkz _EXCLUDE_DIRS).",
+                    root,
+                    _MAX_FILES,
+                )
+                return
+            yield Path(dirpath) / fn
+
+
 def scan_source_for_dead_gates(roots: Iterable[str | Path]) -> list[Violation]:
-    """roots altindaki tum .py'leri tara; os.environ.get boolean-gate ihlallerini dondur."""
+    """roots altindaki tum .py'leri tara; os.environ.get boolean-gate ihlallerini dondur.
+
+    Agir-dizinler (venv/site-packages/node_modules/__pycache__/...) ATLANIR + file-cap
+    (klipper #100114: bunlar olmadan rglob bir venv'i 25dk yuruyup core-pin yapiyordu).
+    """
     violations: list[Violation] = []
     for root in roots:
         root_path = Path(root)
         if not root_path.exists():
             continue
-        for py in sorted(root_path.rglob("*.py")):
+        for py in _iter_py_files(root_path):
             try:
                 src = py.read_text(encoding="utf-8")
             except OSError:

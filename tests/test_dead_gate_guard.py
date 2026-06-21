@@ -205,3 +205,20 @@ def test_audit_runtime_detects_axis2_key_suffix_gate(tmp_path: Path, monkeypatch
     dead = audit_runtime_dead_gates(str(env_file), [src])
     assert len(dead) == 1
     assert dead[0].name == "SSH_STRICT_HOST_KEY"
+
+
+def test_scan_excludes_heavy_dirs(tmp_path: Path) -> None:
+    """klipper #100114 / 88C-runaway: scan_source venv/site-packages/__pycache__ vb.
+    ATLAR (rglob bunlari yuruyup 25dk core-pin yapiyordu). Bu dizinlerdeki .py taranmaz."""
+    (tmp_path / "app.py").write_text(
+        'import os\n\ndef f():\n    return os.environ.get("X_ENABLED") != "0"\n',
+        encoding="utf-8",
+    )
+    heavy = tmp_path / ".venv" / "lib" / "site-packages"
+    heavy.mkdir(parents=True)
+    (heavy / "evil.py").write_text(
+        'import os\n\ndef g():\n    return os.environ.get("Y_ENABLED") != "0"\n',
+        encoding="utf-8",
+    )
+    names = sorted(v.name for v in scan_source_for_dead_gates([tmp_path]))
+    assert names == ["X_ENABLED"]  # Y_ENABLED (.venv/site-packages) ATLANDI
