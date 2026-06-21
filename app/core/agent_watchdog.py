@@ -1,0 +1,293 @@
+"""Agent watchdog — klipper'in KENDI sub-ajanlarinin saglik-farkindaligi (gap-7).
+
+LIVESYS ingestion-producer: runaway-process + heartbeat-stall'i tespit edip MEVCUT
+events-spine'a (app.core.events.emit_event) yazar -> LSA-Faz2/agent-feed otomatik gosterir.
+Mevcut agent_freshness() cron-scheduling-freshness yapar; bu modul EKSIK parcayi kapatir:
+core-pinned RUNAWAY proc (klipper 88°C-incident: 4 kacak scanner %100×4core 17-25dk) +
+always-on-ajan heartbeat-STALL.
+
+FP-ONLEME (klipper #100115 — yanlis-pozitif "felaketten beter", mesru-isi oldurmesin):
+- COMERT esik: core-pinned >RUNAWAY_CPU_PCT + SURE >RUNAWAY_MIN_MINUTES (pytest~90s,
+  ruff/rsync birkac-dk MESRU, oldurulmemeli).
+- ZORUNLU ALLOWLIST: pytest/ruff/mypy/npm/node/rsync/backup/cron-wrap/git -> ASLA auto-kill.
+- KADEMELI: borderline/allowlist -> notify-only; auto-kill SADECE net-runaway + cmdline-
+  dogrulanmis + allowlist-disi + AUTO_KILL gate-ON. Reversible + provenance.
+- auto-kill DEFAULT-OFF (read_env_var AGENT_WATCHDOG_AUTOKILL; notify-only baslar).
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from app.core.config import read_env_var
+
+logger = logging.getLogger(__name__)
+
+# --- Esikler (config; gate'ler read_env_var ile — os.environ.get DEGIL, #174 sinifi) ---
+RUNAWAY_CPU_PCT = 90.0  # core-pinned sayilir
+RUNAWAY_MIN_MINUTES = 15.0  # bu sureden uzun core-pin = net-runaway (comert: 90s-pytest haric)
+ALLOWLIST_WARN_MINUTES = 30.0  # allowlist'teki proc bile bu kadar uzun surerse warn (kill YOK)
+HEARTBEAT_MAX_AGE_MINUTES = 10.0  # hook-state heartbeat bu kadar bayatsa stall
+
+# Mesru uzun-CPU proc'lari (cmdline-substring, case-insensitive). ASLA auto-kill edilmez.
+ALLOWLIST_PATTERNS: tuple[str, ...] = (
+    "pytest",
+    "ruff",
+    "mypy",
+    "npm",
+    "node",
+    "rsync",
+    "backup",
+    "test-runner",
+    "run-all-tests",
+    "klipper-cron-wrap",
+    "git",
+    "uvicorn",
+    "gunicorn",
+    "ollama",
+    "docker",
+    "playwright",
+)
+
+
+def _autokill_enabled() -> bool:
+    """AUTO_KILL gate — read_env_var (.env + os.environ), os.environ.get DEGIL (#174 sinifi;
+    systemd EnvironmentFile gecmiyor -> os.environ.get .env'i goremez). DEFAULT KAPALI."""
+    return (read_env_var("AGENT_WATCHDOG_AUTOKILL") or "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+@dataclass(frozen=True)
+class ProcSnapshot:
+    """Bir process'in watchdog-anlik gorunumu."""
+
+    pid: int
+    name: str
+    cmdline: str
+    cpu_pct: float
+    age_minutes: float
+
+
+@dataclass
+class HeartbeatStall:
+    agent: str
+    age_minutes: float
+    path: str
+
+
+@dataclass
+class Verdict:
+    """Bir runaway-aday icin karar."""
+
+    snap: ProcSnapshot
+    allowlisted: bool
+    runaway: bool
+    action: str  # ignore | notify | kill
+    reasons: list[str] = field(default_factory=list)
+
+
+def is_allowlisted(cmdline: str, name: str = "") -> bool:
+    """cmdline/name mesru-uzun-CPU listesinde mi? (ASLA auto-kill)."""
+    hay = f"{name} {cmdline}".lower()
+    return any(p in hay for p in ALLOWLIST_PATTERNS)
+
+
+def classify(
+    snap: ProcSnapshot,
+    *,
+    cpu_pct: float = RUNAWAY_CPU_PCT,
+    min_minutes: float = RUNAWAY_MIN_MINUTES,
+    warn_minutes: float = ALLOWLIST_WARN_MINUTES,
+) -> Verdict:
+    """Runaway siniflandirma (saf-mantik, test-edilebilir). FP-onleme klipper #100115.
+
+    - cpu < esik VEYA sure < min -> ignore (mesru/gecici).
+    - core-pinned + sure>=min:
+        - allowlist'te -> notify yalniz sure>=warn_minutes ise (asla kill).
+        - allowlist-disi -> kill-adayi (gercek kill AUTO_KILL+cmdline-verify ile gate'li).
+    """
+    reasons: list[str] = []
+    allow = is_allowlisted(snap.cmdline, snap.name)
+    runaway = snap.cpu_pct >= cpu_pct and snap.age_minutes >= min_minutes
+    if not runaway:
+        reasons.append(f"cpu={snap.cpu_pct:.0f}%<{cpu_pct:.0f} veya sure={snap.age_minutes:.0f}dk<{min_minutes:.0f}")
+        return Verdict(snap, allow, False, "ignore", reasons)
+    if allow:
+        # mesru ama cok-uzun: yalniz uyari (asla oldurme)
+        if snap.age_minutes >= warn_minutes:
+            reasons.append(f"allowlist ama {snap.age_minutes:.0f}dk>={warn_minutes:.0f} -> warn (kill YOK)")
+            return Verdict(snap, True, True, "notify", reasons)
+        reasons.append("allowlist + sure<warn -> ignore")
+        return Verdict(snap, True, True, "ignore", reasons)
+    reasons.append(
+        f"net-runaway: cpu={snap.cpu_pct:.0f}%>={cpu_pct:.0f} + sure={snap.age_minutes:.0f}dk>={min_minutes:.0f} + allowlist-disi"
+    )
+    return Verdict(snap, False, True, "kill", reasons)
+
+
+def check_heartbeat_stalls(
+    hook_state_dir: str | Path,
+    *,
+    max_age_minutes: float = HEARTBEAT_MAX_AGE_MINUTES,
+    now_ts: float | None = None,
+) -> list[HeartbeatStall]:
+    """data/hook-state/*.json heartbeat'lerini oku; max_age'den bayat olanlari dondur.
+
+    code_review._write_heartbeat deseni: {"ts": ISO8601, ...}. now_ts test-edilebilirlik
+    icin enjekte edilebilir (epoch saniye); None -> sistem-saati. Hata -> atla (fail-safe)."""
+    import time
+    from datetime import datetime
+
+    base = Path(hook_state_dir)
+    if not base.exists():
+        return []
+    now = now_ts if now_ts is not None else time.time()
+    stalls: list[HeartbeatStall] = []
+    for hb in sorted(base.glob("*.json")):
+        try:
+            data = json.loads(hb.read_text(encoding="utf-8"))
+            ts_raw = data.get("ts")
+            if not ts_raw:
+                continue
+            ts = datetime.fromisoformat(str(ts_raw)).timestamp()
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        age_min = (now - ts) / 60.0
+        if age_min >= max_age_minutes:
+            stalls.append(HeartbeatStall(agent=hb.stem, age_minutes=age_min, path=str(hb)))
+    return stalls
+
+
+def snapshot_processes(interval: float = 1.0, self_pid: int | None = None) -> list[ProcSnapshot]:
+    """psutil ile anlik process gorunumu (cpu_percent interval-ornekli, 2-sample). self haric.
+    psutil yoksa/hata -> [] (fail-safe). Linux-runtime; testler mock'lar."""
+    try:
+        import os
+        import time as _t
+
+        import psutil
+    except Exception:
+        return []
+    me = self_pid if self_pid is not None else os.getpid()
+    primed: list[Any] = []
+    for p in psutil.process_iter(["pid", "name", "cmdline", "create_time"]):
+        if p.info["pid"] == me:
+            continue
+        try:
+            p.cpu_percent(None)  # 1. ornek (priming)
+            primed.append(p)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    _t.sleep(interval)
+    now = _t.time()
+    out: list[ProcSnapshot] = []
+    for p in primed:
+        try:
+            cpu = float(p.cpu_percent(None))  # 2. ornek -> interval-ortalama
+            info = p.info
+            age_min = max(0.0, (now - (info.get("create_time") or now)) / 60.0)
+            cmd = " ".join(info.get("cmdline") or [])
+            out.append(ProcSnapshot(pid=int(info["pid"]), name=info.get("name") or "", cmdline=cmd, cpu_pct=cpu, age_minutes=age_min))
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return out
+
+
+def _verify_and_kill(snap: ProcSnapshot, *, dry_run: bool) -> dict[str, object]:
+    """/proc/PID/cmdline dogrula-SONRA-kill (per-PID; mass-kill YOK, PID-reuse koruma).
+    Graduated: SIGTERM -> bekle -> SIGKILL. dry_run -> sadece niyet (provenance). Linux."""
+    import os
+    import signal
+    import time as _t
+
+    prov: dict[str, object] = {
+        "pid": snap.pid,
+        "name": snap.name,
+        "cmdline": snap.cmdline[:200],
+        "cpu_pct": snap.cpu_pct,
+        "age_minutes": round(snap.age_minutes, 1),
+    }
+    try:
+        live = Path(f"/proc/{snap.pid}/cmdline").read_bytes().replace(b"\x00", b" ").decode("utf-8", "replace").strip()
+    except OSError:
+        prov["result"] = "vanished"
+        return prov
+    # cmdline ilk-token eslesmesi -> PID-reuse'da yanlis-proc oldurme
+    first = snap.cmdline.split()[0] if snap.cmdline.strip() else ""
+    if first and first not in live:
+        prov["result"] = "cmdline-mismatch-skip"
+        return prov
+    if dry_run:
+        prov["result"] = "dry_run-intent"
+        return prov
+    try:
+        os.kill(snap.pid, signal.SIGTERM)
+        _t.sleep(5)
+        try:
+            os.kill(snap.pid, 0)
+            os.kill(snap.pid, 9)  # SIGKILL — numeric (Windows-mypy stub'inda signal.SIGKILL yok)
+            prov["result"] = "SIGTERM+SIGKILL"
+        except ProcessLookupError:
+            prov["result"] = "SIGTERM"
+    except (ProcessLookupError, PermissionError) as exc:
+        prov["result"] = f"kill-fail:{type(exc).__name__}"
+    return prov
+
+
+def run_watchdog(hook_state_dir: str | Path = "data/hook-state") -> dict[str, int]:
+    """Tek watchdog-tur: runaway-proc + heartbeat-stall -> events-spine (emit_event).
+    Fail-safe (hicbir dal startup/cron'u bozmaz). Dondurur: ozet sayaclari."""
+    from app.core.events import emit_event
+
+    summary: dict[str, int] = {"runaways": 0, "stalls": 0, "killed": 0, "emitted": 0}
+    autokill = _autokill_enabled()
+    try:
+        for snap in snapshot_processes():
+            v = classify(snap)
+            if v.action == "ignore":
+                continue
+            summary["runaways"] += 1
+            sev = "critical" if v.action == "kill" else "warn"
+            payload: dict[str, object] = {
+                "pid": snap.pid,
+                "cpu_pct": snap.cpu_pct,
+                "age_minutes": round(snap.age_minutes, 1),
+                "allowlisted": v.allowlisted,
+                "action": v.action,
+                "reasons": v.reasons,
+                "cmdline": snap.cmdline[:200],
+            }
+            if v.action == "kill":
+                prov = _verify_and_kill(snap, dry_run=not autokill)
+                payload["kill"] = prov
+                if str(prov.get("result", "")).startswith(("SIGTERM", "SIGKILL")):
+                    summary["killed"] += 1
+            if emit_event(
+                type="agent-health",
+                source=f"watchdog:proc:{snap.name or snap.pid}",
+                title=f"runaway proc {snap.name} ({snap.cpu_pct:.0f}% {snap.age_minutes:.0f}dk)",
+                severity=sev,
+                detail=" ; ".join(v.reasons),
+                payload=payload,
+            ):
+                summary["emitted"] += 1
+    except Exception:
+        logger.exception("watchdog runaway-tarama hatasi (fail-safe)")
+    try:
+        for st in check_heartbeat_stalls(hook_state_dir):
+            summary["stalls"] += 1
+            if emit_event(
+                type="agent-health",
+                source=f"watchdog:heartbeat:{st.agent}",
+                title=f"ajan heartbeat-stall: {st.agent} ({st.age_minutes:.0f}dk)",
+                severity="warn",
+                detail=f"{st.path} {st.age_minutes:.0f}dk bayat (esik {HEARTBEAT_MAX_AGE_MINUTES:.0f}dk)",
+                payload={"agent": st.agent, "age_minutes": round(st.age_minutes, 1)},
+            ):
+                summary["emitted"] += 1
+    except Exception:
+        logger.exception("watchdog heartbeat-tarama hatasi (fail-safe)")
+    return summary
