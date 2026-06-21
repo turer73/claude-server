@@ -5,7 +5,10 @@ from app.core.agents import llm_core
 from app.core.agents.llmcore import LLMCore
 
 
-def test_route_table_known_tasks():
+def test_route_table_known_tasks(monkeypatch):
+    # Default-tabloyu test et — canlı .env LLM_ROUTE_* override'larından izole (prod kutusunda
+    # code-review/verify claude'a yönlendirilebilir; bu test saf tablo defaultlarını doğrular).
+    monkeypatch.setattr(lc, "read_env_var", lambda k: None)
     core = LLMCore()
     assert core.route("code-review") == ("ollama", "qwen2.5-coder:7b")
     assert core.route("diagnosis") == ("ollama", "qwen2.5:3b")

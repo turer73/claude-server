@@ -134,9 +134,20 @@ async def test_verify_one_uncertain_kept(monkeypatch):
 
 
 async def test_verify_one_empty_kept(monkeypatch):
-    """claude-down → boş → KORU (kör-bırakma yok)."""
+    """Yanıt geldi ama BOŞ (claude boş-string döndü, istisna YOK) → KORU (belirsiz, muhafazakâr)."""
     _stub_llm(monkeypatch, "")
     assert await cr._verify_one("x.py", "code", _F1) is True
+
+
+async def test_verify_one_unavailable_dropped(monkeypatch):
+    """verify ÇALIŞAMADI (claude-down/kota → generate istisna) → FAIL-CLOSED ELE (False).
+    2026-06-20 incident fix: eski fail-open claude-503'te qwen-FP'leri korudu → flood."""
+
+    async def boom(prompt, **kw):
+        raise RuntimeError("claude cli rc=1")
+
+    monkeypatch.setattr(cr.llm_core, "generate", boom)
+    assert await cr._verify_one("x.py", "code", _F1) is False
 
 
 async def test_verify_findings_filters_p1p2_keeps_p3(monkeypatch):
