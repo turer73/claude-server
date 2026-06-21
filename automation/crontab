@@ -102,3 +102,5 @@
 */15 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh queue-merge-review /opt/linux-ai-server/scripts/queue-merged-for-review.sh
 # Ajan-feed: açık-PR Codex bulgularını cache'le (ağ-çağrısı cron'da; session-start offline kalsın) — her 30dk (LSA Faz-1, 2026-06-21)
 */30 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh codex-feed-poll /opt/linux-ai-server/automation/codex-feed-poll.sh
+# Sistem Durumu: günlük longitudinal LLM-sentez (yaşayan farkındalık) → discovery(learning) — 07:30 (LSA Faz-2, 2026-06-21)
+30 7 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh system-state /opt/linux-ai-server/automation/system-state.sh
