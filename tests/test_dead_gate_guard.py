@@ -75,15 +75,46 @@ def test_scan_ignores_read_env_var(tmp_path: Path) -> None:
     assert scan_source_for_dead_gates([tmp_path]) == []
 
 
-def test_scan_ignores_path_suffix_and_non_bool_compare(tmp_path: Path) -> None:
+def test_scan_excludes_path_and_secret_suffix(tmp_path: Path) -> None:
+    """Path/secret-isimli os.environ.get FP YARATMAZ (gate-sonek yok / path-sonek var)."""
     _write_py(
         tmp_path,
         "def f():\n"
-        '    p = os.environ.get("RAG_METRICS_DB", "/x")\n'  # path-sonek -> haric
-        '    q = os.environ.get("X_ENABLED", "v") == "verbose"\n'  # bool-literal degil
-        "    return p, q\n",
+        '    a = os.environ.get("RAG_METRICS_DB", "/x")\n'
+        '    b = os.environ.get("DB_PATH")\n'
+        '    c = os.environ.get("GITHUB_TOKEN")\n'
+        '    d = os.environ.get("OLLAMA_URL")\n'
+        "    return a, b, c, d\n",
     )
     assert scan_source_for_dead_gates([tmp_path]) == []
+
+
+def test_scan_flags_six_common_fn_patterns(tmp_path: Path) -> None:
+    """Klipper #100091: karsilastirma-sarti OLMADAN 6 yaygin gate-formu da yakalanir.
+
+    Eski Compare-only scanner bunlari kaciriyordu (yuksek-FN). idiom(4) bu codebase'in
+    kendi gate-deseni (CODE_REVIEW_ENABLED tipi) — read_env_var ile guvenli, ama
+    os.environ.get ile yazilirsa olu olur, yakalanmali.
+    """
+    _write_py(
+        tmp_path,
+        "def f1():\n"
+        '    if os.environ.get("A_ENABLED"):\n'  # truthy (en yaygin)
+        "        return 1\n"
+        "def f2():\n"
+        '    if not os.environ.get("B_GATE"):\n'
+        "        return 1\n"
+        "def f3():\n"
+        '    return os.environ.get("C_FLAG") in ("1", "true")\n'
+        "def f4():\n"
+        '    return os.environ.get("D_ENABLED", "1").strip().lower() not in ("0", "false")\n'
+        "def f5():\n"
+        '    return os.environ.get("E_ON", "on") == "on"\n'
+        "def f6():\n"
+        '    return bool(os.environ.get("F_ENABLED"))\n',
+    )
+    names = sorted(v.name for v in scan_source_for_dead_gates([tmp_path]))
+    assert names == ["A_ENABLED", "B_GATE", "C_FLAG", "D_ENABLED", "E_ON", "F_ENABLED"]
 
 
 def test_audit_runtime_detects_dead_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

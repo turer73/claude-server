@@ -43,10 +43,6 @@ PATH_SUFFIXES: tuple[str, ...] = (
     "_SECRET",
 )
 
-# Boolean-kullanim isareti: env-okuma bu literallerden biriyle karsilastiriliyorsa
-# (!= "0" / == "1" / == "true" ...) bu bir gate'tir (path/sayisal-deger degil).
-BOOL_LITERALS: frozenset[str] = frozenset({"0", "1", "true", "false", "True", "False", "yes", "no"})
-
 
 def is_gate_name(name: str) -> bool:
     """Boolean feature-gate ismi mi? Path/secret env'lerini dislar.
@@ -108,27 +104,36 @@ def _env_read_name(node: ast.AST) -> str | None:
     return None
 
 
-def _is_bool_literal(node: ast.AST) -> bool:
-    """node "0"/"1"/"true"/... gibi boolean-literal Constant mi? (int 0/1 dahil)."""
-    return isinstance(node, ast.Constant) and str(node.value) in BOOL_LITERALS
-
-
 class _Scanner(ast.NodeVisitor):
-    """Compare node'larinda gate-env-okuma + boolean-literal cifti arar."""
+    """Gate-isimli `os.environ.get`/`os.getenv`/`os.environ[...]` okumalarini arar.
+
+    Klipper #100091: KARSILASTIRMA-sarti YOK. Eski Compare-only desen 6 yaygin
+    gate-formunu kaciriyordu (hepsi yuksek-FN):
+      if os.environ.get("X_ENABLED"):                       # truthy (EN YAYGIN)
+      if not os.environ.get("X_GATE"):
+      os.environ.get("X_FLAG") in ("1", "true")
+      os.environ.get("X_ENABLED", "1").strip().lower() not in ("0", "false")  # codebase idiom'u
+      os.environ.get("X_ON", "on") == "on"
+      bool(os.environ.get("X_ENABLED"))
+    is_gate_name zaten FP-guvenligini sagliyor (path/secret isimleri dislar) ->
+    gate-isimli HER os.environ-okumasi ihlaldir, kullanim-formuna BAKILMAZ.
+    read_env_var(...) kasitli yakalanmaz (guvenli yol; os.environ + .env okur).
+    """
 
     def __init__(self) -> None:
         self.found: list[tuple[int, str]] = []
 
-    def visit_Compare(self, node: ast.Compare) -> None:
-        operands: list[ast.expr] = [node.left, *node.comparators]
-        gate_name: str | None = None
-        for op in operands:
-            name = _env_read_name(op)
-            if name and is_gate_name(name):
-                gate_name = name
-                break
-        if gate_name and any(_is_bool_literal(op) for op in operands):
-            self.found.append((node.lineno, gate_name))
+    def _check(self, node: ast.expr) -> None:
+        name = _env_read_name(node)
+        if name and is_gate_name(name):
+            self.found.append((node.lineno, name))
+
+    def visit_Call(self, node: ast.Call) -> None:
+        self._check(node)
+        self.generic_visit(node)
+
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        self._check(node)
         self.generic_visit(node)
 
 
