@@ -110,10 +110,43 @@ class CodeReviewAgent:
             self._queue.write_text("")
         except Exception:
             return
-        for rel in dict.fromkeys(lines):  # uniq + sıra-koru
-            p = cr.ROOT / rel
-            if p.is_file():
-                await self._review_one(p, "commit")
+        files = [rel for rel in dict.fromkeys(lines) if (cr.ROOT / rel).is_file()]  # uniq + sıra-koru
+        if not files:
+            return
+        before = self.total_findings
+        for rel in files:
+            await self._review_one(cr.ROOT / rel, "commit")
+        # Heartbeat (ajan-feed): GERÇEK bir inceleme oldu → temiz mi bulgu mu, ne zaman.
+        # "sorun yok dedi haberim olmalı" — temiz-verdict'in TEK kalıcı izi (early-return iz bırakmaz).
+        self._write_heartbeat("commit", len(files), self.total_findings - before)
+
+    def _write_heartbeat(self, trigger: str, files: int, findings: int) -> None:
+        """data/hook-state/last-code-review.json — ajan-feed'in Haiku-canlılık + verdict kaynağı.
+        FAIL-SAFE: yazım hatası incelemeyi bozmaz."""
+        try:
+            import json
+            from datetime import UTC, datetime
+
+            try:
+                model = self.status().get("model")  # route hatası heartbeat'i KAYBETMEMELİ
+            except Exception:
+                model = None
+            hb = cr.ROOT / "data" / "hook-state" / "last-code-review.json"
+            hb.parent.mkdir(parents=True, exist_ok=True)
+            hb.write_text(
+                json.dumps(
+                    {
+                        "ts": datetime.now(UTC).isoformat(),
+                        "trigger": trigger,
+                        "files": files,
+                        "findings": findings,
+                        "clean": findings == 0,
+                        "model": model,
+                    }
+                )
+            )
+        except Exception:
+            logger.debug("heartbeat write failed", exc_info=True)
 
     async def _sweep(self) -> None:
         if not self._sweep_files:
@@ -151,7 +184,7 @@ class CodeReviewAgent:
                 title=f"🔬 Kod-review P1 ({source}): {res['p1_titles'][0][:120]}",
                 severity="warning",
                 detail=(
-                    "Read-only kod-mühendisi ajanı (qwen2.5-coder) bulgusu — discoveries'e yazıldı, DOĞRULA.\n"
-                    + "\n".join(res["p1_titles"])
+                    f"Read-only kod-review ajanı ({self.status().get('model', 'Haiku')}) bulgusu — "
+                    "discoveries'e yazıldı, DOĞRULA.\n" + "\n".join(res["p1_titles"])
                 ),
             )

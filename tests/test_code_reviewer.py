@@ -306,3 +306,41 @@ async def test_agent_drain_queue(tmp_db, tmp_path, monkeypatch):
     assert len(seen) == 1  # dup-dosya tek kez incelendi
     assert "main.py" in seen[0]
     assert qf.read_text() == ""  # kuyruk drenaj edildi
+
+    # Heartbeat (ajan-feed): gerçek inceleme → verdict kalıcı iz bırakmalı (LSA Faz-1).
+    import json
+
+    hb = tmp_path / "data" / "hook-state" / "last-code-review.json"
+    assert hb.exists()  # drain heartbeat yazdı
+    d = json.loads(hb.read_text())
+    assert d["files"] == 1
+    assert d["findings"] == 1
+    assert d["clean"] is False  # bulgu vardı → temiz değil
+    assert d["trigger"] == "commit"
+
+
+async def test_agent_drain_heartbeat_clean(tmp_db, tmp_path, monkeypatch):
+    """Bulgu YOKSA heartbeat clean=True yazar — 'sorun yok dedi haberim olmalı' (LSA Faz-1)."""
+    from app.core import code_review_agent as cra
+
+    monkeypatch.setattr(cra.cr, "_ENABLED", True)
+    monkeypatch.setattr(cra.cr, "ROOT", tmp_path)
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "main.py").write_text("x = 1\n")
+    agent = cra.CodeReviewAgent()
+    qf = tmp_path / "queue.txt"
+    agent._queue = qf
+    qf.write_text("app/main.py\n")
+
+    async def fake_review_file(p):
+        return []  # temiz
+
+    monkeypatch.setattr(cra.cr, "review_file", fake_review_file)
+    monkeypatch.setattr(cra.cr, "record_findings", lambda rel, f: {"new": 0, "dup": 0, "p1_titles": []})
+
+    await agent._drain_queue()
+    import json
+
+    d = json.loads((tmp_path / "data" / "hook-state" / "last-code-review.json").read_text())
+    assert d["findings"] == 0
+    assert d["clean"] is True  # temiz verdict İZ BIRAKIR (early-return yok)
