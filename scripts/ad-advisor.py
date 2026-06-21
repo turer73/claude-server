@@ -131,7 +131,9 @@ def _ad_copy_llm(prop: str, keywords: list[str]) -> str:
     try:
         out = gsc._post_json(
             f"{API_BASE}/api/v1/claude/run",
-            {"prompt": prompt, "read_only": True, "max_turns": 1},
+            # Sentez/strateji = Sonnet (model belirtilmezse CLI default'a düşer). Haftalık,
+            # tek çağrı → kota önemsiz; güçlü model reklam-metni kalitesi için.
+            {"prompt": prompt, "read_only": True, "max_turns": 1, "model": "claude-sonnet-4-6"},
             {"X-API-Key": ikey},
             CLAUDE_TIMEOUT,
         )

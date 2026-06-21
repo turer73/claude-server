@@ -36,7 +36,7 @@ _AGENT_MANIFEST = [
         "role": "AdSense strateji uzmanı (LLM)",
         "type": "cron",
         "schedule": "haftalık",
-        "models": ["qwen2.5:3b"],
+        "models": ["claude-sonnet-4-6 (CLI)"],
         "log": "ad-advisor.log",
         "evsrc": "ad-advisor",
         "script": "ad-advisor.sh",
