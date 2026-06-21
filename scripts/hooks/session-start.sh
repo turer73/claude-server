@@ -42,6 +42,16 @@ fi
   echo "=== HAFIZA SISTEMI — Oturum Baslangici ($DEV) ==="
   echo ""
 
+  # ─── 🛰️ AJAN FEED — tüm ajan sinyalleri tek-bakış (Yaşayan Sistem Farkındalığı) ──
+  # Kullanıcı (2026-06-21): "ortak sistem kur tüm ajanlardan gelen bilgileri toplayıp sana
+  # bilgi verecek". agent-feed.sh = Haiku-verdict + Codex + alarm + not + tekrar-cron birleşik.
+  # FAIL-SAFE: script yok/hata → atla (oturum-start bozulmaz).
+  FEED_SH="${HOOK_AGENT_FEED:-/opt/linux-ai-server/scripts/agent-feed.sh}"
+  if [ -x "$FEED_SH" ]; then
+    bash "$FEED_SH" --device "$DEV" 2>/dev/null
+    echo ""
+  fi
+
   # Stats
   echo "Durum:"
   sqlite3 "$DB" "SELECT '  Hafiza: ' || COUNT(*) || ' kayit' FROM memories WHERE active=1;" 2>/dev/null
