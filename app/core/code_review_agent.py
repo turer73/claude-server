@@ -162,7 +162,13 @@ class CodeReviewAgent:
         for _ in range(self._k):
             p = self._sweep_files[self._pos % len(self._sweep_files)]
             self._pos += 1
-            await self._review_one(p, "sweep")
+            # discovery #1130: tek dosyanın _review_one hatası (emit_event/registry fırlarsa)
+            # sweep loop'unu KIRMAMALI → kalan dosyalar atlanır. Per-dosya izole
+            # (_drain_queue'daki #1128 fix'iyle aynı simetri).
+            try:
+                await self._review_one(p, "sweep")
+            except Exception:
+                logger.exception("review_one failed for %s (sweep devam ediyor)", p)
 
     def _collect_files(self) -> list[Path]:
         out: list[Path] = []
