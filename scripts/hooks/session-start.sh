@@ -52,6 +52,21 @@ fi
     echo ""
   fi
 
+  # ─── 🆕 Son oturumdan beri yeni sinyaller (watermark-delta, LSA Faz-2) ──
+  # Watermark = bu cihazın SON kaydedilen oturumunun created_at'i. "Sen yokken ne oldu" deltası.
+  # FAIL-SAFE: hata → atla. SRV_DB aşağıda da kullanılıyor (burada tanımla).
+  SRV_DB="${HOOK_SERVER_DB:-/opt/linux-ai-server/data/server.db}"
+  LASTSES=$(sqlite3 "$DB" "SELECT created_at FROM sessions WHERE device_name='$DEV' ORDER BY id DESC LIMIT 1;" 2>/dev/null)
+  if [ -n "$LASTSES" ]; then
+    NEW_DISC=$(sqlite3 "$DB" "SELECT COUNT(*) FROM discoveries WHERE created_at > '$LASTSES';" 2>/dev/null)
+    NEW_NOTE=$(sqlite3 "$DB" "SELECT COUNT(*) FROM notes WHERE created_at > '$LASTSES' AND from_device != '$DEV';" 2>/dev/null)
+    NEW_CRIT=$(sqlite3 "$SRV_DB" "SELECT COUNT(*) FROM alerts WHERE timestamp > '$LASTSES' AND severity='critical';" 2>/dev/null)
+    if [ "${NEW_DISC:-0}" -gt 0 ] || [ "${NEW_NOTE:-0}" -gt 0 ] || [ "${NEW_CRIT:-0}" -gt 0 ]; then
+      echo "🆕 Son oturumdan beri (${LASTSES%%.*}): ${NEW_DISC:-0} yeni discovery, ${NEW_NOTE:-0} yeni not, ${NEW_CRIT:-0} kritik alarm"
+      echo ""
+    fi
+  fi
+
   # Stats
   echo "Durum:"
   sqlite3 "$DB" "SELECT '  Hafiza: ' || COUNT(*) || ' kayit' FROM memories WHERE active=1;" 2>/dev/null

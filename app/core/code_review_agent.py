@@ -115,7 +115,12 @@ class CodeReviewAgent:
             return
         before = self.total_findings
         for rel in files:
-            await self._review_one(cr.ROOT / rel, "commit")
+            # discovery #1128 (Haiku-self-review P1): tek dosyanın _review_one hatası (emit_event/
+            # status fırlarsa) for-loop'u KIRMAMALI → kalan dosyalar + heartbeat atlanır. Per-dosya izole.
+            try:
+                await self._review_one(cr.ROOT / rel, "commit")
+            except Exception:
+                logger.exception("review_one failed for %s (drain devam ediyor)", rel)
         # Heartbeat (ajan-feed): GERÇEK bir inceleme oldu → temiz mi bulgu mu, ne zaman.
         # "sorun yok dedi haberim olmalı" — temiz-verdict'in TEK kalıcı izi (early-return iz bırakmaz).
         self._write_heartbeat("commit", len(files), self.total_findings - before)
@@ -176,6 +181,10 @@ class CodeReviewAgent:
         rel = res.get("rel", abs_path.name)
         self.total_findings += res["new"]
         if res["p1_titles"]:
+            try:
+                model = self.status().get("model", "Haiku")  # route-lookup emit-path'ini KIRMAMALI
+            except Exception:
+                model = "Haiku"
             # P1 → emit_event (teşhis-asistanı deseni; notify-cron Telegram'a çevirir)
             await asyncio.to_thread(
                 emit_event,
@@ -183,8 +192,5 @@ class CodeReviewAgent:
                 source=f"code-review:{rel}",
                 title=f"🔬 Kod-review P1 ({source}): {res['p1_titles'][0][:120]}",
                 severity="warning",
-                detail=(
-                    f"Read-only kod-review ajanı ({self.status().get('model', 'Haiku')}) bulgusu — "
-                    "discoveries'e yazıldı, DOĞRULA.\n" + "\n".join(res["p1_titles"])
-                ),
+                detail=(f"Read-only kod-review ajanı ({model}) bulgusu — discoveries'e yazıldı, DOĞRULA.\n" + "\n".join(res["p1_titles"])),
             )
