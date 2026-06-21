@@ -117,6 +117,36 @@ def test_scan_flags_six_common_fn_patterns(tmp_path: Path) -> None:
     assert names == ["A_ENABLED", "B_GATE", "C_FLAG", "D_ENABLED", "E_ON", "F_ENABLED"]
 
 
+def test_scan_axis2_bool_literal_usage_despite_secret_suffix(tmp_path: Path) -> None:
+    """AXIS-2 (klipper #100095 / Codex #175): bool-literal ile karsilastirilan env, isim
+    _KEY/_HOST gibi sonek-disli olsa bile gate'tir (SSH_STRICT_HOST_KEY). is_gate_name'in
+    _KEY-dislamasi bunu AXIS-1'de kacirir; AXIS-2 (kullanim-bazli) yakalar."""
+    _write_py(
+        tmp_path,
+        "def f():\n"
+        '    strict = os.environ.get("SSH_STRICT_HOST_KEY", "").strip().lower() in ("1", "true", "yes")\n'
+        '    lvl = os.environ.get("LOG_VERBOSE") == "1"\n'
+        "    return strict, lvl\n",
+    )
+    names = sorted(v.name for v in scan_source_for_dead_gates([tmp_path]))
+    assert names == ["LOG_VERBOSE", "SSH_STRICT_HOST_KEY"]
+
+
+def test_scan_axis2_fp_safe_secret_presence_and_nonbool(tmp_path: Path) -> None:
+    """AXIS-2 FP-safe: secret presence-check (truthy, bool-literal yok) ve non-bool
+    karsilastirma (== "sk-xyz") flaglenmez. secret/path asla "1"/"true" ile karsilastirilmaz."""
+    _write_py(
+        tmp_path,
+        "def f():\n"
+        '    if os.environ.get("GITHUB_TOKEN"):\n'
+        "        pass\n"
+        '    mode = os.environ.get("API_KEY") == "sk-xyz"\n'
+        '    db = os.environ.get("DB_PATH", "/x")\n'
+        "    return mode, db\n",
+    )
+    assert scan_source_for_dead_gates([tmp_path]) == []
+
+
 def test_audit_runtime_detects_dead_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     src = tmp_path / "src"
     src.mkdir()

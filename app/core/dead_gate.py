@@ -43,6 +43,12 @@ PATH_SUFFIXES: tuple[str, ...] = (
     "_SECRET",
 )
 
+# Boolean-literal degerler: bir env bunlarla karsilastirilirsa (== "1" / != "0" /
+# in ("1","true",...)) BOOLEAN-GATE'tir — isim-soneki ne olursa olsun. secret/path
+# asla "1"/"true" ile karsilastirilmaz -> FP-safe. Gate-sonek-siz / _KEY-disli gate'leri
+# yakalar (SSH_STRICT_HOST_KEY, klipper #100095 / Codex #175 ssh_client:58).
+BOOL_LITERALS: frozenset[str] = frozenset({"0", "1", "true", "false", "yes", "no", "on", "off"})
+
 
 def is_gate_name(name: str) -> bool:
     """Boolean feature-gate ismi mi? Path/secret env'lerini dislar.
@@ -104,36 +110,70 @@ def _env_read_name(node: ast.AST) -> str | None:
     return None
 
 
-class _Scanner(ast.NodeVisitor):
-    """Gate-isimli `os.environ.get`/`os.getenv`/`os.environ[...]` okumalarini arar.
+def _is_boolish(node: ast.expr) -> bool:
+    """Boolean-literal Constant ("1"/"true"/"on"...) VEYA bool-literal koleksiyonu
+    (in ("1", "true") gibi Tuple/List/Set). Case-insensitive."""
+    if isinstance(node, ast.Constant):
+        return str(node.value).lower() in BOOL_LITERALS
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return bool(node.elts) and all(isinstance(e, ast.Constant) and str(e.value).lower() in BOOL_LITERALS for e in node.elts)
+    return False
 
-    Klipper #100091: KARSILASTIRMA-sarti YOK. Eski Compare-only desen 6 yaygin
-    gate-formunu kaciriyordu (hepsi yuksek-FN):
-      if os.environ.get("X_ENABLED"):                       # truthy (EN YAYGIN)
-      if not os.environ.get("X_GATE"):
-      os.environ.get("X_FLAG") in ("1", "true")
-      os.environ.get("X_ENABLED", "1").strip().lower() not in ("0", "false")  # codebase idiom'u
-      os.environ.get("X_ON", "on") == "on"
-      bool(os.environ.get("X_ENABLED"))
-    is_gate_name zaten FP-guvenligini sagliyor (path/secret isimleri dislar) ->
-    gate-isimli HER os.environ-okumasi ihlaldir, kullanim-formuna BAKILMAZ.
-    read_env_var(...) kasitli yakalanmaz (guvenli yol; os.environ + .env okur).
+
+def _env_read_in_subtree(node: ast.AST) -> str | None:
+    """Subtree'deki ilk os.environ.get/getenv/environ[] okumasinin ismini bul.
+    `get("X", "").strip().lower()` gibi sarmalanmis env-okumalari icin (AXIS 2)."""
+    for child in ast.walk(node):
+        name = _env_read_name(child)
+        if name is not None:
+            return name
+    return None
+
+
+class _Scanner(ast.NodeVisitor):
+    """os.environ.get boolean-gate okumalarini IKI eksende yakalar (read_env_var kullanilmali).
+
+    AXIS 1 (isim-bazli, klipper #100091): gate-isimli (is_gate_name) HER os.environ.get/
+      getenv/environ[] okumasi -> kullanim-formuna BAKILMAZ. 6 yaygin formu kapsar:
+      truthy `if get("X_ENABLED")`, `not`, `in ("1","true")`, `.strip().lower() not in (...)`
+      [codebase idiom], `== "on"`, `bool(...)`. read_env_var kasitli yakalanmaz.
+    AXIS 2 (kullanim-bazli, klipper #100095 / Codex #175): bir env BOOL-LITERAL ile
+      karsilastiriliyorsa (== "1" / != "0" / in ("1","true","yes")) -> isim-soneki
+      FARKETMEZ. _KEY/_HOST gibi sonek-disli ama gate-olan env'leri yakalar
+      (SSH_STRICT_HOST_KEY). FP-safe: secret/path asla "1"/"true" ile karsilastirilmaz.
     """
 
     def __init__(self) -> None:
         self.found: list[tuple[int, str]] = []
 
-    def _check(self, node: ast.expr) -> None:
+    def _add(self, lineno: int, name: str) -> None:
+        if (lineno, name) not in self.found:
+            self.found.append((lineno, name))
+
+    def _check_name(self, node: ast.expr) -> None:
         name = _env_read_name(node)
         if name and is_gate_name(name):
-            self.found.append((node.lineno, name))
+            self._add(node.lineno, name)
 
     def visit_Call(self, node: ast.Call) -> None:
-        self._check(node)
+        self._check_name(node)  # AXIS 1
         self.generic_visit(node)
 
     def visit_Subscript(self, node: ast.Subscript) -> None:
-        self._check(node)
+        self._check_name(node)  # AXIS 1
+        self.generic_visit(node)
+
+    def visit_Compare(self, node: ast.Compare) -> None:
+        # AXIS 2: operandlardan biri bool-literal ise, diger operand-subtree'deki env-okumasi
+        # gate'tir. is_gate_name'ler AXIS 1'de alindi -> burada yalniz sonek-disli olanlar.
+        operands: list[ast.expr] = [node.left, *node.comparators]
+        if any(_is_boolish(op) for op in operands):
+            for op in operands:
+                if _is_boolish(op):
+                    continue
+                name = _env_read_in_subtree(op)
+                if name and not is_gate_name(name):
+                    self._add(node.lineno, name)
         self.generic_visit(node)
 
 
