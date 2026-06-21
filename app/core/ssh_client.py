@@ -5,12 +5,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
-import os
 import uuid
 from datetime import datetime
 
 import paramiko
 
+from app.core.config import read_env_var
 from app.exceptions import NotFoundError, RateLimitError, ShellExecutionError
 
 log = logging.getLogger(__name__)
@@ -55,7 +55,10 @@ class SSHClient:
             client.load_system_host_keys()
         except OSError:
             pass  # known_hosts yoksa sorun değil; politika devreye girer
-        strict = os.environ.get("SSH_STRICT_HOST_KEY", "").strip().lower() in ("1", "true", "yes")
+        # read_env_var: os.environ + .env-dosyasi (systemd EnvironmentFile gecmiyor).
+        # os.environ.get tek-basina .env'deki SSH_STRICT_HOST_KEY=1'i goremezdi -> guvenlik
+        # gate'i serviste sessizce olu kalirdi (#174 sinifi; bkz app/core/dead_gate.py).
+        strict = (read_env_var("SSH_STRICT_HOST_KEY") or "").strip().lower() in ("1", "true", "yes")
         client.set_missing_host_key_policy(paramiko.RejectPolicy() if strict else _LogAndAcceptPolicy())
         try:
             client.connect(

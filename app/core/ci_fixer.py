@@ -22,7 +22,7 @@ from app.core.ci_signal_dedup import (
     get_recent_occurrences,
     record_lesson,
 )
-from app.core.config import get_settings
+from app.core.config import get_settings, read_env_var
 from app.db.database import Database
 
 logger = logging.getLogger(__name__)
@@ -146,8 +146,13 @@ def _dedup_enabled() -> bool:
     """Check whether CI signal dedup is enabled via env flag.
 
     Default: enabled. Set CI_SIGNAL_DEDUP_ENABLED=0 to disable.
+
+    read_env_var (os.environ + .env-dosyasi fallback), os.environ.get DEGIL:
+    systemd unit `.env`'i EnvironmentFile= ile gecirmiyor -> os.environ.get tek-basina
+    `.env`'deki `=0` kill-switch'i goremez, gate serviste sessizce no-op kalir
+    (#174 sinifi; bkz app/core/dead_gate.py). signal_quality.py:35 ile ayni desen.
     """
-    return os.environ.get("CI_SIGNAL_DEDUP_ENABLED", "1") != "0"
+    return (read_env_var("CI_SIGNAL_DEDUP_ENABLED") or "1") != "0"
 
 
 # ---------------------------------------------------------------------------
