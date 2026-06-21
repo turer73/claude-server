@@ -97,7 +97,12 @@ async def create_discovery(data: DiscoveryCreate):
             return {"id": recent_dup[0], "status": "duplicate_skipped_5min", "secrets_redacted": redacted_labels}
 
         # Semantik-dedup (fail-safe → ADD). NOOP/UPDATE erken-döner; SUPERSEDE eskiyi geçersizler.
-        decision = sq.semantic_dedup(project=data.project, dtype=data.type, title=data.title, details=details_clean)
+        # Codex#176: recurring-log (haftalık rapor) skip_dedup=True ile atlar (ardışık raporlar
+        # cosine≥0.90 → yanlış-merge/geçmiş-kaybı önlenir; exact-title yine korur).
+        if data.skip_dedup:
+            decision = {"operation": "ADD"}
+        else:
+            decision = sq.semantic_dedup(project=data.project, dtype=data.type, title=data.title, details=details_clean)
         op = decision.get("operation", "ADD")
         vec = decision.get("vector")
         if op == "NOOP" and decision.get("target_id"):

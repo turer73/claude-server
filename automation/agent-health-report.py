@@ -248,6 +248,7 @@ def write_report(summary: str, narrative: str, n_problem: int, mkey: str) -> str
                 "device_name": "klipper",
                 "project": "linux-ai-server",
                 "type": "learning",
+                "skip_dedup": True,  # Codex#176: haftalık-log; semantic-dedup ardışık raporları merge etmesin
                 "title": f"Haftalık Ajan Sağlık Raporu — {week_tag}",
                 "details": body,
                 "rationale": f"agent-health-report.py — {n_problem} stale/failing ajan; Haiku-sentez; salt-okunur.",
