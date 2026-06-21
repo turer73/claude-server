@@ -305,7 +305,7 @@ async def test_agent_drain_queue(tmp_db, tmp_path, monkeypatch):
     await agent._drain_queue()
     assert len(seen) == 1  # dup-dosya tek kez incelendi
     assert "main.py" in seen[0]
-    assert qf.read_text() == ""  # kuyruk drenaj edildi
+    assert not qf.exists()  # kuyruk atomic-rename ile tüketildi (#1132: truncate değil)
 
     # Heartbeat (ajan-feed): gerçek inceleme → verdict kalıcı iz bırakmalı (LSA Faz-1).
     import json
@@ -372,7 +372,7 @@ async def test_drain_isolates_review_one_failure(tmp_db, tmp_path, monkeypatch):
 
     await agent._drain_queue()  # exception YUTULMALI, propagate ETMEMELİ
     assert len(seen) == 2  # ikinci dosya da denendi (loop kırılmadı)
-    assert qf.read_text() == ""  # kuyruk drenaj edildi
+    assert not qf.exists()  # kuyruk atomic-rename ile tüketildi (#1132: truncate değil)
     import json
 
     hb = tmp_path / "data" / "hook-state" / "last-code-review.json"
@@ -405,6 +405,55 @@ async def test_sweep_isolates_review_one_failure(tmp_db, tmp_path, monkeypatch):
 
     await agent._sweep()  # exception YUTULMALI, propagate ETMEMELİ
     assert seen == ["a.py", "b.py"]  # ikinci dosya da denendi (loop kırılmadı)
+
+
+async def test_drain_recovers_leftover_draining(tmp_db, tmp_path, monkeypatch):
+    """discovery #1132: atomic-rename drain — önceki drain çökerse .draining leftover kalır,
+    sonraki tur onu işler (truncate-tabanlı eski kod bunu kaybederdi)."""
+    from app.core import code_review_agent as cra
+
+    monkeypatch.setattr(cra.cr, "_ENABLED", True)
+    monkeypatch.setattr(cra.cr, "ROOT", tmp_path)
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "a.py").write_text("x = 1\n")
+    agent = cra.CodeReviewAgent()
+    agent._queue = tmp_path / "queue.txt"
+    # queue.txt YOK ama önceki drain'den kalma .draining VAR (crash senaryosu)
+    (tmp_path / "queue.draining").write_text("app/a.py\n")
+
+    seen = []
+
+    async def rec(p, src):
+        seen.append(p.name)
+
+    monkeypatch.setattr(agent, "_review_one", rec)
+
+    await agent._drain_queue()
+    assert seen == ["a.py"]  # leftover .draining işlendi (kaybolmadı)
+    assert not (tmp_path / "queue.draining").exists()  # işlendikten sonra temizlendi
+
+
+async def test_drain_uses_atomic_rename_no_truncate(tmp_db, tmp_path, monkeypatch):
+    """discovery #1132: queue.txt atomic rename ile tüketilir (truncate-window YOK) —
+    drain sonrası queue.txt silinmiş, kalıcı .draining bırakılmamış olmalı."""
+    from app.core import code_review_agent as cra
+
+    monkeypatch.setattr(cra.cr, "_ENABLED", True)
+    monkeypatch.setattr(cra.cr, "ROOT", tmp_path)
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "a.py").write_text("x = 1\n")
+    agent = cra.CodeReviewAgent()
+    agent._queue = tmp_path / "queue.txt"
+    agent._queue.write_text("app/a.py\n")
+
+    async def _noop(p, src):
+        return None
+
+    monkeypatch.setattr(agent, "_review_one", _noop)
+
+    await agent._drain_queue()
+    assert not agent._queue.exists()  # rename ile tüketildi
+    assert not (tmp_path / "queue.draining").exists()  # leftover bırakmadı
 
 
 async def test_review_one_p1_emits_event(tmp_path, monkeypatch):
