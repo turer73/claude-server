@@ -76,3 +76,39 @@ def test_write_state_payload_skip_dedup(dbs, monkeypatch):
     assert captured["body"]["skip_dedup"] is True  # günlük-log dedup'tan korunur
     assert captured["body"]["type"] == "learning"
     assert captured["body"]["title"].startswith("Sistem Durumu — ")  # tarih-unique
+
+
+def test_write_state_no_key():
+    assert ss.write_state("h", "n", "") == "no MEMORY_API_KEY"
+
+
+def test_synthesize(monkeypatch):
+    assert ss.synthesize("veri", "") == ""  # key yok → boş
+    monkeypatch.setattr(ss, "_post_json", lambda *a, **k: {"result": "  yaşayan anlatı  "})
+    assert ss.synthesize("veri", "ikey") == "yaşayan anlatı"  # trim'li result
+
+    def boom(*a, **k):
+        raise RuntimeError("claude/run patladı")
+
+    monkeypatch.setattr(ss, "_post_json", boom)
+    out = ss.synthesize("veri", "ikey")
+    assert out.startswith("(Sonnet sentez başarısız")  # fail-safe, exception yutulur
+
+
+def test_main_outcome_pass(dbs, monkeypatch, capsys):
+    monkeypatch.setattr(ss, "_envget", lambda k: "key" if "KEY" in k else "")
+    monkeypatch.setattr(ss, "synthesize", lambda summary, ikey: "gerçek anlatı cümlesi")
+    monkeypatch.setattr(ss, "write_state", lambda s, n, m: "")  # başarılı yazım
+    monkeypatch.setattr(ss.sys, "argv", ["system-state.py", "--days", "7"])
+    rc = ss.main()
+    assert rc == 0
+    assert "OUTCOME: pass" in capsys.readouterr().out  # sentez+yazım OK → pass marker
+
+
+def test_main_outcome_partial_on_write_fail(dbs, monkeypatch, capsys):
+    monkeypatch.setattr(ss, "_envget", lambda k: "key" if "KEY" in k else "")
+    monkeypatch.setattr(ss, "synthesize", lambda summary, ikey: "anlatı")
+    monkeypatch.setattr(ss, "write_state", lambda s, n, m: "DB hatası")  # yazım başarısız
+    monkeypatch.setattr(ss.sys, "argv", ["system-state.py"])
+    ss.main()
+    assert "OUTCOME: partial" in capsys.readouterr().out
