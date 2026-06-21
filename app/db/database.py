@@ -225,9 +225,7 @@ class Database:
             if "invalid_at" not in acols:
                 await self._conn.execute("ALTER TABLE alerts ADD COLUMN invalid_at TEXT")
                 # backfill: zaten resolved olanların gerçek-dünya geçersizliği = resolved_at
-                await self._conn.execute(
-                    "UPDATE alerts SET invalid_at = resolved_at WHERE invalid_at IS NULL AND resolved=1"
-                )
+                await self._conn.execute("UPDATE alerts SET invalid_at = resolved_at WHERE invalid_at IS NULL AND resolved=1")
             if "supersedes_id" not in acols:
                 await self._conn.execute("ALTER TABLE alerts ADD COLUMN supersedes_id INTEGER")
 

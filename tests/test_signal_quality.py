@@ -28,9 +28,7 @@ class _Boom:
 def disco_db():
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row
-    db.execute(
-        "CREATE TABLE discoveries (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"
-    )
+    db.execute("CREATE TABLE discoveries (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
     db.execute("INSERT INTO discoveries (created_at) VALUES ('2026-01-01 00:00:00')")
     db.commit()
     yield db
@@ -63,6 +61,7 @@ def test_embed_fail_safe_none(monkeypatch):
 
 
 def test_semantic_dedup_fail_safe_add(monkeypatch):
+    monkeypatch.setenv("SIGNAL_SEMANTIC_DEDUP", "1")  # autouse gate'i bu test icin ac (gercek embed-fail yolu)
     monkeypatch.setattr(sq, "requests", _Boom)
     out = sq.semantic_dedup(project="x", title="t", details="d")
     assert out["operation"] == "ADD"  # embed yok → ADD'e düş

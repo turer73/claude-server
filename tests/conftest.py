@@ -45,6 +45,15 @@ def _reset_rate_limiters():
     return
 
 
+@pytest.fixture(autouse=True)
+def _disable_semantic_dedup(monkeypatch):
+    """Write-path testleri deterministik olmalı — semantic-dedup canlı Ollama/Qdrant'a
+    bağımlıdır (klipper: non-determinizm + bayat-Qdrant-payload false-merge). Testte
+    env-gate ile kapat. Dedup mantığı test_signal_quality'de izole (mock'lu) test edilir.
+    Bir test gerçek-path isterse setenv('SIGNAL_SEMANTIC_DEDUP','1')."""
+    monkeypatch.setenv("SIGNAL_SEMANTIC_DEDUP", "0")
+
+
 @pytest.fixture
 def app(tmp_path, monkeypatch):
     monkeypatch.setenv("DB_PATH", str(tmp_path / "test.db"))

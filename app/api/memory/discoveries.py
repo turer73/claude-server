@@ -142,8 +142,16 @@ async def create_discovery(data: DiscoveryCreate):
             "(session_id, device_name, project, type, title, details, status, rationale, valid_at, importance, supersedes_id) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)",
             (
-                data.session_id, data.device_name, data.project, data.type, data.title,
-                details_clean, data.status or "active", data.rationale, importance, superseded_id,
+                data.session_id,
+                data.device_name,
+                data.project,
+                data.type,
+                data.title,
+                details_clean,
+                data.status or "active",
+                data.rationale,
+                importance,
+                superseded_id,
             ),
         )
         db.commit()
@@ -178,6 +186,7 @@ async def update_discovery(discovery_id: int, data: DiscoveryUpdate):
     """Discovery güncelle — status lifecycle (active → completed/obsolete/superseded)"""
     db = get_db()
     try:
+        sq.ensure_signal_columns(db)  # invalid_at yazımı için kolon garantisi
         fields, params = [], []
         if data.title:
             fields.append("title=?")
@@ -209,6 +218,7 @@ async def update_discovery(discovery_id: int, data: DiscoveryUpdate):
 async def resolve_discovery(discovery_id: int):
     db = get_db()
     try:
+        sq.ensure_signal_columns(db)  # invalid_at yazımı için kolon garantisi
         db.execute(
             "UPDATE discoveries SET resolved=1, status='completed', invalid_at=datetime('now') WHERE id=?",
             (discovery_id,),
@@ -240,9 +250,7 @@ async def list_discoveries_by_type(dtype: str, project: str | None = None, statu
         for r in rows:
             _track_read(db, "discoveries", r["id"])
         try:
-            db.executemany(
-                "UPDATE discoveries SET last_accessed=datetime('now') WHERE id=?", [(r["id"],) for r in rows]
-            )
+            db.executemany("UPDATE discoveries SET last_accessed=datetime('now') WHERE id=?", [(r["id"],) for r in rows])
             db.commit()
         except Exception:
             pass

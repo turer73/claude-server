@@ -45,8 +45,8 @@ def _degraded(op: str, reason: str) -> None:
 # Migration (idempotent — _ensure_read_by deseniyle birebir)
 # ----------------------------------------------------------------------------
 _SIGNAL_COLUMNS = {
-    "valid_at": "TEXT",       # gerçek-dünya geçerlilik başlangıcı (default=created_at)
-    "invalid_at": "TEXT",     # gerçek-dünyada geçersizleşme (obsolete/superseded/completed)
+    "valid_at": "TEXT",  # gerçek-dünya geçerlilik başlangıcı (default=created_at)
+    "invalid_at": "TEXT",  # gerçek-dünyada geçersizleşme (obsolete/superseded/completed)
     "supersedes_id": "INTEGER",  # bu kayıt hangi (çözülmüş) kaydın regression'ı
     "importance": "INTEGER",  # 1-10 (decay-scoring), default 5
     "last_accessed": "TEXT",  # son okuma (recency bump)
@@ -170,9 +170,7 @@ def search_similar(vec: list[float], project: str, top_k: int = 5) -> list[dict]
                 ]
             },
         }
-        r = requests.post(
-            f"{QDRANT_URL}/collections/{DISCO_COLLECTION}/points/search", json=body, timeout=15
-        )
+        r = requests.post(f"{QDRANT_URL}/collections/{DISCO_COLLECTION}/points/search", json=body, timeout=15)
         if r.status_code != 200:
             _degraded("qdrant_search", f"http {r.status_code}")
             return []
@@ -189,7 +187,7 @@ def score_importance(title: str, details: str | None) -> int:
     """qwen2.5 ile 1-10 önem skoru (TR-prompt). Fail/garbage → DEFAULT_IMPORTANCE (5)."""
     prompt = (
         "Bir yazılım/altyapı bulgusunun önem derecesini 1-10 arası değerlendir. "
-        "1=önemsiz/rutin, 10=kritik/acil. SADECE şu JSON: {\"importance\": <1-10 tamsayı>}\n\n"
+        '1=önemsiz/rutin, 10=kritik/acil. SADECE şu JSON: {"importance": <1-10 tamsayı>}\n\n'
         f"Başlık: {title}\nDetay: {(details or '')[:500]}"
     )
     data = _ollama_json_safe(prompt, op="score_importance")
@@ -218,17 +216,14 @@ def dedup_decision(candidate: dict, matches: list[dict]) -> dict:
     Fail/garbage/geçersiz-op → {"operation": "ADD"} (yeni kayıt; asla blok yok).
     """
     cand_txt = f"Başlık: {candidate.get('title')}\nDetay: {(candidate.get('details') or '')[:400]}"
-    match_lines = "\n".join(
-        f"- id={m['id']} (benzerlik={m.get('score', 0):.2f}) {m.get('payload', {}).get('title', '')}"
-        for m in matches
-    )
+    match_lines = "\n".join(f"- id={m['id']} (benzerlik={m.get('score', 0):.2f}) {m.get('payload', {}).get('title', '')}" for m in matches)
     prompt = (
         "Yeni bir bulgu (ADAY) ile mevcut AKTİF benzer bulgular verildi. Operasyon seç:\n"
         "ADD=gerçekten yeni/farklı bir bulgu. UPDATE=aynı konunun evrilmişi (mevcut kaydı güncelle). "
         "NOOP=aynısının tekrarı (yeni kayıt gereksiz). SUPERSEDE=mevcut çözülmüş/eski bir bulgunun "
         "yeniden ortaya çıkışı (regression).\n"
-        "SADECE şu JSON: {\"operation\": \"ADD|UPDATE|NOOP|SUPERSEDE\", \"target_id\": <id veya null>, "
-        "\"reason\": \"<kısa>\"}\n\n"
+        'SADECE şu JSON: {"operation": "ADD|UPDATE|NOOP|SUPERSEDE", "target_id": <id veya null>, '
+        '"reason": "<kısa>"}\n\n'
         f"ADAY:\n{cand_txt}\n\nMEVCUT AKTİF BENZERLER:\n{match_lines}"
     )
     data = _ollama_json_safe(prompt, op="dedup_decision")
@@ -257,7 +252,12 @@ def semantic_dedup(*, project: str, title: str, details: str | None) -> dict:
 
     Dönen: {"operation": ..., "target_id"?, "vector"?, "degraded"?}
     HER fail-yolu ADD'e düşer (vector=None ise upsert atlanır). ASLA exception fırlatmaz.
+
+    Env-gate SIGNAL_SEMANTIC_DEDUP=0 → tamamen atla (ADD). Ops kill-switch + testlerde
+    deterministik (canlı Ollama/Qdrant'a bağımlı değil). Default '1' (açık).
     """
+    if os.environ.get("SIGNAL_SEMANTIC_DEDUP", "1") != "1":
+        return {"operation": "ADD", "vector": None, "degraded": "disabled"}
     vec = embed_safe(f"{title}\n{details or ''}")
     if vec is None:
         # Embed yok → semantik-dedup atla, exact-title-dedup (mevcut) devralır.
@@ -265,9 +265,7 @@ def semantic_dedup(*, project: str, title: str, details: str | None) -> dict:
     matches = [m for m in search_similar(vec, project) if m.get("score", 0) >= DEDUP_COSINE_THRESHOLD]
     if not matches:
         return {"operation": "ADD", "vector": vec}
-    decision = dedup_decision(
-        {"title": title, "details": details}, matches
-    )
+    decision = dedup_decision({"title": title, "details": details}, matches)
     decision["vector"] = vec
     return decision
 
