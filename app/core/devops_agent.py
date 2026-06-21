@@ -220,7 +220,11 @@ class DevOpsAgent:
         # (notify-cron Telegram'a çevirir). KOMUT ÇALIŞTIRMAZ — yalnız okur+öneri. Fail-silent;
         # alert akışını asla bozmaz. once/incident (auto-resolve'da sıfırlanır → tekrarda yeniden).
         self._diagnostic_enabled = (read_env_var("DEVOPS_DIAGNOSTIC_ENABLED") or "1").strip().lower() not in ("0", "false", "no", "off")
-        self._diag_model = read_env_var("DEVOPS_DIAGNOSTIC_MODEL") or "qwen2.5:3b"  # LLMCore'a task=diagnosis ile geçer
+        # Teşhis modeli = GERÇEK route (LLM_ROUTE_DIAGNOSIS override'ı; default tablo qwen2.5:3b).
+        # Display + label için; üretimde generate(task="diagnosis") route'u kendi seçer (explicit GEÇME).
+        from app.core.agents.llmcore import llm_core as _lc
+
+        self._diag_model = _lc.route("diagnosis")[1]
         self._diag_timeout = 25
         self._diag_memory_db = "/opt/linux-ai-server/data/claude_memory.db"
         self._diagnosed: set[str] = set()
@@ -745,7 +749,7 @@ class DevOpsAgent:
             "değişikliklerden biriyle korelasyon görüyorsan açıkça belirt. Komut/aksiyon "
             "ÖNERME, sadece hipotez ver. Emin değilsen 'belirsiz' yaz."
         )
-        out = await llm_core.generate(prompt, task="diagnosis", model=self._diag_model, timeout=self._diag_timeout)
+        out = await llm_core.generate(prompt, task="diagnosis", timeout=self._diag_timeout)
         return (out.strip()[:600] or None) if out else None
 
     # ── LIVESYS Faz 5 Slice-2: verify -> escalate ──────────────

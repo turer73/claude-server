@@ -1,8 +1,20 @@
 """LLMCore testleri — task-bazlı routing + backend dispatch + fail-silent (AIOS uyarlaması)."""
 
+import pytest
+
 import app.core.agents.llmcore as lc
 from app.core.agents import llm_core
 from app.core.agents.llmcore import LLMCore
+
+
+@pytest.fixture(autouse=True)
+def _isolate_route_env(monkeypatch):
+    """Canlı .env LLM_ROUTE_* override'larını test'lerden izole et — prod kutusunda
+    LLM_ROUTE_DIAGNOSIS=claude:haiku gibi override'lar tabloyu ezip ollama-task testlerini
+    kırmasın (CI'da .env yok → yeşil, lokal kırmızı sorununu önler). Kendi read_env_var'ını
+    setattr eden testler (route_env_override) bunu ezer."""
+    _real = lc.read_env_var
+    monkeypatch.setattr(lc, "read_env_var", lambda k: None if str(k).startswith("LLM_ROUTE_") else _real(k))
 
 
 def test_route_table_known_tasks(monkeypatch):
