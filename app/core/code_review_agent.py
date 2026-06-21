@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 
 import psutil
@@ -103,11 +104,20 @@ class CodeReviewAgent:
 
     async def _drain_queue(self) -> None:
         """commit-hook'un yazdığı değişen-dosyaları incele, kuyruğu temizle."""
+        # discovery #1132: eski read_text()→write_text("") arası TOCTOU — bu pencerede
+        # commit-hook'un (AYRI process) append'i truncate ile KAYBOLURDU. Atomic os.replace
+        # ile pencere yapısal olarak kapanır: rename'den ÖNCEKİ append .draining'e düşer
+        # (işlenir), SONRAKİ yeni queue dosyası oluşturur (sonraki tick'te yakalanır).
+        # POSIX rename atomic → kayıp yok. .draining leftover (önceki drain çöktüyse) bu
+        # turda işlenir (crash-recovery).
+        drain_path = self._queue.with_suffix(".draining")
         try:
-            if not self._queue.exists():
+            if self._queue.exists():
+                os.replace(self._queue, drain_path)  # atomic: queue → draining
+            if not drain_path.exists():
                 return
-            lines = [ln.strip() for ln in self._queue.read_text().splitlines() if ln.strip()]
-            self._queue.write_text("")
+            lines = [ln.strip() for ln in drain_path.read_text().splitlines() if ln.strip()]
+            drain_path.unlink()
         except Exception:
             return
         files = [rel for rel in dict.fromkeys(lines) if (cr.ROOT / rel).is_file()]  # uniq + sıra-koru
