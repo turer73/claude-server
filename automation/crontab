@@ -104,3 +104,6 @@
 */30 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh codex-feed-poll /opt/linux-ai-server/automation/codex-feed-poll.sh
 # Sistem Durumu: günlük longitudinal LLM-sentez (yaşayan farkındalık) → discovery(learning) — 07:30 (LSA Faz-2, 2026-06-21)
 30 7 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh system-state /opt/linux-ai-server/automation/system-state.sh
+# Agent watchdog (gap-7): runaway-proc + heartbeat-stall → events-spine. Her 3dk. AUTO_KILL
+# default-OFF (notify-only/dry_run; FAZ-A gözlem). single-instance-lock+timeout wrapper'da. (klipper #100115)
+*/3 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh agent-watchdog /opt/linux-ai-server/automation/agent-watchdog.sh
