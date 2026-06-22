@@ -31,6 +31,16 @@ _ENABLED = (read_env_var("CODE_REVIEW_ENABLED") or "1").strip().lower() not in (
 _MODEL = read_env_var("CODE_REVIEW_MODEL") or "qwen2.5-coder:7b"
 _TIMEOUT = int(read_env_var("CODE_REVIEW_TIMEOUT") or "60")
 _MAX_BYTES = 12000  # dosya başına LLM'e gönderilecek max (büyük dosyada baş kısmı)
+# Büyük dosya kısaltılınca modele AÇIK truncation-notu eklenir: yoksa model snippet'in
+# ani-kesintisini "incomplete code / syntax error / unparseable" sanıp FP konfabüle eder
+# (discovery #1137/#1139/#1140: test_code_reviewer.py 19KB→12KB-cut → 3× sahte syntax-FP;
+# verify de AYNI kesik snippet'i gördüğü için elemiyordu). Scan+verify ikisi de bu notu görür.
+_TRUNCATION_NOTE = (
+    "\n\n# ⚠️ [REVIEW-NOTU: Dosya {total} byte; yalnız ilk {shown} byte gönderildi "
+    "(büyük-dosya kısaltması). Snippet SONUNDAKİ ani kesinti TRUNCATION'dır, kod-kusuru "
+    "DEĞİL → 'incomplete code'/'syntax error'/'unparseable'/'file ends abruptly'/'partial "
+    "statement' TÜRÜ bulgu RAPORLAMA.]"
+)
 # #4 Adversarial-verify: her P1/P2 bulgu bağımsız skeptik 2. pass'ten geçer (FP'yi sistem eler).
 _VERIFY_ENABLED = (read_env_var("CODE_REVIEW_VERIFY_ENABLED") or "1").strip().lower() not in ("0", "false", "no", "off")
 # #3 Gerçek-öğrenme: learn-mode'un sentezlediği dersler review-prompt'a oto-beslenir (ajan kendi
@@ -115,11 +125,19 @@ async def _ask_coder(prompt: str) -> list[dict]:
         return []
 
 
+def _build_snippet(code: str) -> str:
+    """LLM'e gönderilecek kod. _MAX_BYTES üstündeyse kısalt + truncation-notu ekle
+    (model ani-kesintiyi syntax-hatası sanmasın — #1137/#1139/#1140 FP kök-fix)."""
+    if len(code) <= _MAX_BYTES:
+        return code
+    return code[:_MAX_BYTES] + _TRUNCATION_NOTE.format(total=len(code), shown=_MAX_BYTES)
+
+
 async def review_source(rel_path: str, code: str) -> list[dict]:
     """Tek dosyayı incele → bulgu listesi (read-only)."""
     if not _ENABLED or not code.strip():
         return []
-    snippet = code[:_MAX_BYTES]
+    snippet = _build_snippet(code)
     prompt = _REVIEW_PROMPT.format(lang=_lang(rel_path) or "text", path=rel_path, code=snippet, lessons=_lessons_block())
     findings = await _ask_coder(prompt)
     if _VERIFY_ENABLED and findings:
