@@ -49,6 +49,13 @@ fi
 CR_FINDINGS=$(q "$SRV_DB" "SELECT '   └ ' || substr(replace(title,'🔬 Kod-review ',''),1,60) FROM events WHERE source LIKE 'code-review:%' AND title LIKE '%(commit)%' AND timestamp > datetime('now','-${HOURS} hours') ORDER BY timestamp DESC LIMIT 4")
 [ -n "$CR_FINDINGS" ] && add "🔬 Haiku bulgu (DOĞRULA):" && add "$CR_FINDINGS"
 
+# ── 🐛 Unhandled exception (gap-2 producer): son N saat, fingerprint-gruplu ──
+# type=exception events-spine'da (source=exception:{fp}, title={ExcType} @ module:func).
+# severity=warn → Telegram'a da düşer AMA session-start görünürlük "yaşayan farkındalık":
+# gerçek-unhandled-5xx = server-bug, DOĞRULA. GROUP BY source → her fingerprint tek satır+sayı.
+EXC=$(q "$SRV_DB" "SELECT '   └ ' || substr(title,1,55) || ' (' || COUNT(*) || 'x)' FROM events WHERE type='exception' AND timestamp > datetime('now','-${HOURS} hours') GROUP BY source ORDER BY MAX(timestamp) DESC LIMIT 4")
+[ -n "$EXC" ] && add "🐛 Unhandled exception (DOĞRULA):" && add "$EXC"
+
 # ── 🤖 Codex: açık PR bulguları (cache dosyasından — codex-feed-poll cron yazar) ──
 if [ -r "$CODEX_CACHE" ]; then
     CODEX=$(grep -v '^#' "$CODEX_CACHE" 2>/dev/null | head -4)
