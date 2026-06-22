@@ -21,6 +21,7 @@ import os
 import socket
 import sqlite3
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -307,30 +308,58 @@ def _memory_key() -> str:
         return ""
 
 
-def rag_canary_liveness(timeout: float = 3.0) -> dict:
+# Canary yük-toleransı (klipper #100137 — 88°C scanner-runaway altında 3s-timeout
+# kırıldı = FP "dead" #1126/#1127). Tek-atış 3s yerine 5s + transient-retry: kısa
+# yük-spike'ı meşru-yavaşlığı ölü-sanmasın. Definitive HTTP yanıt (4xx/5xx) retry
+# ETMEZ (sunucu cevap verdi = canlı-katman; FP-kaynağı yalnız timeout/conn-fail).
+RAG_CANARY_TIMEOUT_S = 5.0
+RAG_CANARY_RETRIES = 1  # transient hatada ek deneme sayısı (toplam 2 atış)
+RAG_CANARY_BACKOFF_S = 0.5  # denemeler arası kısa bekleme (spike'tan decorrelate)
+
+
+def rag_canary_liveness(
+    timeout: float = RAG_CANARY_TIMEOUT_S,
+    retries: int = RAG_CANARY_RETRIES,
+    backoff: float = RAG_CANARY_BACKOFF_S,
+) -> dict:
     """B (canary): /rag/health aktif-prob. Organik query-sayısından DECOUPLE —
     idle=meşru, canary-OK=canlı, canary-fail=ölü. /rag/* router-level verify_key
-    ister → X-Memory-Key gönder (yoksa 401 = auth-FP, rag-ölü DEĞİL)."""
-    try:
-        headers = {"User-Agent": "klipper-liveness/1", "X-Memory-Key": _memory_key()}
-        req = urllib.request.Request(RAG_HEALTH_URL, headers=headers)  # noqa: S310
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-            status = resp.status
-        ok = 200 <= status < 300
-        return {
-            "source": "rag",
-            "klass": "B",
-            "status": "alive" if ok else "dead",
-            "detail": f"canary http={status}",
-        }
-    except urllib.error.HTTPError as e:
-        # 401/403 = HTTP katmanı canlı ama auth reddi (key yanlış/eksik) -> bu
-        # rag-processor ölü demek DEĞİL; "unknown" (auth sorunu, ayrı mesele).
-        if e.code in (401, 403):
-            return {"source": "rag", "klass": "B", "status": "unknown", "detail": f"canary auth http={e.code}"}
-        return {"source": "rag", "klass": "B", "status": "dead", "detail": f"canary http={e.code}"}
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
-        return {"source": "rag", "klass": "B", "status": "dead", "detail": f"canary-fail: {type(e).__name__}"}
+    ister → X-Memory-Key gönder (yoksa 401 = auth-FP, rag-ölü DEĞİL).
+
+    YÜK-TOLERANSI (klipper #100137): timeout/conn-fail TRANSIENT sayılır → `retries`
+    kez tekrar dene (yük-spike FP-önleme). Definitive HTTP yanıt (4xx/5xx) retry
+    ETMEZ — sunucu cevap verdi, transient değil."""
+    headers = {"User-Agent": "klipper-liveness/1", "X-Memory-Key": _memory_key()}
+    last_exc: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            req = urllib.request.Request(RAG_HEALTH_URL, headers=headers)  # noqa: S310
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+                status = resp.status
+            ok = 200 <= status < 300
+            return {
+                "source": "rag",
+                "klass": "B",
+                "status": "alive" if ok else "dead",
+                "detail": f"canary http={status}",
+            }
+        except urllib.error.HTTPError as e:
+            # 401/403 = HTTP katmanı canlı ama auth reddi (key yanlış/eksik) -> bu
+            # rag-processor ölü demek DEĞİL; "unknown" (auth sorunu, ayrı mesele).
+            # Definitive yanıt → retry YOK (transient değil).
+            if e.code in (401, 403):
+                return {"source": "rag", "klass": "B", "status": "unknown", "detail": f"canary auth http={e.code}"}
+            return {"source": "rag", "klass": "B", "status": "dead", "detail": f"canary http={e.code}"}
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            last_exc = e  # transient (timeout/conn) → kalan deneme varsa tekrar
+            if attempt < retries and backoff > 0:
+                time.sleep(backoff)
+    return {
+        "source": "rag",
+        "klass": "B",
+        "status": "dead",
+        "detail": f"canary-fail: {type(last_exc).__name__} ({retries + 1} deneme)",
+    }
 
 
 # ── Docker konteyner canary ──────────────────────────────────────────────
