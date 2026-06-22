@@ -16,3 +16,6 @@ from app.core.anomaly_check import run_anomaly_check  # noqa: E402
 if __name__ == "__main__":
     summary = run_anomaly_check()
     print(f"anomaly-check: {summary}")
+    # klipper-cron-wrap.sh OUTCOME marker (cron_outcomes detay/health). run_anomaly_check
+    # fail-safe → her zaman özet döner; cron-run tamamlandı = pass.
+    print(f"OUTCOME: pass | anomalies={summary['anomalies']} emitted={summary['emitted']} suppressed={summary['suppressed']}")

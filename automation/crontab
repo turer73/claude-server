@@ -113,3 +113,6 @@
 # Drift-check (gap-8): deployed≠running (SHA /health stale) + config-drift (dead-gate) →
 # events-spine (warn). emit_throttled dedup 30dk pencere (persistent-drift flood bastır). (klipper #100128)
 */15 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh drift-check /opt/linux-ai-server/venv/bin/python3 /opt/linux-ai-server/automation/drift-check.py
+# Metric-anomaly (gap-4): metrics_history robust-baseline (median+MAD) → son-değer >=5MAD sapma =
+# olağandışı (static-eşik-altı sapmaları yakalar, devops'u tamamlar) → events-spine (warn). (klipper #100128)
+*/15 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh anomaly-check /opt/linux-ai-server/venv/bin/python3 /opt/linux-ai-server/automation/anomaly-check.py
