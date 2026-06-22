@@ -143,15 +143,21 @@ async def test_verify_one_fp_dropped(monkeypatch):
     assert await cr._verify_one("x.py", "code", _F1) is False
 
 
-async def test_verify_one_uncertain_kept(monkeypatch):
-    """Belirsiz/garbage (FP ile başlamıyor) → KORUNUR (gerçek-kaçırma > FP-survivor; insan review eder)."""
+async def test_verify_one_uncertain_dropped(monkeypatch):
+    """SIKILAŞTIRILDI (%98-FP): belirsiz/garbage (REAL ile başlamıyor) → ELENİR (yalnız net-REAL korunur)."""
     _stub_llm(monkeypatch, "emin değilim, belki")
-    assert await cr._verify_one("x.py", "code", _F1) is True
+    assert await cr._verify_one("x.py", "code", _F1) is False
 
 
-async def test_verify_one_empty_kept(monkeypatch):
-    """Yanıt geldi ama BOŞ (claude boş-string döndü, istisna YOK) → KORU (belirsiz, muhafazakâr)."""
+async def test_verify_one_empty_dropped(monkeypatch):
+    """SIKILAŞTIRILDI: boş-yanıt (belirsiz) → ELENİR (net-REAL değil)."""
     _stub_llm(monkeypatch, "")
+    assert await cr._verify_one("x.py", "code", _F1) is False
+
+
+async def test_verify_one_real_prefix_kept(monkeypatch):
+    """'REAL: <gerekçe>' (tek-kelime değil ama REAL-prefix) → KORUNUR (startswith)."""
+    _stub_llm(monkeypatch, "REAL: somut girdi os.system(user_input) ile RCE")
     assert await cr._verify_one("x.py", "code", _F1) is True
 
 
@@ -166,7 +172,9 @@ async def test_verify_one_unavailable_dropped(monkeypatch):
     assert await cr._verify_one("x.py", "code", _F1) is False
 
 
-async def test_verify_findings_filters_p1p2_keeps_p3(monkeypatch):
+async def test_verify_findings_verifies_all_including_p3(monkeypatch):
+    """SIKILAŞTIRILDI: TÜM severity (P3 dahil) verify edilir; P3-bypass kaldırıldı (FP-flood-fix)."""
+
     async def fake_verify(rel, code, f):
         return f["title"] == "real-bug"
 
@@ -174,10 +182,10 @@ async def test_verify_findings_filters_p1p2_keeps_p3(monkeypatch):
     findings = [
         {"severity": "P1", "title": "real-bug", "line": 1, "detail": ""},
         {"severity": "P2", "title": "fake-bug", "line": 2, "detail": ""},
-        {"severity": "P3", "title": "nit", "line": 3, "detail": ""},  # P3 → verify atlanır, kalır
+        {"severity": "P3", "title": "nit", "line": 3, "detail": ""},  # P3 de verify → FP-ise elenir
     ]
     kept = await cr._verify_findings("x.py", "code", findings)
-    assert {f["title"] for f in kept} == {"real-bug", "nit"}  # fake-bug elendi
+    assert {f["title"] for f in kept} == {"real-bug"}  # fake-bug + nit (P3) elendi
 
 
 async def test_review_source_applies_verify(monkeypatch):
