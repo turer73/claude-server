@@ -35,6 +35,19 @@ ANOMALY_MAD_THRESHOLD = 5.0  # robust-z >= bu = anomali (CÖMERT; diurnal-FP ön
 ANOMALY_DEDUP_SECONDS = 1800.0  # 30dk (persistent-anomali re-emit-yok)
 _MAD_SCALE = 0.6745  # robust-z normalizasyon sabiti (normal-dağılım MAD→sigma)
 
+# OPERASYONEL-ZEMİN: istatistiksel-anomali (z) YETMEZ — değer gerçekten concern-seviyesinde
+# olmalı. Yoksa session-activity benign-spike = FP (klipper gözlem 2026-06-22: cpu 0.6→6.3
+# z=6.4 ama %6 önemsiz; mem 19→35 z=11.1 ama %35 sağlıklı → 3 gereksiz warn-page/2h).
+# {metric: (high_floor, low_floor)}. low_floor=None → DÜŞÜK-yön suppress: resource metriklerinde
+# (cpu/mem/disk/temp) düşük-değer benign (idle/boş/serin), crash-sinyali DEĞİL (crash=liveness'in
+# işi). Bilinmeyen-metrik → floor-yok (z-tek-başına, geriye-uyumlu). devops-static-eşik'i tamamlar.
+ANOMALY_FLOORS: dict[str, tuple[float, float | None]] = {
+    "cpu_usage": (70.0, None),
+    "memory_usage": (80.0, None),
+    "disk_usage": (85.0, None),
+    "temperature": (75.0, None),
+}
+
 
 def _enabled() -> bool:
     """Kill-switch (default ON). read_env_var (#174 sınıfı; early-return'de kullanılır)."""
@@ -96,6 +109,12 @@ def detect_anomalies(
         z = robust_zscore(baseline, latest)
         if z is None or abs(z) < threshold:
             continue
+        # Operasyonel-zemin guard: istatistiksel-anomali + değer concern-seviyesinde olmalı.
+        high_floor, low_floor = ANOMALY_FLOORS.get(metric, (float("-inf"), float("inf")))
+        if z > 0 and latest < high_floor:
+            continue  # yüksek-yön ama önemsiz-değer (örn cpu %6 < %70) → FP, atla
+        if z < 0 and (low_floor is None or latest > low_floor):
+            continue  # düşük-yön: resource-low benign (None) veya floor-üstü → atla
         med = statistics.median(baseline)
         direction = "yüksek" if z > 0 else "düşük"
         out.append(
