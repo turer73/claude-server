@@ -16,3 +16,9 @@ from app.core.drift_check import run_drift_check  # noqa: E402
 if __name__ == "__main__":
     summary = run_drift_check()
     print(f"drift-check: {summary}")
+    # klipper-cron-wrap.sh OUTCOME marker (cron_outcomes detay/health). run_drift_check
+    # fail-safe → her zaman özet döner; cron-run tamamlandı = pass.
+    print(
+        f"OUTCOME: pass | sha_drift={summary['sha_drift']} config_drift={summary['config_drift']} "
+        f"emitted={summary['emitted']} suppressed={summary['suppressed']}"
+    )

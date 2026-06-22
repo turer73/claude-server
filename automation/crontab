@@ -110,3 +110,6 @@
 # Log-novelty (gap-3): journalctl → Drain3 online-template-miner → cluster_created (NOVEL) →
 # events-spine (warn). Error-ish filter + KVKK-redact + cross-run state-persist. window=10dk. (klipper #100128)
 */10 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh log-novelty /opt/linux-ai-server/venv/bin/python3 /opt/linux-ai-server/automation/log-novelty.py
+# Drift-check (gap-8): deployed≠running (SHA /health stale) + config-drift (dead-gate) →
+# events-spine (warn). emit_throttled dedup 30dk pencere (persistent-drift flood bastır). (klipper #100128)
+*/15 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh drift-check /opt/linux-ai-server/venv/bin/python3 /opt/linux-ai-server/automation/drift-check.py
