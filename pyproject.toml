@@ -22,6 +22,7 @@ dependencies = [
     "structlog>=24.0.0",
     "paramiko>=3.4.0",
     "requests>=2.32.0",  # rag.py, research.py, telegram_bot.py sync calls
+    "drain3>=0.9.11",  # gap-3 log-novelty: online log-template-miner (saf-Python, CPU)
 ]
 
 [project.optional-dependencies]
