@@ -132,6 +132,28 @@ def test_run_watchdog_dedups_across_runs(tmp_path: Path, monkeypatch: pytest.Mon
     assert n == 1  # ikinci tur events'e yazmadı (dedup)
 
 
+def test_run_watchdog_heartbeat_stall_emits_and_dedups(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """run_watchdog heartbeat-stall dalı: emit + cross-run dedup (runaway dalından ayrı kanıt)."""
+    monkeypatch.setenv("DB_PATH", _events_db(tmp_path))
+    hb = tmp_path / "hb"
+    hb.mkdir()
+    (hb / "code-review.json").write_text('{"ts": "2020-01-01T00:00:00+00:00"}', encoding="utf-8")  # bayat
+    monkeypatch.setattr(aw, "snapshot_processes", lambda *a, **k: [])  # runaway yok, yalnız stall
+    s1 = aw.run_watchdog(hook_state_dir=str(hb))
+    s2 = aw.run_watchdog(hook_state_dir=str(hb))
+    assert s1["stalls"] == 1
+    assert s1["emitted"] == 1
+    assert s2["emitted"] == 0  # pencere-içi dedup
+    assert s2["suppressed"] == 1
+    con = sqlite3.connect(tmp_path / "server.db")
+    con.row_factory = sqlite3.Row
+    rows = con.execute("SELECT * FROM events WHERE type='agent-health'").fetchall()
+    con.close()
+    assert len(rows) == 1
+    assert rows[0]["severity"] == "warn"
+    assert rows[0]["source"] == "watchdog:heartbeat:code-review"
+
+
 def test_heartbeat_stall_skips_non_dict_json(tmp_path):
     """hook-state'te heartbeat-OLMAYAN json (ör. pending-notes.json=LIST) stall-taramayı ÇÖKERTMEMELI
     (klipper: cron-wire canlı tetikledi; data.get('ts') AttributeError tüm-taramayı düşürüyordu)."""
