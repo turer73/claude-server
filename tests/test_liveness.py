@@ -296,6 +296,21 @@ def test_rag_canary_no_retry_on_http_error(monkeypatch):
     assert calls["n"] == 1  # retry YOK (definitive yanıt)
 
 
+def test_rag_canary_backoff_sleeps_between_retries(monkeypatch):
+    """backoff>0 → denemeler ARASI time.sleep (spike'tan decorrelate), son denemeden sonra YOK.
+    time.sleep mock'lanır (test hızlı kalsın)."""
+    slept = {"n": 0}
+    monkeypatch.setattr(lv.time, "sleep", lambda s: slept.__setitem__("n", slept["n"] + 1))
+
+    def _boom(*a, **k):
+        raise TimeoutError("load")
+
+    monkeypatch.setattr(lv.urllib.request, "urlopen", _boom)
+    res = lv.rag_canary_liveness(retries=2, backoff=0.5)
+    assert res["status"] == "dead"
+    assert slept["n"] == 2  # 3 deneme arası 2 backoff (son-sonrası yok)
+
+
 # ── VPS-A gate-ek regresyon ──
 
 
