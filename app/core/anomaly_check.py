@@ -48,6 +48,17 @@ ANOMALY_FLOORS: dict[str, tuple[float, float | None]] = {
     "temperature": (75.0, None),
 }
 
+# PERSISTENCE-GATE: floor-üstü tek-örnek (transient) spike page üretmesin — metrik floor'u
+# son N ARDIŞIK-tick'te de aşmalı (geçici-tepe ≠ sürekli-sorun). Klipper gözlem 2026-06-22:
+# kendi research/run sorgum mem'i 1-tick %91'e fırlattı (z=60.8, floor-üstü=GERÇEK ama anında
+# %16'ya döndü) ve warn-page üretti. Sürekli-yüksek (gerçek-sorun) çoklu-tick floor-üstü kalır;
+# transient kalmaz → bu gate yalnız transient'i eler, sürekli-anomaliyi geçirir.
+# Worker-duplikasyonu (2 uvicorn worker aynı saniye 2 satır yazar) → saniye-granülünde GROUP BY
+# ile tick-bazına indirilir (satır-bazı DEĞİL). FAIL-OPEN: yeterli-veri yoksa GEÇİR (page-kaçırma
+# > fazladan-page; watchdog-FP-disiplininin tersi — burada false-negative daha kötü).
+ANOMALY_PERSIST_SAMPLES = 2  # floor'u aşması gereken ardışık-distinct-tick sayısı
+ANOMALY_PERSIST_WINDOW_MIN = 30  # persistence-lookback (dk; yakın-geçmiş, gap'e dayanıklı)
+
 
 def _enabled() -> bool:
     """Kill-switch (default ON). read_env_var (#174 sınıfı; early-return'de kullanılır)."""
@@ -95,6 +106,49 @@ def robust_zscore(baseline: list[float], latest: float) -> float | None:
     return _MAD_SCALE * (latest - med) / mad
 
 
+def _persisted_beyond_floor(
+    metric: str,
+    high_floor: float,
+    low_floor: float | None,
+    is_high: bool,
+    *,
+    persist: int = ANOMALY_PERSIST_SAMPLES,
+    window_min: int = ANOMALY_PERSIST_WINDOW_MIN,
+) -> bool:
+    """Son `persist` ardışık-distinct-tick metrik floor'u (high) aşıyor / (low) altında mı?
+    True = sürekli (page-et), False = transient (ele). Worker-duplikasyonu saniye-granülü
+    GROUP BY ile tick'e indirilir. FAIL-OPEN: yeterli-tick yok / floor-yok / DB-hata → True
+    (page-kaçırmaktansa fazladan-page). Bilinmeyen-metrik (high_floor=-inf) → trivial True
+    (z-only geriye-uyumlu, persistence uygulanmaz)."""
+    # Floor-yok metrik (high=-inf veya low=None/inf) → persistence anlamsız, geçir.
+    if is_high and high_floor == float("-inf"):
+        return True
+    if not is_high and (low_floor is None or low_floor == float("inf")):
+        return True
+    try:
+        con = get_conn(server_db_path(), readonly=True)
+        try:
+            rows = con.execute(
+                # Saniye-granülü GROUP BY: 2-worker aynı-tick satırlarını tek tick'e indirir
+                # (AVG). Son `persist` distinct-tick (yeni→eski).
+                f"SELECT AVG({metric}) AS v FROM metrics_history "  # noqa: S608 (metric ∈ METRICS sabiti)
+                f"WHERE datetime(timestamp) > datetime('now', ?) AND {metric} IS NOT NULL "
+                "GROUP BY datetime(timestamp) ORDER BY datetime(timestamp) DESC LIMIT ?",
+                (f"-{int(window_min)} minutes", int(persist)),
+            ).fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        logger.exception("anomaly _persisted_beyond_floor sorgu hatası (fail-open → geçir)")
+        return True
+    vals = [float(r["v"]) for r in rows if r["v"] is not None]
+    if len(vals) < persist:
+        return True  # yeterli-tick yok (yeni-başladı/gap) → fail-open, geçir
+    if is_high:
+        return all(v >= high_floor for v in vals)
+    return all(v <= low_floor for v in vals)  # type: ignore[operator]  # low_floor None yukarıda elendi
+
+
 def detect_anomalies(
     series: dict[str, list[float]], *, min_samples: int = ANOMALY_MIN_SAMPLES, threshold: float = ANOMALY_MAD_THRESHOLD
 ) -> list[dict[str, Any]]:
@@ -135,10 +189,12 @@ def run_anomaly_check(
     min_samples: int = ANOMALY_MIN_SAMPLES,
     threshold: float = ANOMALY_MAD_THRESHOLD,
     series: dict[str, list[float]] | None = None,
+    persist: int = ANOMALY_PERSIST_SAMPLES,
 ) -> dict[str, int]:
-    """Tek tur: metrics_history → robust-anomali → emit_throttled(type=anomaly, warn).
-    Fail-safe. `series` verilirse DB-okuma atlanır (test-injection). Döndürür: {anomalies, emitted, suppressed}."""
-    summary: dict[str, int] = {"anomalies": 0, "emitted": 0, "suppressed": 0}
+    """Tek tur: metrics_history → robust-anomali → persistence-gate → emit_throttled(type=anomaly, warn).
+    Fail-safe. `series` verilirse DB-okuma atlanır (test-injection). persistence-gate transient-spike'ı
+    eler (floor son `persist` ardışık-tick'te aşılmalı; fail-open). Döndürür: {anomalies, emitted, suppressed, transient}."""
+    summary: dict[str, int] = {"anomalies": 0, "emitted": 0, "suppressed": 0, "transient": 0}
     try:
         if not _enabled():
             return summary
@@ -146,6 +202,13 @@ def run_anomaly_check(
         anomalies = detect_anomalies(src, min_samples=min_samples, threshold=threshold)
         summary["anomalies"] = len(anomalies)
         for a in anomalies:
+            # Persistence-gate: floor-üstü tek-tick (transient) ise ele (gerçek-sürekli geçer).
+            high_floor, low_floor = ANOMALY_FLOORS.get(a["metric"], (float("-inf"), float("inf")))
+            is_high = a["direction"] == "yüksek"
+            if not _persisted_beyond_floor(a["metric"], high_floor, low_floor, is_high, persist=persist):
+                summary["transient"] += 1
+                logger.info("anomaly transient-elendi (persistence): %s latest=%s z=%s", a["metric"], a["latest"], a["robust_z"])
+                continue
             res = emit_throttled(
                 type="anomaly",
                 source=f"anomaly:{a['metric']}",

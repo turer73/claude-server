@@ -18,4 +18,7 @@ if __name__ == "__main__":
     print(f"anomaly-check: {summary}")
     # klipper-cron-wrap.sh OUTCOME marker (cron_outcomes detay/health). run_anomaly_check
     # fail-safe → her zaman özet döner; cron-run tamamlandı = pass.
-    print(f"OUTCOME: pass | anomalies={summary['anomalies']} emitted={summary['emitted']} suppressed={summary['suppressed']}")
+    print(
+        f"OUTCOME: pass | anomalies={summary['anomalies']} emitted={summary['emitted']} "
+        f"suppressed={summary['suppressed']} transient={summary['transient']}"
+    )

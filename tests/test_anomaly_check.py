@@ -199,6 +199,92 @@ def test_run_disabled_gate(monkeypatch, tmp_path):
     assert s["anomalies"] == 0
 
 
+# ---- persistence-gate (transient-spike filtresi 2026-06-22) ----
+
+
+def _metrics_with_ts(tmp_path: Path, rows: list[tuple[str, float]]) -> None:
+    """events + metrics_history kur; rows = [(iso_ts, cpu_value)] (açık timestamp'li)."""
+    con = sqlite3.connect(tmp_path / "server.db")
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "timestamp TEXT DEFAULT (datetime('now')), type TEXT, source TEXT, severity TEXT DEFAULT 'info', "
+        "title TEXT, detail TEXT, payload TEXT, notified INTEGER DEFAULT 0)"
+    )
+    con.execute(
+        "CREATE TABLE metrics_history (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, "
+        "cpu_usage REAL, memory_usage REAL, disk_usage REAL, temperature REAL, load_avg TEXT, network_io TEXT)"
+    )
+    for ts, cpu in rows:
+        con.execute("INSERT INTO metrics_history (timestamp, cpu_usage) VALUES (?, ?)", (ts, cpu))
+    con.commit()
+    con.close()
+
+
+def _recent_ts(minutes_ago: float) -> str:
+    import datetime as _dt
+
+    return (_dt.datetime.now(_dt.UTC) - _dt.timedelta(minutes=minutes_ago)).isoformat()
+
+
+def test_persistence_transient_high_suppressed(monkeypatch, tmp_path):
+    """Floor-üstü tek-tick (transient) spike → persistence-gate eler (emitted=0, transient=1).
+    Klipper 2026-06-22 mem-%91-1-tick senaryosu."""
+    rows = [(_recent_ts(25 - i), v) for i, v in enumerate(_BASE)]  # ~13..25dk varyanslı baseline (MAD>0)
+    rows.append((_recent_ts(1.0), 20.0))  # önceki tick: floor-altı
+    rows.append((_recent_ts(0.0), 95.0))  # latest tick: floor-üstü ama TEK
+    _metrics_with_ts(tmp_path, rows)
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "server.db"))
+    monkeypatch.delenv("ANOMALY_CHECK_ENABLED", raising=False)
+    s = ac.run_anomaly_check()
+    assert s["anomalies"] == 1  # detect yakaladı
+    assert s["emitted"] == 0  # ama persistence eledi
+    assert s["transient"] == 1
+    assert _drift_rows(tmp_path) == []
+
+
+def test_persistence_sustained_high_emits(monkeypatch, tmp_path):
+    """Floor-üstü çoklu-ardışık-tick (sürekli) → persistence GEÇİRİR (emitted=1)."""
+    rows = [(_recent_ts(25 - i), v) for i, v in enumerate(_BASE)]
+    rows.append((_recent_ts(1.0), 92.0))  # önceki tick: floor-üstü
+    rows.append((_recent_ts(0.0), 95.0))  # latest tick: floor-üstü → 2-tick sürekli
+    _metrics_with_ts(tmp_path, rows)
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "server.db"))
+    monkeypatch.delenv("ANOMALY_CHECK_ENABLED", raising=False)
+    s = ac.run_anomaly_check()
+    assert s["anomalies"] == 1
+    assert s["emitted"] == 1
+    assert s["transient"] == 0
+
+
+def test_persistence_worker_dup_not_fooled(monkeypatch, tmp_path):
+    """Worker-duplikasyonu (2 satır aynı saniye) transient'i sürekli gibi GÖSTERMEMELİ —
+    saniye-granülü GROUP BY tek-tick'e indirir → transient eler."""
+    rows = [(_recent_ts(25 - i), v) for i, v in enumerate(_BASE)]
+    rows.append((_recent_ts(1.0), 20.0))  # önceki tick düşük (1 satır)
+    spike_ts = _recent_ts(0.0)
+    rows.append((spike_ts, 95.0))  # spike tick — worker-1
+    rows.append((spike_ts, 95.0))  # AYNI saniye — worker-2 (duplikasyon)
+    _metrics_with_ts(tmp_path, rows)
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "server.db"))
+    monkeypatch.delenv("ANOMALY_CHECK_ENABLED", raising=False)
+    s = ac.run_anomaly_check()
+    assert s["emitted"] == 0  # 2 dup-satır = 1 tick → hâlâ transient
+    assert s["transient"] == 1
+
+
+def test_persisted_beyond_floor_failopen_insufficient(monkeypatch, tmp_path):
+    """Yeterli-tick yok (yeni-başladı) → fail-open True (page-kaçırma > fazladan-page)."""
+    _metrics_with_ts(tmp_path, [(_recent_ts(0.0), 95.0)])  # tek tick (<persist=2)
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "server.db"))
+    assert ac._persisted_beyond_floor("cpu_usage", 70.0, None, is_high=True) is True
+
+
+def test_persisted_beyond_floor_unknown_metric_trivial_true(monkeypatch, tmp_path):
+    """Floor-yok metrik (high=-inf) → persistence uygulanmaz, trivial True (z-only geriye-uyumlu)."""
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "server.db"))
+    assert ac._persisted_beyond_floor("load_metric", float("-inf"), float("inf"), is_high=True) is True
+
+
 def test_run_failsafe_on_error(monkeypatch, tmp_path):
     _events_db(tmp_path).close()
     monkeypatch.setenv("DB_PATH", str(tmp_path / "server.db"))
