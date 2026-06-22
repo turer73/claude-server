@@ -78,6 +78,38 @@ def test_detect_skips_insufficient_samples():
     assert out == []
 
 
+# ---- operasyonel-zemin guard (FP-fix 2026-06-22) ----
+
+# idle-cpu baseline (~1%) + outlier: z-yüksek AMA mutlak-değer floor'a göre değişken.
+_IDLE = [1.0, 1.2, 0.8, 1.1, 0.9, 1.0, 1.3, 0.7, 1.0, 1.1, 0.9, 1.2]
+
+
+def test_floor_suppresses_benign_high():
+    # cpu 1→8: istatistiksel-anomali (z>>5) AMA %8 < %70 floor → operasyonel-önemsiz → ATLA (FP-fix)
+    out = ac.detect_anomalies({"cpu_usage": [*_IDLE, 8.0]})
+    assert out == []
+
+
+def test_floor_allows_real_high():
+    # cpu 1→95: z-yüksek VE %95 >= %70 floor → GERÇEK anomali, ateşler
+    out = ac.detect_anomalies({"cpu_usage": [*_IDLE, 95.0]})
+    assert len(out) == 1
+    assert out[0]["direction"] == "yüksek"
+
+
+def test_low_direction_suppressed_for_resource():
+    # cpu 50→1: düşük-yön (z<0); resource-low benign (low_floor=None) → ATLA (crash≠düşük-cpu)
+    base = [50.0, 52.0, 48.0, 51.0, 49.0, 50.0, 53.0, 47.0, 50.0, 51.0, 49.0, 52.0]
+    out = ac.detect_anomalies({"cpu_usage": [*base, 1.0]})
+    assert out == []
+
+
+def test_unknown_metric_no_floor_zonly():
+    # FLOORS'ta olmayan metrik → floor-yok (z-tek-başına, geriye-uyumlu)
+    out = ac.detect_anomalies({"load_metric": [*_IDLE, 8.0]})
+    assert len(out) == 1  # floor olmadığı için z-anomali ateşler
+
+
 # ---- _read_metric_series ----
 
 
