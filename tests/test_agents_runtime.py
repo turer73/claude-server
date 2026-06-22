@@ -121,15 +121,17 @@ class _FakeCRA:
 
 
 def test_codereview_card_signal_rate():
+    # Sinyal-oranı = GERÇEK (completed) ÷ TRİYAJ (completed+obsolete). active (triaj-bekleyen) sayılmaz.
     crdb = {
-        "counts": {"active": 9, "obsolete": 3},
+        "counts": {"active": 9, "completed": 2, "obsolete": 6},
         "findings": [
             {"time": "2026-06-20T09:00", "title": "app/api/dev.py:48 injection", "severity": "P1", "status": "active", "kind": "bug"}
         ],
     }
     card = _codereview_card(_FakeCRA(), crdb)
     assert card["key"] == "code-review"
-    assert card["success_rate"] == {"label": "Sinyal (FP-değil)", "value": 0.75, "n": 12}  # 9/(9+3)
+    # 2 gerçek / (2+6) triaj = 0.25 (eski buggy: active/total = 9/15 = yanıltıcı backlog-oranı)
+    assert card["success_rate"] == {"label": "Sinyal (gerçek÷triaj)", "value": 0.25, "n": 8}
     assert card["current_task"] == "Son inceleme: app/api/dev.py:48"
     assert "claude-haiku-4-5-20251001 (tarama)" in card["models"]
     assert "claude-sonnet-4-6 (kontrol/sentez)" in card["models"]

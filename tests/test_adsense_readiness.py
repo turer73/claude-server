@@ -95,17 +95,21 @@ def test_readiness_checklist_missing_trust():
 
 
 def test_detect_state_changes():
-    prev = {"a.com": "NEEDS_ATTENTION", "b.com": "READY", "c.com": "READY"}
+    prev = {"a.com": "NEEDS_ATTENTION", "b.com": "READY", "c.com": "READY", "e.com": "NEEDS_ATTENTION", "f.com": "GETTING_READY"}
     cur = {
         "a.com": {"state": "READY", "reason": ""},
         "b.com": {"state": "READY", "reason": ""},
         "c.com": {"state": "NEEDS_ATTENTION", "reason": "low-value-content"},
         "d.com": {"state": "REQUIRES_REVIEW", "reason": ""},
+        "e.com": {"state": "GETTING_READY", "reason": ""},  # iyileşme (re-review) — eskiden yanlış 'bad'
+        "f.com": {"state": "NEEDS_ATTENTION", "reason": ""},  # kötüleşme
     }
     changes = ar.detect_state_changes(prev, cur)
     by = {c["domain"]: c for c in changes}
-    assert by["a.com"]["kind"] == "good"  # onay
-    assert by["c.com"]["kind"] == "bad"  # regresyon
+    assert by["a.com"]["kind"] == "good"  # NEEDS_ATTENTION→READY onay
+    assert by["c.com"]["kind"] == "bad"  # READY→NEEDS_ATTENTION regresyon
+    assert by["e.com"]["kind"] == "good"  # NEEDS_ATTENTION→GETTING_READY = İYİLEŞME (#1146/#1147 fix)
+    assert by["f.com"]["kind"] == "bad"  # GETTING_READY→NEEDS_ATTENTION regresyon
     assert "b.com" not in by  # değişmedi
     assert "d.com" not in by  # yeni (prev'de yok) → değişim sayılmaz
 
