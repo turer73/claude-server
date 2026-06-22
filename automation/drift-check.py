@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Drift-check cron entry (gap-8) — deployed≠running / config drift -> events-spine.
+"""Drift-check cron entry (gap-8) — deployed≠running (SHA) drift -> events-spine.
 
 klipper-cron-wrap.sh ile periyodik cagrilir (lock + timeout cron-wrap TARAFINDA, watchdog #185
 deseni). Bu entry sadece run_drift_check()'i cagirir; mantik + fail-safe + emit_throttled
-app/core/drift_check.py icinde.
+app/core/drift_check.py icinde. (config-drift kaldirildi — boot-audit'te, bkz drift_check.py.)
 """
 
 import sys
@@ -19,6 +19,6 @@ if __name__ == "__main__":
     # klipper-cron-wrap.sh OUTCOME marker (cron_outcomes detay/health). run_drift_check
     # fail-safe → her zaman özet döner; cron-run tamamlandı = pass.
     print(
-        f"OUTCOME: pass | sha_drift={summary['sha_drift']} config_drift={summary['config_drift']} "
+        f"OUTCOME: pass | sha_drift={summary['sha_drift']} "
         f"emitted={summary['emitted']} suppressed={summary['suppressed']}"
     )
