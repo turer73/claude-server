@@ -59,6 +59,7 @@ from app.api.webops import router as webops_router
 from app.api.ws_status import router as ws_status_router
 from app.exceptions import ServerError
 from app.middleware.audit_log import AuditMiddleware
+from app.middleware.exception_events import record_exception_event, route_template
 from app.middleware.rate_limit import GlobalRateLimitMiddleware
 from app.middleware.request_id import RequestIdMiddleware
 from app.ws.logs import router as ws_logs_router
@@ -330,6 +331,16 @@ def create_app() -> FastAPI:
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         logger.exception("Unhandled exception: %s %s", request.method, request.url.path)
+        # gap-2: unhandled-exc → events-spine (fingerprint + throttle). Producer 500-
+        # yanıtını ASLA bloklamaz/çökertmez (kendi try/except'i + cold-path to_thread).
+        # method/path thread-ÖNCESİ extract (live Request thread'e geçmesin); path =
+        # route-template (KVKK: PII'siz).
+        try:
+            method = request.method
+            path = route_template(request)
+            await asyncio.to_thread(record_exception_event, exc, method=method, path=path)
+        except Exception:
+            logger.exception("exception-event dispatch hatası (fail-safe; yanıt etkilenmez)")
         return JSONResponse(
             status_code=500,
             content={"error": "InternalError", "message": "Internal server error", "detail": None},
