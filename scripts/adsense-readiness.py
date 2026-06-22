@@ -108,16 +108,24 @@ def readiness_checklist(audit: dict[str, Any]) -> dict[str, Any]:
     return {"score": score, "total": checks_total, "gaps": gaps, "ready": not gaps}
 
 
+# AdSense durum sıralaması (kötü→iyi). 'good' = READY'e DOĞRU hareket (iyileşme),
+# 'bad' = READY'den UZAK (regresyon). Bilinmeyen durum = en-düşük (0).
+_STATE_RANK: dict[str, int] = {"NEEDS_ATTENTION": 0, "REQUIRES_REVIEW": 0, "GETTING_READY": 1, "READY": 2}
+
+
 def detect_state_changes(prev: dict[str, str], cur: dict[str, dict[str, str]]) -> list[dict[str, str]]:
-    """Önceki↔şimdiki AdSense durumları → geçişler (saf). READY'e dönüş = onay (good),
-    READY'den çıkış/yeni-NEEDS_ATTENTION = regresyon (bad)."""
+    """Önceki↔şimdiki AdSense durumları → geçişler (saf). YÖN-DUYARLI: rank artışı (READY'e
+    yaklaşma) = onay (good), rank düşüşü = regresyon (bad).
+
+    ESKİ HATA: good = (state==READY) → NEEDS_ATTENTION→GETTING_READY (problem-durumundan
+    re-review'e = İYİLEŞME) yanlışça 'bad'/regresyon sayılıyordu (sahte-alarm #1146/#1147)."""
     changes: list[dict[str, str]] = []
     for domain, info in cur.items():
         state = info["state"] if isinstance(info, dict) else info
         old = prev.get(domain)
         if old is None or old == state:
             continue
-        good = state == "READY"
+        good = _STATE_RANK.get(state, 0) > _STATE_RANK.get(old, 0)
         changes.append({"domain": domain, "from": old, "to": state, "kind": "good" if good else "bad"})
     return changes
 

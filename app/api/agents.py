@@ -253,7 +253,12 @@ def _codereview_card(cra, crdb: dict) -> dict:
     st = cra.status()
     counts = crdb["counts"]
     active = counts.get("active", 0)
-    total = active + counts.get("obsolete", 0)
+    # Sinyal-oranı = TRİYAJ-EDİLEN bulguların kaçı GERÇEKTİ: completed (fix'lendi) ÷ (completed+obsolete).
+    # active (triaj-bekleyen) sayılmaz — henüz gerçek/FP bilinmez. ESKİ HATA: active/(active+obsolete)
+    # = açık/toplam (backlog), FP-oranı DEĞİL → her şey triaj-edilip kapatılınca yanıltıcı %0 ("ajan
+    # %100 FP" sanılır oysa "backlog temiz" demek).
+    completed = counts.get("completed", 0)
+    triaged = completed + counts.get("obsolete", 0)
     findings = crdb["findings"]
     last_file = findings[0]["title"].split(" ", 1)[0] if findings else None
     return {
@@ -268,7 +273,7 @@ def _codereview_card(cra, crdb: dict) -> dict:
         "interval_s": st.get("interval_s"),
         "current_task": (f"Son inceleme: {last_file}" if last_file else "Kuyruk/sweep bekliyor"),
         "stats": {"Tick": st.get("ticks", 0), "Toplam bulgu": st.get("total_findings", 0), "Aktif": active},
-        "success_rate": ({"label": "Sinyal (FP-değil)", "value": round(active / total, 3), "n": total} if total else None),
+        "success_rate": ({"label": "Sinyal (gerçek÷triaj)", "value": round(completed / triaged, 3), "n": triaged} if triaged else None),
         "findings": findings,
     }
 
