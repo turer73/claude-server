@@ -8,6 +8,13 @@ set +e
 # Cron PATH minimaldir — webhook auth icin .env'den WEBHOOK_SECRET'i yukle
 [ -f /opt/linux-ai-server/.env ] && set -a && source /opt/linux-ai-server/.env && set +a
 
+# server.db yolu: systemd service DB_PATH set eder AMA cron etmez (.env'de DB_PATH YOK) →
+# cron-python server_db_path() DEFAULT_DB_PATH=/tmp/linux-ai-server-test.db'ye düşer = emit/read
+# YANLIŞ-DB. gap-3/4/8 cron-üreticileri (log-novelty/anomaly/drift) sessizce /tmp-test-DB'ye
+# yazardı (emit_event KAYBOLUR; sadece healthy-state'te emit-yok olduğu için fark edilmemişti).
+# EXPORT → tüm cron-python alt-süreçleri kanonik server.db'yi kullanır.
+export DB_PATH="${DB_PATH:-/opt/linux-ai-server/data/server.db}"
+
 NAME="${1:-unknown-cron}"
 shift
 
