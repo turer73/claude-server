@@ -43,6 +43,10 @@ def test_is_interesting():
     assert ln.is_interesting("Traceback (most recent call last):")
     assert ln.is_interesting("job FAILED exit 1")
     assert ln.is_interesting("CRITICAL kernel panic")
+    # Codex #194: Python exception-class 'Error' SONEKİ (eski \berror\b kaçırıyordu)
+    assert ln.is_interesting("ValueError: invalid literal for int()")
+    assert ln.is_interesting("sqlite3.OperationalError: database is locked")
+    assert ln.is_interesting("raise TypeError('x')")
     assert not ln.is_interesting("INFO request completed 200 ok")
     assert not ln.is_interesting("user alice logged in successfully")
 
@@ -54,6 +58,17 @@ def test_redact_scrubs_pii():
     assert "123456789" not in r
     assert "<email>" in r
     assert "<ip>" in r
+
+
+def test_drain3_state_file_has_no_raw_pii(monkeypatch, tmp_path):
+    """Codex #194: redact Drain3'e VERİLMEDEN ÖNCE → ham-PII state-dosyasına (.bin) yazılmaz.
+    Eski sıra (raw→add_log_message→save_state, emit-anında redact) ilk-occurrence'ı persist ediyordu."""
+    monkeypatch.setenv("DB_PATH", _events_db(tmp_path))
+    state = tmp_path / "d3.bin"
+    ln.run_log_novelty(state_path=str(state), lines=["ERROR auth failed user secret-eve@example.com ip 10.9.8.7"])
+    blob = state.read_bytes()  # FilePersistence state dosyası
+    assert b"secret-eve@example.com" not in blob  # ham email state'te YOK
+    assert b"10.9.8.7" not in blob  # ham ip state'te YOK
 
 
 # ---- entegrasyon (gerçek Drain3) ----

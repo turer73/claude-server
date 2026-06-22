@@ -1,7 +1,7 @@
-"""Tests for app/core/drift_check.py (gap-8 deployed≠running / config drift producer).
+"""Tests for app/core/drift_check.py (gap-8 deployed≠running SHA drift producer).
 
-sha_drift: /health HTTP mock'lanır (Linux-only değil, ama prob-hedefi mock). config_drift:
-dead_gate.audit mock. run: gerçek emit_throttled + events-DB (dedup dahil).
+sha_drift: /health HTTP mock'lanır. run: gerçek emit_throttled + events-DB (dedup dahil).
+config-drift KALDIRILDI (Codex #196: cron-wrap .env→os.environ no-op + main.py boot-audit redundant).
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ import json
 import sqlite3
 from pathlib import Path
 
-from app.core import dead_gate
 from app.core import drift_check as dc
 
 
@@ -77,30 +76,6 @@ def test_sha_drift_unreachable_is_none(monkeypatch):
     assert dc.sha_drift() is None  # server-down → drift değil (liveness ayrı)
 
 
-# ---- config_drift ----
-
-
-def test_config_drift_maps_dead_gates(monkeypatch):
-    monkeypatch.setattr(
-        dead_gate,
-        "audit_runtime_dead_gates",
-        lambda ef, sr: [dead_gate.DeadGate(name="FOO_GATE", reader="app/x.py:10")],
-    )
-    out = dc.config_drift("env", ["app"])
-    assert len(out) == 1
-    assert out[0]["kind"] == "config"
-    assert out[0]["gate"] == "FOO_GATE"
-    assert "FOO_GATE" in out[0]["detail"]
-
-
-def test_config_drift_failsafe_on_error(monkeypatch):
-    def _boom(ef, sr):
-        raise RuntimeError("audit patladı")
-
-    monkeypatch.setattr(dead_gate, "audit_runtime_dead_gates", _boom)
-    assert dc.config_drift("env", ["app"]) == []  # hata → [] (cron-bozmaz)
-
-
 # ---- run_drift_check (gerçek emit_throttled + events-DB) ----
 
 
@@ -108,24 +83,28 @@ def test_run_emits_drift_warn(monkeypatch, tmp_path):
     monkeypatch.setenv("DB_PATH", _events_db(tmp_path))
     monkeypatch.delenv("DRIFT_CHECK_ENABLED", raising=False)
     monkeypatch.setattr(dc, "sha_drift", lambda *a, **k: {"kind": "sha", "detail": "deployed≠running restart"})
-    monkeypatch.setattr(dc, "config_drift", lambda *a, **k: [{"kind": "config", "gate": "BAR", "detail": "dead-gate BAR"}])
     s = dc.run_drift_check()
     assert s["sha_drift"] == 1
-    assert s["config_drift"] == 1
-    assert s["emitted"] == 2
+    assert s["emitted"] == 1
     rows = _rows(tmp_path)
-    assert len(rows) == 2
-    assert all(r["severity"] == "warn" for r in rows)
-    assert all(r["type"] == "drift" for r in rows)
-    sources = {r["source"] for r in rows}
-    assert "drift:sha" in sources
-    assert "drift:config:BAR" in sources
+    assert len(rows) == 1
+    assert rows[0]["severity"] == "warn"
+    assert rows[0]["type"] == "drift"
+    assert rows[0]["source"] == "drift:sha"
+
+
+def test_run_no_drift_no_emit(monkeypatch, tmp_path):
+    monkeypatch.setenv("DB_PATH", _events_db(tmp_path))
+    monkeypatch.setattr(dc, "sha_drift", lambda *a, **k: None)  # stale değil
+    s = dc.run_drift_check()
+    assert s["sha_drift"] == 0
+    assert s["emitted"] == 0
+    assert len(_rows(tmp_path)) == 0
 
 
 def test_run_dedup_across_runs(monkeypatch, tmp_path):
     monkeypatch.setenv("DB_PATH", _events_db(tmp_path))
     monkeypatch.setattr(dc, "sha_drift", lambda *a, **k: {"kind": "sha", "detail": "restart gerekli"})
-    monkeypatch.setattr(dc, "config_drift", lambda *a, **k: [])
     s1 = dc.run_drift_check()
     s2 = dc.run_drift_check()  # aynı drift, pencere-içi
     assert s1["emitted"] == 1

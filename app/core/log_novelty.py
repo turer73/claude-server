@@ -41,8 +41,11 @@ LOG_NOVELTY_WINDOW_MIN = 10  # journalctl --since penceresi (cron-cadence + buff
 LOG_NOVELTY_MAX_EMIT = 10  # per-run novel-emit tavanı (log-overhaul flood-koruma)
 DEFAULT_STATE_PATH = "data/hook-state/log-novelty-drain3.bin"
 
-# Error-ish satır filtresi (case-insensitive). Novel-template yalnız bunlar arasında aranır.
-_INTERESTING = re.compile(r"\b(error|critical|exception|traceback|failed|fatal|panic)\b", re.IGNORECASE)
+# Error-ish satır filtresi (case-insensitive, SUBSTRING — `\b` YOK). `\berror\b` Python
+# exception-class'larındaki `Error` SONEKİNİ kaçırıyordu (ValueError/TypeError/OSError;
+# Codex #194) çünkü 'Error' kelime-içinde glue'lu. Substring-match `ValueError`→`error`
+# yakalar. FP-tradeoff (terror/errors) log-novelty'de kabul (cömert-recall; Drain3 dedup'lar).
+_INTERESTING = re.compile(r"(error|critical|exception|traceback|failed|fatal|panic)", re.IGNORECASE)
 
 # KVKK redaction (best-effort, defense-in-depth). Drain3 template'i ilk-occurrence'da HENÜZ
 # generalize DEĞİL (cluster_created = ham satır; `<*>` ancak 2. benzer satırda) → emit-anında
@@ -109,13 +112,17 @@ def _build_miner(state_path: str | Path) -> Any:
 def detect_novel(lines: list[str], miner: Any) -> list[dict[str, Any]]:
     """Filtreli satırları Drain3'e ver; `cluster_created` (NOVEL) template'leri döndür.
 
-    KVKK: `template_mined` (PII-maskeli `<*>`) saklanır, ham-satır DEĞİL. Drain3 state
-    mutasyonu burada olur (tüm-filtreli-satır öğrenilir) → çağıran save_state etmeli."""
+    KVKK (Codex #194 fix): satır Drain3'e verilmeden ÖNCE redact'lenir → ham-PII Drain3
+    state-dosyasına (.bin) ASLA yazılmaz. Eski sıra (raw→Drain3→save_state, emit-anında
+    redact) ilk-occurrence ham-satırı state'e persist ediyordu. Yan-fayda: <email>/<ip>
+    stabil-token → daha-iyi clustering (email-varyasyonu template patlatmaz). Drain3 state
+    mutasyonu burada olur → çağıran save_state etmeli."""
     novel: list[dict[str, Any]] = []
     for line in lines:
         if not is_interesting(line):
             continue
-        res = miner.add_log_message(line)
+        red = redact(line)  # ÖNCE redact: state-dosyasına ham-PII yazma
+        res = miner.add_log_message(red)
         if res.get("change_type") == "cluster_created":
             novel.append({"cluster_id": res.get("cluster_id"), "template": res.get("template_mined") or "<?>"})
     return novel
