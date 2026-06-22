@@ -97,6 +97,28 @@ def test_read_metric_series_failsafe_no_table(monkeypatch, tmp_path):
     assert ac._read_metric_series() == {}  # sqlite hata → {} (fail-safe)
 
 
+def test_read_metric_series_iso_timestamp_window(monkeypatch, tmp_path):
+    """Codex #199: metrics_history ISO-T yazılır (monitor_agent isoformat); datetime(timestamp)
+    ile TEMPORAL pencere. Eski leksik karşılaştırma 'T'>' ' → 48h-eski satırı da içeriyordu."""
+    import datetime as _dt
+
+    con = _events_db(tmp_path)
+    con.execute(
+        "CREATE TABLE metrics_history (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, "
+        "cpu_usage REAL, memory_usage REAL, disk_usage REAL, temperature REAL, load_avg TEXT, network_io TEXT)"
+    )
+    now = _dt.datetime.now(_dt.UTC)
+    old_iso = (now - _dt.timedelta(hours=48)).isoformat()  # 24h-pencere DIŞI
+    recent_iso = (now - _dt.timedelta(hours=1)).isoformat()  # İÇ
+    con.execute("INSERT INTO metrics_history (timestamp, cpu_usage) VALUES (?, ?)", (old_iso, 11.0))
+    con.execute("INSERT INTO metrics_history (timestamp, cpu_usage) VALUES (?, ?)", (recent_iso, 22.0))
+    con.commit()
+    con.close()
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "server.db"))
+    series = ac._read_metric_series(hours=24)
+    assert series["cpu_usage"] == [22.0]  # yalnız recent (old 48h ISO-T pencere-dışı, leksik-değil)
+
+
 # ---- run_anomaly_check (gerçek emit_throttled + events-DB) ----
 
 

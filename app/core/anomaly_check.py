@@ -48,8 +48,12 @@ def _read_metric_series(hours: int = ANOMALY_WINDOW_HOURS) -> dict[str, list[flo
     try:
         con = get_conn(server_db_path(), readonly=True)
         try:
+            # datetime(timestamp): metrics_history ISO-T yazılır (monitor_agent
+            # datetime.now(UTC).isoformat()), datetime('now') boşluk-ayraçlı → çıplak
+            # string-karşılaştırma LEKSİK ('T'>' ') = pencere bozuk (Codex #199). datetime()
+            # her iki tarafı normalize eder → TEMPORAL karşılaştırma.
             rows = con.execute(
-                f"SELECT {cols} FROM metrics_history WHERE timestamp > datetime('now', ?) ORDER BY id",
+                f"SELECT {cols} FROM metrics_history WHERE datetime(timestamp) > datetime('now', ?) ORDER BY id",
                 (f"-{int(hours)} hours",),
             ).fetchall()
         finally:
