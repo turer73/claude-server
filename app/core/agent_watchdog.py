@@ -32,6 +32,12 @@ RUNAWAY_CPU_PCT = 90.0  # core-pinned sayilir
 RUNAWAY_MIN_MINUTES = 15.0  # bu sureden uzun core-pin = net-runaway (comert: 90s-pytest haric)
 ALLOWLIST_WARN_MINUTES = 30.0  # allowlist'teki proc bile bu kadar uzun surerse warn (kill YOK)
 HEARTBEAT_MAX_AGE_MINUTES = 10.0  # hook-state heartbeat bu kadar bayatsa stall
+# Producer-dedup penceresi (klipper #100128 ortak emit_throttled): cron */3 -> ayni
+# (type, source) olayi her 3dk RE-EMIT etme. 15dk pencere = devam-eden runaway/stall
+# ~5 turda 1 emit (flood-bastir ama periyodik re-surface). events-tablosu age-sorgusu
+# process-bagimsiz -> cron'un her-tur yeni-process'i de dedup eder (in-proc dict ise
+# runs-arasi paylasilmaz, bkz app/core/emit_throttle.py docstring).
+WATCHDOG_DEDUP_WINDOW_SECONDS = 900.0
 
 # Mesru uzun-CPU proc'lari (cmdline-substring, case-insensitive). ASLA auto-kill edilmez.
 ALLOWLIST_PATTERNS: tuple[str, ...] = (
@@ -242,11 +248,15 @@ def _verify_and_kill(snap: ProcSnapshot, *, dry_run: bool) -> dict[str, object]:
 
 
 def run_watchdog(hook_state_dir: str | Path = "data/hook-state") -> dict[str, int]:
-    """Tek watchdog-tur: runaway-proc + heartbeat-stall -> events-spine (emit_event).
-    Fail-safe (hicbir dal startup/cron'u bozmaz). Dondurur: ozet sayaclari."""
-    from app.core.events import emit_event
+    """Tek watchdog-tur: runaway-proc + heartbeat-stall -> events-spine (emit_throttled).
+    Fail-safe (hicbir dal startup/cron'u bozmaz). Dondurur: ozet sayaclari.
 
-    summary: dict[str, int] = {"runaways": 0, "stalls": 0, "killed": 0, "emitted": 0}
+    emit_throttled (klipper #100128): ayni (type, source) WATCHDOG_DEDUP_WINDOW icinde
+    RE-EMIT edilmez (cron */3 flood-bastir); devam-eden runaway/stall periyodik re-surface.
+    summary['suppressed'] = pencere-ici bastirilan emit sayisi."""
+    from app.core.emit_throttle import emit_throttled
+
+    summary: dict[str, int] = {"runaways": 0, "stalls": 0, "killed": 0, "emitted": 0, "suppressed": 0}
     autokill = _autokill_enabled()
     try:
         for snap in snapshot_processes():
@@ -269,29 +279,37 @@ def run_watchdog(hook_state_dir: str | Path = "data/hook-state") -> dict[str, in
                 payload["kill"] = prov
                 if str(prov.get("result", "")).startswith(("SIGTERM", "SIGKILL")):
                     summary["killed"] += 1
-            if emit_event(
+            res = emit_throttled(
                 type="agent-health",
                 source=f"watchdog:proc:{snap.name or snap.pid}",
                 title=f"runaway proc {snap.name} ({snap.cpu_pct:.0f}% {snap.age_minutes:.0f}dk)",
                 severity=sev,
                 detail=" ; ".join(v.reasons),
                 payload=payload,
-            ):
+                window_seconds=WATCHDOG_DEDUP_WINDOW_SECONDS,
+            )
+            if res.emitted:
                 summary["emitted"] += 1
+            elif res.suppressed:
+                summary["suppressed"] += 1
     except Exception:
         logger.exception("watchdog runaway-tarama hatasi (fail-safe)")
     try:
         for st in check_heartbeat_stalls(hook_state_dir):
             summary["stalls"] += 1
-            if emit_event(
+            res = emit_throttled(
                 type="agent-health",
                 source=f"watchdog:heartbeat:{st.agent}",
                 title=f"ajan heartbeat-stall: {st.agent} ({st.age_minutes:.0f}dk)",
                 severity="warn",
                 detail=f"{st.path} {st.age_minutes:.0f}dk bayat (esik {HEARTBEAT_MAX_AGE_MINUTES:.0f}dk)",
                 payload={"agent": st.agent, "age_minutes": round(st.age_minutes, 1)},
-            ):
+                window_seconds=WATCHDOG_DEDUP_WINDOW_SECONDS,
+            )
+            if res.emitted:
                 summary["emitted"] += 1
+            elif res.suppressed:
+                summary["suppressed"] += 1
     except Exception:
         logger.exception("watchdog heartbeat-tarama hatasi (fail-safe)")
     return summary
