@@ -16,3 +16,9 @@ from app.core.log_novelty import run_log_novelty  # noqa: E402
 if __name__ == "__main__":
     summary = run_log_novelty()
     print(f"log-novelty: {summary}")
+    # klipper-cron-wrap.sh OUTCOME marker (cron_outcomes detay/health). run_log_novelty
+    # fail-safe → her zaman özet döner; cron-run tamamlandı = pass.
+    print(
+        f"OUTCOME: pass | scanned={summary['scanned']} novel={summary['novel']} "
+        f"emitted={summary['emitted']} cap={summary['suppressed_cap']}"
+    )

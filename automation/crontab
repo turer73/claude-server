@@ -107,3 +107,6 @@
 # Agent watchdog (gap-7): runaway-proc + heartbeat-stall → events-spine. Her 3dk. AUTO_KILL
 # default-OFF (notify-only/dry_run; FAZ-A gözlem). single-instance-lock+timeout wrapper'da. (klipper #100115)
 */3 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh agent-watchdog /opt/linux-ai-server/automation/agent-watchdog.sh
+# Log-novelty (gap-3): journalctl → Drain3 online-template-miner → cluster_created (NOVEL) →
+# events-spine (warn). Error-ish filter + KVKK-redact + cross-run state-persist. window=10dk. (klipper #100128)
+*/10 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh log-novelty /opt/linux-ai-server/venv/bin/python3 /opt/linux-ai-server/automation/log-novelty.py
