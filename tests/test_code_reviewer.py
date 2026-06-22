@@ -42,6 +42,22 @@ def _rows(db, **w):
     return out
 
 
+def test_build_snippet_marks_truncation():
+    """discovery #1137/#1139/#1140: büyük dosya kısaltılınca truncation-notu eklenmeli
+    (model ani-kesintiyi 'incomplete code/syntax error' sanmasın). Kısa dosya değişmez."""
+    small = "x = 1\n"
+    assert cr._build_snippet(small) == small  # <= _MAX_BYTES: marker YOK, kod aynen
+
+    big = "a" * (cr._MAX_BYTES + 500)
+    out = cr._build_snippet(big)
+    assert out.startswith("a" * cr._MAX_BYTES)  # ilk _MAX_BYTES korunur
+    assert "TRUNCATION" in out  # truncation-notu eklendi
+    assert "RAPORLAMA" in out  # "incomplete code raporlama" talimatı
+    assert str(len(big)) in out  # toplam-boyut nota yazıldı
+    # tam-sınır (== _MAX_BYTES): kısaltma yok
+    assert cr._build_snippet("a" * cr._MAX_BYTES) == "a" * cr._MAX_BYTES
+
+
 def test_record_findings_dedup(tmp_db):
     """Aynı bulgu 2 kez → 1 new + 1 dup (unique-active index)."""
     f = [{"line": 42, "severity": "P1", "title": "SQL injection", "detail": "user input concat"}]
