@@ -232,11 +232,15 @@ def test_rag_canary_alive_and_dead(monkeypatch):
     monkeypatch.setattr(lv.urllib.request, "urlopen", lambda *a, **k: _Resp())
     assert lv.rag_canary_liveness()["status"] == "alive"
 
+    calls = {"n": 0}
+
     def _boom(*a, **k):
+        calls["n"] += 1
         raise OSError("connection refused")
 
     monkeypatch.setattr(lv.urllib.request, "urlopen", _boom)
-    assert lv.rag_canary_liveness()["status"] == "dead"  # canary-fail (idle değil)
+    assert lv.rag_canary_liveness(backoff=0.0)["status"] == "dead"  # canary-fail (idle değil)
+    assert calls["n"] == 2  # transient → 1 ilk + 1 retry (klipper #100137 yük-toleransı)
 
 
 def test_rag_canary_401_is_unknown_not_dead(monkeypatch):
@@ -248,6 +252,48 @@ def test_rag_canary_401_is_unknown_not_dead(monkeypatch):
 
     monkeypatch.setattr(lv.urllib.request, "urlopen", _401)
     assert lv.rag_canary_liveness()["status"] == "unknown"
+
+
+def test_rag_canary_retries_transient_then_alive(monkeypatch):
+    """Yük-spike toleransı (klipper #100137): ilk transient-fail → retry → ikinci OK → alive.
+    88°C-incident'te 3s-timeout FP üretiyordu; retry meşru-yavaşlığı ölü-sanmaz."""
+
+    class _Resp:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    calls = {"n": 0}
+
+    def _flaky(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TimeoutError("load spike")  # ilk deneme: transient
+        return _Resp()  # retry: başarılı
+
+    monkeypatch.setattr(lv.urllib.request, "urlopen", _flaky)
+    res = lv.rag_canary_liveness(backoff=0.0)
+    assert res["status"] == "alive"  # retry kurtardı → FP yok
+    assert calls["n"] == 2
+
+
+def test_rag_canary_no_retry_on_http_error(monkeypatch):
+    """Definitive HTTP yanıt (5xx) retry-ETMEZ — sunucu cevap verdi = transient değil
+    (retry yalnız timeout/conn-fail için; 5xx ayrı sinyal, tek-atış dead)."""
+    calls = {"n": 0}
+
+    def _503(*a, **k):
+        calls["n"] += 1
+        raise lv.urllib.error.HTTPError("u", 503, "Service Unavailable", {}, None)
+
+    monkeypatch.setattr(lv.urllib.request, "urlopen", _503)
+    res = lv.rag_canary_liveness(backoff=0.0)
+    assert res["status"] == "dead"
+    assert calls["n"] == 1  # retry YOK (definitive yanıt)
 
 
 # ── VPS-A gate-ek regresyon ──
