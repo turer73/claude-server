@@ -128,3 +128,44 @@ def test_disabled_gate_no_scan(monkeypatch, tmp_path):
     assert s["scanned"] == 0
     assert s["emitted"] == 0
     assert len(_rows(tmp_path)) == 0
+
+
+# ---- read_journal_lines (journalctl subprocess; Linux-only → mock'lanır) ----
+
+
+def test_read_journal_lines_parses_and_rc_failsafe(monkeypatch):
+    class _Ok:
+        returncode = 0
+        stdout = "line one\n\nERROR two\n"  # boş satır atlanmalı
+
+    monkeypatch.setattr(ln.subprocess, "run", lambda *a, **k: _Ok())
+    assert ln.read_journal_lines(since_min=5) == ["line one", "ERROR two"]
+
+    class _Fail:
+        returncode = 1
+        stdout = "irrelevant"
+
+    monkeypatch.setattr(ln.subprocess, "run", lambda *a, **k: _Fail())
+    assert ln.read_journal_lines() == []  # rc!=0 → [] (fail-safe)
+
+
+def test_read_journal_lines_oserror_returns_empty(monkeypatch):
+    def _boom(*a, **k):
+        raise OSError("journalctl yok (non-Linux)")
+
+    monkeypatch.setattr(ln.subprocess, "run", _boom)
+    assert ln.read_journal_lines() == []  # hata/non-Linux → [] (cron-bozmaz)
+
+
+def test_run_failsafe_on_internal_error(monkeypatch, tmp_path):
+    """Drain3/iç-hata cron'u ÇÖKERTMEZ (fail-safe except + logger.exception)."""
+    monkeypatch.setenv("DB_PATH", _events_db(tmp_path))
+
+    def _boom(*a, **k):
+        raise RuntimeError("drain3 patladı")
+
+    monkeypatch.setattr(ln, "_build_miner", _boom)
+    s = ln.run_log_novelty(state_path=str(tmp_path / "d3.bin"), lines=["ERROR x broke"])
+    assert s["scanned"] == 1  # scan oldu, sonra miner patladı → except yakaladı (crash yok)
+    assert s["emitted"] == 0
+    assert s["novel"] == 0
