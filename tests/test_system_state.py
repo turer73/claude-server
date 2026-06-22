@@ -21,7 +21,7 @@ _spec.loader.exec_module(ss)
 def dbs(tmp_path, monkeypatch):
     srv = tmp_path / "server.db"
     con = sqlite3.connect(srv)
-    con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, timestamp TEXT, severity TEXT, source TEXT, title TEXT)")
+    con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, timestamp TEXT, type TEXT, severity TEXT, source TEXT, title TEXT)")
     con.execute("CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY, timestamp TEXT, job TEXT, result TEXT)")
     con.execute("CREATE TABLE alerts (id INTEGER PRIMARY KEY, timestamp TEXT, severity TEXT, source TEXT, message TEXT, resolved INTEGER)")
     # kendi-iyileşen alarm (resolved) + tekrar-fail cron
@@ -30,7 +30,15 @@ def dbs(tmp_path, monkeypatch):
     for _ in range(4):
         con.execute(f"INSERT INTO cron_outcomes (timestamp,job,result) VALUES ({H},'liveness-check','fail')")
     con.execute(f"INSERT INTO cron_outcomes (timestamp,job,result) VALUES ({H},'ok-job','pass')")
-    con.execute(f"INSERT INTO events (timestamp,severity,source,title) VALUES ({H},'warn','code-review:x.py','🔬 P1 (commit): x')")
+    con.execute(
+        f"INSERT INTO events (timestamp,type,severity,source,title) VALUES ({H},'alert','warn','code-review:x.py','🔬 P1 (commit): x')"
+    )
+    # gap-2 unhandled-exception: aynı fingerprint 2× (count=2, recurring-bug trendi)
+    for _ in range(2):
+        con.execute(
+            f"INSERT INTO events (timestamp,type,severity,source,title) VALUES "
+            f"({H},'exception','warn','exception:ValueError:app/api/x.py:foo','ValueError @ app/api/x.py:foo')"
+        )
     con.commit()
     con.close()
 
@@ -52,6 +60,8 @@ def test_gather_state_longitudinal(dbs):
     assert any(j == "liveness-check" and c == 4 for j, c in st["cron_recurring_fail"])  # tekrar-fail trend
     assert any(src == "temperature" and r == 1 for src, c, r in st["alerts_fired"])  # kendi-iyileşen (resolved=1)
     assert st["code_review_findings"][0][0] == 1  # commit-bulgu sayıldı
+    assert any("ValueError" in t and c == 2 for t, c in st["exceptions_by_fp"])  # gap-2 exception fingerprint-gruplu
+    assert "ValueError @ app/api/x.py:foo" in ss.render_data(st)  # render'da görünür
 
 
 def test_render_data_no_crash_empty(monkeypatch, tmp_path):
@@ -133,6 +143,7 @@ def test_render_with_last_review():
     st = {
         "days": 7,
         "events_by_sev": {},
+        "exceptions_by_fp": [],
         "cron_result": {},
         "cron_recurring_fail": [],
         "alerts_fired": [],

@@ -68,6 +68,13 @@ def gather_state(days: int) -> dict:
     st["events_by_sev"] = dict(
         _q(SRV_DB, "SELECT severity, COUNT(*) FROM events WHERE timestamp > datetime('now',?) GROUP BY severity", (w,))
     )
+    # Unhandled exception (gap-2 producer): fingerprint-gruplu — recurring server-bug trendi
+    st["exceptions_by_fp"] = _q(
+        SRV_DB,
+        "SELECT title, COUNT(*) c FROM events WHERE type='exception' AND timestamp > datetime('now',?) "
+        "GROUP BY source ORDER BY c DESC LIMIT 8",
+        (w,),
+    )
     # Cron: pass/fail/partial + TEKRAR-FAIL job'lar (>=3 fail = trend)
     st["cron_result"] = dict(
         _q(SRV_DB, "SELECT result, COUNT(*) FROM cron_outcomes WHERE timestamp > datetime('now',?) GROUP BY result", (w,))
@@ -127,6 +134,7 @@ def render_data(st: dict) -> str:
     L = [
         f"SİSTEM DURUMU HAM VERİ (son {st['days']} gün):",
         f"Olaylar (severity): {st['events_by_sev'] or 'yok'}",
+        f"Unhandled exception (fingerprint, adet): {[(t, c) for t, c in st['exceptions_by_fp']] or 'yok'}",
         f"Cron sonuç: {st['cron_result'] or 'yok'}",
         f"TEKRAR-FAIL cron (>=3): {[(j, c) for j, c in st['cron_recurring_fail']] or 'yok'}",
         f"Alarm fırlayan (source, adet, çözülen): {[(s, c, r) for s, c, r in st['alerts_fired']] or 'yok'}",
