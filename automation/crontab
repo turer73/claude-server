@@ -116,3 +116,6 @@
 # Metric-anomaly (gap-4): metrics_history robust-baseline (median+MAD) → son-değer >=5MAD sapma =
 # olağandışı (static-eşik-altı sapmaları yakalar, devops'u tamamlar) → events-spine (warn). (klipper #100128)
 */15 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh anomaly-check /opt/linux-ai-server/venv/bin/python3 /opt/linux-ai-server/automation/anomaly-check.py
+# Korelasyon (gap-5): events-spine cross-source (exception/anomaly/drift/log-novelty/watchdog) 15dk
+# penceresi → ≥2 farklı-kaynak = korele incident (keep-pattern, fingerprint-dedup). fatigue↓. (klipper #100128)
+*/15 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh correlation-check /opt/linux-ai-server/venv/bin/python3 /opt/linux-ai-server/automation/correlation-check.py
