@@ -71,9 +71,10 @@ Dosya: {path}
 {code}
 ```"""
 
-# #4 Adversarial-verify prompt — ŞÜPHECİ 2. denetçi, görevi bulguyu ÇÜRÜTMEK. Mitigation/yanlış-satır
-# ararsa FP. Belirsizde FP (bu ajan FP-eğilimli; gerçek-kaçırma > FP-spam değil ama şüpheci kalsın).
-_VERIFY_PROMPT = """Sen ŞÜPHECİ bir kıdemli güvenlik+correctness denetçisisin. Bir junior gözden geçirici aşağıdaki bulguyu raporladı. Görevin onu ÇÜRÜTMEK (yanlış-pozitif mi).
+# #4 Adversarial-verify prompt — ŞÜPHECİ 2. denetçi. SIKILAŞTIRILDI (2026-06-22): bu junior-ajan
+# ~%98 FP (dashboard sinyal=%2). VARSAYILAN=FP; yalnız SOMUT-tetik-kurulabilen bulgu REAL. Belirsiz→FP
+# (_verify_one parsing'i de yalnız net-REAL korur). Eski "belirsizde-koru" → FP-flood'a yol açtı.
+_VERIFY_PROMPT = """Sen ŞÜPHECİ bir kıdemli güvenlik+correctness denetçisisin. FP-EĞİLİMLİ bir junior-ajan (geçmiş ~%98 yanlış-pozitif) aşağıdaki bulguyu raporladı. VARSAYILAN cevabın FP — bulguyu ancak SOMUT-KANIT'la onaylarsın.
 
 DOSYA: {path}
 BULGU: [{sev}] {title} — satır {line}
@@ -84,9 +85,11 @@ KOD:
 {code}
 ```
 
-Kontrol et: (1) Bu GERÇEK, exploit-edilebilir/somut bir sorun mu? (2) Yakında bir mitigation VAR MI — shlex.quote / parametreli-sorgu (?/%s placeholder) / regex-validation / allowlist / try-except / None-kontrol / busy_timeout? (3) Satır-no gerçek soruna mı işaret ediyor (yorum/import/test değil)?
-Mitigation varsa, satır yanlışsa, ya da emin değilsen → FP.
-SADECE tek kelime yanıt: REAL veya FP"""
+REAL demek için: bulgunun GERÇEKTEN tetiklendiği somut senaryoyu (tam girdi/çağrı/trace) zihninde kurabilmelisin. Kuramıyorsan = FP.
+
+KESİN FP işaretleri (biri varsa FP de): mitigation var (shlex.quote / parametreli-sorgu ?/%s / None-kontrol / try-except / allowlist / regex-validation / busy_timeout); erişilen dict-key fonksiyon-başında GARANTİ init-edilmiş; fail-safe try/except tüm-gövdeyi sarıyor (asla raise etmez); satır yorum/import/boş/test-iskelet; değer operasyonel-eşik-altı (önemsiz); test-helper'da exception-path cleanup-leak (tmp+pytest-cleanup → anlamsız); "olabilir / potansiyel / riski-var" ama somut-tetik gösterilemiyor.
+
+SADECE tek kelime yanıt ver: REAL veya FP. Emin değilsen FP."""
 
 
 def _lang(path: str) -> str:
@@ -170,14 +173,18 @@ async def _verify_one(rel_path: str, code: str, f: dict) -> bool:
         return False
     out = (raw or "").strip().upper()
     first = out.split()[0] if out.split() else ""
-    return first != "FP"  # yanıt-geldi: yalnız net-FP elenir; gerisi (REAL/boş/belirsiz) korunur
+    # SIKILAŞTIRILDI (2026-06-22, %98-FP): yalnız NET-REAL korunur; FP/belirsiz/boş → ELE.
+    # Eski "first != FP" (belirsizi korur) → FP-survivor seli. Ajan ikincil-net (Codex + klipper-verify
+    # + commit-already-merged) → emin-olmayan-bulguyu düşürmek FP-flood'u keser, gerçek-net bulgu kalır.
+    return first.startswith("REAL")
 
 
 async def _verify_findings(rel_path: str, code: str, findings: list[dict]) -> list[dict]:
-    """P1/P2 bulgularını skeptik-pass'ten geçir (FP ele). P3 düşük-stake → verify atla."""
+    """TÜM bulguları skeptik-pass'ten geçir (FP ele). SIKILAŞTIRILDI (2026-06-22): P3 de verify edilir
+    (eski P3-bypass FP-flood'a katkıydı — test_drift_check:20 gibi P3-FP'ler doğrudan geçiyordu)."""
     kept = []
     for f in findings:
-        if f["severity"] == "P3" or await _verify_one(rel_path, code, f):
+        if await _verify_one(rel_path, code, f):
             kept.append(f)
     return kept
 
