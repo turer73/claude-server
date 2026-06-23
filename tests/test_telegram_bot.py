@@ -29,12 +29,51 @@ def _fake_update(text: str, chat_id: int = 123, msg_id: int = 1) -> dict:
 def test_process_update_skips_non_research():
     from app.api.telegram_bot import process_update
 
+    # chat 123 != owner (.env TELEGRAM_CHAT_ID = gerçek 10-haneli id) → düz metin SKIP (eskisi gibi)
     with patch("app.api.telegram_bot._send_message") as snd, patch("app.api.telegram_bot.research_ask") as ask:
         out = process_update(_fake_update("merhaba"))
     assert out["ok"]
     assert out["skipped"] == "not /research"
     snd.assert_not_called()
     ask.assert_not_called()
+
+
+def test_process_update_owner_plain_routes_to_claude(monkeypatch):
+    """SAHİP-chat'ten DÜZ metin (slash'sız) → _handle_claude (prefix opsiyonel iyileştirme)."""
+    from app.api import telegram_bot as tb
+
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "777")
+    monkeypatch.setattr(tb, "read_env_var", lambda k: "777" if k == "TELEGRAM_CHAT_ID" else None)
+    with patch.object(tb, "_handle_claude", return_value={"ok": True, "action": "claude"}) as hc:
+        out = tb.process_update(_fake_update("deploy durumu ne", chat_id=777))
+    assert out["action"] == "claude"
+    hc.assert_called_once()
+    args, kwargs = hc.call_args
+    assert args[0] == 777  # chat_id
+    assert args[1] == "deploy durumu ne"  # prompt (strip'li)
+    assert kwargs.get("fresh") is False  # düz metin → oturum devam (sıfırlama yok)
+
+
+def test_process_update_nonowner_plain_still_skipped(monkeypatch):
+    """Owner-DIŞI düz metin → SKIP (güvenlik: yalnız sahip Claude'u tetikler)."""
+    from app.api import telegram_bot as tb
+
+    monkeypatch.setattr(tb, "read_env_var", lambda k: "777" if k == "TELEGRAM_CHAT_ID" else None)
+    with patch.object(tb, "_handle_claude") as hc:
+        out = tb.process_update(_fake_update("merhaba", chat_id=123))  # 123 != 777
+    assert out["skipped"] == "not /research"
+    hc.assert_not_called()
+
+
+def test_process_update_owner_slash_command_not_hijacked(monkeypatch):
+    """Sahip bilinmeyen slash-komut (/foo) → Claude'a YÖNLENDİRİLMEZ (yanlış-route önle), SKIP."""
+    from app.api import telegram_bot as tb
+
+    monkeypatch.setattr(tb, "read_env_var", lambda k: "777" if k == "TELEGRAM_CHAT_ID" else None)
+    with patch.object(tb, "_handle_claude") as hc:
+        out = tb.process_update(_fake_update("/foo bar", chat_id=777))
+    assert out["skipped"] == "not /research"
+    hc.assert_not_called()
 
 
 def test_process_update_help_when_empty_question():

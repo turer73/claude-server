@@ -340,6 +340,12 @@ def process_update(update: dict) -> dict:
     # /research, /research-hi, /research-claude (or @bot_username variants)
     m = re.match(r"^/research(-hi|-claude)?(@\w+)?(\s|$)", text)
     if not m:
+        # SAHİP-chat'ten DÜZ metin (slash'sız) → /claude gibi işle (prefix opsiyonel; telefondan
+        # "deploy durumu ne" gibi yaz, Claude işlesin). GÜVENLİK: yalnız owner (TELEGRAM_CHAT_ID).
+        # Slash-komut (/foo) hijack EDİLMEZ (yanlış-yönlendirme önle) ve non-owner → skip (eskisi gibi).
+        owner = read_env_var("TELEGRAM_CHAT_ID")
+        if owner and str(chat_id) == str(owner) and text.strip() and not text.startswith("/"):
+            return _handle_claude(chat_id, text.strip(), msg_id, fresh=False)
         return {"ok": True, "skipped": "not /research"}
 
     suffix = m.group(1) or ""
