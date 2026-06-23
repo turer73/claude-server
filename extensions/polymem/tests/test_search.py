@@ -1,5 +1,4 @@
 """FTS5 search tests."""
-
 from __future__ import annotations
 
 
@@ -26,7 +25,6 @@ def _sess(client, auth_headers, **overrides):
 
 # ----- auth + validation -----
 
-
 def test_search_auth_required(client):
     r = client.get("/search?q=foo")
     assert r.status_code == 401
@@ -46,7 +44,6 @@ def test_search_punctuation_only_returns_empty(client, auth_headers):
 
 
 # ----- core matching -----
-
 
 def test_search_matches_memory_content(client, auth_headers):
     _mem(client, auth_headers, name="hit", content="kernel module rebuild ritual")
@@ -85,7 +82,6 @@ def test_search_returns_snippet_with_highlight(client, auth_headers):
 
 # ----- filtering + lifecycle -----
 
-
 def test_search_excludes_soft_deleted(client, auth_headers):
     m = _mem(client, auth_headers, name="trashed", content="rare-token-zxq")
     client.delete(f"/memories/{m['id']}", headers=auth_headers)
@@ -115,7 +111,6 @@ def test_search_reflects_session_delete(client, auth_headers):
 
 
 # ----- limit + total -----
-
 
 def test_search_limit_caps_per_kind(client, auth_headers):
     for i in range(5):

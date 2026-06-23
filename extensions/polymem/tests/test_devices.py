@@ -1,5 +1,4 @@
 """Devices + device_projects tests."""
-
 from __future__ import annotations
 
 
@@ -13,7 +12,6 @@ def _register(client, auth_headers, **overrides):
 
 # ----- auth -----
 
-
 def test_devices_auth_required(client):
     r = client.get("/devices")
     assert r.status_code == 401
@@ -26,7 +24,6 @@ def test_devices_auth_disabled_mode_ok(client_noauth):
 
 
 # ----- register / upsert -----
-
 
 def test_register_creates_device(client, auth_headers):
     d = _register(client, auth_headers, hostname="klipper.local", mesh_ip="100.64.0.1")
@@ -55,7 +52,6 @@ def test_register_upserts_by_name(client, auth_headers):
 
 # ----- list / get -----
 
-
 def test_list_orders_by_last_seen_desc(client, auth_headers):
     _register(client, auth_headers, name="dev-a", platform="linux")
     _register(client, auth_headers, name="dev-b", platform="linux")
@@ -78,7 +74,6 @@ def test_get_missing_returns_404(client, auth_headers):
 
 
 # ----- ping / delete -----
-
 
 def test_ping_bumps_last_seen(client, auth_headers):
     d = _register(client, auth_headers)
@@ -107,7 +102,6 @@ def test_delete_missing_returns_404(client, auth_headers):
 
 
 # ----- device_projects -----
-
 
 def test_projects_require_device(client, auth_headers):
     r = client.get("/devices/nope/projects", headers=auth_headers)
@@ -144,15 +138,21 @@ def test_upsert_project_creates_then_updates(client, auth_headers):
 
 def test_list_projects_for_device(client, auth_headers):
     _register(client, auth_headers)
-    client.post("/devices/klipper/projects", headers=auth_headers, json={"project": "p1"})
-    client.post("/devices/klipper/projects", headers=auth_headers, json={"project": "p2"})
+    client.post(
+        "/devices/klipper/projects", headers=auth_headers, json={"project": "p1"}
+    )
+    client.post(
+        "/devices/klipper/projects", headers=auth_headers, json={"project": "p2"}
+    )
     rows = client.get("/devices/klipper/projects", headers=auth_headers).json()
     assert {r["project"] for r in rows} == {"p1", "p2"}
 
 
 def test_delete_project(client, auth_headers):
     _register(client, auth_headers)
-    client.post("/devices/klipper/projects", headers=auth_headers, json={"project": "p1"})
+    client.post(
+        "/devices/klipper/projects", headers=auth_headers, json={"project": "p1"}
+    )
     r = client.delete("/devices/klipper/projects/p1", headers=auth_headers)
     assert r.status_code == 200
     assert client.get("/devices/klipper/projects", headers=auth_headers).json() == []
