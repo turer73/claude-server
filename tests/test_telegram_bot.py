@@ -76,6 +76,31 @@ def test_process_update_owner_slash_command_not_hijacked(monkeypatch):
     hc.assert_not_called()
 
 
+def test_process_update_edited_message_not_routed(monkeypatch):
+    """#210-P2 (Codex): sahip eski-mesajı DÜZENLEYİNCE (edited_message) plaintext→Claude TETİKLENMEZ
+    (kazara ikinci-Claude-run). Yalnız yeni `message` route edilir."""
+    from app.api import telegram_bot as tb
+
+    monkeypatch.setattr(tb, "read_env_var", lambda k: "777" if k == "TELEGRAM_CHAT_ID" else None)
+    upd = {"update_id": 1, "edited_message": {"message_id": 1, "chat": {"id": 777}, "text": "merhaba"}}
+    with patch.object(tb, "_handle_claude") as hc:
+        out = tb.process_update(upd)
+    assert out["skipped"] == "not /research"
+    hc.assert_not_called()
+
+
+def test_process_update_leading_whitespace_slash_not_hijacked(monkeypatch):
+    """#210-P2 (Codex): ' /foo' (önde-boşluk) strip'lenince slash-komuttur → Claude'a YÖNLENDİRİLMEZ
+    (untrimmed-startswith guard'ı delemez)."""
+    from app.api import telegram_bot as tb
+
+    monkeypatch.setattr(tb, "read_env_var", lambda k: "777" if k == "TELEGRAM_CHAT_ID" else None)
+    with patch.object(tb, "_handle_claude") as hc:
+        out = tb.process_update(_fake_update(" /foo bar", chat_id=777))
+    assert out["skipped"] == "not /research"
+    hc.assert_not_called()
+
+
 def test_process_update_help_when_empty_question():
     from app.api.telegram_bot import process_update
 
