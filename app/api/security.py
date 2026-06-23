@@ -220,27 +220,19 @@ def _derive_source(title: str | None) -> str:
     return "other"
 
 
-def _enrich_source(rows: list[dict], source: str | None, limit: int) -> list[dict]:
-    """Her bulguya derived `source` ekle; `source` verilirse o alt-kaynağa filtrele; sonra limit uygula.
-    (Filtre post-fetch — kaynak title-deseninden türetilir, SQL-kolonu değil; limit filtreden SONRA tam.)"""
-    out: list[dict] = []
-    for raw in rows:
-        r = dict(raw)
-        r["source"] = _derive_source(r.get("title"))
-        if source is None or r["source"] == source:
-            out.append(r)
-        if len(out) >= limit:
-            break
-    return out
-
-
-def _findings_scoped(projects: list[str], status: str | None, limit: int) -> list[dict]:
+def _findings_scoped(projects: list[str], status: str | None, source: str | None, limit: int) -> list[dict]:
     """type='bug' AND project IN (pentest-target domain'leri) — code-review/dev bulgularını DIŞLAR.
-    list_discoveries ile aynı kolon-şekli. projects whitelist'ten (güvenli, parametreli)."""
+    list_discoveries ile aynı kolon-şekli. projects whitelist'ten (güvenli, parametreli).
+
+    `source` verilirse SQL-SEVİYESİNDE filtrele (LIMIT'ten ÖNCE) — _derive_source'u SQLite
+    user-function olarak register eder. Böylece tek-kaynak son-bulguları domine etse bile
+    (örn 300 self-pentest + eski nuclei) ?source=nuclei güvenilir döner (post-fetch over-fetch
+    cap'inin kaçırdığı durum — Codex #216 P2)."""
     if not projects:
         return []
     db = _memory.get_db()
     try:
+        db.create_function("pentest_source", 1, _derive_source, deterministic=True)
         ph = ",".join("?" for _ in projects)
         q = (
             "SELECT id, session_id, device_name, project, type, title, status, "
@@ -251,11 +243,17 @@ def _findings_scoped(projects: list[str], status: str | None, limit: int) -> lis
         if status:
             q += " AND status=?"
             params.append(status)
+        if source is not None:
+            q += " AND pentest_source(title)=?"
+            params.append(source)
         q += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
-        return [dict(r) for r in db.execute(q, params).fetchall()]
+        rows = [dict(r) for r in db.execute(q, params).fetchall()]
     finally:
         db.close()
+    for r in rows:
+        r["source"] = _derive_source(r.get("title"))
+    return rows
 
 
 @router.get("/pentest/findings", dependencies=[Depends(rate_limit_read)])
@@ -267,18 +265,16 @@ async def list_findings(
 ):
     """Pentest bulguları — pentest-target domain'lerine SCOPE'lu (project=domain). Dev/code-review
     bulguları (named-project) DIŞLANIR. Tek-target için ?project=<domain> (whitelist'te; aksi boş).
-    Her bulguda derived `source` ('nuclei'|'self-pentest'|'other'); ?source=<x> ile alt-kaynak filtrele
-    (post-fetch; over-fetch ile limit filtreden-sonra tam)."""
+    Her bulguda derived `source` ('nuclei'|'self-pentest'|'other'); ?source=<x> ile alt-kaynak
+    filtrele (SQL-seviyesinde, LIMIT'ten önce → mixed-history'de güvenilir)."""
     targets = _load_targets()
-    # source-filter post-fetch → filtreden sonra `limit` tam dönsün diye fazladan çek.
-    fetch = limit if source is None else min(limit * 10, 500)
     if project is not None:
         if project.lower() not in targets:
             return []  # off-whitelist project → dev/code-review sızdırma
-        rows = await _memory.list_discoveries(project=project, type="bug", status=status, limit=fetch)
+        scope = [project.lower()]
     else:
-        rows = _findings_scoped(targets, status, fetch)
-    return _enrich_source(rows, source, limit)
+        scope = targets
+    return _findings_scoped(scope, status, source, limit)
 
 
 @router.get("/pentest/findings/{finding_id}", dependencies=[Depends(rate_limit_read)])
