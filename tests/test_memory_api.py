@@ -1064,6 +1064,9 @@ async def test_create_concurrent_integrity_returns_existing(client, memory_db, m
         return 5
 
     monkeypatch.setattr("app.api.memory.signal_quality.score_importance", _rival_then_score)
-    r = await _post_disc(client, "yaris baslik")
+    r = await _post_disc(client, "yaris baslik", details="kaybeden-detay")
     assert r.status_code == 200  # 500 DEĞİL
-    assert r.json()["status"] == "already_exists_concurrent"
+    body = r.json()
+    assert body["status"] == "already_exists_concurrent"
+    # #213-P2: kaybeden-payload düşmedi → kazanana merge edildi (rakip details=NULL'dı, şimdi loser'ınki)
+    assert (await client.get(f"/api/v1/memory/discoveries/{body['id']}")).json()["details"] == "kaybeden-detay"

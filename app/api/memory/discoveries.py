@@ -185,6 +185,14 @@ async def create_discovery(data: DiscoveryCreate):
                 (data.project, data.type, data.title),
             ).fetchone()
             if winner:
+                # #213-P2 (Codex): kaybeden-payload'ı SESSİZCE DÜŞÜRME — exact-title yolu gibi kazananı
+                # bu isteğin details/rationale'ıyla merge et (concurrent-client context-kaybı önle).
+                if details_clean or data.rationale:
+                    db.execute(
+                        "UPDATE discoveries SET details=COALESCE(?, details), device_name=?, rationale=COALESCE(?, rationale) WHERE id=?",
+                        (details_clean, data.device_name, data.rationale, winner[0]),
+                    )
+                    db.commit()
                 return {"id": winner[0], "status": "already_exists_concurrent", "secrets_redacted": redacted_labels}
             raise  # beklenmedik IntegrityError → yükselt (yut-ma)
         _sync_fts(db, cur.lastrowid, data.title, details_clean)
