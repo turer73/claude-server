@@ -31,12 +31,23 @@ send_telegram() {
         -d text="$1" >/dev/null 2>&1
 }
 
-RESPONSE=$(curl -s --max-time 10 "$URL" 2>/dev/null)
+# In-run retry: geçici Tailscale/VPS blip'i sahte partial-page'e çevirme (klipper 2026-06-23;
+# #205/#207/#209 ile aynı "tek-örnek != sürekli-sorun" disiplini — partial'ların çoğu blip,
+# balance erişildiğinde sağlıklı). N deneme + kısa backoff; ancak HEPSİ boş kalırsa partial.
+# Deneme/backoff env ile ayarlanır (test hızı: RENDERHANE_RETRY_SLEEP=0).
+RETRY_ATTEMPTS=${RENDERHANE_RETRY_ATTEMPTS:-3}
+RETRY_SLEEP=${RENDERHANE_RETRY_SLEEP:-3}
+RESPONSE=""
+for _att in $(seq 1 "$RETRY_ATTEMPTS"); do
+    RESPONSE=$(curl -s --max-time 10 "$URL" 2>/dev/null)
+    [ -n "$RESPONSE" ] && break
+    [ "$_att" -lt "$RETRY_ATTEMPTS" ] && sleep "$RETRY_SLEEP"
+done
 if [ -z "$RESPONSE" ]; then
-    echo "[$TS] ERROR: VPS /api/health timeout/empty" >> "$LOG"
+    echo "[$TS] ERROR: VPS /api/health timeout/empty ($RETRY_ATTEMPTS deneme)" >> "$LOG"
     # Geçici dış-bağımlılık (VPS panola-social erişilemedi) -> partial (warning),
     # CRITICAL DEĞİL: bir sonraki saatlik run'da düzelir. (outcome-contract)
-    echo "OUTCOME: partial | VPS /api/health erişilemedi (geçici dış-bağımlılık; saatlik retry)"
+    echo "OUTCOME: partial | VPS /api/health $RETRY_ATTEMPTS-denemede erişilemedi (geçici dış-bağımlılık; saatlik retry)"
     exit 0
 fi
 
