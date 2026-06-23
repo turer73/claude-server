@@ -145,7 +145,16 @@ async def create_discovery(data: DiscoveryCreate):
         # importance (fail-safe → 5) — DB-MUTASYON ÖNCESİ son await (buradaki iptal = no-op, veri-kaybı yok).
         importance = await asyncio.to_thread(sq.score_importance, data.title, details_clean)
 
-        # KRİTİK BÖLÜM (içinde await YOK): önce HALEF-INSERT (durable), SONRA eskiyi-superseded → veri-kaybı yok.
+        # KRİTİK BÖLÜM (içinde await YOK → senkron=ATOMİK, cancellation-penceresi yok):
+        # #212-P1 (Codex): eskiyi ÖNCE superseded yap (same-title SUPERSEDE'de idx_discoveries_unique_active
+        # aktif-başlık-unique'ini ihlal etmesin — eski hâlâ active iken aynı-başlık INSERT IntegrityError verir).
+        # #208-P1: ama ARALARINDA await YOK (importance yukarıda, set_payload aşağıda) → senkron sqlite,
+        # iptal-noktası yok → eski-superseded + halef-INSERT bölünemez → veri-kaybı da imkansız.
+        if superseded_id:
+            db.execute(
+                "UPDATE discoveries SET status='superseded', invalid_at=datetime('now') WHERE id=? AND status='active'",
+                (superseded_id,),
+            )
         cur = db.execute(
             "INSERT INTO discoveries "
             "(session_id, device_name, project, type, title, details, status, rationale, valid_at, importance, supersedes_id) "
@@ -163,16 +172,10 @@ async def create_discovery(data: DiscoveryCreate):
                 superseded_id,
             ),
         )
-        db.commit()
+        db.commit()  # eski-superseded + halef-INSERT tek-commit (atomik)
         _sync_fts(db, cur.lastrowid, data.title, details_clean)
         db.commit()
         new_id = cur.lastrowid
-        if superseded_id:  # halef artık durable → eskiyi superseded işaretle (iptal-güvenli sıra)
-            db.execute(
-                "UPDATE discoveries SET status='superseded', invalid_at=datetime('now') WHERE id=? AND status='active'",
-                (superseded_id,),
-            )
-            db.commit()
 
         # #208-P2 (Codex): response-kritik event'i Qdrant-await'inden ÖNCE schedule et — create_task
         # detached olduğu için aşağıdaki await'te iptal olsa bile bug_created/fix_created webhook/Telegram atlanmaz.
