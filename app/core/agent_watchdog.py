@@ -266,11 +266,11 @@ def _compute_sustained(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(new_state), encoding="utf-8")
     except OSError:
-        # #209-P2 (Codex): state YAZILAMADIYSA stale-state'i KULLANMA -> boş-sustained dön (bu tur emit-yok,
-        # konservatif). Yoksa eski-dosya kalır, düşüp-tekrar-spike yapan uzun-ömürlü PID sonraki turda
-        # stale `since`'i devralıp sahte-sustained-runaway üretebilirdi.
-        logger.warning("watchdog cpu-streak state yazilamadi -> bu tur sustained={} (stale-state kullanilmaz)")
-        return {}
+        # #212-P2 (Codex): write-fail'de HESAPLANAN sustained'i ATMA — yoksa 15dk+ gerçek-runaway o tur
+        # kör-edilir (alert/kill yok). Bu turun map'i prev-state+current-snap'tan DOĞRU hesaplandı; sadece
+        # PERSIST edilemedi. Geri-dön (current-tespit korunur). (Stale-future-read riski ayrı+nadir: kalıcı
+        # write-fail = fark-edilir infra-sorunu; return-{} onu zaten ÇÖZMÜYORDU — dosya yine değişmiyor.)
+        logger.warning("watchdog cpu-streak state yazilamadi -> hesaplanan-sustained korunur (persist atlandi)")
     return sustained
 
 

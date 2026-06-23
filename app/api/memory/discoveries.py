@@ -188,12 +188,14 @@ async def create_discovery(data: DiscoveryCreate):
         )
 
         # Best-effort Qdrant (DB artık tutarlı; buradaki await'te iptal YALNIZ Qdrant-sync kaybeder, veri-kaybı YOK).
+        # #212-P2 (Codex): superseded-payload-sync ÖNCE — sonraki upsert-await'inde iptal olursa eski Qdrant-point
+        # 'active' kalıp gelecekteki semantic_dedup'ı (UPDATE/NOOP DB-status-recheck'siz) yanıltmasın.
+        if superseded_id:
+            await asyncio.to_thread(sq.set_payload_status, superseded_id, "superseded")  # Qdrant payload-sync (önce)
         await asyncio.to_thread(sq.ensure_collection)
         await asyncio.to_thread(
             sq.upsert_discovery, new_id, vec, {"project": data.project, "type": data.type, "title": data.title, "status": "active"}
         )
-        if superseded_id:
-            await asyncio.to_thread(sq.set_payload_status, superseded_id, "superseded")  # Qdrant payload-sync
 
         result = {"id": new_id, "status": "created", "importance": importance, "secrets_redacted": redacted_labels}
         if superseded_id:
