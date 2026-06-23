@@ -1,4 +1,5 @@
 """FastAPI app + router factory."""
+
 from __future__ import annotations
 
 from pathlib import Path

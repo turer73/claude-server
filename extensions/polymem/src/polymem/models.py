@@ -1,4 +1,5 @@
 """Pydantic v2 models."""
+
 from __future__ import annotations
 
 from typing import Any, Literal
@@ -41,6 +42,7 @@ class MemoryRead(BaseModel):
 
 # ----- devices -----
 
+
 class DeviceRegister(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     platform: str = Field(min_length=1, max_length=50)
@@ -81,6 +83,7 @@ class DeviceProjectRead(BaseModel):
 
 # ----- sessions -----
 
+
 class SessionCreate(BaseModel):
     summary: str = Field(min_length=1)
     device_name: str | None = None
@@ -100,6 +103,7 @@ class SessionRead(BaseModel):
 
 
 # ----- search -----
+
 
 class SearchMemoryHit(BaseModel):
     id: int

@@ -1,4 +1,5 @@
 """Sessions tests."""
+
 from __future__ import annotations
 
 
@@ -12,6 +13,7 @@ def _create(client, auth_headers, **overrides):
 
 # ----- auth -----
 
+
 def test_sessions_auth_required(client):
     r = client.get("/sessions")
     assert r.status_code == 401
@@ -24,6 +26,7 @@ def test_sessions_auth_disabled_mode_ok(client_noauth):
 
 
 # ----- create -----
+
 
 def test_create_minimal_defaults_date_today(client, auth_headers):
     s = _create(client, auth_headers)
@@ -63,6 +66,7 @@ def test_create_with_explicit_date_and_context(client, auth_headers):
 
 
 # ----- get / list -----
+
 
 def test_get_missing_returns_404(client, auth_headers):
     r = client.get("/sessions/999", headers=auth_headers)
@@ -118,6 +122,7 @@ def test_list_rejects_bad_limit(client, auth_headers):
 
 
 # ----- delete -----
+
 
 def test_delete_removes_session(client, auth_headers):
     s = _create(client, auth_headers)

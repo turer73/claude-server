@@ -1,4 +1,5 @@
 """Memories CRUD router."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -26,11 +27,7 @@ def build_router(db_path: str | Path, auth_dep) -> APIRouter:
         if device is not None:
             clauses.append("source_device = ?")
             params.append(device)
-        sql = (
-            "SELECT * FROM memories WHERE "
-            + " AND ".join(clauses)
-            + " ORDER BY updated_at DESC LIMIT ?"
-        )
+        sql = "SELECT * FROM memories WHERE " + " AND ".join(clauses) + " ORDER BY updated_at DESC LIMIT ?"
         params.append(limit)
         with connect(db_path) as db:
             rows = db.execute(sql, params).fetchall()

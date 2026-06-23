@@ -1,4 +1,5 @@
 """Unified FTS5 search across memories + sessions."""
+
 from __future__ import annotations
 
 import re

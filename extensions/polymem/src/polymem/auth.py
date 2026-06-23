@@ -1,4 +1,5 @@
 """X-Memory-Key dependency."""
+
 from __future__ import annotations
 
 from fastapi import Header, HTTPException, status

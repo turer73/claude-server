@@ -263,8 +263,7 @@ def findings_source_db(tmp_path, monkeypatch, pentest_env):
         "VALUES ('panola.app','bug','self-pentest: eksik security header','smoke detayı','active')"
     )
     conn.execute(
-        "INSERT INTO discoveries (project,type,title,details,status) "
-        "VALUES ('panola.app','bug','manuel bulgu','diğer detay','active')"
+        "INSERT INTO discoveries (project,type,title,details,status) VALUES ('panola.app','bug','manuel bulgu','diğer detay','active')"
     )
     conn.commit()
     conn.close()

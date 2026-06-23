@@ -1,4 +1,5 @@
 """Sessions router (append-only log of agent work)."""
+
 from __future__ import annotations
 
 import json

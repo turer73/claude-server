@@ -1,4 +1,5 @@
 """Memories CRUD + auth tests."""
+
 from __future__ import annotations
 
 
@@ -16,6 +17,7 @@ def _make(client, auth_headers, **overrides):
 
 
 # ----- auth -----
+
 
 def test_auth_missing_key_rejects(client):
     r = client.get("/memories")
@@ -39,6 +41,7 @@ def test_auth_disabled_mode_skips_check(client_noauth):
 
 
 # ----- create -----
+
 
 def test_create_minimal_fields(client, auth_headers):
     m = _make(client, auth_headers)
@@ -66,6 +69,7 @@ def test_create_rejects_bad_type(client, auth_headers):
 
 
 # ----- list + filter -----
+
 
 def test_list_filters_by_type(client, auth_headers):
     _make(client, auth_headers, type="user", name="u1")
@@ -99,6 +103,7 @@ def test_list_excludes_inactive_by_default(client, auth_headers):
 
 # ----- read by id -----
 
+
 def test_get_by_id(client, auth_headers):
     m = _make(client, auth_headers)
     r = client.get(f"/memories/{m['id']}", headers=auth_headers)
@@ -112,6 +117,7 @@ def test_get_missing_returns_404(client, auth_headers):
 
 
 # ----- update -----
+
 
 def test_update_changes_fields_and_touches_updated_at(client, auth_headers):
     m = _make(client, auth_headers)
@@ -135,6 +141,7 @@ def test_update_missing_returns_404(client, auth_headers):
 
 # ----- soft delete -----
 
+
 def test_soft_delete_marks_inactive(client, auth_headers):
     m = _make(client, auth_headers)
     r = client.delete(f"/memories/{m['id']}", headers=auth_headers)
@@ -145,6 +152,7 @@ def test_soft_delete_marks_inactive(client, auth_headers):
 
 
 # ----- mark read -----
+
 
 def test_mark_read_increments_counter(client, auth_headers):
     m = _make(client, auth_headers)
