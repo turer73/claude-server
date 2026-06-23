@@ -203,13 +203,45 @@ def get_run(job_id: str, tail: int = 200) -> dict:
 # internally they're discovery rows.
 
 
+def _findings_scoped(projects: list[str], status: str | None, limit: int) -> list[dict]:
+    """type='bug' AND project IN (pentest-target domain'leri) — code-review/dev bulgularını DIŞLAR.
+    list_discoveries ile aynı kolon-şekli. projects whitelist'ten (güvenli, parametreli)."""
+    if not projects:
+        return []
+    db = _memory.get_db()
+    try:
+        ph = ",".join("?" for _ in projects)
+        q = (
+            "SELECT id, session_id, device_name, project, type, title, status, "
+            "rationale, read_count, date(created_at) as date FROM discoveries "
+            f"WHERE type='bug' AND project IN ({ph})"  # noqa: S608 (projects whitelist'ten, value parametreli)
+        )
+        params: list = list(projects)
+        if status:
+            q += " AND status=?"
+            params.append(status)
+        q += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        return [dict(r) for r in db.execute(q, params).fetchall()]
+    finally:
+        db.close()
+
+
 @router.get("/pentest/findings", dependencies=[Depends(rate_limit_read)])
 async def list_findings(
     project: str | None = None,
     status: str | None = "active",
     limit: int = 30,
 ):
-    return await _memory.list_discoveries(project=project, type="bug", status=status, limit=limit)
+    """Pentest bulguları — pentest-target domain'lerine SCOPE'lu (project=domain). Dev/code-review
+    bulguları (named-project) DIŞLANIR (eskiden project=None tüm-type=bug'ları döndürüyordu, karışıyordu).
+    Tek-target için ?project=<domain> (whitelist'te olmalı; aksi → leak-yok boş)."""
+    targets = _load_targets()
+    if project is not None:
+        if project.lower() not in targets:
+            return []  # off-whitelist project → dev/code-review sızdırma
+        return await _memory.list_discoveries(project=project, type="bug", status=status, limit=limit)
+    return _findings_scoped(targets, status, limit)
 
 
 @router.get("/pentest/findings/{finding_id}", dependencies=[Depends(rate_limit_read)])
