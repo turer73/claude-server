@@ -92,7 +92,9 @@ scan_domain() {
   count=$(wc -l < "$outfile")
   log "$domain: $count bulgu"
 
-  local project="${domain%%.*}"
+  # project = TAM domain (self-pentest.sh ile tutarlı + /pentest/findings whitelist-scope'una uyar).
+  # Eskiden ${domain%%.*} (TLD-strip) → "renderhane" gibi dev-project'lerle ÇAKIŞIYOR + scope-dışı kalıyordu.
+  local project="$domain"
   while IFS= read -r line; do
     local tid sev iname matched title
     tid=$(echo "$line" | jq -r '.["template-id"] // empty')

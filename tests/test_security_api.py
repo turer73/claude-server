@@ -196,6 +196,11 @@ def findings_db(tmp_path, monkeypatch, pentest_env):
     conn.execute(
         "INSERT INTO discoveries (project, type, title, details, status) VALUES ('panola.app', 'fix', 'not a bug', 'detail C', 'active')"
     )
+    # SCOPE testi: code-review bug'ı (whitelist-DIŞI project) — /pentest/findings DÖNDÜRMEMELİ
+    conn.execute(
+        "INSERT INTO discoveries (project, type, title, details, status) "
+        "VALUES ('code-review', 'bug', 'app/core/x.py SQLi', 'kod-bulgusu', 'active')"
+    )
     conn.commit()
     conn.close()
 
@@ -221,6 +226,22 @@ async def test_findings_status_filter_passthrough(client, findings_db):
     rows = resp.json()
     assert len(rows) == 1
     assert rows[0]["title"] == "old fixed thing"
+
+
+async def test_findings_excludes_non_target_project(client, findings_db):
+    """SCOPE fix: project=None → yalnız pentest-target domain'leri (panola.app); code-review
+    bug'ı (whitelist-dışı) DIŞLANIR. Eskiden tüm-type=bug dönüyordu (kod-bulgusu karışıyordu)."""
+    resp = await client.get("/api/v1/security/pentest/findings", headers=HEADERS)
+    titles = [r["title"] for r in resp.json()]
+    assert "open CSP gap" in titles  # panola.app (whitelist) → var
+    assert "app/core/x.py SQLi" not in titles  # code-review (whitelist-dışı) → YOK
+
+
+async def test_findings_explicit_offwhitelist_project_no_leak(client, findings_db):
+    """?project=code-review → boş (whitelist-dışı project'le dev/code-review sızdırma)."""
+    resp = await client.get("/api/v1/security/pentest/findings?project=code-review", headers=HEADERS)
+    assert resp.status_code == 200
+    assert resp.json() == []
 
 
 async def test_finding_get_by_id_returns_full_record(client, findings_db):
