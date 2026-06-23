@@ -119,15 +119,12 @@ async def create_discovery(data: DiscoveryCreate):
                 )
                 db.commit()
             return {"id": tid, "status": "merged_semantic", "secrets_redacted": redacted_labels}
-        superseded_id = None
-        if op == "SUPERSEDE" and decision.get("target_id"):
-            superseded_id = decision["target_id"]
-            db.execute(
-                "UPDATE discoveries SET status='superseded', invalid_at=datetime('now') WHERE id=? AND status='active'",
-                (superseded_id,),
-            )
-            db.commit()
-            await asyncio.to_thread(sq.set_payload_status, superseded_id, "superseded")  # Qdrant payload-sync (data-loss önle)
+        # #208-P1 (Codex): SUPERSEDE'de eskiyi-superseded-işaretleme HALEF-INSERT'TEN SONRA yapılır.
+        # Eski sıra (önce-superseded-commit → await set_payload → await score_importance → INSERT)
+        # cancellation-penceresi açıyordu: await'te iptal (client-disconnect/timeout/shutdown) → eski
+        # kalıcı-superseded + halef YOK = VERİ-KAYBI. Yeni sıra: importance-await mutasyon-ÖNCESİ
+        # (iptal=no-op) → INSERT-halef (durable) → SONRA eskiyi-superseded (önce-halef-sonra-supersede).
+        superseded_id = decision["target_id"] if (op == "SUPERSEDE" and decision.get("target_id")) else None
 
         # Exact-title fallback (semantik ADD/degrade yolu — ayni-baslik aktif kayit → guncelle).
         # SUPERSEDE'de bilerek YENİ row istiyoruz, fallback'i atla.
@@ -145,8 +142,10 @@ async def create_discovery(data: DiscoveryCreate):
                     db.commit()
                 return {"id": existing[0], "status": "already_exists", "secrets_redacted": redacted_labels}
 
-        # importance (fail-safe → 5) + INSERT (valid_at=now bi-temporal, supersedes_id linkage)
+        # importance (fail-safe → 5) — DB-MUTASYON ÖNCESİ son await (buradaki iptal = no-op, veri-kaybı yok).
         importance = await asyncio.to_thread(sq.score_importance, data.title, details_clean)
+
+        # KRİTİK BÖLÜM (içinde await YOK): önce HALEF-INSERT (durable), SONRA eskiyi-superseded → veri-kaybı yok.
         cur = db.execute(
             "INSERT INTO discoveries "
             "(session_id, device_name, project, type, title, details, status, rationale, valid_at, importance, supersedes_id) "
@@ -168,13 +167,15 @@ async def create_discovery(data: DiscoveryCreate):
         _sync_fts(db, cur.lastrowid, data.title, details_clean)
         db.commit()
         new_id = cur.lastrowid
+        if superseded_id:  # halef artık durable → eskiyi superseded işaretle (iptal-güvenli sıra)
+            db.execute(
+                "UPDATE discoveries SET status='superseded', invalid_at=datetime('now') WHERE id=? AND status='active'",
+                (superseded_id,),
+            )
+            db.commit()
 
-        # Qdrant upsert (fail-safe; vec yoksa atlanir — semantik-dedup ileride exact-title'a düşer)
-        await asyncio.to_thread(sq.ensure_collection)
-        await asyncio.to_thread(
-            sq.upsert_discovery, new_id, vec, {"project": data.project, "type": data.type, "title": data.title, "status": "active"}
-        )
-
+        # #208-P2 (Codex): response-kritik event'i Qdrant-await'inden ÖNCE schedule et — create_task
+        # detached olduğu için aşağıdaki await'te iptal olsa bile bug_created/fix_created webhook/Telegram atlanmaz.
         event_type = f"{data.type}_created" if data.type in ("bug", "fix") else "discovery_created"
         asyncio.create_task(
             _fire_event(
@@ -182,6 +183,14 @@ async def create_discovery(data: DiscoveryCreate):
                 {"id": new_id, "project": data.project, "type": data.type, "title": data.title, "device": data.device_name},
             )
         )
+
+        # Best-effort Qdrant (DB artık tutarlı; buradaki await'te iptal YALNIZ Qdrant-sync kaybeder, veri-kaybı YOK).
+        await asyncio.to_thread(sq.ensure_collection)
+        await asyncio.to_thread(
+            sq.upsert_discovery, new_id, vec, {"project": data.project, "type": data.type, "title": data.title, "status": "active"}
+        )
+        if superseded_id:
+            await asyncio.to_thread(sq.set_payload_status, superseded_id, "superseded")  # Qdrant payload-sync
 
         result = {"id": new_id, "status": "created", "importance": importance, "secrets_redacted": redacted_labels}
         if superseded_id:

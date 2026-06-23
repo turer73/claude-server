@@ -107,6 +107,28 @@ def test_sustained_resets_when_cpu_drops(tmp_path: Path) -> None:
     assert "1234" not in json.loads((tmp_path / aw.CPU_STREAK_FILE).read_text())  # state'ten dustu
 
 
+def test_sustained_malformed_since_does_not_abort(tmp_path: Path) -> None:
+    """#209-P2 (Codex): non-numeric `since` (null/string) float-patlamasıyla TÜM-taramayı iptal
+    ETMEMELİ — per-entry guard, malformed→fresh(sustained 0). Diğer geçerli PID'ler etkilenmez."""
+    now = 1_000_000.0
+    (tmp_path / aw.CPU_STREAK_FILE).write_text(json.dumps({"1234": {"since": "garbage"}, "5678": {"since": None}}), encoding="utf-8")
+    # iki high-PID: ikisi de malformed-since → fresh (sustained 0), exception YOK
+    snaps = [_snap(cpu=99.0, age=30.0), ProcSnapshot(pid=5678, name="x", cmdline="y", cpu_pct=99.0, age_minutes=30.0)]
+    out = aw._compute_sustained(snaps, state_dir=tmp_path, now_ts=now)
+    assert out[1234] == 0.0  # malformed → fresh, patlamadı
+    assert out[5678] == 0.0
+
+
+def test_sustained_write_fail_returns_empty(tmp_path: Path) -> None:
+    """#209-P2 (Codex): state-YAZILAMAZSA stale-state kullanma → boş-sustained dön (bu tur emit-yok)."""
+    # state_dir'i DOSYA yap → mkdir/write OSError → return {}
+    blocker = tmp_path / "blocked"
+    blocker.write_text("x", encoding="utf-8")
+    state_dir = blocker / "sub"  # bir dosyanın altına yazılamaz → OSError
+    out = aw._compute_sustained([_snap(cpu=99.0, age=30.0)], state_dir=state_dir, now_ts=1_000_000.0)
+    assert out == {}  # write-fail → stale kullanılmaz
+
+
 def test_sustained_pid_reuse_guard(tmp_path: Path) -> None:
     now = 1_000_000.0
     # prev streak 60dk ama process YASI 1dk -> reuse/restart -> eski-streak devralinmaz

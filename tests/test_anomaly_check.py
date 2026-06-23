@@ -97,6 +97,16 @@ def test_floor_allows_real_high():
     assert out[0]["direction"] == "yüksek"
 
 
+def test_memory_floor_aligned_to_config_75():
+    # #205-P2 (Codex): memory floor 80→75 (config alert_memory_percent=75 hizalama).
+    # mem 19→76: %76 >= %75 floor → artık GEÇER (eski 80-floor'da bastırılırdı, static-alert ile tutarsızdı)
+    assert ac.ANOMALY_FLOORS["memory_usage"][0] == 75.0
+    out76 = ac.detect_anomalies({"memory_usage": [*_IDLE, 76.0]})
+    assert len(out76) == 1  # 76 >= 75 floor → flagged (korelasyon-yolu artık görür)
+    # mem 19→74: %74 < %75 floor → hâlâ bastır (operasyonel-önemsiz)
+    assert ac.detect_anomalies({"memory_usage": [*_IDLE, 74.0]}) == []
+
+
 def test_low_direction_suppressed_for_resource():
     # cpu 50→1: düşük-yön (z<0); resource-low benign (low_floor=None) → ATLA (crash≠düşük-cpu)
     base = [50.0, 52.0, 48.0, 51.0, 49.0, 50.0, 53.0, 47.0, 50.0, 51.0, 49.0, 52.0]

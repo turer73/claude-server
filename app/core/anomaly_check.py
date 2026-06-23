@@ -41,9 +41,14 @@ _MAD_SCALE = 0.6745  # robust-z normalizasyon sabiti (normal-dağılım MAD→si
 # {metric: (high_floor, low_floor)}. low_floor=None → DÜŞÜK-yön suppress: resource metriklerinde
 # (cpu/mem/disk/temp) düşük-değer benign (idle/boş/serin), crash-sinyali DEĞİL (crash=liveness'in
 # işi). Bilinmeyen-metrik → floor-yok (z-tek-başına, geriye-uyumlu). devops-static-eşik'i tamamlar.
+# #205-P2 (Codex): memory floor, config'deki static-alert eşiğiyle (alert_memory_percent=75)
+# HİZALI olmalı. Eski floor=80 > alert=75 idi → 76-79% bandı static-alerter'ı tetikliyor ama
+# anomaly-producer'ı tetiklemiyordu (korelasyon-yolu o bandı görmüyordu). 75'e indirildi. Diğer
+# floor'lar config-alert'in ALTINDA (cpu 70<85, temp 75<80) = anomaly static'i TAMAMLAR (kasıtlı);
+# yalnız memory floor>alert tutarsızdı.
 ANOMALY_FLOORS: dict[str, tuple[float, float | None]] = {
     "cpu_usage": (70.0, None),
-    "memory_usage": (80.0, None),
+    "memory_usage": (75.0, None),
     "disk_usage": (85.0, None),
     "temperature": (75.0, None),
 }

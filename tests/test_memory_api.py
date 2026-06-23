@@ -1016,6 +1016,10 @@ async def test_create_dedup_supersede_branch(client, memory_db, monkeypatch):
     body = (await _post_disc(client, "bulgu tekrar nuksetti")).json()
     assert body["status"] == "created"
     assert body["supersedes_id"] == old_id
-    # eski kayıt superseded oldu (bi-temporal regression linkage)
+    # #208-P1: HALEF aktif+durable (yeni sıra: önce-INSERT-sonra-eski-superseded → cancel'da veri-kaybı yok)
+    new_id = body["id"]
+    r_new = await client.get(f"/api/v1/memory/discoveries/{new_id}")
+    assert r_new.json()["status"] == "active"
+    # eski kayıt superseded oldu (bi-temporal regression linkage) — ANCAK halef durable olduktan sonra
     r3 = await client.get(f"/api/v1/memory/discoveries/{old_id}")
     assert r3.json()["status"] == "superseded"
