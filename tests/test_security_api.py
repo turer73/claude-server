@@ -244,6 +244,96 @@ async def test_findings_explicit_offwhitelist_project_no_leak(client, findings_d
     assert resp.json() == []
 
 
+@pytest.fixture
+def findings_source_db(tmp_path, monkeypatch, pentest_env):
+    """Alt-kaynak ayrımı için: nuclei + self-pentest + other bulguları (whitelist domain panola.app)."""
+    import sqlite3
+
+    from tests.test_memory_api import MEMORY_SCHEMA
+
+    db_path = tmp_path / "memory.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(MEMORY_SCHEMA)
+    conn.execute(
+        "INSERT INTO discoveries (project,type,title,details,status) "
+        "VALUES ('panola.app','bug','[high] Exposed .git directory (git-config-exposure)','nuclei detayı','active')"
+    )
+    conn.execute(
+        "INSERT INTO discoveries (project,type,title,details,status) "
+        "VALUES ('panola.app','bug','self-pentest: eksik security header','smoke detayı','active')"
+    )
+    conn.execute(
+        "INSERT INTO discoveries (project,type,title,details,status) VALUES ('panola.app','bug','manuel bulgu','diğer detay','active')"
+    )
+    conn.commit()
+    conn.close()
+    from app.api import memory as memory_mod
+
+    monkeypatch.setattr(memory_mod, "DB_PATH", str(db_path))
+    return db_path
+
+
+async def test_findings_source_derivation(client, findings_source_db):
+    """Her bulguda derived `source`: nuclei-title→'nuclei', self-pentest:→'self-pentest', diğer→'other'."""
+    resp = await client.get("/api/v1/security/pentest/findings", headers=HEADERS)
+    by_title = {r["title"]: r["source"] for r in resp.json()}
+    assert by_title["[high] Exposed .git directory (git-config-exposure)"] == "nuclei"
+    assert by_title["self-pentest: eksik security header"] == "self-pentest"
+    assert by_title["manuel bulgu"] == "other"
+
+
+async def test_findings_source_filter(client, findings_source_db):
+    """?source=nuclei → yalnız nuclei-alt-kaynak bulguları."""
+    resp = await client.get("/api/v1/security/pentest/findings?source=nuclei", headers=HEADERS)
+    rows = resp.json()
+    assert len(rows) == 1
+    assert rows[0]["source"] == "nuclei"
+    assert "git" in rows[0]["title"]
+    # self-pentest filtre de doğru
+    resp2 = await client.get("/api/v1/security/pentest/findings?source=self-pentest", headers=HEADERS)
+    assert [r["source"] for r in resp2.json()] == ["self-pentest"]
+
+
+@pytest.fixture
+def findings_source_dominated_db(tmp_path, monkeypatch, pentest_env):
+    """Codex #216 P2 senaryosu: tek-kaynak son-bulguları domine eder + 1 ESKİ nuclei dışarıda.
+    25 self-pentest (yeni) + 1 nuclei (eski). limit=2 → eski over-fetch cap'i (limit*10=20)
+    nuclei'yi kaçırırdı; SQL-seviyesi filtre LIMIT'ten önce çalışıp güvenilir bulmalı."""
+    import sqlite3
+
+    from tests.test_memory_api import MEMORY_SCHEMA
+
+    db_path = tmp_path / "memory.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(MEMORY_SCHEMA)
+    # ESKİ nuclei (created_at eski → ORDER BY created_at DESC'te en sonda)
+    conn.execute(
+        "INSERT INTO discoveries (project,type,title,details,status,created_at) "
+        "VALUES ('panola.app','bug','[low] Eski nuclei bulgusu (old-template)','x','active','2020-01-01 00:00:00')"
+    )
+    # 25 YENİ self-pentest (default created_at = now → DESC'te en başta, over-fetch penceresini doldurur)
+    for i in range(25):
+        conn.execute(
+            "INSERT INTO discoveries (project,type,title,details,status) VALUES ('panola.app','bug',?,'y','active')",
+            (f"self-pentest: header eksik #{i}",),
+        )
+    conn.commit()
+    conn.close()
+    from app.api import memory as memory_mod
+
+    monkeypatch.setattr(memory_mod, "DB_PATH", str(db_path))
+    return db_path
+
+
+async def test_findings_source_filter_survives_domination(client, findings_source_dominated_db):
+    """?source=nuclei&limit=2 → eski nuclei, 25 yeni self-pentest'e rağmen bulunur (SQL-seviyesi filtre)."""
+    resp = await client.get("/api/v1/security/pentest/findings?source=nuclei&limit=2", headers=HEADERS)
+    rows = resp.json()
+    assert len(rows) == 1, f"eski nuclei kaçırıldı (over-fetch regresyonu): {rows}"
+    assert rows[0]["source"] == "nuclei"
+    assert "Eski nuclei" in rows[0]["title"]
+
+
 async def test_finding_get_by_id_returns_full_record(client, findings_db):
     resp = await client.get("/api/v1/security/pentest/findings/1", headers=HEADERS)
     assert resp.status_code == 200
