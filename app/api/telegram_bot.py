@@ -317,6 +317,9 @@ def process_update(update: dict) -> dict:
     if update.get("callback_query"):
         return _handle_callback(update["callback_query"])
 
+    # #210-P2 (Codex): plaintext→Claude kısayolu YALNIZ yeni-mesajda — `edited_message` re-trigger
+    # yapmasın (sahip eski-mesajı düzenleyince kazara ikinci-Claude-run).
+    is_new_message = update.get("message") is not None
     msg = update.get("message") or update.get("edited_message") or {}
     text = msg.get("text", "") or ""
     chat_id = msg.get("chat", {}).get("id")
@@ -342,10 +345,13 @@ def process_update(update: dict) -> dict:
     if not m:
         # SAHİP-chat'ten DÜZ metin (slash'sız) → /claude gibi işle (prefix opsiyonel; telefondan
         # "deploy durumu ne" gibi yaz, Claude işlesin). GÜVENLİK: yalnız owner (TELEGRAM_CHAT_ID).
-        # Slash-komut (/foo) hijack EDİLMEZ (yanlış-yönlendirme önle) ve non-owner → skip (eskisi gibi).
+        # Slash-komut (/foo) hijack EDİLMEZ + non-owner + edited_message → skip (eskisi gibi).
+        # #210-P2 (Codex): slash-kontrol STRIP'li metinde (önde-boşluklu " /foo" guard'ı delmesin) +
+        # yalnız yeni-mesaj (is_new_message; edit re-trigger etmez).
         owner = read_env_var("TELEGRAM_CHAT_ID")
-        if owner and str(chat_id) == str(owner) and text.strip() and not text.startswith("/"):
-            return _handle_claude(chat_id, text.strip(), msg_id, fresh=False)
+        stripped = text.strip()
+        if owner and str(chat_id) == str(owner) and is_new_message and stripped and not stripped.startswith("/"):
+            return _handle_claude(chat_id, stripped, msg_id, fresh=False)
         return {"ok": True, "skipped": "not /research"}
 
     suffix = m.group(1) or ""

@@ -4,6 +4,7 @@ Gövdeler birebir taşındı (Faz 3).
 """
 
 import asyncio
+import sqlite3
 
 from fastapi import HTTPException
 
@@ -150,29 +151,42 @@ async def create_discovery(data: DiscoveryCreate):
         # aktif-başlık-unique'ini ihlal etmesin — eski hâlâ active iken aynı-başlık INSERT IntegrityError verir).
         # #208-P1: ama ARALARINDA await YOK (importance yukarıda, set_payload aşağıda) → senkron sqlite,
         # iptal-noktası yok → eski-superseded + halef-INSERT bölünemez → veri-kaybı da imkansız.
-        if superseded_id:
-            db.execute(
-                "UPDATE discoveries SET status='superseded', invalid_at=datetime('now') WHERE id=? AND status='active'",
-                (superseded_id,),
+        try:
+            if superseded_id:
+                db.execute(
+                    "UPDATE discoveries SET status='superseded', invalid_at=datetime('now') WHERE id=? AND status='active'",
+                    (superseded_id,),
+                )
+            cur = db.execute(
+                "INSERT INTO discoveries "
+                "(session_id, device_name, project, type, title, details, status, rationale, valid_at, importance, supersedes_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)",
+                (
+                    data.session_id,
+                    data.device_name,
+                    data.project,
+                    data.type,
+                    data.title,
+                    details_clean,
+                    data.status or "active",
+                    data.rationale,
+                    importance,
+                    superseded_id,
+                ),
             )
-        cur = db.execute(
-            "INSERT INTO discoveries "
-            "(session_id, device_name, project, type, title, details, status, rationale, valid_at, importance, supersedes_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)",
-            (
-                data.session_id,
-                data.device_name,
-                data.project,
-                data.type,
-                data.title,
-                details_clean,
-                data.status or "active",
-                data.rationale,
-                importance,
-                superseded_id,
-            ),
-        )
-        db.commit()  # eski-superseded + halef-INSERT tek-commit (atomik)
+            db.commit()  # eski-superseded + halef-INSERT tek-commit (atomik)
+        except sqlite3.IntegrityError:
+            # #208-P2 (Codex): eşzamanlı 2 POST aynı active-(project,type,title) → ikisi de dedup-check
+            # geçer, ikisi de INSERT'e gelir → idx_discoveries_unique_active ihlali. Önceki davranış 500'dü;
+            # şimdi: rollback (varsa commit-edilmemiş superseded-UPDATE geri alınır) + kazanan-row'u döndür.
+            db.rollback()
+            winner = db.execute(
+                "SELECT id FROM discoveries WHERE project=? AND type=? AND title=? AND status='active'",
+                (data.project, data.type, data.title),
+            ).fetchone()
+            if winner:
+                return {"id": winner[0], "status": "already_exists_concurrent", "secrets_redacted": redacted_labels}
+            raise  # beklenmedik IntegrityError → yükselt (yut-ma)
         _sync_fts(db, cur.lastrowid, data.title, details_clean)
         db.commit()
         new_id = cur.lastrowid

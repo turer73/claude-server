@@ -1041,3 +1041,29 @@ async def test_create_dedup_supersede_same_title(client, memory_db, monkeypatch)
     assert body["supersedes_id"] == old_id
     assert (await client.get(f"/api/v1/memory/discoveries/{old_id}")).json()["status"] == "superseded"
     assert (await client.get(f"/api/v1/memory/discoveries/{body['id']}")).json()["status"] == "active"
+
+
+async def test_create_concurrent_integrity_returns_existing(client, memory_db, monkeypatch):
+    """#208-P2 (Codex): score_importance-await sırasında RAKİP aynı-(project,type,title) active-row
+    eklenirse INSERT idx_discoveries_unique_active'i ihlal eder → 500 DEĞİL already_exists_concurrent
+    (rollback + kazanan-row). exact-title-check'ten SONRA, INSERT'ten ÖNCE eklenen rakip = race simülasyonu."""
+    db_path = memory_db
+    monkeypatch.setattr(
+        "app.api.memory.signal_quality.semantic_dedup",
+        lambda **k: {"operation": "ADD", "vector": None},
+    )
+
+    def _rival_then_score(title, details):
+        con = sqlite3.connect(db_path)
+        con.execute(
+            "INSERT INTO discoveries (project, type, title, status, valid_at) VALUES ('p','bug',?,'active',datetime('now'))",
+            (title,),
+        )
+        con.commit()
+        con.close()
+        return 5
+
+    monkeypatch.setattr("app.api.memory.signal_quality.score_importance", _rival_then_score)
+    r = await _post_disc(client, "yaris baslik")
+    assert r.status_code == 200  # 500 DEĞİL
+    assert r.json()["status"] == "already_exists_concurrent"
