@@ -48,3 +48,18 @@ async def test_chat_connection_error(ai):
 
         with pytest.raises(ServerError):
             await ai.chat("Hello")
+
+
+@pytest.mark.anyio
+async def test_list_models_connection_error_logs_and_returns_empty(ai, caplog):
+    """list_models LLM-offline'da SESSİZ-değil: logger.warning + boş-liste (surer #100190; codecov-gap kapat).
+    chat() raise-eder ama list_models graceful-degrade — asimetri kasıtlı (model-listesi opsiyonel)."""
+    import logging
+
+    with (
+        patch("httpx.AsyncClient.get", new_callable=AsyncMock, side_effect=Exception("Connection refused")),
+        caplog.at_level(logging.WARNING),
+    ):
+        models = await ai.list_models()
+    assert models == []  # graceful-degrade (raise DEĞİL)
+    assert any("list_models failed" in r.message for r in caplog.records)  # SESSİZ-değil, loglandı
