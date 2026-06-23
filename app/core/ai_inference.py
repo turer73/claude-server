@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import time
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 from app.exceptions import ServerError
 
@@ -47,5 +50,6 @@ class AIInference:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(f"{self._base_url}/api/tags")
             return resp.json().get("models", [])
-        except Exception:
+        except Exception as e:
+            logger.warning("list_models failed (LLM offline?): %s", e)
             return []
