@@ -102,7 +102,10 @@ async def create_discovery(data: DiscoveryCreate):
         if data.skip_dedup:
             decision = {"operation": "ADD"}
         else:
-            decision = sq.semantic_dedup(project=data.project, dtype=data.type, title=data.title, details=details_clean)
+            # #1121: sync Ollama-embed + Qdrant → to_thread (async event-loop'u bloklamasın)
+            decision = await asyncio.to_thread(
+                sq.semantic_dedup, project=data.project, dtype=data.type, title=data.title, details=details_clean
+            )
         op = decision.get("operation", "ADD")
         vec = decision.get("vector")
         if op == "NOOP" and decision.get("target_id"):
@@ -124,7 +127,7 @@ async def create_discovery(data: DiscoveryCreate):
                 (superseded_id,),
             )
             db.commit()
-            sq.set_payload_status(superseded_id, "superseded")  # Qdrant payload-sync (data-loss önle)
+            await asyncio.to_thread(sq.set_payload_status, superseded_id, "superseded")  # Qdrant payload-sync (data-loss önle)
 
         # Exact-title fallback (semantik ADD/degrade yolu — ayni-baslik aktif kayit → guncelle).
         # SUPERSEDE'de bilerek YENİ row istiyoruz, fallback'i atla.
@@ -143,7 +146,7 @@ async def create_discovery(data: DiscoveryCreate):
                 return {"id": existing[0], "status": "already_exists", "secrets_redacted": redacted_labels}
 
         # importance (fail-safe → 5) + INSERT (valid_at=now bi-temporal, supersedes_id linkage)
-        importance = sq.score_importance(data.title, details_clean)
+        importance = await asyncio.to_thread(sq.score_importance, data.title, details_clean)
         cur = db.execute(
             "INSERT INTO discoveries "
             "(session_id, device_name, project, type, title, details, status, rationale, valid_at, importance, supersedes_id) "
@@ -167,8 +170,10 @@ async def create_discovery(data: DiscoveryCreate):
         new_id = cur.lastrowid
 
         # Qdrant upsert (fail-safe; vec yoksa atlanir — semantik-dedup ileride exact-title'a düşer)
-        sq.ensure_collection()
-        sq.upsert_discovery(new_id, vec, {"project": data.project, "type": data.type, "title": data.title, "status": "active"})
+        await asyncio.to_thread(sq.ensure_collection)
+        await asyncio.to_thread(
+            sq.upsert_discovery, new_id, vec, {"project": data.project, "type": data.type, "title": data.title, "status": "active"}
+        )
 
         event_type = f"{data.type}_created" if data.type in ("bug", "fix") else "discovery_created"
         asyncio.create_task(
@@ -217,7 +222,7 @@ async def update_discovery(discovery_id: int, data: DiscoveryUpdate):
         db.execute(f"UPDATE discoveries SET {', '.join(fields)} WHERE id=?", params)
         db.commit()
         if data.status:  # Qdrant payload-sync (status değişti → active-search'ten çıksın)
-            sq.set_payload_status(discovery_id, data.status)
+            await asyncio.to_thread(sq.set_payload_status, discovery_id, data.status)
         return {"status": "updated"}
     finally:
         db.close()
@@ -233,7 +238,7 @@ async def resolve_discovery(discovery_id: int):
             (discovery_id,),
         )
         db.commit()
-        sq.set_payload_status(discovery_id, "completed")  # Qdrant payload-sync
+        await asyncio.to_thread(sq.set_payload_status, discovery_id, "completed")  # Qdrant payload-sync
         return {"status": "resolved"}
     finally:
         db.close()
