@@ -38,6 +38,10 @@ HEARTBEAT_MAX_AGE_MINUTES = 10.0  # hook-state heartbeat bu kadar bayatsa stall
 # process-bagimsiz -> cron'un her-tur yeni-process'i de dedup eder (in-proc dict ise
 # runs-arasi paylasilmaz, bkz app/core/emit_throttle.py docstring).
 WATCHDOG_DEDUP_WINDOW_SECONDS = 900.0
+# Sureklilik-state: per-PID high-CPU streak'i runs-arasi takip (cadvisor-FP-fix 2026-06-23).
+# Tek-cron-turu high-CPU process-uptime'a bakamaz (mesru-daemon spike'i = sahte-runaway);
+# bunun yerine "kac dk-dir SUREKLI >=esik" olculur. data/hook-state/ icinde JSON.
+CPU_STREAK_FILE = "watchdog-cpu-streak.json"
 
 # Mesru uzun-CPU proc'lari (cmdline-substring, case-insensitive). ASLA auto-kill edilmez.
 ALLOWLIST_PATTERNS: tuple[str, ...] = (
@@ -104,32 +108,40 @@ def is_allowlisted(cmdline: str, name: str = "") -> bool:
 def classify(
     snap: ProcSnapshot,
     *,
+    sustained_minutes: float = 0.0,
     cpu_pct: float = RUNAWAY_CPU_PCT,
     min_minutes: float = RUNAWAY_MIN_MINUTES,
     warn_minutes: float = ALLOWLIST_WARN_MINUTES,
 ) -> Verdict:
     """Runaway siniflandirma (saf-mantik, test-edilebilir). FP-onleme klipper #100115.
 
-    - cpu < esik VEYA sure < min -> ignore (mesru/gecici).
-    - core-pinned + sure>=min:
-        - allowlist'te -> notify yalniz sure>=warn_minutes ise (asla kill).
+    KRITIK (cadvisor-FP-fix 2026-06-23): runaway = SU AN core-pinned + bunu SURDURME suresi
+    (sustained_minutes) >= min_minutes. Eski kod `snap.age_minutes` (process-UPTIME) kullaniyordu
+    -> 12-gun-uptime'li mesru daemon (cadvisor/prometheus) ANLIK 1sn-ornekte >=%90 spike yaparsa
+    sahte "runaway" CRITICAL page uretiyordu. sustained_minutes runs-arasi persistence ile
+    olculur (bkz _compute_sustained); tek-anlik-spike sustained'a ulasmaz, gercek-core-pin ulasir
+    (#207 anomaly-persistence ile ayni ilke). Default 0.0 = fail-safe (sustained-verisi yok -> ignore).
+
+    - cpu < esik VEYA sustained < min -> ignore (mesru/gecici-spike).
+    - core-pinned + sustained>=min:
+        - allowlist'te -> notify yalniz sustained>=warn_minutes ise (asla kill).
         - allowlist-disi -> kill-adayi (gercek kill AUTO_KILL+cmdline-verify ile gate'li).
     """
     reasons: list[str] = []
     allow = is_allowlisted(snap.cmdline, snap.name)
-    runaway = snap.cpu_pct >= cpu_pct and snap.age_minutes >= min_minutes
+    runaway = snap.cpu_pct >= cpu_pct and sustained_minutes >= min_minutes
     if not runaway:
-        reasons.append(f"cpu={snap.cpu_pct:.0f}%<{cpu_pct:.0f} veya sure={snap.age_minutes:.0f}dk<{min_minutes:.0f}")
+        reasons.append(f"cpu={snap.cpu_pct:.0f}%<{cpu_pct:.0f} veya surekli={sustained_minutes:.0f}dk<{min_minutes:.0f}")
         return Verdict(snap, allow, False, "ignore", reasons)
     if allow:
-        # mesru ama cok-uzun: yalniz uyari (asla oldurme)
-        if snap.age_minutes >= warn_minutes:
-            reasons.append(f"allowlist ama {snap.age_minutes:.0f}dk>={warn_minutes:.0f} -> warn (kill YOK)")
+        # mesru ama cok-uzun-SUREKLI: yalniz uyari (asla oldurme)
+        if sustained_minutes >= warn_minutes:
+            reasons.append(f"allowlist ama surekli {sustained_minutes:.0f}dk>={warn_minutes:.0f} -> warn (kill YOK)")
             return Verdict(snap, True, True, "notify", reasons)
-        reasons.append("allowlist + sure<warn -> ignore")
+        reasons.append("allowlist + surekli<warn -> ignore")
         return Verdict(snap, True, True, "ignore", reasons)
     reasons.append(
-        f"net-runaway: cpu={snap.cpu_pct:.0f}%>={cpu_pct:.0f} + sure={snap.age_minutes:.0f}dk>={min_minutes:.0f} + allowlist-disi"
+        f"net-runaway: cpu={snap.cpu_pct:.0f}%>={cpu_pct:.0f} + surekli={sustained_minutes:.0f}dk>={min_minutes:.0f} + allowlist-disi"
     )
     return Verdict(snap, False, True, "kill", reasons)
 
@@ -206,6 +218,52 @@ def snapshot_processes(interval: float = 1.0, self_pid: int | None = None) -> li
     return out
 
 
+def _compute_sustained(
+    snaps: list[ProcSnapshot],
+    *,
+    state_dir: str | Path,
+    now_ts: float,
+    cpu_pct: float = RUNAWAY_CPU_PCT,
+) -> dict[int, float]:
+    """Per-PID SUREKLI-high-CPU suresi (dk), runs-arasi persistent state ile. cadvisor-FP-fix.
+
+    Her tur: cpu>=esik proc'lar icin streak-baslangici (`since`) korunur; eski-tur'da bu PID
+    yoksa veya cpu dustuyse streak KIRILIR (since=now). PID-reuse/restart guard: process'in
+    YASI (age_minutes) iddia-edilen-streak'ten KUCUKSE (process streak'ten genc = imkansiz) ->
+    since sifirlanir. cpu<esik proc'lar state'ten DUSER (streak kirildi). FAIL-SAFE: state
+    okuma/yazma hatasi -> bos-state'le devam (tek-tur sustained=0, conservatif=emit-yok).
+
+    Donus: {pid: sustained_minutes}. only-high proc'lar icin. state JSON'a yazilir."""
+    path = Path(state_dir) / CPU_STREAK_FILE
+    try:
+        prev_raw = json.loads(path.read_text(encoding="utf-8"))
+        prev: dict[str, Any] = prev_raw if isinstance(prev_raw, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        prev = {}
+    new_state: dict[str, dict[str, float]] = {}
+    sustained: dict[int, float] = {}
+    for s in snaps:
+        if s.cpu_pct < cpu_pct:
+            continue  # high degil -> streak yok/kirildi (state'e yazilmaz -> dusar)
+        key = str(s.pid)
+        since = now_ts
+        p = prev.get(key)
+        if isinstance(p, dict):
+            cand_since = float(p.get("since", now_ts))
+            streak_min = (now_ts - cand_since) / 60.0
+            # PID-reuse/restart guard: process en az streak kadar yasamis OLMALI (+0.5dk tolerans)
+            if 0.0 <= streak_min <= s.age_minutes + 0.5:
+                since = cand_since
+        new_state[key] = {"since": since}
+        sustained[s.pid] = max(0.0, (now_ts - since) / 60.0)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(new_state), encoding="utf-8")
+    except OSError:
+        logger.warning("watchdog cpu-streak state yazilamadi (fail-safe; sustained gecici sifirlanir)")
+    return sustained
+
+
 def _verify_and_kill(snap: ProcSnapshot, *, dry_run: bool) -> dict[str, object]:
     """/proc/PID/cmdline dogrula-SONRA-kill (per-PID; mass-kill YOK, PID-reuse koruma).
     Graduated: SIGTERM -> bekle -> SIGKILL. dry_run -> sadece niyet (provenance). Linux."""
@@ -254,13 +312,20 @@ def run_watchdog(hook_state_dir: str | Path = "data/hook-state") -> dict[str, in
     emit_throttled (klipper #100128): ayni (type, source) WATCHDOG_DEDUP_WINDOW icinde
     RE-EMIT edilmez (cron */3 flood-bastir); devam-eden runaway/stall periyodik re-surface.
     summary['suppressed'] = pencere-ici bastirilan emit sayisi."""
+    import time as _t
+
     from app.core.emit_throttle import emit_throttled
 
     summary: dict[str, int] = {"runaways": 0, "stalls": 0, "killed": 0, "emitted": 0, "suppressed": 0}
     autokill = _autokill_enabled()
     try:
-        for snap in snapshot_processes():
-            v = classify(snap)
+        snaps = snapshot_processes()
+        now_ts = _t.time()
+        # cadvisor-FP-fix: runaway = SUREKLI-high (process-uptime DEGIL). Persistent streak.
+        sustained_map = _compute_sustained(snaps, state_dir=hook_state_dir, now_ts=now_ts)
+        for snap in snaps:
+            sustained = sustained_map.get(snap.pid, 0.0)
+            v = classify(snap, sustained_minutes=sustained)
             if v.action == "ignore":
                 continue
             summary["runaways"] += 1
@@ -268,6 +333,7 @@ def run_watchdog(hook_state_dir: str | Path = "data/hook-state") -> dict[str, in
             payload: dict[str, object] = {
                 "pid": snap.pid,
                 "cpu_pct": snap.cpu_pct,
+                "sustained_minutes": round(sustained, 1),
                 "age_minutes": round(snap.age_minutes, 1),
                 "allowlisted": v.allowlisted,
                 "action": v.action,
@@ -282,7 +348,7 @@ def run_watchdog(hook_state_dir: str | Path = "data/hook-state") -> dict[str, in
             res = emit_throttled(
                 type="agent-health",
                 source=f"watchdog:proc:{snap.name or snap.pid}",
-                title=f"runaway proc {snap.name} ({snap.cpu_pct:.0f}% {snap.age_minutes:.0f}dk)",
+                title=f"runaway proc {snap.name} ({snap.cpu_pct:.0f}% {sustained:.0f}dk-surekli)",
                 severity=sev,
                 detail=" ; ".join(v.reasons),
                 payload=payload,
