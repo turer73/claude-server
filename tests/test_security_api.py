@@ -244,6 +244,57 @@ async def test_findings_explicit_offwhitelist_project_no_leak(client, findings_d
     assert resp.json() == []
 
 
+@pytest.fixture
+def findings_source_db(tmp_path, monkeypatch, pentest_env):
+    """Alt-kaynak ayrımı için: nuclei + self-pentest + other bulguları (whitelist domain panola.app)."""
+    import sqlite3
+
+    from tests.test_memory_api import MEMORY_SCHEMA
+
+    db_path = tmp_path / "memory.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(MEMORY_SCHEMA)
+    conn.execute(
+        "INSERT INTO discoveries (project,type,title,details,status) "
+        "VALUES ('panola.app','bug','[high] Exposed .git directory (git-config-exposure)','nuclei detayı','active')"
+    )
+    conn.execute(
+        "INSERT INTO discoveries (project,type,title,details,status) "
+        "VALUES ('panola.app','bug','self-pentest: eksik security header','smoke detayı','active')"
+    )
+    conn.execute(
+        "INSERT INTO discoveries (project,type,title,details,status) "
+        "VALUES ('panola.app','bug','manuel bulgu','diğer detay','active')"
+    )
+    conn.commit()
+    conn.close()
+    from app.api import memory as memory_mod
+
+    monkeypatch.setattr(memory_mod, "DB_PATH", str(db_path))
+    return db_path
+
+
+async def test_findings_source_derivation(client, findings_source_db):
+    """Her bulguda derived `source`: nuclei-title→'nuclei', self-pentest:→'self-pentest', diğer→'other'."""
+    resp = await client.get("/api/v1/security/pentest/findings", headers=HEADERS)
+    by_title = {r["title"]: r["source"] for r in resp.json()}
+    assert by_title["[high] Exposed .git directory (git-config-exposure)"] == "nuclei"
+    assert by_title["self-pentest: eksik security header"] == "self-pentest"
+    assert by_title["manuel bulgu"] == "other"
+
+
+async def test_findings_source_filter(client, findings_source_db):
+    """?source=nuclei → yalnız nuclei-alt-kaynak bulguları."""
+    resp = await client.get("/api/v1/security/pentest/findings?source=nuclei", headers=HEADERS)
+    rows = resp.json()
+    assert len(rows) == 1
+    assert rows[0]["source"] == "nuclei"
+    assert "git" in rows[0]["title"]
+    # self-pentest filtre de doğru
+    resp2 = await client.get("/api/v1/security/pentest/findings?source=self-pentest", headers=HEADERS)
+    assert [r["source"] for r in resp2.json()] == ["self-pentest"]
+
+
 async def test_finding_get_by_id_returns_full_record(client, findings_db):
     resp = await client.get("/api/v1/security/pentest/findings/1", headers=HEADERS)
     assert resp.status_code == 200

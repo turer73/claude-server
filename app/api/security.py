@@ -203,6 +203,37 @@ def get_run(job_id: str, tail: int = 200) -> dict:
 # internally they're discovery rows.
 
 
+# Alt-kaynak (sub-source) ayrımı: pentest-bulguları İKİ araçtan gelir, aynı domain-project'e yazılır.
+# Marker title-deseninde (migration-yok, mevcut+gelecek veriye uyar):
+#   self-pentest.sh  -> "self-pentest: <desc>"
+#   nuclei-scan.sh   -> "[<severity>] <name> (<template-id>)"
+_NUCLEI_TITLE_RE = re.compile(r"^\[[^\]]+\]\s.+\(.+\)\s*$")
+
+
+def _derive_source(title: str | None) -> str:
+    """Bulgunun alt-kaynağını title-deseninden türet → 'self-pentest' | 'nuclei' | 'other'."""
+    t = (title or "").strip()
+    if t.startswith("self-pentest:"):
+        return "self-pentest"
+    if _NUCLEI_TITLE_RE.match(t):
+        return "nuclei"
+    return "other"
+
+
+def _enrich_source(rows: list[dict], source: str | None, limit: int) -> list[dict]:
+    """Her bulguya derived `source` ekle; `source` verilirse o alt-kaynağa filtrele; sonra limit uygula.
+    (Filtre post-fetch — kaynak title-deseninden türetilir, SQL-kolonu değil; limit filtreden SONRA tam.)"""
+    out: list[dict] = []
+    for raw in rows:
+        r = dict(raw)
+        r["source"] = _derive_source(r.get("title"))
+        if source is None or r["source"] == source:
+            out.append(r)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _findings_scoped(projects: list[str], status: str | None, limit: int) -> list[dict]:
     """type='bug' AND project IN (pentest-target domain'leri) — code-review/dev bulgularını DIŞLAR.
     list_discoveries ile aynı kolon-şekli. projects whitelist'ten (güvenli, parametreli)."""
@@ -231,17 +262,23 @@ def _findings_scoped(projects: list[str], status: str | None, limit: int) -> lis
 async def list_findings(
     project: str | None = None,
     status: str | None = "active",
+    source: str | None = None,
     limit: int = 30,
 ):
     """Pentest bulguları — pentest-target domain'lerine SCOPE'lu (project=domain). Dev/code-review
-    bulguları (named-project) DIŞLANIR (eskiden project=None tüm-type=bug'ları döndürüyordu, karışıyordu).
-    Tek-target için ?project=<domain> (whitelist'te olmalı; aksi → leak-yok boş)."""
+    bulguları (named-project) DIŞLANIR. Tek-target için ?project=<domain> (whitelist'te; aksi boş).
+    Her bulguda derived `source` ('nuclei'|'self-pentest'|'other'); ?source=<x> ile alt-kaynak filtrele
+    (post-fetch; over-fetch ile limit filtreden-sonra tam)."""
     targets = _load_targets()
+    # source-filter post-fetch → filtreden sonra `limit` tam dönsün diye fazladan çek.
+    fetch = limit if source is None else min(limit * 10, 500)
     if project is not None:
         if project.lower() not in targets:
             return []  # off-whitelist project → dev/code-review sızdırma
-        return await _memory.list_discoveries(project=project, type="bug", status=status, limit=limit)
-    return _findings_scoped(targets, status, limit)
+        rows = await _memory.list_discoveries(project=project, type="bug", status=status, limit=fetch)
+    else:
+        rows = _findings_scoped(targets, status, fetch)
+    return _enrich_source(rows, source, limit)
 
 
 @router.get("/pentest/findings/{finding_id}", dependencies=[Depends(rate_limit_read)])
