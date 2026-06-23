@@ -219,6 +219,19 @@ def test_autonomy_dead_on_retry_heartbeat_stale(monkeypatch, tmp_path):
     assert lv.autonomy_liveness()["status"] == "dead"
 
 
+def test_autonomy_stale_on_fresh_backlog_overflow(monkeypatch, tmp_path):
+    """alive → stale upgrade: taze backlog > 10 (drain edemiyor). surer note #100190 bulgusu."""
+    s = tmp_path / "server.db"
+    _cron_db(s, [("autonomous-retry", "pass", "-5 minutes")])  # retry-hb taze → alive
+    m = tmp_path / "memory.db"
+    _memory_db(m, poison=2, old_pending=0, fresh_pending=15)  # 15 > 10 → stale upgrade
+    monkeypatch.setattr(lv, "SERVER_DB", str(s))
+    monkeypatch.setattr(lv, "MEMORY_DB", str(m))
+    r = lv.autonomy_liveness()
+    assert r["status"] == "stale", r
+    assert "taze-backlog=15" in r["detail"]
+
+
 def test_rag_canary_alive_and_dead(monkeypatch):
     class _Resp:
         status = 200
