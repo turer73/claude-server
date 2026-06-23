@@ -1016,6 +1016,28 @@ async def test_create_dedup_supersede_branch(client, memory_db, monkeypatch):
     body = (await _post_disc(client, "bulgu tekrar nuksetti")).json()
     assert body["status"] == "created"
     assert body["supersedes_id"] == old_id
-    # eski kayıt superseded oldu (bi-temporal regression linkage)
+    # #208-P1: HALEF aktif+durable; eski superseded — atomik kritik-bölüm (await yok → cancel'da veri-kaybı yok)
+    new_id = body["id"]
+    r_new = await client.get(f"/api/v1/memory/discoveries/{new_id}")
+    assert r_new.json()["status"] == "active"
     r3 = await client.get(f"/api/v1/memory/discoveries/{old_id}")
     assert r3.json()["status"] == "superseded"
+
+
+async def test_create_dedup_supersede_same_title(client, memory_db, monkeypatch):
+    """#212-P1 (Codex regresyon): AYNI (project,type,title) ile SUPERSEDE — idx_discoveries_unique_active
+    aktif-başlık-unique'i ihlal etmemeli. Fix: eskiyi-superseded ÖNCE (insert'ten önce, await yok=atomik).
+    Hatalı sıra (insert-önce) IntegrityError/500 verirdi."""
+    old_id = (await _post_disc(client, "tekrar eden bug", details="ilk")).json()["id"]
+    monkeypatch.setattr(
+        "app.api.memory.signal_quality.semantic_dedup",
+        lambda **k: {"operation": "SUPERSEDE", "target_id": old_id, "vector": None},
+    )
+    # AYNI başlık ama farklı details → 5dk-exact-window'u atla, SUPERSEDE-path'e ulaş
+    r = await _post_disc(client, "tekrar eden bug", details="ikinci")
+    assert r.status_code == 200  # IntegrityError YOK (eski önce superseded → unique-conflict yok)
+    body = r.json()
+    assert body["status"] == "created"
+    assert body["supersedes_id"] == old_id
+    assert (await client.get(f"/api/v1/memory/discoveries/{old_id}")).json()["status"] == "superseded"
+    assert (await client.get(f"/api/v1/memory/discoveries/{body['id']}")).json()["status"] == "active"

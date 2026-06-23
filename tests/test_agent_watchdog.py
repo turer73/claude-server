@@ -107,6 +107,35 @@ def test_sustained_resets_when_cpu_drops(tmp_path: Path) -> None:
     assert "1234" not in json.loads((tmp_path / aw.CPU_STREAK_FILE).read_text())  # state'ten dustu
 
 
+def test_sustained_malformed_since_does_not_abort(tmp_path: Path) -> None:
+    """#209-P2 (Codex): non-numeric `since` (null/string) float-patlamasıyla TÜM-taramayı iptal
+    ETMEMELİ — per-entry guard, malformed→fresh(sustained 0). Diğer geçerli PID'ler etkilenmez."""
+    now = 1_000_000.0
+    (tmp_path / aw.CPU_STREAK_FILE).write_text(json.dumps({"1234": {"since": "garbage"}, "5678": {"since": None}}), encoding="utf-8")
+    # iki high-PID: ikisi de malformed-since → fresh (sustained 0), exception YOK
+    snaps = [_snap(cpu=99.0, age=30.0), ProcSnapshot(pid=5678, name="x", cmdline="y", cpu_pct=99.0, age_minutes=30.0)]
+    out = aw._compute_sustained(snaps, state_dir=tmp_path, now_ts=now)
+    assert out[1234] == 0.0  # malformed → fresh, patlamadı
+    assert out[5678] == 0.0
+
+
+def test_sustained_write_fail_preserves_computed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#212-P2 (Codex): state-YAZILAMAZSA hesaplanan-sustained ATILMAMALI — yoksa 15dk+ gerçek-runaway
+    o tur kör-edilir. read başarılı (20dk-streak) + write fail → map KORUNUR."""
+    now = 1_000_000.0
+    (tmp_path / aw.CPU_STREAK_FILE).write_text(json.dumps({"1234": {"since": now - 1200.0}}), encoding="utf-8")
+    orig_write = Path.write_text
+
+    def _boom(self: Path, *a: object, **k: object) -> int:
+        if self.name == aw.CPU_STREAK_FILE:
+            raise OSError("disk full")
+        return orig_write(self, *a, **k)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "write_text", _boom)
+    out = aw._compute_sustained([_snap(cpu=99.0, age=30.0)], state_dir=tmp_path, now_ts=now)
+    assert abs(out[1234] - 20.0) < 0.1  # 20dk-streak write-fail'de KORUNUR (gerçek-runaway kör-edilmez)
+
+
 def test_sustained_pid_reuse_guard(tmp_path: Path) -> None:
     now = 1_000_000.0
     # prev streak 60dk ama process YASI 1dk -> reuse/restart -> eski-streak devralinmaz

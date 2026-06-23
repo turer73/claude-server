@@ -249,7 +249,13 @@ def _compute_sustained(
         since = now_ts
         p = prev.get(key)
         if isinstance(p, dict):
-            cand_since = float(p.get("since", now_ts))
+            # #209-P2 (Codex): malformed `since` (null/string/hand-edit) -> float TypeError/ValueError
+            # state-load-guard'ı DIŞINDA patlıyordu -> run_watchdog try'ı TÜM runaway-taramayı iptal
+            # ediyordu (tek bozuk-PID = tüm-tespit durur). Per-entry guard: malformed -> since=now (fresh).
+            try:
+                cand_since = float(p.get("since", now_ts))
+            except (TypeError, ValueError):
+                cand_since = now_ts
             streak_min = (now_ts - cand_since) / 60.0
             # PID-reuse/restart guard: process en az streak kadar yasamis OLMALI (+0.5dk tolerans)
             if 0.0 <= streak_min <= s.age_minutes + 0.5:
@@ -260,7 +266,11 @@ def _compute_sustained(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(new_state), encoding="utf-8")
     except OSError:
-        logger.warning("watchdog cpu-streak state yazilamadi (fail-safe; sustained gecici sifirlanir)")
+        # #212-P2 (Codex): write-fail'de HESAPLANAN sustained'i ATMA — yoksa 15dk+ gerçek-runaway o tur
+        # kör-edilir (alert/kill yok). Bu turun map'i prev-state+current-snap'tan DOĞRU hesaplandı; sadece
+        # PERSIST edilemedi. Geri-dön (current-tespit korunur). (Stale-future-read riski ayrı+nadir: kalıcı
+        # write-fail = fark-edilir infra-sorunu; return-{} onu zaten ÇÖZMÜYORDU — dosya yine değişmiyor.)
+        logger.warning("watchdog cpu-streak state yazilamadi -> hesaplanan-sustained korunur (persist atlandi)")
     return sustained
 
 
