@@ -124,6 +124,13 @@ sudo tee "$SERVICE_FILE" > /dev/null << SERVICE_EOF
 Description=GitHub Actions Runner - koken-akademi (ephemeral, klipper)
 After=network-online.target
 Wants=network-online.target
+# Ephemeral runner her job sonrası exit-0 yapar; Restart=always re-register için DOĞRU.
+# Ama config/run KALICI fail ederse (bozuk token, ağ, repo erişimi) runner anında çıkar
+# ve RestartSec=5 ile her 5sn'de yeni registration-token ister -> GitHub API spam/rate-limit
+# busyloop'u. StartLimit: 5dk içinde >5 restart olursa servisi durdur (failed state) ->
+# normal işleyişte (job-başına ~1 restart) asla tetiklenmez, kalıcı-fail'de loop'u keser.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -131,7 +138,8 @@ User=$RUNNER_USER
 WorkingDirectory=$RUNNER_DIR
 ExecStart=$WRAPPER_SCRIPT
 Restart=always
-RestartSec=5
+# Çıkış→re-register arası bekleme; spike'ı yumuşatır (job-başına tek restart'ta görünmez).
+RestartSec=10
 KillMode=process
 KillSignal=SIGTERM
 TimeoutStopSec=5min
