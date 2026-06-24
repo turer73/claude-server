@@ -28,6 +28,17 @@ TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 router = APIRouter(prefix="/webhooks/telegram", tags=["telegram-webhook"])
 
 
+def _tg_ok(resp) -> bool:
+    """Telegram başarısını JSON body {ok:bool}'tan oku, HTTP-status'tan DEĞİL (#1180).
+    Telegram HTTP 200 + {ok:false, error_code:400} dönebilir (örn. Markdown parse) →
+    requests.Response.ok (sadece 2xx) bunu kaçırır, fallback atlanır, mesaj sessizce
+    kaybolur. JSON parse edilemezse HTTP-status'a düş (best-effort)."""
+    try:
+        return bool(resp.json().get("ok", False))
+    except Exception:
+        return bool(getattr(resp, "ok", False))
+
+
 def _send_message(chat_id: int, text: str, reply_to: int | None = None) -> None:
     """Markdown sendMessage helper. Best-effort. Codex P2: Markdown parse hatasında
     (dengesiz `_`/`*`/`[`/backtick — Claude log/path çıktısında sık) Telegram 400 döner
@@ -44,7 +55,7 @@ def _send_message(chat_id: int, text: str, reply_to: int | None = None) -> None:
         payload["reply_to_message_id"] = reply_to
     try:
         r = requests.post(f"{TELEGRAM_API}/sendMessage", json=payload, timeout=10)
-        if not getattr(r, "ok", False):
+        if not _tg_ok(r):
             # Markdown parse başarısız -> parse_mode'suz düz metin olarak tekrar dene.
             payload.pop("parse_mode", None)
             requests.post(f"{TELEGRAM_API}/sendMessage", json=payload, timeout=10)

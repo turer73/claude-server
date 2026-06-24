@@ -487,6 +487,21 @@ async def test_discovery_get_404(client, memory_db):
     assert resp.status_code == 404
 
 
+async def test_discovery_update_404_on_missing_id(client, memory_db):
+    # #1165: olmayan id'ye PUT → 0-satır UPDATE; "updated"+200 yerine 404 dönmeli.
+    resp = await client.put("/api/v1/memory/discoveries/999999", json={"details": "x"})
+    assert resp.status_code == 404
+
+
+async def test_discovery_list_as_of_invalid_returns_400(client, memory_db):
+    # #1167: geçersiz as_of → SQLite datetime() NULL → sessiz boş liste yerine 400.
+    resp = await client.get("/api/v1/memory/discoveries?as_of=not-a-date")
+    assert resp.status_code == 400
+    # geçerli ISO ts kabul edilmeli (boş liste olsa da 200)
+    ok = await client.get("/api/v1/memory/discoveries?as_of=2026-06-25T00:00:00")
+    assert ok.status_code == 200
+
+
 async def test_discoveries_by_type(client, memory_db):
     await client.post(
         "/api/v1/memory/discoveries",
