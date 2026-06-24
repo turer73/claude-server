@@ -73,7 +73,10 @@ def test_webops_tokens_empty_by_default(monkeypatch):
     assert s.github_token == ""
 
 
-def test_db_path_default():
+def test_db_path_default(monkeypatch):
+    # autouse _isolate_db_path fixture DB_PATH'i tmp'ye set eder; bu test gerçek
+    # unset-default'u doğruladığı için DB_PATH'i açıkça temizle.
+    monkeypatch.delenv("DB_PATH", raising=False)
     s = Settings()
     assert "server.db" in s.db_path
 

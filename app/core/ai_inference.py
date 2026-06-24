@@ -27,7 +27,8 @@ class AIInference:
     ) -> dict:
         from app.core.agents.llmcore import llm_core
 
-        messages = context or []
+        # Kopya al — append() caller'ın listesini mutate etmesin (aliasing bug).
+        messages = list(context) if context else []
         # Disable thinking mode by default for speed on low-end hardware
         if not think and message and not message.startswith("/think"):
             message = f"/no_think {message}"

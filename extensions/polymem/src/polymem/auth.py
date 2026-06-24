@@ -1,5 +1,8 @@
 """X-Memory-Key dependency."""
+
 from __future__ import annotations
+
+import hmac
 
 from fastapi import Header, HTTPException, status
 
@@ -14,7 +17,8 @@ def make_auth_dependency(api_key: str | None):
     async def verify(x_memory_key: str | None = Header(default=None)) -> None:
         if not api_key:
             return
-        if x_memory_key != api_key:
+        # Constant-time karşılaştırma — erken-çıkış timing-attack ile key brute-force'u önler.
+        if x_memory_key is None or not hmac.compare_digest(x_memory_key, api_key):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="invalid or missing X-Memory-Key",

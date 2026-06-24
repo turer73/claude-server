@@ -22,6 +22,20 @@ def anyio_backend():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_db_path(tmp_path, monkeypatch):
+    """Her teste izole DB_PATH ver — prod events-tablosuna fixture-sızıntısını önler.
+
+    emit_event/get_conn `_db_path()` (DB_PATH env) okur, _store_alert'e geçilen `db`
+    nesnesini DEĞİL. DB_PATH prod'a export edilmişse (cron-wrap PR#200 / systemd-env /
+    ajan-oturumu pytest çalıştırınca), DB_PATH set ETMEYEN testler (test_store_alert,
+    test_resolve_alert_db, test_store_alert_no_db ...) prod data/server.db'ye
+    'CPU at 95%'/'CPU high' critical-event'i yazar → #1176'nın sahte 'tekrarlayan CPU'
+    kök-nedeni. Bu autouse default tüm testleri tmp'ye sabitler; kendi DB_PATH'ini
+    isteyen test (bridge) sonra setenv ile override eder (monkeypatch son-yazan kazanır)."""
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "isolated.db"))
+
+
+@pytest.fixture(autouse=True)
 def _clear_settings_cache():
     """Clear lru_cache on get_settings so env var changes take effect."""
     get_settings.cache_clear()
