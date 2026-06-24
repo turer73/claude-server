@@ -124,6 +124,22 @@ def _force_remediate(event_id: str) -> dict:
 # uzun-ömürlü, update'ler arası kalır). /claude devam ettirir, /claude-new sıfırlar.
 _CLAUDE_SESSION: dict[int, str] = {}
 
+# Aynı chat_id'den eşzamanlı /claude'lar oturum-sürekliliğini yarıştırır (read→yavaş
+# _run_claude→write arasında ikinci mesaj eski sid'i okur, biri diğerinin new_sid'ini
+# ezer → session kaybı/çapraz-bulaşma). Per-chat lock ile aynı-chat'i serialize et;
+# farklı chat'ler paralel kalır. Lock-dict'in kendisi _CLAUDE_LOCKS_GUARD ile korunur.
+_CLAUDE_LOCKS: dict[int, threading.Lock] = {}
+_CLAUDE_LOCKS_GUARD = threading.Lock()
+
+
+def _claude_chat_lock(chat_id: int) -> threading.Lock:
+    with _CLAUDE_LOCKS_GUARD:
+        lock = _CLAUDE_LOCKS.get(chat_id)
+        if lock is None:
+            lock = threading.Lock()
+            _CLAUDE_LOCKS[chat_id] = lock
+        return lock
+
 
 def _run_claude(prompt: str, session_id: str | None = None) -> dict:
     """Owner-onaylı /claude -> localhost Claude Code run (internal-key, admin scope).
@@ -217,15 +233,17 @@ def _claude_worker(chat_id: int, prompt: str, msg_id: int | None, fresh: bool) -
     ka = threading.Thread(target=_keepalive, daemon=True)
     ka.start()
     try:
-        sid = None if fresh else _CLAUDE_SESSION.get(chat_id)
-        res = _run_claude(prompt, session_id=sid)
+        # Per-chat lock: aynı chat'in read→run→write'ını serialize et (session yarışı).
+        with _claude_chat_lock(chat_id):
+            sid = None if fresh else _CLAUDE_SESSION.get(chat_id)
+            res = _run_claude(prompt, session_id=sid)
+            new_sid = res.get("session_id")
+            if new_sid and not (res.get("error") or not res.get("ok", False)):
+                _CLAUDE_SESSION[chat_id] = new_sid
         if res.get("error") or not res.get("ok", False):
             reply = f"❌ *Claude hatası:* `{res.get('error') or res.get('stderr', 'bilinmeyen')[:200]}`"
         else:
             answer = res.get("result") or "(boş yanıt)"
-            new_sid = res.get("session_id")
-            if new_sid:
-                _CLAUDE_SESSION[chat_id] = new_sid
             # Bulguyu hafızaya kaydet (köprü-yazar, read-only korunur).
             saved = _save_finding(prompt, answer) if res.get("result") else False
             # cost GÖSTERME: Max-plan abonelikte faturalanmaz; CLI'nin nosyonel
