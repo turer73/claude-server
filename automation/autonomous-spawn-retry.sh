@@ -32,19 +32,42 @@ if [ "$(id -un)" = "klipperos" ] && [ -z "${RETRY_PRIVS_DROPPED:-}" ]; then
     # Max-abonelik OAuth token FALLBACK: klipper-auto'nun ~/.claude/.credentials.json'ı
     # expire olsa bile (2026-06-14 olayı: spawn 401 -> 3-deneme poison -> autonomy=dead),
     # klipperos .env'deki canlı CLAUDE_CODE_OAUTH_TOKEN'ı (surer rotate eder) spawn'a geçir.
-    # klipper-auto .env'i okuyamaz; token'ı priv-drop'tan ÖNCE (klipperos iken) oku. CLI
-    # env-token'ı credentials.json'a tercih eder -> stale-cred'e bağımlılık kalkar. Boşsa
-    # geçme (mevcut native-cred davranışı korunur). Token sk-ant-oat... (boşluksuz) -> word-split güvenli.
+    # klipper-auto .env'i okuyamaz; token'ı priv-drop'tan ÖNCE (klipperos iken) oku.
+    # GÜVENLİK (Codex P2): token'ı argv/env ile sudo'ya GEÇİRME — sudo başarılı komutu
+    # authpriv'e loglar + `ps` argv herkese açık -> secret sızar. Onun yerine 640 tmpfile'a
+    # yaz (klipper-auto klipperos-grubunda -> grup-okur), SADECE dosya-yolunu (secret değil)
+    # argv'le geçir; post-drop oku+sil. tmpfs (/dev/shm) -> diske hiç düşmez.
     _OAUTH_TOK="$(grep -m1 '^CLAUDE_CODE_OAUTH_TOKEN=' /opt/linux-ai-server/.env 2>/dev/null | cut -d= -f2- | tr -d "\"'\r")"
-    exec sudo -n -u klipper-auto \
+    _TOK_FILE=""
+    if [ -n "$_OAUTH_TOK" ]; then
+        _TOK_FILE="$(mktemp /dev/shm/.klipper-oauth.XXXXXX 2>/dev/null || mktemp)"
+        printf '%s' "$_OAUTH_TOK" > "$_TOK_FILE" && chmod 640 "$_TOK_FILE" || _TOK_FILE=""
+    fi
+    unset _OAUTH_TOK
+    # NOT exec: child bittikten sonra tmpfile'ı SİLMELİYİZ. /dev/shm sticky-bit ->
+    # sadece OWNER (klipperos) silebilir, klipper-auto silemez. Bu yüzden child'ı sudo
+    # ile çalıştır, dön, klipperos olarak temizle, child'ın rc'siyle çık (fall-through YOK).
+    sudo -n -u klipper-auto \
         env RETRY_PRIVS_DROPPED=1 \
             HOME=/home/klipper-auto \
-            ${_OAUTH_TOK:+CLAUDE_CODE_OAUTH_TOKEN=$_OAUTH_TOK} \
+            ${_TOK_FILE:+CLAUDE_OAUTH_TOKEN_FILE=$_TOK_FILE} \
             HOOK_ENV_FILE=/opt/linux-ai-server/.env.autonomous \
             TELEGRAM_ENV_FILE=/opt/linux-ai-server/.env.autonomous \
             AUTONOMOUS_LOCK=/opt/linux-ai-server/data/hook-state/klipper-autonomous-claude.lock \
             RETRY_LOCK=/opt/linux-ai-server/data/hook-state/klipper-autonomous-spawn-retry.lock \
         "$0" "$@"
+    _DROP_RC=$?
+    [ -n "$_TOK_FILE" ] && rm -f "$_TOK_FILE" 2>/dev/null   # owner=klipperos -> sticky-OK
+    exit $_DROP_RC
+fi
+
+# Post-drop (klipper-auto): token-file'ı oku -> env-var. CLI CLAUDE_CODE_OAUTH_TOKEN'ı
+# stale credentials.json'a tercih eder. SİLME burada DEĞİL: sticky-bit -> klipper-auto
+# silemez; temizliği owner-klipperos (yukarıda, child dönünce) yapar.
+if [ -n "${CLAUDE_OAUTH_TOKEN_FILE:-}" ] && [ -r "$CLAUDE_OAUTH_TOKEN_FILE" ]; then
+    CLAUDE_CODE_OAUTH_TOKEN="$(cat "$CLAUDE_OAUTH_TOKEN_FILE" 2>/dev/null)"
+    [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] && export CLAUDE_CODE_OAUTH_TOKEN
+    unset CLAUDE_OAUTH_TOKEN_FILE
 fi
 
 LOG_FILE="${RETRY_LOG:-/opt/linux-ai-server/data/hook-logs/autonomous-spawn-retry.log}"
