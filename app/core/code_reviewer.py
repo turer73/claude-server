@@ -47,6 +47,14 @@ _VERIFY_ENABLED = (read_env_var("CODE_REVIEW_VERIFY_ENABLED") or "1").strip().lo
 # derslerini uygular). Gürültü-korumalı: sadece aktif code-review 'learning', cap'li, geri-alınabilir.
 _LEARN_FEEDBACK_ENABLED = (read_env_var("CODE_REVIEW_LEARN_FEEDBACK_ENABLED") or "1").strip().lower() not in ("0", "false", "no", "off")
 _LEARN_FEEDBACK_MAX = int(read_env_var("CODE_REVIEW_LEARN_FEEDBACK_MAX") or "5")
+# Negatif/FP-feedback (surer #100203): pozitif-ders loop'u ölü (sentez >=3-aktif ister, hacim
+# düşük → hiç ders yok). En yüksek kaldıraç FP-prone ajan için NEGATİF sinyal: bu codebase'de
+# SIK obsolete/FP-edilen bulgu-tiplerini "şüpheci ol" olarak besle → FP-sel tekrarını + aynı-
+# bulgu re-flag'ini azalt. >=MIN kez obsolete olan tip = sistemik-FP deseni (izole-duplicate
+# eşiği geçmez). Advisory: mitigation-FP-guard'ı EZMEZ, sadece kanıt-barını yükseltir.
+_FP_FEEDBACK_ENABLED = (read_env_var("CODE_REVIEW_FP_FEEDBACK_ENABLED") or "1").strip().lower() not in ("0", "false", "no", "off")
+_FP_FEEDBACK_MIN = int(read_env_var("CODE_REVIEW_FP_FEEDBACK_MIN") or "3")  # tip >=N kez obsolete → FP-deseni
+_FP_FEEDBACK_MAX = int(read_env_var("CODE_REVIEW_FP_FEEDBACK_MAX") or "5")  # en fazla N tip besle
 
 _SEVERITIES = {"P1", "P2", "P3"}
 
@@ -61,7 +69,7 @@ MITIGATION-FARKINDALIĞI (yanlış-pozitif önle — KRİTİK): Kod sorunu ZATEN
 - input-validation (regex fullmatch / allowlist / izinli-değer kontrolü) ve SONRA kullanım → MITIGATED.
 - try/except, None/boş kontrolü, timeout/busy_timeout, with-context → ilgili risk MITIGATED.
 f-string'de komut/SQL görmen TEK BAŞINA açık değildir — yakında bir guard (quote/validate/param) var mı BAK; varsa GÜVENLİDİR.
-Aynı sorunu TEK kez bildir (P1+P2 olarak tekrarlama). Satır-no'yu yorum/import değil, sorunun GERÇEK satırına ver.{lessons}
+Aynı sorunu TEK kez bildir (P1+P2 olarak tekrarlama). Satır-no'yu yorum/import değil, sorunun GERÇEK satırına ver.{lessons}{fp_feedback}
 
 Yanıtı YALNIZ şu JSON dizisi olarak ver (başka metin yok), sorun yoksa boş dizi []:
 [{{"line": <satır-no>, "severity": "P1|P2|P3", "title": "<=60 kar özet", "detail": "<niçin sorun + somut kanıt, 1-2 cümle>"}}]
@@ -141,7 +149,9 @@ async def review_source(rel_path: str, code: str) -> list[dict]:
     if not _ENABLED or not code.strip():
         return []
     snippet = _build_snippet(code)
-    prompt = _REVIEW_PROMPT.format(lang=_lang(rel_path) or "text", path=rel_path, code=snippet, lessons=_lessons_block())
+    prompt = _REVIEW_PROMPT.format(
+        lang=_lang(rel_path) or "text", path=rel_path, code=snippet, lessons=_lessons_block(), fp_feedback=_fp_feedback_block()
+    )
     findings = await _ask_coder(prompt)
     if _VERIFY_ENABLED and findings:
         findings = await _verify_findings(rel_path, snippet, findings)
@@ -219,6 +229,54 @@ def _lessons_block() -> str:
     return (
         "\n\nÖĞRENİLEN DERSLER (bu codebase'de TEKRAR etti — bu desenlere ÖZELLİKLE dikkat, "
         "AMA yine de mitigation-farkındalığını uygula; ders FP-guard'ı EZMEZ):\n" + items
+    )
+
+
+def _recent_fp_patterns(min_count: int = _FP_FEEDBACK_MIN, limit: int = _FP_FEEDBACK_MAX) -> list[tuple[str, int]]:
+    """Bu codebase'de SIK obsolete-edilen bulgu-tipleri (sistemik-FP deseni). title 'path:line
+    <özet>' → '<özet>' (tip) bazında grupla, >=min_count obsolete olanları döndür. Read-only.
+    İzole duplicate (1-2 kez) eşiği geçmez → yalnız tekrar-eden FP-deseni yüzeye çıkar."""
+    try:
+        conn = sqlite3.connect(MEMORY_DB)
+        conn.execute("PRAGMA busy_timeout=5000")
+        rows = conn.execute(
+            "SELECT title FROM discoveries WHERE project=? AND type='bug' AND status='obsolete'",
+            (PROJECT,),
+        ).fetchall()
+        conn.close()
+        from collections import Counter
+
+        kinds: Counter = Counter()
+        for (t,) in rows:
+            kind = t.split(" ", 1)[1].lower() if " " in t else t.lower()
+            kinds[kind] += 1
+        return [(k, n) for k, n in kinds.most_common(limit) if n >= min_count]
+    except Exception:
+        return []
+
+
+def _sanitize_pattern(s: str, maxlen: int = 80) -> str:
+    """FP-pattern'i prompt'a enjekte etmeden önce temizle (Codex #220): title'lar model/API
+    çıktısından gelir; kontrol-karakteri/newline bullet'tan kaçıp prompt'u yönlendirebilir
+    (örn. '[]'e steer). Tüm whitespace/kontrol-karakterini tek boşluğa indir + cap."""
+    cleaned = "".join(ch if ch.isprintable() else " " for ch in s)
+    cleaned = " ".join(cleaned.split())  # newline/tab/çoklu-boşluk → tek boşluk
+    return cleaned[:maxlen]
+
+
+def _fp_feedback_block() -> str:
+    """Negatif-feedback bloğu: sık-FP/obsolete tipleri 'şüpheci ol' uyarısı olarak prompt'a
+    enjekte et (boş = desen yok / kapalı). Advisory — mitigation-FP-guard'ı EZMEZ, yalnız
+    bu tipler için kanıt-barını yükseltir (re-flag + FP-sel tekrarını azaltır)."""
+    if not _FP_FEEDBACK_ENABLED:
+        return ""
+    pats = _recent_fp_patterns()
+    if not pats:
+        return ""
+    items = "\n".join(f"- {_sanitize_pattern(k)} ({n}× geçmişte FP/obsolete)" for k, n in pats)
+    return (
+        "\n\nGEÇMİŞ YANLIŞ-POZİTİFLER (bu codebase'de bu tipler SIK yanlış-pozitif/obsolete oldu — "
+        "yalnızca SOMUT, satır-bazlı kanıtın varsa flag'le; şüpheli/teorik olanı ATLA):\n" + items
     )
 
 
