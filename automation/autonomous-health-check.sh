@@ -97,8 +97,75 @@ if [ -f "$THROTTLE_FILE" ]; then
     fi
 fi
 
+# 9. Onboarding readiness + AUTO-FIX (claude CLI upgrade ~/.claude.json'daki
+#    hasCompletedOnboarding'i sifirlayabilir -> yeni CLI headless cold-start'ta
+#    TTY-siz onboarding/trust dialog'unda HANG -> spawn rc=124 timeout -> poison ->
+#    liveness autonomy=dead. 2026-06-25 olayi, PR #224 follow-up). Her spawn-user'in
+#    flag'ini idempotent+atomic set et. Guvenli config-fix (headless icin dogru) -> oto.
+#    klipperos full-NOPASSWD-sudo -> klipper-auto dosyasina da erisir/yazar.
+ONBOARD_FIXED=()
+ensure_onboarding() {
+    local user="$1" home="$2"
+    local cj="$home/.claude.json"
+    # Config yoksa skip (claude hic calismamis; ilk-run kendi yazar)
+    sudo -n -u "$user" test -f "$cj" 2>/dev/null || { PASSES+=("onboarding-$user-no-config"); return; }
+    # Read+fix tek atomic adimda (read-modify-write race'i daraltir; os.replace atomik).
+    # Yol argv ile gecer (sudo env'i strip eder -> os.environ ulasmaz).
+    local res
+    res=$(sudo -n -u "$user" python3 - "$cj" <<'PY' 2>/dev/null
+import json, os, sys
+p = sys.argv[1]
+try:
+    d = json.load(open(p))
+except Exception:
+    print("unreadable"); raise SystemExit
+if d.get("hasCompletedOnboarding") is True:
+    print("ready"); raise SystemExit
+d["hasCompletedOnboarding"] = True
+tmp = p + ".onboard.tmp"
+with open(tmp, "w") as f:
+    json.dump(d, f)
+os.replace(tmp, p)          # atomik, partial-write korumasi
+print("fixed")
+PY
+)
+    case "$res" in
+        ready) PASSES+=("onboarding-$user-ready") ;;
+        fixed) ONBOARD_FIXED+=("$user"); PASSES+=("onboarding-$user-AUTOFIXED")
+               log "RECOVER onboarding-autofix user=$user (hasCompletedOnboarding=true)" ;;
+        *)     FAILS+=("onboarding-$user-unreadable")
+               log "FAIL onboarding-$user-unreadable (res='$res')" ;;
+    esac
+}
+ensure_onboarding klipper-auto /home/klipper-auto
+ensure_onboarding klipperos    /home/klipperos
+
 TOTAL=$(( ${#PASSES[@]} + ${#FAILS[@]} ))
-log "health summary: pass=${#PASSES[@]}/$TOTAL fail=${#FAILS[@]} cleanup=${CLEANUP_RECOVERED}"
+log "health summary: pass=${#PASSES[@]}/$TOTAL fail=${#FAILS[@]} cleanup=${CLEANUP_RECOVERED} onboard-fixed=${#ONBOARD_FIXED[@]}"
+
+# Onboarding auto-fix audit entry (FAIL olmasa bile — sessiz oto-onarim gorunur olsun)
+if [ "${#ONBOARD_FIXED[@]}" -gt 0 ]; then
+    DATE_SLUG=$(date -u +%Y%m%d-%H%M)
+    USERS_CSV=$(IFS=,; echo "${ONBOARD_FIXED[*]}")
+    USERS_VAR="$USERS_CSV" DATE_VAR="$DATE_SLUG" \
+    python3 <<'PY' 2>/dev/null || true
+import json, os, urllib.request
+KEY = [l.split('=',1)[1].strip() for l in open(os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')).read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
+body = json.dumps({
+    'type': 'project',
+    'name': f"autonomous-onboarding-autofix-{os.environ['DATE_VAR']}",
+    'description': f"Otonom spawn onboarding flag oto-onarildi — {os.environ['DATE_VAR']}",
+    'content': f"## Recovery\nSpawn-user(lar)in ~/.claude.json hasCompletedOnboarding flag'i eksikti (muhtemel sebep: claude CLI upgrade flag'i sifirladi) -> headless cold-start onboarding-hang riski (spawn rc=124 -> poison -> autonomy=dead). Otomatik True set edildi (atomik).\n\n- User(lar): {os.environ['USERS_VAR']}\n- Eylem: hasCompletedOnboarding=true (idempotent)\n- Referans: PR #224 follow-up, 2026-06-25 onboarding-hang olayi\n\nKullanici aksiyon gerekmiyor — spawn'lar tekrar calisabilir.",
+    'source_device': 'klipper-autonomous',
+    'rationale': 'Automated onboarding recovery — audit log, no user attention needed'
+}, ensure_ascii=False).encode('utf-8')
+req = urllib.request.Request('http://127.0.0.1:8420/api/v1/memory/memories',
+    data=body, method='POST',
+    headers={'Content-Type':'application/json; charset=utf-8','X-Memory-Key':KEY})
+try: urllib.request.urlopen(req, timeout=5).read()
+except Exception as e: print(f'onboarding audit write err: {e}')
+PY
+fi
 
 # Cleanup recovery audit entry (FAIL olmasa bile)
 if [ "$CLEANUP_RECOVERED" = "1" ]; then
