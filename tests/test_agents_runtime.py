@@ -130,23 +130,11 @@ def test_codereview_card_signal_rate():
     }
     card = _codereview_card(_FakeCRA(), crdb)
     assert card["key"] == "code-review"
-    # 2 gerçek / (2+6) triaj = 0.25 (eski buggy: active/total = 9/15 = yanıltıcı backlog-oranı).
-    # counts_recent yoksa tüm-zaman counts'a düşer (fail-safe) → bu test o fallback'i de doğrular.
-    assert card["success_rate"] == {"label": "Sinyal (gerçek÷triaj, son 30g)", "value": 0.25, "n": 8}
+    # 2 gerçek / (2+6) triaj = 0.25 (eski buggy: active/total = 9/15 = yanıltıcı backlog-oranı)
+    assert card["success_rate"] == {"label": "Sinyal (gerçek÷triaj)", "value": 0.25, "n": 8}
     assert card["current_task"] == "Son inceleme: app/api/dev.py:48"
     assert "claude-haiku-4-5-20251001 (tarama)" in card["models"]
     assert "claude-sonnet-4-6 (kontrol/sentez)" in card["models"]
-
-
-def test_codereview_card_signal_uses_recent_window():
-    # #100203: sinyal son-30g penceresinden hesaplanır (tüm-zaman FP-selini hariç tutar).
-    crdb = {
-        "counts": {"completed": 2, "obsolete": 200},  # tüm-zaman: sel → 2/202 ~0.01
-        "counts_recent": {"completed": 3, "obsolete": 1},  # son-30g: post-hardening → 3/4 = 0.75
-        "findings": [],
-    }
-    card = _codereview_card(_FakeCRA(), crdb)
-    assert card["success_rate"] == {"label": "Sinyal (gerçek÷triaj, son 30g)", "value": 0.75, "n": 4}
 
 
 def test_codereview_card_empty():

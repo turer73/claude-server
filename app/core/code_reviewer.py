@@ -255,6 +255,15 @@ def _recent_fp_patterns(min_count: int = _FP_FEEDBACK_MIN, limit: int = _FP_FEED
         return []
 
 
+def _sanitize_pattern(s: str, maxlen: int = 80) -> str:
+    """FP-pattern'i prompt'a enjekte etmeden önce temizle (Codex #220): title'lar model/API
+    çıktısından gelir; kontrol-karakteri/newline bullet'tan kaçıp prompt'u yönlendirebilir
+    (örn. '[]'e steer). Tüm whitespace/kontrol-karakterini tek boşluğa indir + cap."""
+    cleaned = "".join(ch if ch.isprintable() else " " for ch in s)
+    cleaned = " ".join(cleaned.split())  # newline/tab/çoklu-boşluk → tek boşluk
+    return cleaned[:maxlen]
+
+
 def _fp_feedback_block() -> str:
     """Negatif-feedback bloğu: sık-FP/obsolete tipleri 'şüpheci ol' uyarısı olarak prompt'a
     enjekte et (boş = desen yok / kapalı). Advisory — mitigation-FP-guard'ı EZMEZ, yalnız
@@ -264,7 +273,7 @@ def _fp_feedback_block() -> str:
     pats = _recent_fp_patterns()
     if not pats:
         return ""
-    items = "\n".join(f"- {k} ({n}× geçmişte FP/obsolete)" for k, n in pats)
+    items = "\n".join(f"- {_sanitize_pattern(k)} ({n}× geçmişte FP/obsolete)" for k, n in pats)
     return (
         "\n\nGEÇMİŞ YANLIŞ-POZİTİFLER (bu codebase'de bu tipler SIK yanlış-pozitif/obsolete oldu — "
         "yalnızca SOMUT, satır-bazlı kanıtın varsa flag'le; şüpheli/teorik olanı ATLA):\n" + items
