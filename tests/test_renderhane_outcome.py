@@ -137,3 +137,22 @@ def test_renderhane_all_retries_empty_still_partial(tmp_path):
     out = _run_bash(tmp_path, extra_env={"RENDERHANE_PARTIAL_GATE": "1"})
     assert "OUTCOME: partial" in out
     assert "3-denemede" in out  # 3 deneme yapıldığı görünür
+
+
+def test_renderhane_gate_invalid_fails_open(tmp_path):
+    """Codex #219 fail-open: GATE non-numeric (.env typo) -> sessizce-bastırma DEĞİL, page et
+    (gate=1'e düş). Config-typo monitoring'i kör etmemeli."""
+    out = _run(tmp_path, "", extra_env={"RENDERHANE_PARTIAL_GATE": "iki"})
+    assert "OUTCOME: partial" in out  # geçersiz gate → fail-open, tek-örnek bile page'ler
+    assert "OUTCOME: pass" not in out
+
+
+def test_renderhane_state_unwritable_fails_open(tmp_path):
+    """Codex #219 fail-open: streak persist edilemezse (hook-state unwritable) sürekli-kesinti
+    asla page edemez (sessiz kör-nokta) -> persist-fail'de hemen partial/page."""
+    # STATE_DIR parent'ı bir DOSYA → mkdir -p ve echo başarısız → fail-open beklenir.
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x")
+    out = _run(tmp_path, "", extra_env={"RENDERHANE_STATE_DIR": str(blocker / "state")})
+    assert "OUTCOME: partial" in out
+    assert "fail-open" in out
