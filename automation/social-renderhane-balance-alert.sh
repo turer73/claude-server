@@ -19,8 +19,13 @@ TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 URL="http://100.126.113.23:9800/api/health"   # VPS panola-social Tailscale node
 THRESHOLD=${RENDERHANE_BALANCE_THRESHOLD:-200}
 COOLDOWN_HOURS=${RENDERHANE_BALANCE_COOLDOWN:-6}
-STATE_DIR=/opt/linux-ai-server/data/hook-state
+STATE_DIR=${RENDERHANE_STATE_DIR:-/opt/linux-ai-server/data/hook-state}  # test izolasyonu için override
 STATE_FILE="$STATE_DIR/renderhane-balance-last-alert"
+PARTIAL_STREAK_FILE="$STATE_DIR/renderhane-balance-partial-streak"
+# Run'lar-arası persistence-gate: izole partial (sonraki saatlik run'da düzelir) page
+# ETMEMELİ; yalnız >=GATE ardışık partial = sürekli kesinti → warn/page. In-run retry
+# saniye-blip'i, bu gate saat-ölçekli izole kesintiyi filtreler (#205/#207/#209 disiplini).
+PARTIAL_GATE=${RENDERHANE_PARTIAL_GATE:-2}
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG")"
 
@@ -29,6 +34,23 @@ send_telegram() {
         -d chat_id="${TELEGRAM_CHAT_ID}" \
         -d parse_mode="Markdown" \
         -d text="$1" >/dev/null 2>&1
+}
+
+# Partial outcome'u run'lar-arası gate'le: ardışık-streak'i artır; <GATE ise page-etme
+# (OUTCOME: pass + log), >=GATE ise gerçek partial (warn). Her durumda exit 0.
+emit_partial_gated() {
+    local detail="$1" streak=0
+    [ -f "$PARTIAL_STREAK_FILE" ] && streak=$(cat "$PARTIAL_STREAK_FILE" 2>/dev/null || echo 0)
+    case "$streak" in *[!0-9]* | "") streak=0 ;; esac
+    streak=$((streak + 1))
+    echo "$streak" > "$PARTIAL_STREAK_FILE"
+    if [ "$streak" -ge "$PARTIAL_GATE" ]; then
+        echo "OUTCOME: partial | $detail (${streak}. ardışık — sürekli kesinti)"
+    else
+        echo "[$TS] SUPPRESS izole partial (${streak}/${PARTIAL_GATE} ardışık, blip): $detail" >> "$LOG"
+        echo "OUTCOME: pass | transient blip bastırıldı (${streak}/${PARTIAL_GATE}): $detail"
+    fi
+    exit 0
 }
 
 # In-run retry: geçici Tailscale/VPS blip'i sahte partial-page'e çevirme (klipper 2026-06-23;
@@ -45,10 +67,9 @@ for _att in $(seq 1 "$RETRY_ATTEMPTS"); do
 done
 if [ -z "$RESPONSE" ]; then
     echo "[$TS] ERROR: VPS /api/health timeout/empty ($RETRY_ATTEMPTS deneme)" >> "$LOG"
-    # Geçici dış-bağımlılık (VPS panola-social erişilemedi) -> partial (warning),
-    # CRITICAL DEĞİL: bir sonraki saatlik run'da düzelir. (outcome-contract)
-    echo "OUTCOME: partial | VPS /api/health $RETRY_ATTEMPTS-denemede erişilemedi (geçici dış-bağımlılık; saatlik retry)"
-    exit 0
+    # Geçici dış-bağımlılık (VPS panola-social erişilemedi) -> run'lar-arası gate'li partial:
+    # izole blip page-etmez, ardışık >=GATE sürekli-kesinti warn/page eder.
+    emit_partial_gated "VPS /api/health $RETRY_ATTEMPTS-denemede erişilemedi (geçici dış-bağımlılık; saatlik retry)"
 fi
 
 BALANCE=$(echo "$RESPONSE" | python3 -c '
@@ -62,12 +83,13 @@ except Exception:
 
 if [ -z "$BALANCE" ] || [ "$BALANCE" = "-1" ]; then
     echo "[$TS] PARSE ERROR: renderhane_balance missing in: $RESPONSE" >> "$LOG"
-    # Beklenmedik payload (alan eksik) -> partial (warning), CRITICAL değil; transient
-    # olabilir, kalıcıysa warning olarak yüzeyde kalır (outcome-contract).
-    echo "OUTCOME: partial | renderhane_balance alanı yanıtta yok (payload değişmiş olabilir)"
-    exit 0
+    # Beklenmedik payload (alan eksik) -> gate'li partial; izole blip page-etmez,
+    # ardışık >=GATE kalıcı payload-değişimi warn/page eder.
+    emit_partial_gated "renderhane_balance alanı yanıtta yok (payload değişmiş olabilir)"
 fi
 
+# Balance başarıyla okundu → ardışık-partial streak'i sıfırla (kesinti bitti).
+rm -f "$PARTIAL_STREAK_FILE"
 echo "[$TS] balance=$BALANCE threshold=$THRESHOLD" >> "$LOG"
 
 if [ "$BALANCE" -lt "$THRESHOLD" ]; then
