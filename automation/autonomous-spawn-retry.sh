@@ -29,9 +29,17 @@ set -uo pipefail   # NOT -e: tek not fail tum loop'u kesmesin
 # guvenlik modeli). Self-drop-privs: eger klipperos olarak girilirse, sudo
 # ile klipper-auto'ya re-exec et.
 if [ "$(id -un)" = "klipperos" ] && [ -z "${RETRY_PRIVS_DROPPED:-}" ]; then
+    # Max-abonelik OAuth token FALLBACK: klipper-auto'nun ~/.claude/.credentials.json'ı
+    # expire olsa bile (2026-06-14 olayı: spawn 401 -> 3-deneme poison -> autonomy=dead),
+    # klipperos .env'deki canlı CLAUDE_CODE_OAUTH_TOKEN'ı (surer rotate eder) spawn'a geçir.
+    # klipper-auto .env'i okuyamaz; token'ı priv-drop'tan ÖNCE (klipperos iken) oku. CLI
+    # env-token'ı credentials.json'a tercih eder -> stale-cred'e bağımlılık kalkar. Boşsa
+    # geçme (mevcut native-cred davranışı korunur). Token sk-ant-oat... (boşluksuz) -> word-split güvenli.
+    _OAUTH_TOK="$(grep -m1 '^CLAUDE_CODE_OAUTH_TOKEN=' /opt/linux-ai-server/.env 2>/dev/null | cut -d= -f2- | tr -d "\"'\r")"
     exec sudo -n -u klipper-auto \
         env RETRY_PRIVS_DROPPED=1 \
             HOME=/home/klipper-auto \
+            ${_OAUTH_TOK:+CLAUDE_CODE_OAUTH_TOKEN=$_OAUTH_TOK} \
             HOOK_ENV_FILE=/opt/linux-ai-server/.env.autonomous \
             TELEGRAM_ENV_FILE=/opt/linux-ai-server/.env.autonomous \
             AUTONOMOUS_LOCK=/opt/linux-ai-server/data/hook-state/klipper-autonomous-claude.lock \
