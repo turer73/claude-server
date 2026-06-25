@@ -1,0 +1,20 @@
+[Unit]
+Description=koken-akademi ephemeral GitHub Actions runner (Docker-isolated, owner-only)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kokenrunner
+ExecStart=/opt/linux-ai-server/extensions/gh-runner/run-ephemeral-loop.sh
+Restart=always
+RestartSec=15
+# StartLimitBurst YOK: normal job-cycle'lar loop-içi iterasyon (servis-restart DEĞİL) →
+# eski guard (StartLimitBurst=5) normal yükü kırıyordu; bu tasarımda restart yalnız
+# orkestratör-crash'inde olur (#1175 Codex :133 fix).
+# KillMode varsayılan (control-group): durdurma/restart'ta child-process'ler de temizlenir
+# (eski KillMode=process child sızdırıyordu, Codex :143). Container zaten --rm.
+
+[Install]
+WantedBy=multi-user.target
