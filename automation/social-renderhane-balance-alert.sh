@@ -40,10 +40,20 @@ send_telegram() {
 # (OUTCOME: pass + log), >=GATE ise gerçek partial (warn). Her durumda exit 0.
 emit_partial_gated() {
     local detail="$1" streak=0
+    # FAIL-OPEN (Codex #219): GATE non-numeric (.env typo) → gate'i 1'e düşür = page et.
+    # Sessizce-asla-page-etme'den (config-typo monitoring'i kör eder) güvenli taraf.
+    case "$PARTIAL_GATE" in *[!0-9]* | "") echo "[$TS] WARN GATE='$PARTIAL_GATE' geçersiz → fail-open(1)" >> "$LOG" 2>/dev/null; PARTIAL_GATE=1 ;; esac
+    [ "$PARTIAL_GATE" -lt 1 ] && PARTIAL_GATE=1
     [ -f "$PARTIAL_STREAK_FILE" ] && streak=$(cat "$PARTIAL_STREAK_FILE" 2>/dev/null || echo 0)
     case "$streak" in *[!0-9]* | "") streak=0 ;; esac
     streak=$((streak + 1))
-    echo "$streak" > "$PARTIAL_STREAK_FILE"
+    # FAIL-OPEN (Codex #219): streak persist edilemezse (hook-state unwritable) gate sayamaz →
+    # sürekli kesintide bile asla page etmez (sessiz kör-nokta). Persist-fail → hemen partial/page.
+    if ! echo "$streak" > "$PARTIAL_STREAK_FILE" 2>/dev/null; then
+        echo "[$TS] WARN streak persist edilemedi → fail-open partial" >> "$LOG" 2>/dev/null
+        echo "OUTCOME: partial | $detail (state-persist-fail → fail-open)"
+        exit 0
+    fi
     if [ "$streak" -ge "$PARTIAL_GATE" ]; then
         echo "OUTCOME: partial | $detail (${streak}. ardışık — sürekli kesinti)"
     else
