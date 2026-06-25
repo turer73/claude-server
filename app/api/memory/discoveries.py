@@ -41,6 +41,10 @@ async def list_discoveries(
             query += " AND status=?"
             params.append(status)
         if as_of:
+            # Validasyon (#1167): geçersiz datetime → SQLite datetime() NULL döner → WHERE hep
+            # false → sessizce boş liste. Önce doğrula, geçersizse 400 (sessiz-boş yerine).
+            if db.execute("SELECT datetime(?)", (as_of,)).fetchone()[0] is None:
+                raise HTTPException(400, f"invalid as_of datetime: {as_of!r}")
             # Codex P2: as_of'u datetime() ile normalize (ISO 'T' vs ' ' string-compare tutarsızlığı).
             query += " AND valid_at <= datetime(?) AND (invalid_at IS NULL OR invalid_at > datetime(?))"
             params.extend([as_of, as_of])
@@ -255,8 +259,10 @@ async def update_discovery(discovery_id: int, data: DiscoveryUpdate):
         if not fields:
             raise HTTPException(400, "No fields to update")
         params.append(discovery_id)
-        db.execute(f"UPDATE discoveries SET {', '.join(fields)} WHERE id=?", params)
+        cur = db.execute(f"UPDATE discoveries SET {', '.join(fields)} WHERE id=?", params)
         db.commit()
+        if cur.rowcount == 0:  # id yok → 0-satır; "updated" dönüp caller'ı yanıltma (#1165)
+            raise HTTPException(404, "Discovery not found")
         if data.status:  # Qdrant payload-sync (status değişti → active-search'ten çıksın)
             await asyncio.to_thread(sq.set_payload_status, discovery_id, data.status)
         return {"status": "updated"}

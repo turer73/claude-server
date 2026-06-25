@@ -439,6 +439,30 @@ def test_send_message_falls_back_to_plain_on_markdown_error(monkeypatch):
     assert "parse_mode" not in calls[1]  # fallback düz metin
 
 
+def test_send_message_fallback_on_http200_telegram_not_ok(monkeypatch):
+    """#1180: Telegram HTTP 200 + {ok:false} (Markdown parse) → r.ok=True olur ama
+    JSON ok=false; fallback yine de tetiklenmeli (mesaj kaybolmasın)."""
+    import app.api.telegram_bot as tb
+
+    monkeypatch.setattr(tb, "TELEGRAM_BOT_TOKEN", "T")
+    calls = []
+
+    class _R:
+        ok = True  # HTTP 200 — ama Telegram logic-hatası
+
+        def json(self):
+            return {"ok": False, "error_code": 400, "description": "can't parse entities"}
+
+    def _post(url, json=None, timeout=None):
+        calls.append(dict(json))
+        return _R()
+
+    with patch("app.api.telegram_bot.requests.post", side_effect=_post):
+        tb._send_message(123, "dengesiz `backtick")
+    assert len(calls) == 2  # HTTP 200 ama ok:false → yine plain retry
+    assert "parse_mode" not in calls[1]
+
+
 def test_send_message_no_retry_when_ok(monkeypatch):
     """Markdown başarılıysa tek POST (gereksiz retry yok)."""
     import app.api.telegram_bot as tb
