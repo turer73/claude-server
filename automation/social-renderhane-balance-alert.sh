@@ -19,7 +19,7 @@ TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 URL="http://100.126.113.23:9800/api/health"   # VPS panola-social Tailscale node
 THRESHOLD=${RENDERHANE_BALANCE_THRESHOLD:-200}
 COOLDOWN_HOURS=${RENDERHANE_BALANCE_COOLDOWN:-6}
-STATE_DIR=/opt/linux-ai-server/data/hook-state
+STATE_DIR=${RENDERHANE_STATE_DIR:-/opt/linux-ai-server/data/hook-state}  # test izolasyonu için override
 STATE_FILE="$STATE_DIR/renderhane-balance-last-alert"
 PARTIAL_STREAK_FILE="$STATE_DIR/renderhane-balance-partial-streak"
 # Run'lar-arası persistence-gate: izole partial (sonraki saatlik run'da düzelir) page
