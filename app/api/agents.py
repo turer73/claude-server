@@ -195,6 +195,15 @@ def _codereview_db() -> dict:
                 "SELECT status, COUNT(*) FROM discoveries WHERE project='code-review' AND type='bug' GROUP BY status"
             ).fetchall():
                 counts[status] = n
+            # Pencereli sayım (son 30g) — sinyal-metriği için (surer #100203): 06-19/20 245-FP
+            # seli (277/289 obsolete) tüm-zaman precision'ı şişiriyor; son-N-gün post-hardening
+            # gerçeği gösterir. created_at bazlı (triaj-zamanı değil ama yeterince yakın proxy).
+            counts_recent: dict[str, int] = {}
+            for status, n in con.execute(
+                "SELECT status, COUNT(*) FROM discoveries WHERE project='code-review' AND type='bug' "
+                "AND created_at > datetime('now','-30 days') GROUP BY status"
+            ).fetchall():
+                counts_recent[status] = n
             rows = con.execute(
                 "SELECT created_at, title, COALESCE(details,'') AS details, status, type "
                 "FROM discoveries WHERE project='code-review' ORDER BY id DESC LIMIT 8"
@@ -209,11 +218,11 @@ def _codereview_db() -> dict:
                 }
                 for r in rows
             ]
-            return {"counts": counts, "findings": findings}
+            return {"counts": counts, "counts_recent": counts_recent, "findings": findings}
         finally:
             con.close()
     except Exception:
-        return {"counts": {}, "findings": []}
+        return {"counts": {}, "counts_recent": {}, "findings": []}
 
 
 def _devops_card(dv) -> dict:
@@ -257,8 +266,11 @@ def _codereview_card(cra, crdb: dict) -> dict:
     # active (triaj-bekleyen) sayılmaz — henüz gerçek/FP bilinmez. ESKİ HATA: active/(active+obsolete)
     # = açık/toplam (backlog), FP-oranı DEĞİL → her şey triaj-edilip kapatılınca yanıltıcı %0 ("ajan
     # %100 FP" sanılır oysa "backlog temiz" demek).
-    completed = counts.get("completed", 0)
-    triaged = completed + counts.get("obsolete", 0)
+    # Sinyal son-30g penceresinden (surer #100203): tüm-zaman 06-19/20 FP-selini içeriyor
+    # → precision'ı haksız düşürüyor. Pencere yoksa (eski veri) tüm-zamana düş (fail-safe).
+    counts_recent = crdb.get("counts_recent") or counts
+    completed = counts_recent.get("completed", 0)
+    triaged = completed + counts_recent.get("obsolete", 0)
     findings = crdb["findings"]
     last_file = findings[0]["title"].split(" ", 1)[0] if findings else None
     return {
@@ -273,7 +285,9 @@ def _codereview_card(cra, crdb: dict) -> dict:
         "interval_s": st.get("interval_s"),
         "current_task": (f"Son inceleme: {last_file}" if last_file else "Kuyruk/sweep bekliyor"),
         "stats": {"Tick": st.get("ticks", 0), "Toplam bulgu": st.get("total_findings", 0), "Aktif": active},
-        "success_rate": ({"label": "Sinyal (gerçek÷triaj)", "value": round(completed / triaged, 3), "n": triaged} if triaged else None),
+        "success_rate": (
+            {"label": "Sinyal (gerçek÷triaj, son 30g)", "value": round(completed / triaged, 3), "n": triaged} if triaged else None
+        ),
         "findings": findings,
     }
 

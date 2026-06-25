@@ -242,6 +242,34 @@ def test_lessons_block_empty_when_none(tmp_db, monkeypatch):
     assert cr._lessons_block() == ""
 
 
+def _insert_bug(db, title, status="obsolete"):
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO discoveries (project, type, title, status) VALUES (?, 'bug', ?, ?)", (cr.PROJECT, title, status))
+    conn.commit()
+    conn.close()
+
+
+def test_fp_feedback_block_surfaces_recurring_obsolete(tmp_db, monkeypatch):
+    # #100203 negatif-feedback: >=MIN kez obsolete olan bulgu-tipi 'şüpheci ol' bloğunda çıkar;
+    # izole (eşik-altı) tip çıkmaz. kind = title'ın 'path:line ' sonrası kısmı.
+    monkeypatch.setattr(cr, "_FP_FEEDBACK_ENABLED", True)
+    monkeypatch.setattr(cr, "_FP_FEEDBACK_MIN", 3)
+    for i in range(3):
+        _insert_bug(tmp_db, f"app/api/dev{i}.py:{i} sql injection risk")  # aynı kind 3× obsolete
+    _insert_bug(tmp_db, "app/x.py:1 nadir-tek-bulgu")  # izole → eşik-altı
+    block = cr._fp_feedback_block()
+    assert "GEÇMİŞ YANLIŞ-POZİTİFLER" in block
+    assert "sql injection risk" in block
+    assert "nadir-tek-bulgu" not in block  # 1× → MIN=3 altı, dahil değil
+
+
+def test_fp_feedback_block_disabled_empty(tmp_db, monkeypatch):
+    monkeypatch.setattr(cr, "_FP_FEEDBACK_ENABLED", False)
+    monkeypatch.setattr(cr, "_FP_FEEDBACK_MIN", 1)
+    _insert_bug(tmp_db, "app/x.py:1 herhangi-bulgu")
+    assert cr._fp_feedback_block() == ""
+
+
 async def test_review_source_injects_lessons(tmp_db, monkeypatch):
     """Uçtan-uca: ajan kendi dersini review-prompt'a oto-enjekte eder."""
     monkeypatch.setattr(cr, "_LEARN_FEEDBACK_ENABLED", True)
