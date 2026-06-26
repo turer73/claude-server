@@ -42,7 +42,18 @@ LEGACY_SERVICE="actions-runner-koken"
 LEGACY_DIR="/opt/actions-runner/koken"
 if systemctl list-unit-files 2>/dev/null | grep -q "^${LEGACY_SERVICE}\.service"; then
     echo "  ESKİ güvensiz runner bulundu (${LEGACY_SERVICE}) → durdur + disable + kaldır"
-    sudo systemctl disable --now "${LEGACY_SERVICE}" 2>/dev/null || true
+    # FAIL-CLOSED (Codex P1 :45): disable başarısız olursa (timeout/systemd-red) unit'i SİLME +
+    # devam etme. Aksi halde eski root-capable runner KOŞMAYA devam edip job kapar; unit-dosyası
+    # silinince de fark edilmez. Durdur → gerçekten inactive mi DOĞRULA → ancak sonra kaldır.
+    if ! sudo systemctl disable --now "${LEGACY_SERVICE}"; then
+        echo "HATA: ${LEGACY_SERVICE} durdurulamadı — fail-closed, kurulum durduruldu." >&2
+        echo "      Manuel: sudo systemctl stop ${LEGACY_SERVICE} && sudo systemctl disable ${LEGACY_SERVICE}" >&2
+        exit 1
+    fi
+    if systemctl is-active --quiet "${LEGACY_SERVICE}"; then
+        echo "HATA: ${LEGACY_SERVICE} disable sonrası HÂLÂ aktif — fail-closed, kurulum durduruldu." >&2
+        exit 1
+    fi
     # GitHub kaydını da sök (config.sh remove); token gerekiyorsa kullanıcı manuel tamamlar.
     if [ -x "${LEGACY_DIR}/config.sh" ]; then
         echo "  NOT: eski runner GitHub kaydı kalmış olabilir — gerekirse manuel kaldır:"
@@ -50,7 +61,7 @@ if systemctl list-unit-files 2>/dev/null | grep -q "^${LEGACY_SERVICE}\.service"
     fi
     sudo rm -f "/etc/systemd/system/${LEGACY_SERVICE}.service"
     sudo systemctl daemon-reload
-    echo "  eski runner emekliye ayrıldı (host'ta artık job kapmıyor)."
+    echo "  eski runner emekliye ayrıldı (durduruldu+doğrulandı; host'ta artık job kapmıyor)."
 fi
 
 # 1) Önkoşullar
@@ -86,8 +97,22 @@ sudo docker build --build-arg RUNNER_VERSION="$RUNNER_VERSION" -t "$IMAGE" "$BUI
 # 4) PAT dizini (dosyayı KULLANICI koyacak; script PAT istemez/saklamaz)
 sudo install -d -m 0750 -o root -g "$RUNNER_USER" "$PAT_DIR"
 
-# 5) Log dosyası (orkestratör yazabilir)
+# 5) Log dosyası (orkestratör yazabilir) + rotation.
 sudo install -m 0640 -o "$RUNNER_USER" -g "$RUNNER_USER" /dev/null /var/log/koken-runner.log
+# logrotate (Codex P2 :53): uzun-ömürlü servis tüm container stdout/stderr'ini bu dosyaya append
+# eder; repo logrotate'i bu yolu KAPSAMIYOR → sınırsız büyür, disk doldurur. copytruncate:
+# wrapper dosyayı `>>` ile açık tutar, in-place truncate ile process-restart gerekmez.
+sudo install -m 0644 /dev/stdin /etc/logrotate.d/koken-runner <<'LOGROTATE'
+/var/log/koken-runner.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+LOGROTATE
 
 # 6) Orkestratör wrapper'ı ROOT-sahipli sabit yola kur (app-user değiştiremez, Codex :10).
 #    Servis bu kopyadan koşar; /opt çalışma-ağacındaki kopya değil. Kaynak = root-sahipli
