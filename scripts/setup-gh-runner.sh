@@ -56,11 +56,21 @@ if ! id "$RUNNER_USER" >/dev/null 2>&1; then
 fi
 sudo usermod -aG docker "$RUNNER_USER"
 
-# 3) Runner image build (sürüm pinli — reproducible)
+# 3) Runner image build (sürüm pinli — reproducible).
+#    Build context'i ROOT-sahipli snapshot'tan al: kurulu deployment'ta install.sh /opt'u
+#    app-kullanıcısına (aiserver) chown'lar → $HERE/{Dockerfile,entrypoint.sh} aiserver-
+#    yazılabilir olur. $HERE'den direkt build edilirse aiserver, image'a kod enjekte edip
+#    (sonraki owner-rebuild'de pişer) container-içi REG_TOKEN'ı sızdırabilir / deploy'u
+#    kurcalayabilir. Root-sahipli kopyadan build → aiserver build-input'unu tamper edemez.
+BUILD_DIR="/usr/local/lib/koken-runner/build"
+sudo rm -rf "$BUILD_DIR"
+sudo install -d -m 0755 -o root -g root "$BUILD_DIR"
+sudo cp -r "$HERE/." "$BUILD_DIR/"
+sudo chown -R root:root "$BUILD_DIR"
 RUNNER_VERSION=$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest | jq -r '.tag_name' | sed 's/^v//')
 [ -n "$RUNNER_VERSION" ] || { echo "HATA: runner sürümü alınamadı"; exit 1; }
-echo "  runner sürümü: $RUNNER_VERSION → image build ($IMAGE)"
-sudo docker build --build-arg RUNNER_VERSION="$RUNNER_VERSION" -t "$IMAGE" "$HERE"
+echo "  runner sürümü: $RUNNER_VERSION → image build ($IMAGE, root-sahipli context)"
+sudo docker build --build-arg RUNNER_VERSION="$RUNNER_VERSION" -t "$IMAGE" "$BUILD_DIR"
 
 # 4) PAT dizini (dosyayı KULLANICI koyacak; script PAT istemez/saklamaz)
 sudo install -d -m 0750 -o root -g "$RUNNER_USER" "$PAT_DIR"
@@ -69,12 +79,13 @@ sudo install -d -m 0750 -o root -g "$RUNNER_USER" "$PAT_DIR"
 sudo install -m 0640 -o "$RUNNER_USER" -g "$RUNNER_USER" /dev/null /var/log/koken-runner.log
 
 # 6) Orkestratör wrapper'ı ROOT-sahipli sabit yola kur (app-user değiştiremez, Codex :10).
-#    Servis bu kopyadan koşar; /opt çalışma-ağacındaki kopya değil.
+#    Servis bu kopyadan koşar; /opt çalışma-ağacındaki kopya değil. Kaynak = root-sahipli
+#    BUILD_DIR snapshot'ı (image ile aynı güven sınırı).
 sudo install -D -m 0755 -o root -g root \
-    "$HERE/run-ephemeral-loop.sh" /usr/local/lib/koken-runner/run-ephemeral-loop.sh
+    "$BUILD_DIR/run-ephemeral-loop.sh" /usr/local/lib/koken-runner/run-ephemeral-loop.sh
 
-# 7) systemd unit
-sudo install -m 0644 "$HERE/koken-runner.service" "/etc/systemd/system/${SERVICE_NAME}.service"
+# 7) systemd unit (root-sahipli snapshot'tan)
+sudo install -m 0644 "$BUILD_DIR/koken-runner.service" "/etc/systemd/system/${SERVICE_NAME}.service"
 sudo systemctl daemon-reload
 
 cat <<EOF

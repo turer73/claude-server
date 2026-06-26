@@ -44,6 +44,10 @@ pip install -e . --quiet
 
 # Set permissions
 chown -R aiserver:aiserver /opt/linux-ai-server
+# gh-runner build context'i ROOT'ta KALIR: aiserver bunları asla yazmaz; app-user'a chown
+# edilirse aiserver Dockerfile/entrypoint.sh'a kod enjekte edip sonraki owner-rebuild'de
+# runner image'ına bulaştırabilir (REG_TOKEN sızıntısı/deploy-tamper). Root-sahipli = pristine.
+chown -R root:root /opt/linux-ai-server/extensions
 chown -R aiserver:aiserver /var/lib/linux-ai-server
 chown -R aiserver:aiserver /var/log/linux-ai-server
 chown -R aiserver:aiserver /var/AI-stump
