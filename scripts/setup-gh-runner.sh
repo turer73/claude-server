@@ -27,10 +27,12 @@ PAT_DIR="/etc/koken-runner"
 if [ -n "${KOKEN_RUNNER_SRC:-}" ]; then
     HERE="$KOKEN_RUNNER_SRC"
 elif HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../extensions/gh-runner" 2>/dev/null && pwd)" \
-        && [ "${HERE#/opt/linux-ai-server/}" = "$HERE" ]; then
-    # Adjacent kaynak yalnız /opt ALTINDA DEĞİLSE kabul edilir: /opt aiserver'a chown'lu →
-    # oradan build edersek app-user Dockerfile/entrypoint'i tamper edip privileged rebuild'de
-    # bulaştırabilirdi (Codex P1 :29). /opt-kaynak → root-sahipli /usr/local snapshot'ına düş.
+        && [ "$(stat -c %U "$HERE" 2>/dev/null)" != "aiserver" ]; then
+    # Adjacent kaynak app-user'a (aiserver) ait DEĞİLSE kabul: operatör git-checkout'u root/
+    # klipperos-sahipli → güvenilir. install.sh-deployment'ta /opt aiserver'a chown'lu → reddet,
+    # root-sahipli /usr/local snapshot'ına düş (Codex P1 :29). DISCRIMINATOR=OWNERSHIP, path-prefix
+    # DEĞİL: bu repo'nun checkout'u /opt/linux-ai-server'da yaşıyor, path-guard onu da yanlışlıkla
+    # reddedip dokümante 'sudo bash scripts/setup-gh-runner.sh'ı kırardı (regresyon-fix).
     :
 else
     HERE="/usr/local/lib/koken-runner/gh-runner"
