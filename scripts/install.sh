@@ -30,7 +30,10 @@ mkdir -p /etc/linux-ai-server
 # Copy files
 cp -r app/ /opt/linux-ai-server/
 cp -r scripts/ /opt/linux-ai-server/scripts/
-cp -r extensions/ /opt/linux-ai-server/extensions/   # gh-runner setup'ı buradan Dockerfile/service okur (Codex :22)
+# gh-runner setup'ı buradan Dockerfile/service okur (Codex :22). reinstall'da içeriği değiştir:
+# `cp -r extensions/ dest/` dest VARSA GNU-cp'de extensions/extensions nestelerdi (Codex :28).
+mkdir -p /opt/linux-ai-server/extensions
+cp -r extensions/. /opt/linux-ai-server/extensions/
 cp pyproject.toml /opt/linux-ai-server/
 cp -r config/ /etc/linux-ai-server/
 cp config/env /etc/linux-ai-server/env 2>/dev/null || true

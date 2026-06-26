@@ -51,30 +51,38 @@ def test_entrypoint_requires_reg_token(tmp_path):
 
 
 def test_loop_mint_success_runs_ephemeral_container(tmp_path):
-    # curl registration-token döndürür (gerçek jq ayıklar) → docker run REG_TOKEN ile çağrılır.
+    # curl registration-token döndürür (gerçek jq ayıklar) → docker run env-passthrough ile çağrılır.
     _fake_bin(tmp_path / "bin", "curl", "printf '%s' '{\"token\":\"REG123\"}'\n")
-    # fake docker: argümanlarını dosyaya yaz (REG_TOKEN geçti mi doğrula)
-    _fake_bin(tmp_path / "bin", "docker", f'echo "$@" > "{tmp_path}/docker.args"\nexit 0\n')
+    # fake docker: argümanları + container'a geçen REG_TOKEN env'ini ayrı dosyalara yaz.
+    _fake_bin(
+        tmp_path / "bin",
+        "docker",
+        f'echo "$@" > "{tmp_path}/docker.args"\nprintf "%s" "${{REG_TOKEN:-}}" > "{tmp_path}/docker.regtoken"\nexit 0\n',
+    )
     r = _run_loop(tmp_path, {"KOKEN_RUNNER_MAX_CYCLES": "1"})
     assert r.returncode == 0
     args = (tmp_path / "docker.args").read_text()
     assert "run" in args
     assert "--rm" in args
-    assert "REG_TOKEN=REG123" in args  # kısa-ömürlü token container'a geçti
     assert "--pull never" in args  # yerel image (registry-pull yok)
     assert "RUNNER_NAME=" in args  # sabit ad container'a geçti (--replace bayatı devralır)
+    # Kayıt-token argv'de GÖRÜNMEMELİ (-e REG_TOKEN name-only); /proc/cmdline sızıntısını önler.
+    assert "REG123" not in args
+    # ...ama container env'inden değeri ALMALI (env-passthrough doğru çalışıyor).
+    assert (tmp_path / "docker.regtoken").read_text() == "REG123"
 
 
-def test_loop_docker_start_failure_backs_off(tmp_path):
-    # mint BAŞARILI ama docker container'ı başlatamıyor (rc=125: daemon/image yok). Bu durum
-    # job-fail/idle DEĞİL → backoff şart; aksi halde fails sıfırlanıp sonsuz token-mint olurdu.
+def test_loop_container_failure_backs_off(tmp_path):
+    # mint BAŞARILI ama container/runner fail (rc!=0: başlatma 125 VEYA config/run hatası). Bu
+    # job-fail/idle DEĞİL → backoff şart (rc=0 dışı normal-tamamlanma yok); aksi halde fails
+    # sıfırlanıp hiç runner koşmadan sonsuz token-mint olurdu (Codex :44/:57).
     _fake_bin(tmp_path / "bin", "curl", "printf '%s' '{\"token\":\"REG123\"}'\n")
-    _fake_bin(tmp_path / "bin", "docker", "exit 125\n")  # daemon/başlatma hatası
+    _fake_bin(tmp_path / "bin", "docker", "exit 1\n")  # config/run hatası (container başladı, runner fail)
     r = _run_loop(tmp_path, {"KOKEN_RUNNER_MAX_CYCLES": "2"})
     assert r.returncode == 0
     log = (tmp_path / "run.log").read_text()
-    assert log.count("backoff") >= 2  # her başlatma-hatası backoff'a düşer (API-spam yok)
-    assert "BAŞLATILAMADI" in log
+    assert log.count("backoff") >= 2  # her container-fail backoff'a düşer (API-spam yok)
+    assert "BAŞARISIZ" in log
 
 
 def test_loop_mint_failure_backs_off_no_spam(tmp_path):

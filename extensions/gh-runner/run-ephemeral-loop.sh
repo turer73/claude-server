@@ -23,11 +23,14 @@ mint_token() {
     local pat
     pat=$(cat "$PAT_FILE" 2>/dev/null) || return 1
     [ -n "$pat" ] || return 1
-    curl -fsS --max-time 20 -X POST \
-        -H "Authorization: Bearer ${pat}" \
-        -H "Accept: application/vnd.github+json" \
-        -H "X-GitHub-Api-Version: 2022-11-28" \
-        "https://api.github.com/repos/${REPO}/actions/runners/registration-token" \
+    # Authorization header argv'de GÖRÜNMEZ: --config - ile stdin'den okunur. Aksi halde PAT
+    # `curl -H "Bearer ..."` argümanına girer, /proc/<pid>/cmdline ile başka unprivileged
+    # kullanıcıya (örn. aiserver) sızar — 0640 dosya korumasını boşa çıkarır (Codex :27).
+    printf 'header = "Authorization: Bearer %s"\n' "$pat" \
+        | curl -fsS --max-time 20 -X POST --config - \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPO}/actions/runners/registration-token" \
         | jq -r '.token // empty'
 }
 
@@ -38,22 +41,27 @@ run_one_cycle() {
         return 1
     fi
     log "yeni job-cycle: taze ephemeral container (state izolasyonu)"
+    # REG_TOKEN argv'de GÖRÜNMEZ: değer orkestratörün env'inden geçer (-e REG_TOKEN, =value YOK).
+    # /proc/<pid>/environ yalnız kokenrunner+root okuyabilir; /proc/<pid>/cmdline world-readable
+    # olduğundan -e REG_TOKEN="$token" başka kullanıcıya kayıt-token'ı sızdırırdı (Codex :43).
+    export REG_TOKEN="$token"
     # İzolasyon: --rm (taze), host-mount/socket YOK, non-root, --pull never (yerel image).
     docker run --rm --pull never \
-        -e REG_TOKEN="$token" \
+        -e REG_TOKEN \
         -e REPO_URL="https://github.com/${REPO}" \
         -e RUNNER_NAME="$RUNNER_NAME" \
         "$IMAGE" >>"$LOG" 2>&1
     rc=$?
-    # docker container'ı BAŞLATAMADIysa (rc=125 daemon/socket/image-yok; 126/127 entrypoint
-    # exec edilemedi) bu mint-fail gibi backoff ister: aksi halde return 0 → fails sıfırlanır →
-    # hiç runner koşmadan sonsuz token-mint = API-spam (Codex :44). Container KOŞTUYSA (rc 0 veya
-    # job-fail/idle) cycle başarılı: --ephemeral tek-job sonrası taze cycle normaldir.
-    if [ "$rc" -eq 125 ] || [ "$rc" -eq 126 ] || [ "$rc" -eq 127 ]; then
-        log "docker container BAŞLATILAMADI (rc=$rc: daemon/image/socket) → başlatma-hatası, backoff"
+    unset REG_TOKEN
+    # Ephemeral happy-path: config+run başarılı, TEK job sonrası rc=0 (job'un kendisi fail etse
+    # bile run.sh 0 döner — sonuç GitHub'a raporlanır). rc!=0 → container BAŞLATILAMADI (125/126/
+    # 127) VEYA config/run BAŞARISIZ (GitHub'a ulaşamadı / REPO_URL red / crash). Her iki halde
+    # de backoff: aksi halde fails sıfırlanır, hiç runner koşmadan sonsuz token-mint=API-spam
+    # olur (Codex :44/:57). Normal-tamamlanma yalnız rc=0 ile ayırt edilebilir.
+    if [ "$rc" -ne 0 ]; then
+        log "container/runner BAŞARISIZ (rc=$rc: başlatma/config/run) → backoff (no-runner API-spam'i önle)"
         return 1
     fi
-    [ "$rc" -ne 0 ] && log "container rc=$rc (job-fail/idle, normal — sonraki cycle taze)"
     return 0
 }
 
