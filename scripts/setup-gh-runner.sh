@@ -1,165 +1,159 @@
 #!/usr/bin/env bash
-# GitHub Actions self-hosted runner kurulum scripti
-# koken-akademi repo'su için ephemeral runner (Klipper SER8)
+# koken-akademi self-hosted GitHub Actions runner — GÜVENLİ kurulum (Docker-ephemeral, owner-only).
 #
-# Kullanım: bash /opt/linux-ai-server/scripts/setup-gh-runner.sh
-# Gereksinim: sudo yetkisi (klipperos NOPASSWD:ALL → OK)
-
+# Eski host-tabanlı tasarımın (job'lar NOPASSWD-root klipperos olarak host'ta koşuyordu,
+# Codex #222: 3×P1) yerini alır (#1175 güvenlik-rework). Yeni güvenlik modeli:
+#   - Job'lar TAZE container'da non-root 'runner' olarak koşar → host-sudo/mount YOK,
+#     job-arası state-sızıntısı YOK (--rm + --ephemeral).
+#   - Dedicated 'kokenrunner' host-kullanıcısı: login YOK, SUDO YOK; yalnız docker-run +
+#     token-mint yapan orkestratör. İş yükü container'da izole.
+#   - Fine-grained PAT host'ta root-only (0640); container'a yalnız kısa-ömürlü
+#     registration-token girer (PAT job'a ASLA ulaşmaz).
+#
+# Tehdit modeli: OWNER-ONLY (yalnız sahip-tetikli build/deploy). Fork/dış-PR kodu BU runner'da
+# çalıştırılmamalı (workflow'da pull_request_target + self-hosted label kombinasyonu yasak).
 set -euo pipefail
 
-RUNNER_DIR="/opt/actions-runner/koken"
-RUNNER_USER="klipperos"
-RUNNER_NAME="klipper"
-RUNNER_LABELS="self-hosted,linux,klipper"
-REPO_URL="https://github.com/turer73/koken-akademi"
-SERVICE_NAME="actions-runner-koken"
-WRAPPER_SCRIPT="$RUNNER_DIR/start-ephemeral-runner.sh"
-
-echo "=== GH-RUNNER-20260623-01: koken-akademi self-hosted runner kurulumu ==="
-echo ""
-
-# Ön kontrol: gh auth
-echo "[1/8] gh auth kontrol..."
-if ! env -u GITHUB_TOKEN gh auth status 2>&1 | grep -q "Logged in"; then
-    echo "HATA: gh auth başarısız. 'gh auth login' ile oturum aç."
-    exit 1
-fi
-echo "  OK: gh turer73 hesabı aktif"
-
-# Ön kontrol: bağımlılıklar
-echo "[2/8] Bağımlılık kontrol..."
-node_ver=$(node --version 2>/dev/null) && echo "  node: $node_ver" || { echo "HATA: node bulunamadı"; exit 1; }
-git_ver=$(git --version 2>/dev/null) && echo "  git: $git_ver" || { echo "HATA: git bulunamadı"; exit 1; }
-
-# Runner dizini oluştur
-echo "[3/8] Dizin oluşturuluyor: $RUNNER_DIR..."
-sudo mkdir -p "$RUNNER_DIR"
-sudo chown "$RUNNER_USER:$RUNNER_USER" "$RUNNER_DIR"
-echo "  OK"
-
-# En son runner versiyonunu al
-echo "[4/8] GitHub Actions runner son versiyon alınıyor..."
-RUNNER_VERSION=$(env -u GITHUB_TOKEN gh api repos/actions/runner/releases/latest --jq '.tag_name' | sed 's/v//')
-echo "  Versiyon: $RUNNER_VERSION"
-
-RUNNER_TARBALL="actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
-RUNNER_URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${RUNNER_TARBALL}"
-
-# Runner indir
-echo "[5/8] Runner indiriliyor..."
-if [ ! -f "$RUNNER_DIR/$RUNNER_TARBALL" ]; then
-    curl -fsSL -o "$RUNNER_DIR/$RUNNER_TARBALL" "$RUNNER_URL"
-    echo "  İndirildi: $RUNNER_TARBALL"
+REPO="${KOKEN_RUNNER_REPO:-turer73/koken-akademi}"
+RUNNER_USER="kokenrunner"
+IMAGE="koken-gh-runner:latest"
+SERVICE_NAME="koken-runner"
+PAT_DIR="/etc/koken-runner"
+# Build-context (Dockerfile/entrypoint/wrapper/service) kaynağı. Öncelik:
+#   1) KOKEN_RUNNER_SRC (explicit override)
+#   2) ../extensions/gh-runner (git-checkout'tan koşturma — operatör-sahipli, güvenilir)
+#   3) /usr/local/lib/koken-runner/gh-runner (install.sh deployment'ta ROOT-sahipli kopya;
+#      app-user'a chown'lu /opt'tan DEĞİL — aiserver tamper edemez, Codex install-hardening)
+if [ -n "${KOKEN_RUNNER_SRC:-}" ]; then
+    HERE="$KOKEN_RUNNER_SRC"
+elif HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../extensions/gh-runner" 2>/dev/null && pwd)" \
+        && [ "$(stat -c %U "$HERE" 2>/dev/null)" != "aiserver" ]; then
+    # Adjacent kaynak app-user'a (aiserver) ait DEĞİLSE kabul: operatör git-checkout'u root/
+    # klipperos-sahipli → güvenilir. install.sh-deployment'ta /opt aiserver'a chown'lu → reddet,
+    # root-sahipli /usr/local snapshot'ına düş (Codex P1 :29). DISCRIMINATOR=OWNERSHIP, path-prefix
+    # DEĞİL: bu repo'nun checkout'u /opt/linux-ai-server'da yaşıyor, path-guard onu da yanlışlıkla
+    # reddedip dokümante 'sudo bash scripts/setup-gh-runner.sh'ı kırardı (regresyon-fix).
+    :
 else
-    echo "  Zaten mevcut: $RUNNER_TARBALL"
+    HERE="/usr/local/lib/koken-runner/gh-runner"
 fi
 
-# Çıkar
-echo "  Çıkarılıyor..."
-cd "$RUNNER_DIR"
-tar xzf "$RUNNER_TARBALL" --overwrite
-echo "  OK"
+echo "=== koken-akademi GÜVENLİ runner kurulumu (Docker-ephemeral, owner-only) ==="
 
-# İlk yapılandırma (registration token alıp config.sh çalıştır)
-echo "[6/8] Runner yapılandırılıyor (ephemeral)..."
-REG_TOKEN=$(env -u GITHUB_TOKEN gh api \
-    "repos/turer73/koken-akademi/actions/runners/registration-token" \
-    --method POST --jq '.token')
+# 0) ESKİ güvensiz runner'ı (#222, host-tabanlı NOPASSWD-root) emekliye ayır.
+#    Aksi halde eski 'actions-runner-koken' unit'i ayakta kalır ve self-hosted,linux,klipper
+#    label'ıyla owner-tetikli job'ları HOST'ta kapmaya devam eder → bu PR'ın amacı boşa çıkar
+#    (Codex P1 :20). Bu host'ta kurulmadıysa no-op (idempotent).
+LEGACY_SERVICE="actions-runner-koken"
+LEGACY_DIR="/opt/actions-runner/koken"
+if systemctl list-unit-files 2>/dev/null | grep -q "^${LEGACY_SERVICE}\.service"; then
+    echo "  ESKİ güvensiz runner bulundu (${LEGACY_SERVICE}) → durdur + disable + kaldır"
+    # FAIL-CLOSED (Codex P1 :45): disable başarısız olursa (timeout/systemd-red) unit'i SİLME +
+    # devam etme. Aksi halde eski root-capable runner KOŞMAYA devam edip job kapar; unit-dosyası
+    # silinince de fark edilmez. Durdur → gerçekten inactive mi DOĞRULA → ancak sonra kaldır.
+    if ! sudo systemctl disable --now "${LEGACY_SERVICE}"; then
+        echo "HATA: ${LEGACY_SERVICE} durdurulamadı — fail-closed, kurulum durduruldu." >&2
+        echo "      Manuel: sudo systemctl stop ${LEGACY_SERVICE} && sudo systemctl disable ${LEGACY_SERVICE}" >&2
+        exit 1
+    fi
+    if systemctl is-active --quiet "${LEGACY_SERVICE}"; then
+        echo "HATA: ${LEGACY_SERVICE} disable sonrası HÂLÂ aktif — fail-closed, kurulum durduruldu." >&2
+        exit 1
+    fi
+    # Eski unit KillMode=process kullanıyordu → 'disable --now' yalnız ANA süreci öldürür; job
+    # child'ları (klipperos-sudo yüzeyli Runner.Worker) sağ kalabilir, is-active de geçer (Codex
+    # P1 :55). cgroup'u zorla öldür + artık Runner süreçlerini temizle.
+    sudo systemctl kill --kill-whom=all --signal=SIGKILL "${LEGACY_SERVICE}" 2>/dev/null || true
+    sudo pkill -9 -f "${LEGACY_DIR}/.*Runner\.(Listener|Worker)" 2>/dev/null || true
+    # GitHub kaydını da sök (config.sh remove); token gerekiyorsa kullanıcı manuel tamamlar.
+    if [ -x "${LEGACY_DIR}/config.sh" ]; then
+        echo "  NOT: eski runner GitHub kaydı kalmış olabilir — gerekirse manuel kaldır:"
+        echo "       (cd ${LEGACY_DIR} && sudo -u <eski-kullanıcı> ./config.sh remove --token <REMOVE_TOKEN>)"
+    fi
+    sudo rm -f "/etc/systemd/system/${LEGACY_SERVICE}.service"
+    sudo systemctl daemon-reload
+    echo "  eski runner emekliye ayrıldı (durduruldu+doğrulandı; host'ta artık job kapmıyor)."
+fi
 
-# Eski config varsa temizle
-rm -f "$RUNNER_DIR/.runner" "$RUNNER_DIR/.credentials" "$RUNNER_DIR/.credentials_rsaparams" 2>/dev/null || true
+# 1) Önkoşullar
+command -v docker >/dev/null || { echo "HATA: docker bulunamadı"; exit 1; }
+command -v jq >/dev/null || { echo "HATA: jq bulunamadı"; exit 1; }
+[ -f "$HERE/Dockerfile" ] || { echo "HATA: $HERE/Dockerfile yok"; exit 1; }
 
-./config.sh \
-    --url "$REPO_URL" \
-    --token "$REG_TOKEN" \
-    --name "$RUNNER_NAME" \
-    --labels "$RUNNER_LABELS" \
-    --ephemeral \
-    --unattended \
-    --disableupdate
-echo "  OK: runner yapılandırıldı"
+# 2) Dedicated least-privilege kullanıcı: login YOK, SUDO YOK, docker grubunda.
+#    (docker-run için docker grubu gerekir; iş yükü container'da izole olduğundan owner-only
+#     modelde kabul edilebilir — eski tasarımdaki host-NOPASSWD-root'tan kat kat güvenli.)
+if ! id "$RUNNER_USER" >/dev/null 2>&1; then
+    sudo useradd --system --create-home --shell /usr/sbin/nologin "$RUNNER_USER"
+    echo "  kullanıcı oluşturuldu: $RUNNER_USER (nologin, sudo YOK)"
+fi
+sudo usermod -aG docker "$RUNNER_USER"
 
-# Wrapper script oluştur (systemd her restart'ta ephemeral re-register)
-echo "[7/8] Ephemeral wrapper script oluşturuluyor..."
-cat > "$WRAPPER_SCRIPT" << 'WRAPPER_EOF'
-#!/usr/bin/env bash
-# Ephemeral runner wrapper — systemd her restart'ta çalıştırır
-# Her çalışmada yeni token alır ve runner'ı re-register eder
-set -euo pipefail
+# 3) Runner image build (sürüm pinli — reproducible).
+#    Build context'i ROOT-sahipli snapshot'tan al: kurulu deployment'ta install.sh /opt'u
+#    app-kullanıcısına (aiserver) chown'lar → $HERE/{Dockerfile,entrypoint.sh} aiserver-
+#    yazılabilir olur. $HERE'den direkt build edilirse aiserver, image'a kod enjekte edip
+#    (sonraki owner-rebuild'de pişer) container-içi REG_TOKEN'ı sızdırabilir / deploy'u
+#    kurcalayabilir. Root-sahipli kopyadan build → aiserver build-input'unu tamper edemez.
+BUILD_DIR="/usr/local/lib/koken-runner/build"
+sudo rm -rf "$BUILD_DIR"
+sudo install -d -m 0755 -o root -g root "$BUILD_DIR"
+sudo cp -r "$HERE/." "$BUILD_DIR/"
+sudo chown -R root:root "$BUILD_DIR"
+RUNNER_VERSION=$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest | jq -r '.tag_name' | sed 's/^v//')
+[ -n "$RUNNER_VERSION" ] || { echo "HATA: runner sürümü alınamadı"; exit 1; }
+echo "  runner sürümü: $RUNNER_VERSION → image build ($IMAGE, root-sahipli context)"
+sudo docker build --build-arg RUNNER_VERSION="$RUNNER_VERSION" -t "$IMAGE" "$BUILD_DIR"
 
-RUNNER_DIR="/opt/actions-runner/koken"
-cd "$RUNNER_DIR"
+# 4) PAT dizini (dosyayı KULLANICI koyacak; script PAT istemez/saklamaz)
+sudo install -d -m 0750 -o root -g "$RUNNER_USER" "$PAT_DIR"
 
-# Önceki ephemeral state'i temizle
-rm -f .runner .credentials .credentials_rsaparams 2>/dev/null || true
+# 5) Log dosyası (orkestratör yazabilir) + rotation.
+sudo install -m 0640 -o "$RUNNER_USER" -g "$RUNNER_USER" /dev/null /var/log/koken-runner.log
+# logrotate (Codex P2 :53): uzun-ömürlü servis tüm container stdout/stderr'ini bu dosyaya append
+# eder; repo logrotate'i bu yolu KAPSAMIYOR → sınırsız büyür, disk doldurur. copytruncate:
+# wrapper dosyayı `>>` ile açık tutar, in-place truncate ile process-restart gerekmez.
+sudo install -m 0644 /dev/stdin /etc/logrotate.d/koken-runner <<'LOGROTATE'
+/var/log/koken-runner.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+LOGROTATE
 
-# GitHub OAuth token'ı al (GITHUB_TOKEN env'si yoksa keyring'den)
-REG_TOKEN=$(env -u GITHUB_TOKEN gh api \
-    "repos/turer73/koken-akademi/actions/runners/registration-token" \
-    --method POST --jq '.token')
+# 6) Orkestratör wrapper'ı ROOT-sahipli sabit yola kur (app-user değiştiremez, Codex :10).
+#    Servis bu kopyadan koşar; /opt çalışma-ağacındaki kopya değil. Kaynak = root-sahipli
+#    BUILD_DIR snapshot'ı (image ile aynı güven sınırı).
+sudo install -D -m 0755 -o root -g root \
+    "$BUILD_DIR/run-ephemeral-loop.sh" /usr/local/lib/koken-runner/run-ephemeral-loop.sh
 
-# Ephemeral yapılandır
-./config.sh \
-    --url https://github.com/turer73/koken-akademi \
-    --token "$REG_TOKEN" \
-    --name klipper \
-    --labels self-hosted,linux,klipper \
-    --ephemeral \
-    --unattended \
-    --disableupdate
-
-# Runner'ı çalıştır (job bittikten sonra exit 0 ile çıkar)
-exec ./run.sh
-WRAPPER_EOF
-
-chmod +x "$WRAPPER_SCRIPT"
-echo "  OK: $WRAPPER_SCRIPT"
-
-# Systemd service kur
-echo "[8/8] Systemd servisi kuruluyor: $SERVICE_NAME..."
-SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-
-sudo tee "$SERVICE_FILE" > /dev/null << SERVICE_EOF
-[Unit]
-Description=GitHub Actions Runner - koken-akademi (ephemeral, klipper)
-After=network-online.target
-Wants=network-online.target
-# Ephemeral runner her job sonrası exit-0 yapar; Restart=always re-register için DOĞRU.
-# Ama config/run KALICI fail ederse (bozuk token, ağ, repo erişimi) runner anında çıkar
-# ve RestartSec=5 ile her 5sn'de yeni registration-token ister -> GitHub API spam/rate-limit
-# busyloop'u. StartLimit: 5dk içinde >5 restart olursa servisi durdur (failed state) ->
-# normal işleyişte (job-başına ~1 restart) asla tetiklenmez, kalıcı-fail'de loop'u keser.
-StartLimitIntervalSec=300
-StartLimitBurst=5
-
-[Service]
-Type=simple
-User=$RUNNER_USER
-WorkingDirectory=$RUNNER_DIR
-ExecStart=$WRAPPER_SCRIPT
-Restart=always
-# Çıkış→re-register arası bekleme; spike'ı yumuşatır (job-başına tek restart'ta görünmez).
-RestartSec=10
-KillMode=process
-KillSignal=SIGTERM
-TimeoutStopSec=5min
-Environment=HOME=/home/$RUNNER_USER
-
-[Install]
-WantedBy=multi-user.target
-SERVICE_EOF
-
+# 7) systemd unit (root-sahipli snapshot'tan)
+sudo install -m 0644 "$BUILD_DIR/koken-runner.service" "/etc/systemd/system/${SERVICE_NAME}.service"
 sudo systemctl daemon-reload
-sudo systemctl enable "$SERVICE_NAME"
-sudo systemctl start "$SERVICE_NAME"
-echo "  OK: servis aktif"
 
-echo ""
-echo "=== KURULUM TAMAMLANDI ==="
-echo ""
-echo "Durum:  sudo systemctl status $SERVICE_NAME"
-echo "Loglar: journalctl -u $SERVICE_NAME -f"
-echo "GitHub: https://github.com/turer73/koken-akademi/settings/actions/runners"
-echo ""
-echo "Klipper runner GitHub'da 'Idle' görünmeli."
-echo "surer'a runner-aktif bildir → deploy.yml'de runs-on: [self-hosted, klipper] yap."
+cat <<EOF
+
+=== KURULUM TAMAM (image + kullanıcı + servis hazır) ===
+SON ADIMLAR (manuel — güvenlik gereği PAT'ı script saklamaz):
+  1) GitHub fine-grained PAT oluştur:
+       - Repository access: yalnız ${REPO}
+       - Permissions: Administration -> Read and write (registration-token mint için)
+  2) PAT'ı root-only yerleştir — token'ı KOMUT SATIRINA/SHELL GEÇMİŞİNE yazma (read ile gizli
+     gir; değer argv'de değil stdin'den akar):
+       sudo install -m 0640 -o root -g ${RUNNER_USER} /dev/null ${PAT_DIR}/pat
+       read -rs KOKEN_PAT && printf '%s' "\$KOKEN_PAT" | sudo tee ${PAT_DIR}/pat >/dev/null && unset KOKEN_PAT
+  3) Servisi başlat:
+       sudo systemctl enable --now ${SERVICE_NAME}
+  4) İzle:
+       journalctl -u ${SERVICE_NAME} -f   ve   tail -f /var/log/koken-runner.log
+
+GÜNCELLEME (runner 30-gün-deadline'ı, Codex :109): ayda bir setup'ı yeniden koş → image'ı taze
+build eder (en yeni runner sürümü) -> 'sudo systemctl restart ${SERVICE_NAME}'.
+  - install.sh deployment'ta: 'sudo koken-runner-setup' (ROOT-sahipli kopya; /opt'taki app-user-
+    yazılabilir script DEĞİL — aiserver tamper edip root-exec'e çeviremesin diye, Codex).
+  - git-checkout'tan: 'sudo bash scripts/setup-gh-runner.sh' (operatör-sahipli ağaç).
+EOF

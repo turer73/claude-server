@@ -3,6 +3,25 @@ set -e
 
 echo "=== Linux-AI Server Installer ==="
 
+# Installer checkout kökü — operatör-sahipli GÜVENİLİR kaynak. TÜM kopyalar buradan okunur:
+# /opt'a kopyalanıp aiserver'a chown'landıktan SONRA oradan okumak, ele geçen aiserver'ın
+# runner Dockerfile/wrapper/setup'ını root snapshot'lanmadan önce değiştirmesine izin verirdi
+# (Codex P1 TOCTOU). Checkout'tan okumak bu yarışı kapatır.
+if [ -n "${BASH_SOURCE[0]:-}" ]; then
+    SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+else
+    SRC_DIR="$PWD"   # stdin modu (sudo bash < scripts/install.sh): BASH_SOURCE boş → checkout=CWD (Codex :10)
+fi
+if [ "$SRC_DIR" = "/opt/linux-ai-server" ]; then
+    echo "HATA: install.sh'ı /opt kopyasından değil, temiz bir checkout'tan koş." >&2
+    exit 1
+fi
+# Yanlış SRC_DIR'le sessiz-yanlış kurulumdan kaçın: checkout işaretlerini doğrula.
+if [ ! -d "$SRC_DIR/app" ] || [ ! -f "$SRC_DIR/scripts/setup-gh-runner.sh" ]; then
+    echo "HATA: checkout kökü çözülemedi (SRC_DIR=$SRC_DIR). Repo kökünden koş." >&2
+    exit 1
+fi
+
 # Check root
 if [ "$EUID" -ne 0 ]; then
     echo "Please run as root (sudo)"
@@ -27,12 +46,16 @@ mkdir -p /var/log/linux-ai-server
 mkdir -p /var/AI-stump/agents
 mkdir -p /etc/linux-ai-server
 
-# Copy files
-cp -r app/ /opt/linux-ai-server/
-cp -r scripts/ /opt/linux-ai-server/scripts/
-cp pyproject.toml /opt/linux-ai-server/
-cp -r config/ /etc/linux-ai-server/
-cp config/env /etc/linux-ai-server/env 2>/dev/null || true
+# Copy files — replacement semantics (rm-rf + cp -rT): `cp -r X/ dest/` dest VARSA GNU-cp'de
+# dest/X nesteler → upgrade'de stale kod kalır (Codex :28/:63). Kaynak = $SRC_DIR (checkout).
+rm -rf /opt/linux-ai-server/app /opt/linux-ai-server/scripts /opt/linux-ai-server/extensions
+cp -rT "$SRC_DIR/app" /opt/linux-ai-server/app
+cp -rT "$SRC_DIR/scripts" /opt/linux-ai-server/scripts
+cp -rT "$SRC_DIR/extensions" /opt/linux-ai-server/extensions
+cp "$SRC_DIR/pyproject.toml" /opt/linux-ai-server/
+rm -rf /etc/linux-ai-server/config
+cp -r "$SRC_DIR/config" /etc/linux-ai-server/
+cp "$SRC_DIR/config/env" /etc/linux-ai-server/env 2>/dev/null || true
 
 # Install Python dependencies
 cd /opt/linux-ai-server
@@ -43,6 +66,20 @@ chown -R aiserver:aiserver /opt/linux-ai-server
 chown -R aiserver:aiserver /var/lib/linux-ai-server
 chown -R aiserver:aiserver /var/log/linux-ai-server
 chown -R aiserver:aiserver /var/AI-stump
+
+# --- gh-runner: setup script + build context'i app-user'ın DOKUNAMAYACAĞI ROOT-sahipli yere kur ---
+# /opt aiserver'a chown'lu olduğundan oradaki sudo/docker'lı setup script'i VE Dockerfile/
+# entrypoint'i, ele geçen aiserver tarafından tamper edilip aylık owner-rebuild'de root/docker-
+# exec'e çevrilebilirdi (Codex install-hardening). Çözüm: kaynağı $SRC_DIR'den (operatör-sahipli
+# checkout — /opt DEĞİL, TOCTOU yok) /usr/local'e (root-sahipli, go-w'siz, taze=rm-rf ile eski
+# bozuk-mode'lar sıfır) kopyala; operatör buradan koşar. /opt kopyası yalnız repo-bütünlüğü.
+install -d -m 0755 -o root -g root /usr/local/lib/koken-runner
+rm -rf /usr/local/lib/koken-runner/gh-runner
+cp -rT "$SRC_DIR/extensions/gh-runner" /usr/local/lib/koken-runner/gh-runner
+chown -R root:root /usr/local/lib/koken-runner/gh-runner
+chmod -R go-w /usr/local/lib/koken-runner/gh-runner
+install -m 0755 -o root -g root "$SRC_DIR/scripts/setup-gh-runner.sh" /usr/local/sbin/koken-runner-setup
+echo "gh-runner kurmak için: sudo koken-runner-setup  (root-sahipli kaynak; aiserver tamper edemez)"
 
 # Create systemd service
 cat > /etc/systemd/system/linux-ai-server.service << 'UNIT'
