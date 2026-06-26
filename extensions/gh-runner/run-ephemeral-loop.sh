@@ -14,6 +14,7 @@ IMAGE="${KOKEN_RUNNER_IMAGE:-koken-gh-runner:latest}"
 LOG="${KOKEN_RUNNER_LOG:-/var/log/koken-runner.log}"
 BACKOFF_BASE="${KOKEN_RUNNER_BACKOFF_BASE:-30}"             # mint-fail başına +Ns (cap 300)
 MAX_CYCLES="${KOKEN_RUNNER_MAX_CYCLES:-0}"                  # 0=sonsuz (test için sınırla)
+RUNNER_NAME="${KOKEN_RUNNER_NAME:-koken-$(hostname -s)}"    # sabit ad → --replace bayatı devralır
 
 log() { echo "[$(date -u +%FT%TZ)] $*" >>"$LOG" 2>/dev/null || echo "[log] $*"; }
 
@@ -31,7 +32,7 @@ mint_token() {
 }
 
 run_one_cycle() {
-    local token
+    local token rc
     token=$(mint_token) || token=""
     if [ -z "$token" ]; then
         return 1
@@ -41,7 +42,18 @@ run_one_cycle() {
     docker run --rm --pull never \
         -e REG_TOKEN="$token" \
         -e REPO_URL="https://github.com/${REPO}" \
-        "$IMAGE" >>"$LOG" 2>&1 || log "container rc=$? (job-fail/idle, normal — sonraki cycle taze)"
+        -e RUNNER_NAME="$RUNNER_NAME" \
+        "$IMAGE" >>"$LOG" 2>&1
+    rc=$?
+    # docker container'ı BAŞLATAMADIysa (rc=125 daemon/socket/image-yok; 126/127 entrypoint
+    # exec edilemedi) bu mint-fail gibi backoff ister: aksi halde return 0 → fails sıfırlanır →
+    # hiç runner koşmadan sonsuz token-mint = API-spam (Codex :44). Container KOŞTUYSA (rc 0 veya
+    # job-fail/idle) cycle başarılı: --ephemeral tek-job sonrası taze cycle normaldir.
+    if [ "$rc" -eq 125 ] || [ "$rc" -eq 126 ] || [ "$rc" -eq 127 ]; then
+        log "docker container BAŞLATILAMADI (rc=$rc: daemon/image/socket) → başlatma-hatası, backoff"
+        return 1
+    fi
+    [ "$rc" -ne 0 ] && log "container rc=$rc (job-fail/idle, normal — sonraki cycle taze)"
     return 0
 }
 

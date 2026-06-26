@@ -62,6 +62,19 @@ def test_loop_mint_success_runs_ephemeral_container(tmp_path):
     assert "--rm" in args
     assert "REG_TOKEN=REG123" in args  # kısa-ömürlü token container'a geçti
     assert "--pull never" in args  # yerel image (registry-pull yok)
+    assert "RUNNER_NAME=" in args  # sabit ad container'a geçti (--replace bayatı devralır)
+
+
+def test_loop_docker_start_failure_backs_off(tmp_path):
+    # mint BAŞARILI ama docker container'ı başlatamıyor (rc=125: daemon/image yok). Bu durum
+    # job-fail/idle DEĞİL → backoff şart; aksi halde fails sıfırlanıp sonsuz token-mint olurdu.
+    _fake_bin(tmp_path / "bin", "curl", "printf '%s' '{\"token\":\"REG123\"}'\n")
+    _fake_bin(tmp_path / "bin", "docker", "exit 125\n")  # daemon/başlatma hatası
+    r = _run_loop(tmp_path, {"KOKEN_RUNNER_MAX_CYCLES": "2"})
+    assert r.returncode == 0
+    log = (tmp_path / "run.log").read_text()
+    assert log.count("backoff") >= 2  # her başlatma-hatası backoff'a düşer (API-spam yok)
+    assert "BAŞLATILAMADI" in log
 
 
 def test_loop_mint_failure_backs_off_no_spam(tmp_path):

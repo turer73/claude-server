@@ -23,6 +23,25 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../extensions/gh-runner" && pwd)"
 
 echo "=== koken-akademi GÜVENLİ runner kurulumu (Docker-ephemeral, owner-only) ==="
 
+# 0) ESKİ güvensiz runner'ı (#222, host-tabanlı NOPASSWD-root) emekliye ayır.
+#    Aksi halde eski 'actions-runner-koken' unit'i ayakta kalır ve self-hosted,linux,klipper
+#    label'ıyla owner-tetikli job'ları HOST'ta kapmaya devam eder → bu PR'ın amacı boşa çıkar
+#    (Codex P1 :20). Bu host'ta kurulmadıysa no-op (idempotent).
+LEGACY_SERVICE="actions-runner-koken"
+LEGACY_DIR="/opt/actions-runner/koken"
+if systemctl list-unit-files 2>/dev/null | grep -q "^${LEGACY_SERVICE}\.service"; then
+    echo "  ESKİ güvensiz runner bulundu (${LEGACY_SERVICE}) → durdur + disable + kaldır"
+    sudo systemctl disable --now "${LEGACY_SERVICE}" 2>/dev/null || true
+    # GitHub kaydını da sök (config.sh remove); token gerekiyorsa kullanıcı manuel tamamlar.
+    if [ -x "${LEGACY_DIR}/config.sh" ]; then
+        echo "  NOT: eski runner GitHub kaydı kalmış olabilir — gerekirse manuel kaldır:"
+        echo "       (cd ${LEGACY_DIR} && sudo -u <eski-kullanıcı> ./config.sh remove --token <REMOVE_TOKEN>)"
+    fi
+    sudo rm -f "/etc/systemd/system/${LEGACY_SERVICE}.service"
+    sudo systemctl daemon-reload
+    echo "  eski runner emekliye ayrıldı (host'ta artık job kapmıyor)."
+fi
+
 # 1) Önkoşullar
 command -v docker >/dev/null || { echo "HATA: docker bulunamadı"; exit 1; }
 command -v jq >/dev/null || { echo "HATA: jq bulunamadı"; exit 1; }
@@ -49,7 +68,12 @@ sudo install -d -m 0750 -o root -g "$RUNNER_USER" "$PAT_DIR"
 # 5) Log dosyası (orkestratör yazabilir)
 sudo install -m 0640 -o "$RUNNER_USER" -g "$RUNNER_USER" /dev/null /var/log/koken-runner.log
 
-# 6) systemd unit
+# 6) Orkestratör wrapper'ı ROOT-sahipli sabit yola kur (app-user değiştiremez, Codex :10).
+#    Servis bu kopyadan koşar; /opt çalışma-ağacındaki kopya değil.
+sudo install -D -m 0755 -o root -g root \
+    "$HERE/run-ephemeral-loop.sh" /usr/local/lib/koken-runner/run-ephemeral-loop.sh
+
+# 7) systemd unit
 sudo install -m 0644 "$HERE/koken-runner.service" "/etc/systemd/system/${SERVICE_NAME}.service"
 sudo systemctl daemon-reload
 

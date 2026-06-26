@@ -7,7 +7,10 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=kokenrunner
-ExecStart=/opt/linux-ai-server/extensions/gh-runner/run-ephemeral-loop.sh
+# Wrapper root'a-ait sabit yoldan koşar (setup scripti kurar). /opt/linux-ai-server
+# kurulu deployment'ta app-kullanıcısına chown'lu olduğundan oradan koşarsak app-user
+# wrapper'ı değiştirip kokenrunner (docker-grup ~ root) olarak kod çalıştırabilirdi (Codex :10).
+ExecStart=/usr/local/lib/koken-runner/run-ephemeral-loop.sh
 Restart=always
 RestartSec=15
 # StartLimitBurst YOK: normal job-cycle'lar loop-içi iterasyon (servis-restart DEĞİL) →
