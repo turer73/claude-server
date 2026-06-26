@@ -19,7 +19,18 @@ RUNNER_USER="kokenrunner"
 IMAGE="koken-gh-runner:latest"
 SERVICE_NAME="koken-runner"
 PAT_DIR="/etc/koken-runner"
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../extensions/gh-runner" && pwd)"
+# Build-context (Dockerfile/entrypoint/wrapper/service) kaynağı. Öncelik:
+#   1) KOKEN_RUNNER_SRC (explicit override)
+#   2) ../extensions/gh-runner (git-checkout'tan koşturma — operatör-sahipli, güvenilir)
+#   3) /usr/local/lib/koken-runner/gh-runner (install.sh deployment'ta ROOT-sahipli kopya;
+#      app-user'a chown'lu /opt'tan DEĞİL — aiserver tamper edemez, Codex install-hardening)
+if [ -n "${KOKEN_RUNNER_SRC:-}" ]; then
+    HERE="$KOKEN_RUNNER_SRC"
+elif HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../extensions/gh-runner" 2>/dev/null && pwd)"; then
+    :
+else
+    HERE="/usr/local/lib/koken-runner/gh-runner"
+fi
 
 echo "=== koken-akademi GÜVENLİ runner kurulumu (Docker-ephemeral, owner-only) ==="
 
@@ -95,13 +106,18 @@ SON ADIMLAR (manuel — güvenlik gereği PAT'ı script saklamaz):
   1) GitHub fine-grained PAT oluştur:
        - Repository access: yalnız ${REPO}
        - Permissions: Administration -> Read and write (registration-token mint için)
-  2) PAT'ı root-only yerleştir:
-       printf '%s' '<PAT>' | sudo install -m 0640 -o root -g ${RUNNER_USER} /dev/stdin ${PAT_DIR}/pat
+  2) PAT'ı root-only yerleştir — token'ı KOMUT SATIRINA/SHELL GEÇMİŞİNE yazma (read ile gizli
+     gir; değer argv'de değil stdin'den akar):
+       sudo install -m 0640 -o root -g ${RUNNER_USER} /dev/null ${PAT_DIR}/pat
+       read -rs KOKEN_PAT && printf '%s' "\$KOKEN_PAT" | sudo tee ${PAT_DIR}/pat >/dev/null && unset KOKEN_PAT
   3) Servisi başlat:
        sudo systemctl enable --now ${SERVICE_NAME}
   4) İzle:
        journalctl -u ${SERVICE_NAME} -f   ve   tail -f /var/log/koken-runner.log
 
-GÜNCELLEME (runner 30-gün-deadline'ı, Codex :109): ayda bir 'bash scripts/setup-gh-runner.sh'
-ile image'ı yeniden build et (en yeni runner sürümünü çeker) -> 'sudo systemctl restart ${SERVICE_NAME}'.
+GÜNCELLEME (runner 30-gün-deadline'ı, Codex :109): ayda bir setup'ı yeniden koş → image'ı taze
+build eder (en yeni runner sürümü) -> 'sudo systemctl restart ${SERVICE_NAME}'.
+  - install.sh deployment'ta: 'sudo koken-runner-setup' (ROOT-sahipli kopya; /opt'taki app-user-
+    yazılabilir script DEĞİL — aiserver tamper edip root-exec'e çeviremesin diye, Codex).
+  - git-checkout'tan: 'sudo bash scripts/setup-gh-runner.sh' (operatör-sahipli ağaç).
 EOF

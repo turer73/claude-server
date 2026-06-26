@@ -44,13 +44,24 @@ pip install -e . --quiet
 
 # Set permissions
 chown -R aiserver:aiserver /opt/linux-ai-server
-# gh-runner build context'i ROOT'ta KALIR: aiserver bunları asla yazmaz; app-user'a chown
-# edilirse aiserver Dockerfile/entrypoint.sh'a kod enjekte edip sonraki owner-rebuild'de
-# runner image'ına bulaştırabilir (REG_TOKEN sızıntısı/deploy-tamper). Root-sahipli = pristine.
-chown -R root:root /opt/linux-ai-server/extensions
 chown -R aiserver:aiserver /var/lib/linux-ai-server
 chown -R aiserver:aiserver /var/log/linux-ai-server
 chown -R aiserver:aiserver /var/AI-stump
+
+# --- gh-runner: setup script + build context'i app-user'ın DOKUNAMAYACAĞI ROOT-sahipli yere kur ---
+# /opt aiserver'a chown'lu olduğundan oradaki sudo/docker'lı setup script'i VE Dockerfile/
+# entrypoint'i, ele geçen aiserver tarafından (a) dosya-mode 0666/0777 bırakılarak veya (b)
+# app-user-yazılabilir dizinde unlink+replace ile tamper edilip, aylık owner-rebuild'de
+# root/docker-exec'e çevrilebilirdi (Codex install-hardening). Çözüm: kaynağı /usr/local'e
+# (root-sahipli, go-w'siz, taze=rm-rf ile eski bozuk-mode'lar sıfır) kopyala; operatör buradan
+# koşar. /opt'taki kopya yalnız repo-bütünlüğü içindir, runner ARTIK ondan okumaz.
+install -d -m 0755 -o root -g root /usr/local/lib/koken-runner
+rm -rf /usr/local/lib/koken-runner/gh-runner
+cp -rT extensions/gh-runner /usr/local/lib/koken-runner/gh-runner
+chown -R root:root /usr/local/lib/koken-runner/gh-runner
+chmod -R go-w /usr/local/lib/koken-runner/gh-runner
+install -m 0755 -o root -g root scripts/setup-gh-runner.sh /usr/local/sbin/koken-runner-setup
+echo "gh-runner kurmak için: sudo koken-runner-setup  (root-sahipli kaynak; aiserver tamper edemez)"
 
 # Create systemd service
 cat > /etc/systemd/system/linux-ai-server.service << 'UNIT'
