@@ -26,7 +26,11 @@ PAT_DIR="/etc/koken-runner"
 #      app-user'a chown'lu /opt'tan DEĞİL — aiserver tamper edemez, Codex install-hardening)
 if [ -n "${KOKEN_RUNNER_SRC:-}" ]; then
     HERE="$KOKEN_RUNNER_SRC"
-elif HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../extensions/gh-runner" 2>/dev/null && pwd)"; then
+elif HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../extensions/gh-runner" 2>/dev/null && pwd)" \
+        && [ "${HERE#/opt/linux-ai-server/}" = "$HERE" ]; then
+    # Adjacent kaynak yalnız /opt ALTINDA DEĞİLSE kabul edilir: /opt aiserver'a chown'lu →
+    # oradan build edersek app-user Dockerfile/entrypoint'i tamper edip privileged rebuild'de
+    # bulaştırabilirdi (Codex P1 :29). /opt-kaynak → root-sahipli /usr/local snapshot'ına düş.
     :
 else
     HERE="/usr/local/lib/koken-runner/gh-runner"
@@ -54,6 +58,11 @@ if systemctl list-unit-files 2>/dev/null | grep -q "^${LEGACY_SERVICE}\.service"
         echo "HATA: ${LEGACY_SERVICE} disable sonrası HÂLÂ aktif — fail-closed, kurulum durduruldu." >&2
         exit 1
     fi
+    # Eski unit KillMode=process kullanıyordu → 'disable --now' yalnız ANA süreci öldürür; job
+    # child'ları (klipperos-sudo yüzeyli Runner.Worker) sağ kalabilir, is-active de geçer (Codex
+    # P1 :55). cgroup'u zorla öldür + artık Runner süreçlerini temizle.
+    sudo systemctl kill --kill-whom=all --signal=SIGKILL "${LEGACY_SERVICE}" 2>/dev/null || true
+    sudo pkill -9 -f "${LEGACY_DIR}/.*Runner\.(Listener|Worker)" 2>/dev/null || true
     # GitHub kaydını da sök (config.sh remove); token gerekiyorsa kullanıcı manuel tamamlar.
     if [ -x "${LEGACY_DIR}/config.sh" ]; then
         echo "  NOT: eski runner GitHub kaydı kalmış olabilir — gerekirse manuel kaldır:"

@@ -7,9 +7,18 @@ echo "=== Linux-AI Server Installer ==="
 # /opt'a kopyalanıp aiserver'a chown'landıktan SONRA oradan okumak, ele geçen aiserver'ın
 # runner Dockerfile/wrapper/setup'ını root snapshot'lanmadan önce değiştirmesine izin verirdi
 # (Codex P1 TOCTOU). Checkout'tan okumak bu yarışı kapatır.
-SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -n "${BASH_SOURCE[0]:-}" ]; then
+    SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+else
+    SRC_DIR="$PWD"   # stdin modu (sudo bash < scripts/install.sh): BASH_SOURCE boş → checkout=CWD (Codex :10)
+fi
 if [ "$SRC_DIR" = "/opt/linux-ai-server" ]; then
     echo "HATA: install.sh'ı /opt kopyasından değil, temiz bir checkout'tan koş." >&2
+    exit 1
+fi
+# Yanlış SRC_DIR'le sessiz-yanlış kurulumdan kaçın: checkout işaretlerini doğrula.
+if [ ! -d "$SRC_DIR/app" ] || [ ! -f "$SRC_DIR/scripts/setup-gh-runner.sh" ]; then
+    echo "HATA: checkout kökü çözülemedi (SRC_DIR=$SRC_DIR). Repo kökünden koş." >&2
     exit 1
 fi
 

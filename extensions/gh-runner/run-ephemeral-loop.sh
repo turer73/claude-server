@@ -15,8 +15,15 @@ LOG="${KOKEN_RUNNER_LOG:-/var/log/koken-runner.log}"
 BACKOFF_BASE="${KOKEN_RUNNER_BACKOFF_BASE:-30}"             # mint-fail başına +Ns (cap 300)
 MAX_CYCLES="${KOKEN_RUNNER_MAX_CYCLES:-0}"                  # 0=sonsuz (test için sınırla)
 RUNNER_NAME="${KOKEN_RUNNER_NAME:-koken-$(hostname -s)}"    # sabit ad → --replace bayatı devralır
+CONTAINER_NAME="${KOKEN_RUNNER_CONTAINER:-koken-job}"      # sabit container adı → stop'ta temizlenebilir
 
 log() { echo "[$(date -u +%FT%TZ)] $*" >>"$LOG" 2>/dev/null || echo "[log] $*"; }
+
+# systemctl stop/restart'ta: docker run --rm CLIENT'ı systemd öldürse de container ayrı süreç
+# (systemd-child değil) → SIGTERM'i yutan bir job ile sağ kalır, shutdown-izolasyonu bozulurdu
+# (Codex :49). Trap ile sinyalde container'ı zorla kaldır; çıkışta da temizle.
+cleanup() { docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true; }
+trap 'cleanup; exit 143' TERM INT
 
 mint_token() {
     # registration-token mint (PAT host'ta kalır, dönen token kısa-ömürlü). Boş→fail.
@@ -45,8 +52,11 @@ run_one_cycle() {
     # /proc/<pid>/environ yalnız kokenrunner+root okuyabilir; /proc/<pid>/cmdline world-readable
     # olduğundan -e REG_TOKEN="$token" başka kullanıcıya kayıt-token'ı sızdırırdı (Codex :43).
     export REG_TOKEN="$token"
+    # Önceki cycle'dan kalmış bayat container varsa (hard-crash) temizle: sabit --name çakışmasın.
+    docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
     # İzolasyon: --rm (taze), host-mount/socket YOK, non-root, --pull never (yerel image).
-    docker run --rm --pull never \
+    # --name: stop/trap container'ı bulup kaldırabilsin (Codex :49).
+    docker run --rm --pull never --name "$CONTAINER_NAME" \
         -e REG_TOKEN \
         -e REPO_URL="https://github.com/${REPO}" \
         -e RUNNER_NAME="$RUNNER_NAME" \
