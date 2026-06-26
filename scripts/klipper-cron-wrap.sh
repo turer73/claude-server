@@ -8,6 +8,15 @@ set +e
 # Cron PATH minimaldir — webhook auth icin .env'den WEBHOOK_SECRET'i yukle
 [ -f /opt/linux-ai-server/.env ] && set -a && source /opt/linux-ai-server/.env && set +a
 
+# Cron CWD = $HOME (/home/klipperos). Producer'larin RELATIVE state-path'leri (gap-3 log-novelty
+# drain3 .bin = "data/hook-state/...", watchdog-cpu-streak.json, vb.) bu yuzden /home/klipperos/
+# data/'ya dusuyordu = repo disinda + manuel-kosumla split-state + kirilgan. Repo-kokune cd ET ki
+# relative-path'ler repo'nun data/'sina dussun. (DB_PATH zaten absolute, asagida; bu yalniz
+# dosya-tabanli relative state icin.) Repo-koku BASH_SOURCE'tan turetilir (hardcode /opt DEGIL):
+# CI/test checkout'u /opt'ta degil -> hardcode-cd exit 3'le wrapper'i cagiran 6 testi kirardi.
+_CRON_WRAP_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
+cd "${_CRON_WRAP_REPO:-/opt/linux-ai-server}" || { echo "cron-wrap: repo-kokune cd basarisiz (${_CRON_WRAP_REPO:-/opt/linux-ai-server}) — yanlis-CWD'de kosulmaz" >&2; exit 3; }
+
 # server.db yolu: systemd service DB_PATH set eder AMA cron etmez (.env'de DB_PATH YOK) →
 # cron-python server_db_path() DEFAULT_DB_PATH=/tmp/linux-ai-server-test.db'ye düşer = emit/read
 # YANLIŞ-DB. gap-3/4/8 cron-üreticileri (log-novelty/anomaly/drift) sessizce /tmp-test-DB'ye
