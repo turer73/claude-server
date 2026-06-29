@@ -1375,3 +1375,40 @@ async def test_force_remediate_endpoint_no_db(devops_client, app, auth_headers):
     app.state.db = None
     resp = await devops_client.post("/api/v1/devops/remediate/force", json={"event_id": 1}, headers=auth_headers)
     assert resp.status_code == 503
+
+
+async def test_is_in_cpu_grace_window_env_toggle(monkeypatch):
+    # klipper #100224: CPU-grace penceresi UTC-saat env'leriyle deterministik kontrol edilir.
+    from app.core.devops_agent import DevOpsAgent
+
+    agent = DevOpsAgent(db=None, interval=60)
+    monkeypatch.setenv("CPU_GRACE_START_HOUR", "0")
+    monkeypatch.setenv("CPU_GRACE_END_HOUR", "24")  # 0<=hour<24 → her saat
+    assert agent._is_in_cpu_grace_window() is True
+    monkeypatch.setenv("CPU_GRACE_END_HOUR", "0")  # 0<=hour<0 → asla
+    assert agent._is_in_cpu_grace_window() is False
+    monkeypatch.setenv("CPU_GRACE_START_HOUR", "abc")  # geçersiz → fail-safe False
+    assert agent._is_in_cpu_grace_window() is False
+
+
+async def test_detect_cpu_grace_suppresses_cpu_only(monkeypatch):
+    # klipper #100224: grace-penceresinde SADECE cpu-alarmı bastırılır (meşru test-runner/e2e
+    # yükü); disk yine izlenir. Pencere-dışı aynı metrik cpu-alarmı üretir (kontrol).
+    from app.core.devops_agent import _SUSTAINED_N, DevOpsAgent
+
+    hi = {"cpu_percent": 95, "memory_percent": 40, "disk_percent": 95, "temperature": 45}
+
+    # Pencere KAPALI → cpu-alarmı VAR (kontrol)
+    monkeypatch.setenv("CPU_GRACE_START_HOUR", "0")
+    monkeypatch.setenv("CPU_GRACE_END_HOUR", "0")
+    a_off = DevOpsAgent(db=None, interval=60)
+    a_off._history.extend([dict(hi) for _ in range(_SUSTAINED_N)])
+    assert any(a.source == "cpu" for a in a_off._detect(hi))
+
+    # Pencere AÇIK → cpu-alarmı YOK, disk-alarmı yine VAR
+    monkeypatch.setenv("CPU_GRACE_END_HOUR", "24")
+    a_on = DevOpsAgent(db=None, interval=60)
+    a_on._history.extend([dict(hi) for _ in range(_SUSTAINED_N)])
+    alerts = a_on._detect(hi)
+    assert [a for a in alerts if a.source == "cpu"] == []
+    assert any(a.source == "disk" for a in alerts)
