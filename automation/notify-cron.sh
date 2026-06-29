@@ -225,9 +225,11 @@ ${ts}"
     # klipper #100224: kaynak-bazlı Telegram cooldown (flood-bastir). Aynı kaynaktan son
     # NOTIFY_COOLDOWN_SECONDS (default 300=5dk) içinde mesaj gittiyse bu event'i sil
     # (notified=1 yap) ama Telegram'a GÖNDERME. Root-fix'ler yürürken anlık flood kesici.
+    # review-fix: critical ASLA cooldown'la susturulmaz — warn→critical escalation kaçmasın
+    # (monitoring-honesty). Cooldown yalnız warn-flapping'i bastırır; critical hep geçer.
     NOTIFY_COOLDOWN_SECONDS="${NOTIFY_COOLDOWN_SECONDS:-300}"
     COOLDOWN_OK=1
-    if [ "${NOTIFY_COOLDOWN_SECONDS}" -gt 0 ] && [ "$TG_OK" = "1" ]; then
+    if [ "${NOTIFY_COOLDOWN_SECONDS}" -gt 0 ] && [ "$TG_OK" = "1" ] && [ "$sev" != "critical" ]; then
         last_notified_age=$(sqlite3 "$DB_PATH" \
             "SELECT CAST((julianday('now') - julianday(MAX(timestamp))) * 86400 AS INTEGER)
              FROM events WHERE source='${src//\'/}' AND notified=1;" 2>/dev/null)

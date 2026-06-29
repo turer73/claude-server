@@ -124,7 +124,8 @@ def test_debounce_first_run_no_alert(tmp_path):
     assert "sendMessage" not in cap
     assert "EMIT" not in cap
     pending = tmp_path / "state.pending"
-    assert pending.exists() and "rag" in pending.read_text()
+    assert pending.exists()
+    assert "rag" in pending.read_text()
 
 
 def test_debounce_second_run_fires_alert(tmp_path):
