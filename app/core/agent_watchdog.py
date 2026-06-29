@@ -31,7 +31,16 @@ logger = logging.getLogger(__name__)
 RUNAWAY_CPU_PCT = 90.0  # core-pinned sayilir
 RUNAWAY_MIN_MINUTES = 15.0  # bu sureden uzun core-pin = net-runaway (comert: 90s-pytest haric)
 ALLOWLIST_WARN_MINUTES = 30.0  # allowlist'teki proc bile bu kadar uzun surerse warn (kill YOK)
-HEARTBEAT_MAX_AGE_MINUTES = 10.0  # hook-state heartbeat bu kadar bayatsa stall
+HEARTBEAT_MAX_AGE_MINUTES = 10.0  # always-on-daemon heartbeat bu kadar bayatsa stall
+# klipper #100224 FP-fix: bazı hook-state "heartbeat"leri ALWAYS-ON daemon DEĞİL, PERİYODİK
+# son-çalışma marker'ı. last-code-review = code_review_agent commit-tetikli yazar (sessiz
+# dönemde saatlerce güncellenmez = NORMAL) — 10dk eşikle her watchdog-turunda sahte-stall
+# basıyordu (her 15dk Telegram flood, doğrulandı 2026-06-29). Periyodik marker'lara cadence'a
+# uygun UZUN eşik ver; gerçek always-on daemon'lar default 10dk'da kalır. Yeni periyodik
+# marker eklenince buraya da eklenmeli (aksi halde default-10dk ile FP riski).
+HEARTBEAT_MAX_AGE_OVERRIDES: dict[str, float] = {
+    "last-code-review": 1440.0,  # commit-tetikli; yalnız 24s sessizlik = code-review-sistemi-ölü sinyali
+}
 # Producer-dedup penceresi (klipper #100128 ortak emit_throttled): cron */3 -> ayni
 # (type, source) olayi her 3dk RE-EMIT etme. 15dk pencere = devam-eden runaway/stall
 # ~5 turda 1 emit (flood-bastir ama periyodik re-surface). events-tablosu age-sorgusu
@@ -182,7 +191,10 @@ def check_heartbeat_stalls(
         except (OSError, ValueError, AttributeError, json.JSONDecodeError):
             continue
         age_min = (now - ts) / 60.0
-        if age_min >= max_age_minutes:
+        # Periyodik marker'lar (last-code-review vb.) için override-eşik; gerçek always-on
+        # daemon'lar default max_age (klipper #100224 FP-fix).
+        threshold = HEARTBEAT_MAX_AGE_OVERRIDES.get(hb.stem, max_age_minutes)
+        if age_min >= threshold:
             stalls.append(HeartbeatStall(agent=hb.stem, age_minutes=age_min, path=str(hb)))
     return stalls
 
