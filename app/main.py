@@ -108,6 +108,26 @@ def _current_disk_sha() -> str:
     return _disk_sha_cache["sha"]
 
 
+def _app_code_drifted(deployed: str, disk: str) -> bool:
+    """deployed..disk arası app/ (uvicorn-yüklü kod) değişti mi? klipper #100224: drift YALNIZ
+    app/ değişince restart gerektirir; docs/scripts/tests/automation cron'ları disk'ten okunur
+    (restart gerekmez). Eski sha-tabanlı `stale` her commit'te (docs dahil) True olup her merge'de
+    drift-WARN flood'u tetikliyordu. git-diff belirlenemezse True = güvenli-taraf (eski davranış)."""
+    import subprocess
+
+    if deployed == disk:
+        return False
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(Path(__file__).parent.parent), "diff", "--quiet", deployed, disk, "--", "app/"],
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+        )
+        return r.returncode != 0  # 0=app/ aynı (yalnız docs/script/test); !=0=app/ değişti=restart
+    except Exception:
+        return True  # belirlenemez (sha-yok/git-yok) → güvenli: stale (sha-tabanlı eski davranış)
+
+
 # Boot dead-gate discovery emit'leri fire-and-forget (klipper #100091): up-ama-yavas
 # servis edge'inde await-emit boot'u bloklayabilir. Task-ref'leri GC'den koru.
 _boot_emit_tasks: set[asyncio.Task[None]] = set()
@@ -355,14 +375,16 @@ def create_app() -> FastAPI:
         disk = _current_disk_sha()
         # Codex P2: SHA belirlenemezse (git-yok + env-yok) stale SESSİZCE False olmasın —
         # None döndür ('belirlenemez'), yanlış 'drift-yok' güvencesi verme (silent-no-signal).
-        stale = (disk != _DEPLOYED_SHA) if (_DEPLOYED_SHA and disk) else None
+        # klipper #100224: stale artık CONTENT-aware — yalnız app/ (uvicorn-yüklü kod) değişince
+        # True. docs/scripts/tests/automation commit'leri restart gerektirmez → drift-flood yok.
+        stale = _app_code_drifted(_DEPLOYED_SHA, disk) if (_DEPLOYED_SHA and disk) else None
         return {
             "status": "healthy",
             "service": "linux-ai-server",
             "version": __version__,
             "sha": _DEPLOYED_SHA,  # ÇALIŞAN kod (startup'ta sabitlendi)
             "disk_sha": disk,  # disk-HEAD (canlı)
-            "stale": stale,  # True=restart gerekli (deployed≠running) · None=belirlenemez
+            "stale": stale,  # True=app/ drift, restart gerekli · False=app/ aynı · None=belirlenemez
         }
 
     # ---- Routes ----
