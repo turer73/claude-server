@@ -61,6 +61,10 @@ ALLOWLIST_PATTERNS: tuple[str, ...] = (
     "ollama",
     "docker",
     "playwright",
+    # klipper #100224 FP-fix: kalıcı-monitor süreçleri — doğası gereği sürekli-yüksek-CPU,
+    # runaway değil. cadvisor=cgroup-tarayici (Up 12g/0-restart=sağlıklı), prometheus=metrik-toplayici.
+    "cadvisor",
+    "prometheus",
 )
 
 

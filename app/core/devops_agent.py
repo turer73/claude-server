@@ -339,6 +339,17 @@ class DevOpsAgent:
 
     # ── Detector ───────────────────────────────────────
 
+    def _is_in_backup_window(self) -> bool:
+        """03:00-05:00 UTC: daily-backup (03:00) + restore-test (03:20) + pull-vps-backup (04:20).
+        Bu pencerede CPU yükselmesi meşru — klipper #100224 FP-fix.
+        Override: BACKUP_GRACE_START_HOUR / BACKUP_GRACE_END_HOUR env-var (UTC saat, int)."""
+        try:
+            start = int(read_env_var("BACKUP_GRACE_START_HOUR") or "3")
+            end = int(read_env_var("BACKUP_GRACE_END_HOUR") or "5")
+        except (ValueError, TypeError):
+            return False
+        return start <= datetime.now(UTC).hour < end
+
     def _sustained_high(self, key: str, threshold: float) -> bool:
         """Son _SUSTAINED_N örnek (current dahil — _history'ye _detect'ten ÖNCE append edilir)
         eşik-üstü mü → sürdürülen-yük. Geçici zirveyi (zamanlanmış toplu-iş) filtreler.
@@ -363,6 +374,12 @@ class DevOpsAgent:
         for source, key, threshold in checks:
             value = metrics.get(key, 0)
             if value is None:
+                continue
+
+            # klipper #100224: backup-window CPU grace (03:00-05:00 UTC). daily-backup /
+            # restore-test / pull-vps-backup bu pencerede anlık CPU %95+ yapıyor — meşru,
+            # FP önleme. Diğer metrikler (disk/mem/temp) bu pencerede yine izlenir.
+            if source == "cpu" and self._is_in_backup_window():
                 continue
 
             severity = None
