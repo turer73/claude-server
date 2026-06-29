@@ -222,19 +222,39 @@ ${ts}"
         save_discovery "$SAFE_SRC" "$SAFE_TITLE" "$SAFE_DETAIL" "$ts" && DISCOVERY_OK=1
     fi
 
-    # Telegram gönderimi (yalnız TG_OK). Memory-only modda atlanır.
-    if [ "$TG_OK" = "1" ]; then
+    # klipper #100224: kaynak-bazlı Telegram cooldown (flood-bastir). Aynı kaynaktan son
+    # NOTIFY_COOLDOWN_SECONDS (default 300=5dk) içinde mesaj gittiyse bu event'i sil
+    # (notified=1 yap) ama Telegram'a GÖNDERME. Root-fix'ler yürürken anlık flood kesici.
+    # review-fix: critical ASLA cooldown'la susturulmaz — warn→critical escalation kaçmasın
+    # (monitoring-honesty). Cooldown yalnız warn-flapping'i bastırır; critical hep geçer.
+    NOTIFY_COOLDOWN_SECONDS="${NOTIFY_COOLDOWN_SECONDS:-300}"
+    COOLDOWN_OK=1
+    if [ "${NOTIFY_COOLDOWN_SECONDS}" -gt 0 ] && [ "$TG_OK" = "1" ] && [ "$sev" != "critical" ]; then
+        last_notified_age=$(sqlite3 "$DB_PATH" \
+            "SELECT CAST((julianday('now') - julianday(MAX(timestamp))) * 86400 AS INTEGER)
+             FROM events WHERE source='${src//\'/}' AND notified=1;" 2>/dev/null)
+        if [ -n "$last_notified_age" ] && [ "$last_notified_age" -lt "$NOTIFY_COOLDOWN_SECONDS" ] 2>/dev/null; then
+            sqlite3 "$DB_PATH" "UPDATE events SET notified=1 WHERE id=${id};" 2>>"$LOG" || true
+            echo "[$(date -Iseconds)] COOLDOWN id=${id} src=${SAFE_SRC} last=${last_notified_age}s<${NOTIFY_COOLDOWN_SECONDS}s" >> "$LOG"
+            COOLDOWN_OK=0
+        fi
+    fi
+
+    # Telegram gönderimi (yalnız TG_OK ve cooldown geçmişse). Memory-only modda atlanır.
+    if [ "$TG_OK" = "1" ] && [ "$COOLDOWN_OK" = "1" ]; then
         HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 \
             -X POST "$TG_URL" \
             -H "Content-Type: application/json" \
             -d "$BODY" 2>/dev/null)
+    elif [ "$COOLDOWN_OK" = "0" ]; then
+        HTTP="cooldown"
     else
         HTTP="no-tg"
     fi
 
-    if [ "$HTTP" = "200" ]; then
-        sqlite3 "$DB_PATH" "UPDATE events SET notified=1 WHERE id=${id};" 2>>"$LOG" || true
-        echo "[$(date -Iseconds)] SENT id=${id} src=${SAFE_SRC} sev=${sev}" >> "$LOG"
+    if [ "$HTTP" = "200" ] || [ "$HTTP" = "cooldown" ]; then
+        [ "$HTTP" = "200" ] && sqlite3 "$DB_PATH" "UPDATE events SET notified=1 WHERE id=${id};" 2>>"$LOG" || true
+        [ "$HTTP" = "200" ] && echo "[$(date -Iseconds)] SENT id=${id} src=${SAFE_SRC} sev=${sev}" >> "$LOG"
         sent=$((sent + 1))
     elif [ "$TG_OK" = "0" ]; then
         # Memory-only: critical hafızaya YAZILDIYSA handled (notified=1). Yazılamadıysa

@@ -24,12 +24,22 @@ def _fake_bins(bindir: Path, capture: Path, curl_http: str = "200") -> None:
     emit.chmod(0o755)
 
 
-def _run(tmp_path: Path, result_json: str, prev_state: str | None = None, curl_http: str = "200") -> tuple[str, str]:
+def _run(
+    tmp_path: Path,
+    result_json: str,
+    prev_state: str | None = None,
+    curl_http: str = "200",
+    prev_pending: str | None = None,
+    debounce: int = 1,
+) -> tuple[str, str]:
     capture = tmp_path / "cap.log"
     _fake_bins(tmp_path / "bin", capture, curl_http)
     state = tmp_path / "state"
     if prev_state is not None:
         state.write_text(prev_state)
+    pending = tmp_path / "state.pending"
+    if prev_pending is not None:
+        pending.write_text(prev_pending)
     r = subprocess.run(
         ["bash", str(SCRIPT)],
         env={
@@ -42,6 +52,7 @@ def _run(tmp_path: Path, result_json: str, prev_state: str | None = None, curl_h
             "LIVENESS_RESULT": result_json,
             "TELEGRAM_BOT_TOKEN": "x",
             "TELEGRAM_CHAT_ID": "1",
+            "LIVENESS_DEBOUNCE": str(debounce),
         },
         capture_output=True,
         text=True,
@@ -100,3 +111,54 @@ def test_dead_set_not_persisted_on_failed_alert(tmp_path):
     state = tmp_path / "state"
     _run(tmp_path, '{"dead":[{"source":"notify-cron"}]}', curl_http="500")
     assert not state.exists() or state.read_text().strip() == ""
+
+
+# ── Debounce testleri (klipper #100224) ─────────────────────────────────────
+
+
+def test_debounce_first_run_no_alert(tmp_path):
+    """Deploy-grace debounce: ilk dead tespiti (PENDING boş) -> alarm yok (tur-1)."""
+    out, cap = _run(tmp_path, '{"dead":[{"source":"rag"}]}', debounce=2)
+    assert "OUTCOME: pass" in out
+    assert "debounce-1" in out
+    assert "sendMessage" not in cap
+    assert "EMIT" not in cap
+    pending = tmp_path / "state.pending"
+    assert pending.exists()
+    assert "rag" in pending.read_text()
+
+
+def test_debounce_second_run_fires_alert(tmp_path):
+    """Deploy-grace debounce: iki ardışık dead (PENDING dolu) -> alarm ateşlenir."""
+    out, cap = _run(
+        tmp_path,
+        '{"dead":[{"source":"rag"}]}',
+        prev_pending="rag",
+        debounce=2,
+    )
+    assert "OUTCOME: fail" in out
+    assert "sendMessage" in cap
+    assert "rag" in cap
+    assert "EMIT" in cap
+
+
+def test_debounce_transient_no_alert(tmp_path):
+    """Deploy-grace: tur-1 dead, tur-2 recovered -> hiç alarm yok."""
+    out1, cap1 = _run(tmp_path, '{"dead":[{"source":"rag"}]}', debounce=2)
+    assert "sendMessage" not in cap1
+    out2, cap2 = _run(tmp_path, '{"dead":[]}', debounce=2)
+    assert "OUTCOME: pass" in out2
+    assert "sendMessage" not in cap2
+
+
+def test_debounce_partial_recovery(tmp_path):
+    """Debounce: pending'de 2 kaynak, bu run'da 1'i recovered -> sadece persistent alert."""
+    out, cap = _run(
+        tmp_path,
+        '{"dead":[{"source":"rag"}]}',
+        prev_pending="notify-cron rag",
+        debounce=2,
+    )
+    assert "OUTCOME: fail" in out
+    assert "rag" in cap
+    assert "notify-cron" not in cap.split("sendMessage")[1] if "sendMessage" in cap else True

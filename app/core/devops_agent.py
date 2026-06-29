@@ -339,6 +339,20 @@ class DevOpsAgent:
 
     # ── Detector ───────────────────────────────────────
 
+    def _is_in_cpu_grace_window(self) -> bool:
+        """CPU-grace penceresi 03:00-05:00 UTC (= 06:00-08:00 Europe/Istanbul; cron LOCAL koşar).
+        Bu pencerede meşru CPU-ağır cron'lar koşar → tek-örnek/sustained %95 = FP, alarm bastırılır
+        (klipper #100224 FP-fix). GERÇEK sebep (review-düzeltme): test-runner (06:00 local=03:00 UTC,
+        tam pytest suite) + e2e-live-test (07:00 local=04:00 UTC) + system-state (07:30). NOT: daily-
+        backup 03:00 LOCAL=00:00 UTC ve hafif (~4sn) → bu pencerede DEĞİL; CPU-FP sebebi O değil.
+        Override: CPU_GRACE_START_HOUR / CPU_GRACE_END_HOUR env-var (UTC saat, int)."""
+        try:
+            start = int(read_env_var("CPU_GRACE_START_HOUR") or "3")
+            end = int(read_env_var("CPU_GRACE_END_HOUR") or "5")
+        except (ValueError, TypeError):
+            return False
+        return start <= datetime.now(UTC).hour < end
+
     def _sustained_high(self, key: str, threshold: float) -> bool:
         """Son _SUSTAINED_N örnek (current dahil — _history'ye _detect'ten ÖNCE append edilir)
         eşik-üstü mü → sürdürülen-yük. Geçici zirveyi (zamanlanmış toplu-iş) filtreler.
@@ -363,6 +377,13 @@ class DevOpsAgent:
         for source, key, threshold in checks:
             value = metrics.get(key, 0)
             if value is None:
+                continue
+
+            # klipper #100224: CPU-grace penceresi (03:00-05:00 UTC = 06:00-08:00 local).
+            # test-runner (06:00) + e2e-live-test (07:00) meşru CPU %95+ yapıyor — FP önleme.
+            # Diğer metrikler (disk/mem/temp) bu pencerede yine izlenir; runaway-PROCESS'leri
+            # agent_watchdog ayrı tespit eder (pencere kör-nokta değil).
+            if source == "cpu" and self._is_in_cpu_grace_window():
                 continue
 
             severity = None
