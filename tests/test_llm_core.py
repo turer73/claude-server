@@ -310,3 +310,37 @@ async def test_priority_high_bypasses_lowprio_reserve():
 
 def test_singleton_exported():
     assert isinstance(llm_core, LLMCore)
+
+
+def test_record_llm_call_writes_row(tmp_path, monkeypatch):
+    # klipper #100224: merkezi LLM-gözlemlenebilirlik — llm_calls'a satır yazılır.
+    import sqlite3
+
+    from app.core.agents.llmcore import _record_llm_call
+
+    db = tmp_path / "m.db"
+    monkeypatch.setenv("RAG_METRICS_DB", str(db))
+    _record_llm_call("code-review", "ollama", "qwen", 1200.5, True, 50)
+    row = sqlite3.connect(db).execute("SELECT task,backend,model,latency_ms,tokens,ok FROM llm_calls").fetchone()
+    assert row == ("code-review", "ollama", "qwen", 1200, 50, 1)
+
+
+def test_record_llm_call_failsafe(monkeypatch):
+    # Metrik-yazımı ASLA çağrıyı bozmaz: yazılamaz DB → exception yutulur (raise ETMEMELİ).
+    from app.core.agents.llmcore import _record_llm_call
+
+    monkeypatch.setenv("RAG_METRICS_DB", "/proc/nonexistent-dir/x.db")
+    _record_llm_call("t", "ollama", "m", 1.0, True)
+
+
+def test_generate_sync_records_metric(tmp_path, monkeypatch):
+    # generate_sync wrap'i metrik kaydeder (ok=1, doğru task).
+    import sqlite3
+
+    db = tmp_path / "m.db"
+    monkeypatch.setenv("RAG_METRICS_DB", str(db))
+    monkeypatch.setattr(LLMCore, "_ollama_sync", lambda self, *a, **k: "OK")
+    assert LLMCore().generate_sync("p", task="diagnosis") == "OK"
+    row = sqlite3.connect(db).execute("SELECT task,ok FROM llm_calls").fetchone()
+    assert row[0] == "diagnosis"
+    assert row[1] == 1

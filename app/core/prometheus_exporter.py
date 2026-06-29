@@ -59,6 +59,37 @@ class PrometheusExporter:
                 lines.append(f'{name}{{card="{card}"}} {val}')
         return lines
 
+    def _llm_metrics(self) -> list[str]:
+        """LLM çağrı-metrikleri (rag_metrics.db/llm_calls, son 24s) — #100224-audit: LLMCore
+        9 çağrı-yeri gözlemsizdi. backend/ok bazlı çağrı-sayısı + ortalama-latency. Fail-safe."""
+        import sqlite3
+
+        db = os.environ.get("RAG_METRICS_DB", "/opt/linux-ai-server/data/rag_metrics.db")
+        try:
+            conn = sqlite3.connect(db, timeout=2)
+            try:
+                rows = conn.execute(
+                    "SELECT backend, ok, COUNT(*), COALESCE(AVG(latency_ms), 0) "
+                    "FROM llm_calls WHERE ts > datetime('now', '-24 hours') GROUP BY backend, ok"
+                ).fetchall()
+            finally:
+                conn.close()
+        except Exception:
+            return []  # tablo/DB yok → metrik yok (fail-safe)
+        if not rows:
+            return []
+        out = [
+            "# HELP linux_ai_llm_calls_total LLM calls (24h) by backend and ok",
+            "# TYPE linux_ai_llm_calls_total gauge",
+            "# HELP linux_ai_llm_latency_ms_avg Avg LLM latency ms (24h) by backend and ok",
+            "# TYPE linux_ai_llm_latency_ms_avg gauge",
+        ]
+        for backend, ok, n, avg_lat in rows:
+            b = str(backend or "unknown")
+            out.append(f'linux_ai_llm_calls_total{{backend="{b}",ok="{int(ok or 0)}"}} {n}')
+            out.append(f'linux_ai_llm_latency_ms_avg{{backend="{b}",ok="{int(ok or 0)}"}} {avg_lat:.1f}')
+        return out
+
     def export(self) -> str:
         lines: list[str] = []
 
@@ -131,5 +162,8 @@ class PrometheusExporter:
 
         # GPU (amdgpu sysfs; emitted only when a GPU exposes the nodes)
         lines.extend(self._gpu_metrics())
+
+        # LLM çağrı-metrikleri (rag_metrics.db/llm_calls; tablo yoksa boş)
+        lines.extend(self._llm_metrics())
 
         return "\n".join(lines) + "\n"

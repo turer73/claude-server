@@ -76,3 +76,20 @@ def test_valid_prometheus_format(exporter):
             float(parts[-1])
         except ValueError:
             pytest.fail(f"Non-numeric value in: {line}")
+
+
+def test_llm_metrics_empty_when_no_table(exporter, tmp_path, monkeypatch):
+    # klipper #100224: llm_calls tablosu/DB yoksa → boş (fail-safe, no-crash).
+    monkeypatch.setenv("RAG_METRICS_DB", str(tmp_path / "empty.db"))
+    assert exporter._llm_metrics() == []
+
+
+def test_llm_metrics_from_rows(exporter, tmp_path, monkeypatch):
+    # klipper #100224: kayıt sonrası exporter backend/ok bazlı çağrı + latency yüzeyler.
+    monkeypatch.setenv("RAG_METRICS_DB", str(tmp_path / "m.db"))
+    from app.core.agents.llmcore import _record_llm_call
+
+    _record_llm_call("rag", "ollama", "qwen", 1000.0, True, 10)
+    out = "\n".join(exporter._llm_metrics())
+    assert "linux_ai_llm_calls_total" in out
+    assert 'backend="ollama"' in out

@@ -51,6 +51,33 @@ _TASK_ROUTES: dict[str, tuple[str, str]] = {
 }
 
 
+def _record_llm_call(task: str, backend: str, model: str, latency_ms: float, ok: bool, tokens: int | None = None) -> None:
+    """LLM çağrısını rag_metrics.db/llm_calls'a kaydet — merkezi LLM-gözlemlenebilirlik
+    (#100224-audit: 9 çağrı-yeri gözlemsizdi; tek choke-point burada). task/backend/model/
+    latency/ok/tokens → 'hangi ajan GPU'yu yakıyor', 'ne sıklıkla Claude'a eskale ediyoruz'
+    sorularını yanıtlar. FAIL-SAFE: metrik-yazımı ASLA LLM-çağrısını bozmaz."""
+    try:
+        import sqlite3
+
+        db = read_env_var("RAG_METRICS_DB") or "/opt/linux-ai-server/data/rag_metrics.db"
+        conn = sqlite3.connect(db, timeout=2)
+        try:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS llm_calls ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT DEFAULT (datetime('now')), "
+                "task TEXT, backend TEXT, model TEXT, latency_ms INTEGER, tokens INTEGER, ok INTEGER)"
+            )
+            conn.execute(
+                "INSERT INTO llm_calls (task, backend, model, latency_ms, tokens, ok) VALUES (?, ?, ?, ?, ?, ?)",
+                (task, backend, model, int(latency_ms), tokens, 1 if ok else 0),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        logger.debug("llm_calls metric write failed", exc_info=True)
+
+
 class LLMCore:
     """Tek arayüz: task → backend+model yönlendirir.
 
@@ -144,15 +171,24 @@ class LLMCore:
         backend, route_model = self.route(task)
         model = model or route_model
         prio = self._resolve_priority(task, priority)
+        import time as _t
+
+        _t0 = _t.monotonic()
+        _ok = False
         try:
             if backend == "claude":
-                return await self._claude(system or "", prompt, model)
-            return await self._ollama_async(prompt, model, system, temperature, num_predict, timeout, prio)
+                out = await self._claude(system or "", prompt, model)
+            else:
+                out = await self._ollama_async(prompt, model, system, temperature, num_predict, timeout, prio)
+            _ok = True
+            return out
         except Exception:
             if raise_on_error:
                 raise
             logger.debug("LLMCore generate failed (task=%s)", task, exc_info=True)
             return ""
+        finally:
+            _record_llm_call(task, backend, model, (_t.monotonic() - _t0) * 1000, _ok)
 
     async def _ollama_async(self, prompt, model, system, temperature, num_predict, timeout, priority="normal") -> str:
         async with self._ollama_gate_async(priority):  # yerel-CPU vanası + öncelik
@@ -181,17 +217,26 @@ class LLMCore:
         backend, route_model = self.route(task)
         model = model or route_model
         prio = self._resolve_priority(task, priority)
+        import time as _t
+
+        _t0 = _t.monotonic()
+        _ok = False
         try:
             if backend == "claude":
                 from app.api.research import _anthropic_generate
 
-                return (_anthropic_generate(system or "", prompt, model) or "").strip()
-            return self._ollama_sync(prompt, model, system, temperature, num_predict, timeout, prio)
+                out = (_anthropic_generate(system or "", prompt, model) or "").strip()
+            else:
+                out = self._ollama_sync(prompt, model, system, temperature, num_predict, timeout, prio)
+            _ok = True
+            return out
         except Exception:
             if raise_on_error:
                 raise
             logger.debug("LLMCore generate_sync failed (task=%s)", task, exc_info=True)
             return ""
+        finally:
+            _record_llm_call(task, backend, model, (_t.monotonic() - _t0) * 1000, _ok)
 
     def _ollama_sync(self, prompt, model, system, temperature, num_predict, timeout, priority="normal") -> str:
         import requests
@@ -223,17 +268,27 @@ class LLMCore:
         backend, route_model = self.route(task)
         model = model or route_model
         prio = self._resolve_priority(task, "normal")
+        import time as _t
+
+        _t0 = _t.monotonic()
+        _ok = False
+        _tokens = None
         try:
             payload = {"model": model, "prompt": prompt, "stream": False, "options": options or {}}
             with self._ollama_gate_sync(prio):  # yerel-CPU vanası (thread) + öncelik
                 r = requests.post(f"{self._ollama}/api/generate", json=payload, timeout=timeout)
                 r.raise_for_status()
-                return r.json() or {}
+                resp = r.json() or {}
+            _ok = True
+            _tokens = resp.get("eval_count")
+            return resp
         except Exception:
             if raise_on_error:
                 raise
             logger.debug("LLMCore complete_sync failed (task=%s)", task, exc_info=True)
             return {}
+        finally:
+            _record_llm_call(task, backend, model, (_t.monotonic() - _t0) * 1000, _ok, _tokens)
 
     async def chat(
         self,
@@ -251,6 +306,11 @@ class LLMCore:
         backend, route_model = self.route(task)
         model = model or route_model
         prio = self._resolve_priority(task, priority)
+        import time as _t
+
+        _t0 = _t.monotonic()
+        _ok = False
+        _tokens = None
         try:
             async with self._ollama_gate_async(prio):  # yerel-CPU vanası + öncelik
                 async with httpx.AsyncClient(timeout=timeout) as client:
@@ -259,12 +319,17 @@ class LLMCore:
                         json={"model": model, "messages": messages, "stream": False},
                     )
                 r.raise_for_status()
-                return ((r.json() or {}).get("message") or {}).get("content", "").strip()
+                resp = r.json() or {}
+            _ok = True
+            _tokens = resp.get("eval_count")
+            return (resp.get("message") or {}).get("content", "").strip()
         except Exception:
             if raise_on_error:
                 raise
             logger.debug("LLMCore chat failed (task=%s)", task, exc_info=True)
             return ""
+        finally:
+            _record_llm_call(task, backend, model, (_t.monotonic() - _t0) * 1000, _ok, _tokens)
 
     async def _claude(self, system: str, user: str, model: str) -> str:
         """Max-abonelik CLI yolu reuse (research._anthropic_generate, sync → to_thread)."""
