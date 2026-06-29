@@ -36,6 +36,16 @@ def _isolate_db_path(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_rag_metrics_db(tmp_path, monkeypatch):
+    """Her teste izole RAG_METRICS_DB — prod rag_metrics.db'ye fixture-sızıntısını önler.
+    klipper #100224: LLMCore artık her çağrıda llm_calls'a yazıyor (_record_llm_call);
+    RAG_METRICS_DB set ETMEYEN llmcore-testleri (generate_sync/complete_sync/chat ...) aksi
+    halde prod data/rag_metrics.db'ye sızdırırdı (test-pollution, #1176 sınıfı). app fixture
+    kendi RAG_METRICS_DB'sini sonra setenv ile override eder (monkeypatch son-yazan kazanır)."""
+    monkeypatch.setenv("RAG_METRICS_DB", str(tmp_path / "rag_metrics_isolated.db"))
+
+
+@pytest.fixture(autouse=True)
 def _clear_settings_cache():
     """Clear lru_cache on get_settings so env var changes take effect."""
     get_settings.cache_clear()
