@@ -170,6 +170,18 @@ def test_check_heartbeat_stalls(tmp_path: Path) -> None:
     assert {s.agent for s in stalls} == {"stale"}  # fresh=5dk taze, stale=65dk bayat
 
 
+def test_heartbeat_override_periodic_marker(tmp_path: Path) -> None:
+    # klipper #100224: last-code-review PERİYODİK marker (commit-tetikli) → 24s override.
+    # 30dk bayat olsa BİLE stall DEĞİL; ama gerçek always-on daemon 30dk bayat → stall.
+    # Eski 10dk-eşik bunu her watchdog-turunda sahte-stall yapıp Telegram flood ediyordu.
+    (tmp_path / "last-code-review.json").write_text('{"ts": "2026-06-21T18:35:00+00:00"}', encoding="utf-8")
+    (tmp_path / "some-daemon.json").write_text('{"ts": "2026-06-21T18:35:00+00:00"}', encoding="utf-8")
+    now = datetime.datetime.fromisoformat("2026-06-21T19:05:00+00:00").timestamp()  # 30dk sonra
+    agents = {s.agent for s in check_heartbeat_stalls(tmp_path, max_age_minutes=10.0, now_ts=now)}
+    assert "last-code-review" not in agents  # override 1440dk → 30dk stall DEĞİL
+    assert "some-daemon" in agents  # default 10dk → 30dk stall
+
+
 def test_check_heartbeat_stalls_missing_dir(tmp_path: Path) -> None:
     assert check_heartbeat_stalls(tmp_path / "yok", now_ts=0.0) == []
 

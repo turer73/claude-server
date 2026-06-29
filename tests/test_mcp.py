@@ -565,3 +565,22 @@ async def test_run_async_from_running_loop():
 
     # Called from inside a running loop → ThreadPoolExecutor branch
     assert _run_async(mul(4, 5)) == 20
+
+
+def test_rag_query_uses_live_qdrant(monkeypatch):
+    # klipper #100224: rag_query ölü ChromaDB (rag_engine :8100) yerine CANLI Qdrant hibrit-RRF.
+    import app.api.rag as rag
+
+    monkeypatch.setattr(rag, "_embed", lambda q: [0.1, 0.2])
+    monkeypatch.setattr(rag, "_hybrid_search", lambda q, vec, top_k=5: [{"id": "p1", "score": 0.9, "payload": {"text": "x"}}])
+    out = json.loads(execute_tool("rag_query", {"question": "test", "n_results": 3}))
+    assert out["engine"] == "qdrant:klipper-memory"
+    assert out["count"] == 1
+    assert out["hits"][0]["id"] == "p1"
+
+
+def test_rag_index_text_disabled_redirects():
+    # klipper #100224: ad-hoc indexing devre-dışı (curated-collection pollution) → memory_save'e yönlendir.
+    out = json.loads(execute_tool("rag_index_text", {"text": "x"}))
+    assert out["ok"] is False
+    assert "memory_save" in out["skipped"]

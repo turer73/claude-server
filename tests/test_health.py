@@ -70,3 +70,39 @@ async def test_health_stale_false_when_match(client, monkeypatch):
     monkeypatch.setattr(m, "_current_disk_sha", lambda: "cccccccccccc")
     resp = await client.get("/health")
     assert resp.json()["stale"] is False
+
+
+async def test_health_stale_false_when_only_nonapp_changed(client, monkeypatch):
+    # klipper #100224: SHA farklı AMA app/ değişmemiş (docs/script/test commit) → stale=False.
+    # Eski sha-tabanlı her commit'te True olup her merge'de drift-WARN flood ediyordu.
+    from app import main as m
+
+    monkeypatch.setattr(m, "_DEPLOYED_SHA", "aaaaaaaaaaaa")
+    monkeypatch.setattr(m, "_current_disk_sha", lambda: "bbbbbbbbbbbb")
+    monkeypatch.setattr(m, "_app_code_drifted", lambda dep, disk: False)  # app/ aynı
+    resp = await client.get("/health")
+    assert resp.json()["stale"] is False
+
+
+def test_app_code_drifted_unit(monkeypatch):
+    # klipper #100224: content-aware drift — yalnız app/ değişince True.
+    import subprocess
+
+    from app.main import _app_code_drifted
+
+    assert _app_code_drifted("abc123", "abc123") is False  # aynı sha → drift yok
+
+    class _R:
+        def __init__(self, rc):
+            self.returncode = rc
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R(0))
+    assert _app_code_drifted("aaa", "bbb") is False  # app/ aynı (git rc=0)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R(1))
+    assert _app_code_drifted("aaa", "bbb") is True  # app/ değişti (git rc!=0)
+
+    def _boom(*a, **k):
+        raise OSError("no git")
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+    assert _app_code_drifted("aaa", "bbb") is True  # git-yok → güvenli-taraf (stale)

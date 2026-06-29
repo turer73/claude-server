@@ -692,39 +692,47 @@ def execute_tool(name: str, arguments: dict) -> str:
                 result = asyncio.run(ai.chat(message=message, model=model))
             return json.dumps(result)
 
-        # ── RAG Tools ──
+        # ── RAG Tools (klipper #100224: CANLI Qdrant'a repoint — eski ChromaDB rag_engine
+        #    :8100 ÖLÜYDÜ, MCP-RAG sessizce çalışmıyordu. Canlı = app/api/rag.py hibrit-RRF) ──
         elif name == "rag_query":
-            from app.core.rag_engine import RAGEngine
+            from app.api.rag import _embed, _hybrid_search
 
-            engine = RAGEngine()
-            import asyncio
-
-            result = _run_async(
-                engine.query(
-                    arguments["question"],
-                    n_results=arguments.get("n_results", 5),
-                    generate=False,
-                )
-            )
-            return json.dumps(result)
+            q = arguments["question"]
+            n = int(arguments.get("n_results", 5))
+            vec = _embed(q)
+            hits = _hybrid_search(q, vec, top_k=n)
+            out = [{"id": h.get("id"), "score": round(float(h.get("score", 0)), 4), "payload": h.get("payload", {})} for h in hits]
+            return json.dumps({"query": q, "count": len(out), "hits": out, "engine": "qdrant:klipper-memory"})
 
         elif name == "rag_index_text":
-            from app.core.rag_engine import RAGEngine
-
-            engine = RAGEngine()
-            result = _run_async(
-                engine.index_text(
-                    arguments["text"],
-                    source=arguments.get("source", "mcp"),
-                )
+            # Canlı RAG (Qdrant klipper-memory) memory-DB'den OTO-indexlenir (rag-reindex cron).
+            # Ad-hoc MCP-indexing curated-collection'ı kirletir → devre-dışı, memory_save'e yönlendir.
+            return json.dumps(
+                {
+                    "ok": False,
+                    "skipped": "rag_index_text devre-dışı: canlı RAG memory-DB'den oto-indexlenir. İçerik için memory_save kullan; RAG otomatik reindex eder (rag-reindex cron).",
+                }
             )
-            return json.dumps(result)
 
         elif name == "rag_stats":
-            from app.core.rag_engine import RAGEngine
+            import requests
 
-            engine = RAGEngine()
-            return json.dumps(_run_async(engine.stats()))
+            from app.api.rag import COLLECTION, QDRANT_URL
+
+            try:
+                r = requests.get(f"{QDRANT_URL}/collections/{COLLECTION}", timeout=5)
+                res = r.json().get("result", {}) if r.ok else {}
+                return json.dumps(
+                    {
+                        "collection": COLLECTION,
+                        "points": res.get("points_count"),
+                        "status": res.get("status"),
+                        "engine": "qdrant",
+                        "ok": r.ok,
+                    }
+                )
+            except Exception as e:
+                return json.dumps({"ok": False, "error": str(e)[:200]})
 
         # ── Deploy Tools ──
         elif name == "deploy_self":
