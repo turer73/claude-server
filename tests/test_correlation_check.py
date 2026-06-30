@@ -34,13 +34,26 @@ def test_correlate_single_source_no_incident():
     assert cc.correlate(evs) is None
 
 
-def test_correlate_two_sources_incident():
+def test_correlate_two_sources_below_default_threshold():
+    # 2 kaynak < MIN_SOURCES(3) → incident DEĞİL. 2026-06-30 #1152 eval: kronik 2-kaynak
+    # çifti (drift:sha + her-zaman-orada bir sinyal) coincidental-FP üretiyordu; min-3 eler.
     evs = [_ev("anomaly:cpu_usage", "anomaly"), _ev("drift:sha", "drift")]
+    assert cc.correlate(evs) is None
+    # ama explicit min_sources=2 ile eski-davranış hâlâ çağrılabilir (param korunur)
+    assert cc.correlate(evs, min_sources=2) is not None
+
+
+def test_correlate_three_sources_incident():
+    evs = [
+        _ev("anomaly:cpu_usage", "anomaly"),
+        _ev("drift:sha", "drift"),
+        _ev("exception:foo", "exception"),
+    ]
     inc = cc.correlate(evs)
     assert inc is not None
-    assert inc["sources"] == ["anomaly:cpu_usage", "drift:sha"]
-    assert sorted(inc["types"]) == ["anomaly", "drift"]
-    assert inc["event_count"] == 2
+    assert inc["sources"] == ["anomaly:cpu_usage", "drift:sha", "exception:foo"]
+    assert sorted(inc["types"]) == ["anomaly", "drift", "exception"]
+    assert inc["event_count"] == 3
 
 
 def test_correlate_empty_none():
@@ -49,13 +62,14 @@ def test_correlate_empty_none():
 
 def test_correlate_fingerprint_stable_and_order_independent():
     # Aynı kaynak-kümesi (sıra farklı) → AYNI fingerprint (dedup tutarlı)
-    a = cc.correlate([_ev("drift:sha"), _ev("anomaly:cpu")])
-    b = cc.correlate([_ev("anomaly:cpu"), _ev("drift:sha")])
+    # min_sources=2: bu test fingerprint-kararlılığını ölçer, eşik-davranışını değil.
+    a = cc.correlate([_ev("drift:sha"), _ev("anomaly:cpu")], min_sources=2)
+    b = cc.correlate([_ev("anomaly:cpu"), _ev("drift:sha")], min_sources=2)
     assert a is not None
     assert b is not None
     assert a["fingerprint"] == b["fingerprint"]
     # Farklı küme → farklı fingerprint
-    c = cc.correlate([_ev("drift:sha"), _ev("anomaly:memory")])
+    c = cc.correlate([_ev("drift:sha"), _ev("anomaly:memory")], min_sources=2)
     assert c is not None
     assert c["fingerprint"] != a["fingerprint"]
 
@@ -100,7 +114,7 @@ def _incidents(tmp_path: Path):
 def test_run_emits_incident_warn(tmp_path, monkeypatch):
     _events_db(tmp_path).close()
     monkeypatch.setenv("DB_PATH", str(tmp_path / "server.db"))
-    evs = [_ev("anomaly:cpu", "anomaly"), _ev("drift:sha", "drift")]
+    evs = [_ev("anomaly:cpu", "anomaly"), _ev("drift:sha", "drift"), _ev("exception:foo", "exception")]
     s = cc.run_correlation_check(events=evs)
     assert s["incident"] == 1
     assert s["emitted"] == 1
@@ -108,7 +122,18 @@ def test_run_emits_incident_warn(tmp_path, monkeypatch):
     assert len(rows) == 1
     assert rows[0]["severity"] == "warn"
     assert rows[0]["source"].startswith("incident:")
-    assert "2 ilişkili sinyal" in rows[0]["title"]
+    assert "3 ilişkili sinyal" in rows[0]["title"]
+
+
+def test_run_two_sources_no_incident_by_default(tmp_path, monkeypatch):
+    # #1152 eval regresyon-kilidi: 2-kaynak (coincidental) default min-3 ile incident-DEĞİL.
+    _events_db(tmp_path).close()
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "server.db"))
+    evs = [_ev("drift:sha", "drift"), _ev("watchdog:heartbeat:last-code-review", "alert")]
+    s = cc.run_correlation_check(events=evs)
+    assert s["incident"] == 0
+    assert s["emitted"] == 0
+    assert _incidents(tmp_path) == []
 
 
 def test_run_no_incident_single_source(tmp_path, monkeypatch):
@@ -123,7 +148,7 @@ def test_run_no_incident_single_source(tmp_path, monkeypatch):
 def test_run_dedups_same_incident(tmp_path, monkeypatch):
     _events_db(tmp_path).close()
     monkeypatch.setenv("DB_PATH", str(tmp_path / "server.db"))
-    evs = [_ev("anomaly:cpu", "anomaly"), _ev("drift:sha", "drift")]
+    evs = [_ev("anomaly:cpu", "anomaly"), _ev("drift:sha", "drift"), _ev("exception:foo", "exception")]
     s1 = cc.run_correlation_check(events=evs)
     s2 = cc.run_correlation_check(events=evs)  # aynı kaynak-kümesi → suppress
     assert s1["emitted"] == 1
