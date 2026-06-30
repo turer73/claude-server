@@ -71,6 +71,27 @@ ANALYZER_SYSTEM = (
     '"surer_tasks": [{"dosya": "...", "degisiklik": "..."}], "proje": "...", "ozet": "tek cumle"}'
 )
 
+# klipper #100224 structured-output: Ollama'yı geçerli analiz-objesine kısıtla → kırılgan
+# regex-ayıklama (re.search(r"\{...\}")) yerine temiz json.loads. route enum-kısıtlı (geçersiz
+# yönlendirme imkânsız). Ollama yok-sayarsa / claude-route'ta → regex-fallback korunur.
+_ANALYZE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "route": {"type": "string", "enum": ["KLIPPER", "SURER", "HYBRID"]},
+        "klipper_cmds": {"type": "array", "items": {"type": "string"}},
+        "surer_tasks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"dosya": {"type": "string"}, "degisiklik": {"type": "string"}},
+            },
+        },
+        "proje": {"type": "string"},
+        "ozet": {"type": "string"},
+    },
+    "required": ["route", "ozet"],
+}
+
 
 class DispatchRequest(BaseModel):
     task: str
@@ -89,14 +110,14 @@ class DispatchResult(BaseModel):
     duration_ms: int = 0
 
 
-async def _ollama_chat(user_msg: str, system: str = "") -> str:
+async def _ollama_chat(user_msg: str, system: str = "", fmt: dict | None = None) -> str:
     from app.core.agents.llmcore import llm_core
 
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": user_msg})
-    return await llm_core.chat(messages, model=MODEL, timeout=30, raise_on_error=True)
+    return await llm_core.chat(messages, model=MODEL, timeout=30, raise_on_error=True, fmt=fmt)
 
 
 def _quick_route(task: str) -> str:
@@ -140,14 +161,24 @@ def _quick_route(task: str) -> str:
 
 async def _analyze_task(task: str, project: str, context: str) -> dict[str, Any]:
     prompt = f"Gorev: {task}\nProje: {project or 'belirtilmedi'}\nEk bilgi: {context or 'yok'}\n\nAnaliz et ve JSON donus yap."
-    raw = await _ollama_chat(prompt, system=ANALYZER_SYSTEM)
-    m = re.search(r"\{[\s\S]+\}", raw)
-    if m:
+    raw = await _ollama_chat(prompt, system=ANALYZER_SYSTEM, fmt=_ANALYZE_SCHEMA)
+    if raw:
+        # Structured-output: temiz JSON objesi → doğrudan parse. Ollama yok-sayarsa /
+        # claude-route'ta serbest-metin → regex-ayıkla (eski davranış, fail-safe fallback).
         try:
-            parsed: dict[str, Any] = json.loads(m.group(0))
-            return parsed
-        except Exception:
+            parsed: dict[str, Any] = json.loads(raw)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
             pass
+        m = re.search(r"\{[\s\S]+\}", raw)
+        if m:
+            try:
+                parsed = json.loads(m.group(0))
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
     return {
         "route": "SURER",
         "klipper_cmds": [],

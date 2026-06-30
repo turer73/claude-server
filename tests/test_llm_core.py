@@ -197,6 +197,41 @@ async def test_chat_extracts_message_content(monkeypatch):
     assert out == "merhaba"
 
 
+async def test_chat_threads_fmt_into_payload(monkeypatch):
+    """fmt verilince /api/chat payload'ına format=schema eklenir (generate ile simetrik)."""
+    captured: dict = {}
+
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"message": {"content": '{"x":1}'}}
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            captured.update(k.get("json") or {})
+            return FakeResp()
+
+    monkeypatch.setattr(lc.httpx, "AsyncClient", FakeClient)
+    schema = {"type": "object", "properties": {"x": {"type": "integer"}}}
+    await LLMCore().chat([{"role": "user", "content": "x"}], model="qwen2.5:7b", fmt=schema)
+    assert captured.get("format") == schema
+    # fmt verilmezse format anahtarı YOK (geriye-uyum)
+    captured.clear()
+    await LLMCore().chat([{"role": "user", "content": "x"}], model="qwen2.5:7b")
+    assert "format" not in captured
+
+
 async def test_chat_fail_silent_and_raise(monkeypatch):
     """chat(): default fail-silent '', raise_on_error=True → propagate."""
 
