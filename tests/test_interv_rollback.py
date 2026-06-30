@@ -95,7 +95,7 @@ async def test_rollback_runs_on_verify_fail():
     with (
         patch.object(agent._executor, "execute", new_callable=AsyncMock, side_effect=mock_exec),
         patch.object(agent, "_verify_remediation", new_callable=AsyncMock, return_value=False),
-        patch("app.core.devops_agent.emit_event"),
+        patch("app.core.devops.escalation.emit_event"),
     ):
         await agent._verify_and_escalate("temperature", _alert())
 
@@ -144,7 +144,7 @@ async def test_no_rollback_on_verify_pass():
     with (
         patch.object(agent._executor, "execute", new_callable=AsyncMock, side_effect=mock_exec),
         patch.object(agent, "_verify_remediation", new_callable=AsyncMock, return_value=True),  # PASS
-        patch("app.core.devops_agent.emit_event"),
+        patch("app.core.devops.escalation.emit_event"),
     ):
         await agent._verify_and_escalate("temperature", _alert())
     # verify PASS -> rollback denenmez AMA state TEMİZLENİR (surer F1: bayat-state bırakma)

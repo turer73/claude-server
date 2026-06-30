@@ -8,7 +8,6 @@ import sqlite3
 
 import pytest
 
-from app.core import devops_agent as da
 from app.core.devops_agent import Alert, DevOpsAgent
 
 
@@ -33,7 +32,7 @@ def agent():
 
 async def test_diagnose_emits_diagnosis_event(agent, monkeypatch):
     captured = {}
-    monkeypatch.setattr(da, "emit_event", lambda **kw: captured.update(kw))
+    monkeypatch.setattr("app.core.devops.diagnosis.emit_event", lambda **kw: captured.update(kw))
 
     async def fake_ask(alert, ctx):
         return "Muhtemel kök: 2 gün önce renderhane reindex cron'u. CPU deseni eşleşiyor."
@@ -53,7 +52,7 @@ async def test_diagnose_emits_diagnosis_event(agent, monkeypatch):
 async def test_diagnose_failure_is_silent(agent, monkeypatch):
     """Ollama down (None döner) → emit YOK, exception YOK."""
     calls = []
-    monkeypatch.setattr(da, "emit_event", lambda **k: calls.append(k))
+    monkeypatch.setattr("app.core.devops.diagnosis.emit_event", lambda **k: calls.append(k))
 
     async def fake_ask(a, c):
         return None
@@ -72,7 +71,7 @@ async def test_diagnose_never_executes_commands(agent, monkeypatch):
         raise AssertionError("teşhis bir komut çalıştırdı — read-only ihlali!")
 
     monkeypatch.setattr(agent._executor, "execute", boom)
-    monkeypatch.setattr(da, "emit_event", lambda **k: None)
+    monkeypatch.setattr("app.core.devops.diagnosis.emit_event", lambda **k: None)
 
     async def fake_ask(a, c):
         return "hipotez"
