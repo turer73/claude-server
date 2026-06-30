@@ -344,3 +344,24 @@ def test_generate_sync_records_metric(tmp_path, monkeypatch):
     row = sqlite3.connect(db).execute("SELECT task,ok FROM llm_calls").fetchone()
     assert row[0] == "diagnosis"
     assert row[1] == 1
+
+
+def test_payload_includes_format_when_given():
+    # klipper #100224 structured-output: fmt → payload["format"]; yoksa eklenmez.
+    p = LLMCore._payload("p", "m", None, 0.1, 10, {"type": "object"})
+    assert p["format"] == {"type": "object"}
+    assert "format" not in LLMCore._payload("p", "m", None, 0.1, 10)
+
+
+async def test_generate_threads_fmt_to_ollama(monkeypatch):
+    # generate fmt'i _ollama_async'a iletir (structured-output uçtan-uca plumbing).
+    captured = {}
+
+    async def fake_ollama(self, prompt, model, system, temperature, num_predict, timeout, priority="normal", fmt=None):
+        captured["fmt"] = fmt
+        return "x"
+
+    monkeypatch.setattr(LLMCore, "_ollama_async", fake_ollama)
+    schema = {"type": "object", "properties": {"label": {"type": "string"}}}
+    assert await LLMCore().generate("p", task="classify", fmt=schema) == "x"
+    assert captured["fmt"] == schema

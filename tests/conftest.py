@@ -46,6 +46,16 @@ def _isolate_rag_metrics_db(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _disable_cpu_grace_window(monkeypatch):
+    """CPU-grace penceresi (klipper #100224, devops_agent._detect 03-05 UTC cpu-suppress)
+    testlerde KAPALI — yoksa _detect cpu-testleri 03-05 UTC'de zamana-bağlı KIRILIR (gerçek
+    CI-flakiness: 04:55 UTC'de test_detect/auto_resolve/no_duplicate 'assert 0==1' verdi).
+    Grace'i test eden test'ler kendi CPU_GRACE_*'ını setenv ile açar (son-yazan kazanır)."""
+    monkeypatch.setenv("CPU_GRACE_START_HOUR", "0")
+    monkeypatch.setenv("CPU_GRACE_END_HOUR", "0")
+
+
+@pytest.fixture(autouse=True)
 def _clear_settings_cache():
     """Clear lru_cache on get_settings so env var changes take effect."""
     get_settings.cache_clear()
