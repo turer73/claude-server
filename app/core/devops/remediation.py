@@ -6,7 +6,9 @@ import asyncio
 import shlex
 import time
 from datetime import UTC, datetime
+from typing import Any
 
+from app.core.devops._base import _DevOpsAgentBase
 from app.core.devops.models import (
     _GOVERNOR_RE,
     _VALID_GOVERNOR,
@@ -19,7 +21,7 @@ from app.core.events import emit_event
 from app.core.provenance import provenance_json
 
 
-class RemediationMixin:
+class RemediationMixin(_DevOpsAgentBase):
     """DevOpsAgent remediation mixin — split from monolithic devops_agent.py."""
 
     async def _remediate(self, alert: Alert) -> None:
@@ -196,7 +198,7 @@ class RemediationMixin:
         except Exception:
             pass
 
-    def _executable_playbook(self, source: str) -> list[dict] | None:
+    def _executable_playbook(self, source: str) -> list[dict[str, Any]] | None:
         """source -> ÇALIŞTIRILABİLİR playbook adımları (template doldurulmuş).
         None = bu kaynak için manuel-tetiklenebilir düzeltme yok (örn cpu = sadece-
         inceleme). escalation:/remediation: önekleri asıl kaynağa indirgenir."""
@@ -227,7 +229,7 @@ class RemediationMixin:
         """notify-cron + endpoint: bu kaynağa [🔧 Uygula] sunulabilir mi."""
         return self._executable_playbook(source) is not None
 
-    async def force_remediate(self, source: str) -> dict:
+    async def force_remediate(self, source: str) -> dict[str, Any]:
         """Kullanıcı [🔧 Uygula] ile AÇIK ONAY verdi -> remediation_mode-gate BYPASS
         (insan-in-loop ayrı gate; notify-default'ta bile çalışır çünkü onay manuel).
         Playbook'u yürüt + verify + ledger(mode='manual'). verify-fail -> escalate.
@@ -371,7 +373,7 @@ class RemediationMixin:
         await self._verify_and_escalate(source, alert)
 
     @property
-    def remediation_history(self) -> list[dict]:
+    def remediation_history(self) -> list[dict[str, Any]]:
         return [
             {
                 "timestamp": r.timestamp,
@@ -385,5 +387,5 @@ class RemediationMixin:
         ]
 
     @property
-    def playbooks(self) -> dict:
+    def playbooks(self) -> dict[str, Any]:
         return {k: [s["desc"] for s in v] for k, v in PLAYBOOKS.items()}

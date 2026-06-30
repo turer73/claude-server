@@ -6,13 +6,14 @@ import asyncio
 import shlex
 import time
 
+from app.core.devops._base import _DevOpsAgentBase
 from app.core.devops.models import (
     Alert,
 )
 from app.core.events import emit_event
 
 
-class EscalationMixin:
+class EscalationMixin(_DevOpsAgentBase):
     """DevOpsAgent escalation mixin — split from monolithic devops_agent.py."""
 
     async def _escalate_persistent(self) -> None:
@@ -78,7 +79,7 @@ class EscalationMixin:
                 # shlex.quote = savunma-derinliği (refused adlar buraya ulaşamaz ama
                 # source-string ileride başka üreticiden gelebilir — Codex P1 simetrisi).
                 r = await self._executor.execute(f"systemctl is-active {shlex.quote(svc)}", timeout=10)
-                return r.get("stdout", "").strip() == "active"
+                return bool(r.get("stdout", "").strip() == "active")
             if base == "docker":
                 cont = source.split(":", 1)[1]
                 # Codex P2: Running=true unhealthy'de de doğru -> false-recovery. Health-status'a
@@ -105,7 +106,7 @@ class EscalationMixin:
             thr = self._thresholds.get(base)
             if val is None or thr is None:
                 return None
-            return val < thr
+            return bool(val < thr)
         except Exception:
             return None  # verify-edilemedi -> belirsiz (escalate etme)
 

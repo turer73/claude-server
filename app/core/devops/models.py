@@ -9,6 +9,7 @@ import base64
 import os
 import re
 from dataclasses import dataclass
+from typing import Any
 
 # INTERV: yalnız GERİ-ALINABİLİR komutlar rollback'e uygun (DAR set). cpu-governor değişimi
 # tersine çevrilebilir (önceki governor'a dön); prune/delete/truncate/restart GERİ-ALINAMAZ
@@ -58,7 +59,7 @@ class RemediationRecord:
 
 # ── Playbooks ──────────────────────────────────────────────
 
-PLAYBOOKS: dict[str, list[dict]] = {
+PLAYBOOKS: dict[str, list[dict[str, str]]] = {
     "cpu_critical": [
         {"desc": "Log top CPU consumers", "cmd": "ps aux --sort=-%cpu | head -6"},
     ],
@@ -110,7 +111,7 @@ echo "NAMES=$(docker ps --format '{{.Names}}' 2>/dev/null | tr '\\n' ',')"
 VPS_PROBE_B64 = base64.b64encode(VPS_PROBE_SCRIPT.encode()).decode()
 
 
-def parse_vps_probe(stdout: str) -> dict:
+def parse_vps_probe(stdout: str) -> dict[str, Any]:
     """Parse KEY=VALUE lines emitted by VPS_PROBE_SCRIPT into a typed dict."""
     kv: dict[str, str] = {}
     for line in stdout.splitlines():

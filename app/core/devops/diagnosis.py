@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 
+from app.core.devops._base import _DevOpsAgentBase
 from app.core.devops.models import (
     Alert,
 )
 from app.core.events import emit_event
 
 
-class DiagnosisMixin:
+class DiagnosisMixin(_DevOpsAgentBase):
     """DevOpsAgent diagnosis mixin — split from monolithic devops_agent.py."""
 
     def _maybe_diagnose(self, alert: Alert) -> None:

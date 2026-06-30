@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, datetime
+from typing import Any
 
 from app.core.config import read_env_var
+from app.core.devops._base import _DevOpsAgentBase
 from app.core.devops.models import (
     _SUSTAINED_N,
     _SUSTAINED_SOURCES,
@@ -15,10 +17,10 @@ from app.core.devops.models import (
 from app.core.events import emit_event
 
 
-class MetricsMixin:
+class MetricsMixin(_DevOpsAgentBase):
     """DevOpsAgent metrics mixin — split from monolithic devops_agent.py."""
 
-    async def _store_metrics(self, metrics: dict) -> None:
+    async def _store_metrics(self, metrics: dict[str, Any]) -> None:
         if not self._db:
             return
         try:
@@ -63,12 +65,12 @@ class MetricsMixin:
         eşik-üstü mü → sürdürülen-yük. Geçici zirveyi (zamanlanmış toplu-iş) filtreler.
         Yeterli geçmiş yoksa (<N örnek, startup) False — sürdürülen doğrulanamaz, critical etme."""
         recent = list(self._history)[-_SUSTAINED_N:]
-        vals = [m.get(key) for m in recent if m.get(key) is not None]
+        vals = [v for m in recent if (v := m.get(key)) is not None]
         if len(vals) < _SUSTAINED_N:
             return False
         return all(v >= threshold for v in vals)
 
-    def _detect(self, metrics: dict) -> list[Alert]:
+    def _detect(self, metrics: dict[str, Any]) -> list[Alert]:
         now = datetime.now(UTC).isoformat()
         alerts = []
 
@@ -126,7 +128,7 @@ class MetricsMixin:
 
         return alerts
 
-    def _auto_resolve(self, metrics: dict) -> None:
+    def _auto_resolve(self, metrics: dict[str, Any]) -> None:
         """Resolve alerts when metrics return to normal."""
         now = datetime.now(UTC).isoformat()
         resolved = []
@@ -190,7 +192,7 @@ class MetricsMixin:
             pass
 
     @property
-    def active_alerts(self) -> list[dict]:
+    def active_alerts(self) -> list[dict[str, Any]]:
         return [
             {
                 "id": a.id,
@@ -206,21 +208,21 @@ class MetricsMixin:
         ]
 
     @property
-    def metrics_buffer(self) -> list[dict]:
+    def metrics_buffer(self) -> list[dict[str, Any]]:
         return list(self._history)
 
-    async def get_alerts_history(self, limit: int = 50, severity: str | None = None) -> list[dict]:
+    async def get_alerts_history(self, limit: int = 50, severity: str | None = None) -> list[dict[str, Any]]:
         if not self._db:
             return []
         query = "SELECT * FROM alerts ORDER BY timestamp DESC LIMIT ?"
-        params: tuple = (limit,)
+        params: tuple[Any, ...] = (limit,)
         if severity:
             query = "SELECT * FROM alerts WHERE severity = ? ORDER BY timestamp DESC LIMIT ?"
             params = (severity, limit)
         rows = await self._db.fetch_all(query, params)
         return [dict(r) for r in rows]
 
-    async def get_metrics_history(self, minutes: int = 30) -> list[dict]:
+    async def get_metrics_history(self, minutes: int = 30) -> list[dict[str, Any]]:
         if not self._db:
             return list(self._history)
         rows = await self._db.fetch_all(

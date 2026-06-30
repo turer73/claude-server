@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import shlex
 from datetime import UTC, datetime
+from typing import Any
 
+from app.core.devops._base import _DevOpsAgentBase
 from app.core.devops.models import (
     _VALID_UNIT,
     VPS_PROBE_B64,
@@ -14,7 +16,7 @@ from app.core.devops.models import (
 )
 
 
-class ProbeMixin:
+class ProbeMixin(_DevOpsAgentBase):
     """DevOpsAgent probe mixin — split from monolithic devops_agent.py."""
 
     async def _check_services(self) -> None:
@@ -29,7 +31,7 @@ class ProbeMixin:
                 # ad probe'da çalışırdı). Geçersiz ad shell'e HİÇ gömülmez; sessiz değil:
                 # alarm yolu akar, _remediate_service refused-satırı+webhook yazar.
                 if not _VALID_UNIT.fullmatch(svc):
-                    problem = f"Service adi gecersiz ({svc[:60]!r}) — izlenemiyor (enjeksiyon riski)"
+                    problem: str | None = f"Service adi gecersiz ({svc[:60]!r}) — izlenemiyor (enjeksiyon riski)"
                 else:
                     result = await self._executor.execute(f"systemctl is-active {shlex.quote(svc)}", timeout=5)
                     problem = None if result.get("stdout", "").strip() == "active" else f"Service {svc} is not active"
@@ -87,7 +89,7 @@ class ProbeMixin:
             except Exception:
                 pass
 
-    async def _vps_ssh_probe(self) -> dict | None:
+    async def _vps_ssh_probe(self) -> dict[str, Any] | None:
         """Run the fixed VPS metric probe over SSH via an isolated subprocess.
 
         Bypasses the user-facing ShellExecutor on purpose: this is a fixed,
@@ -122,7 +124,7 @@ class ProbeMixin:
             return None
         return parsed
 
-    async def _store_vps_metrics(self, sample: dict, online: bool) -> None:
+    async def _store_vps_metrics(self, sample: dict[str, Any], online: bool) -> None:
         if not self._db:
             return
         try:
@@ -237,10 +239,10 @@ class ProbeMixin:
                 del self._active_alerts[source]
 
     @property
-    def latest_vps(self) -> dict:
+    def latest_vps(self) -> dict[str, Any]:
         return self._latest_vps
 
-    async def get_vps_metrics_history(self, minutes: int = 60) -> list[dict]:
+    async def get_vps_metrics_history(self, minutes: int = 60) -> list[dict[str, Any]]:
         if not self._db:
             return []
         rows = await self._db.fetch_all(
