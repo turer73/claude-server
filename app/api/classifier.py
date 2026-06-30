@@ -15,6 +15,7 @@ network'ten qwen'i remote agent'lara açar.
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -56,10 +57,18 @@ CLASSIFIER_PROMPT_TEMPLATE = (
     'Title: "fix(security): CSRF bypass" + commit steps             -> ACTIONABLE\n\n'
     "--- NOTE TITLE ---\n{title}\n\n"
     "--- NOTE CONTENT (first 300 chars) ---\n{content}\n\n"
-    "Category:"
+    'Respond ONLY with JSON: {{"label": "<CATEGORY>"}}'
 )
 
 VALID_LABELS = ("URGENT", "ACTIONABLE", "DISCUSSION", "ACK")
+
+# klipper #100224: Ollama structured-output — model'i enum'a kısıtla → garantili-geçerli JSON,
+# substring-match FP'si yok ("ACTIONABLE ama DISCUSSION" gibi belirsiz çıktı yanlış-eşleşmez).
+LABEL_SCHEMA = {
+    "type": "object",
+    "properties": {"label": {"type": "string", "enum": list(VALID_LABELS)}},
+    "required": ["label"],
+}
 
 
 class ClassifyRequest(BaseModel):
@@ -83,19 +92,26 @@ async def classify_note(
 
     started = time.monotonic()
     try:
-        raw_text = (
-            await llm_core.generate(prompt, task="classify", model=model, temperature=0.1, num_predict=10, timeout=20, raise_on_error=True)
-        ).upper()
+        raw_text = await llm_core.generate(
+            prompt, task="classify", model=model, temperature=0.1, num_predict=30, timeout=20, raise_on_error=True, fmt=LABEL_SCHEMA
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"ollama upstream error: {e}") from e
 
     duration_ms = int((time.monotonic() - started) * 1000)
 
+    # Structured-output: {"label": "..."} parse et; format desteklenmezse (eski Ollama) substring-fallback.
     label = "DISCUSSION"  # default safe fallback
-    for candidate in VALID_LABELS:
-        if candidate in raw_text:
-            label = candidate
-            break
+    try:
+        cand = str(json.loads(raw_text).get("label", "")).upper()
+        if cand in VALID_LABELS:
+            label = cand
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        up = raw_text.upper()
+        for candidate in VALID_LABELS:
+            if candidate in up:
+                label = candidate
+                break
 
     return {
         "label": label,

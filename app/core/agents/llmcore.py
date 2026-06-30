@@ -144,13 +144,15 @@ class LLMCore:
                 yield
 
     @staticmethod
-    def _payload(prompt: str, model: str, system: str | None, temperature: float, num_predict: int | None) -> dict:
+    def _payload(prompt: str, model: str, system: str | None, temperature: float, num_predict: int | None, fmt: dict | None = None) -> dict:
         options: dict = {"temperature": temperature}
         if num_predict:
             options["num_predict"] = num_predict
         payload: dict = {"model": model, "prompt": prompt, "stream": False, "options": options}
         if system:
             payload["system"] = system
+        if fmt:
+            payload["format"] = fmt  # Ollama structured-output (JSON-schema) → garantili geçerli JSON
         return payload
 
     async def generate(
@@ -165,9 +167,11 @@ class LLMCore:
         timeout: int = 60,
         raise_on_error: bool = False,
         priority: str = "normal",
+        fmt: dict | None = None,
     ) -> str:
         """Async üretim. Hata → "" (fail-silent) veya raise_on_error ise istisna. model routing'i ezer.
-        priority='high' (veya task∈_HIGH_PRIORITY_TASKS) → rutin-işi geçer (rezerv-permit)."""
+        priority='high' (veya task∈_HIGH_PRIORITY_TASKS) → rutin-işi geçer (rezerv-permit).
+        fmt (Ollama JSON-schema) verilirse → garantili-geçerli structured output (claude'da yok-sayılır)."""
         backend, route_model = self.route(task)
         model = model or route_model
         prio = self._resolve_priority(task, priority)
@@ -179,7 +183,7 @@ class LLMCore:
             if backend == "claude":
                 out = await self._claude(system or "", prompt, model)
             else:
-                out = await self._ollama_async(prompt, model, system, temperature, num_predict, timeout, prio)
+                out = await self._ollama_async(prompt, model, system, temperature, num_predict, timeout, prio, fmt)
             _ok = True
             return out
         except Exception:
@@ -190,12 +194,12 @@ class LLMCore:
         finally:
             _record_llm_call(task, backend, model, (_t.monotonic() - _t0) * 1000, _ok)
 
-    async def _ollama_async(self, prompt, model, system, temperature, num_predict, timeout, priority="normal") -> str:
+    async def _ollama_async(self, prompt, model, system, temperature, num_predict, timeout, priority="normal", fmt=None) -> str:
         async with self._ollama_gate_async(priority):  # yerel-CPU vanası + öncelik
             async with httpx.AsyncClient(timeout=timeout) as client:
                 r = await client.post(
                     f"{self._ollama}/api/generate",
-                    json=self._payload(prompt, model, system, temperature, num_predict),
+                    json=self._payload(prompt, model, system, temperature, num_predict, fmt),
                 )
             r.raise_for_status()
             return ((r.json() or {}).get("response") or "").strip()
@@ -212,8 +216,10 @@ class LLMCore:
         timeout: int = 60,
         raise_on_error: bool = False,
         priority: str = "normal",
+        fmt: dict | None = None,
     ) -> str:
-        """Sync üretim (requests) — FastAPI threadpool çağrıcıları için. Aynı routing/raise/öncelik."""
+        """Sync üretim (requests) — FastAPI threadpool çağrıcıları için. Aynı routing/raise/öncelik.
+        fmt (Ollama JSON-schema) → garantili structured output (claude'da yok-sayılır)."""
         backend, route_model = self.route(task)
         model = model or route_model
         prio = self._resolve_priority(task, priority)
@@ -227,7 +233,7 @@ class LLMCore:
 
                 out = (_anthropic_generate(system or "", prompt, model) or "").strip()
             else:
-                out = self._ollama_sync(prompt, model, system, temperature, num_predict, timeout, prio)
+                out = self._ollama_sync(prompt, model, system, temperature, num_predict, timeout, prio, fmt)
             _ok = True
             return out
         except Exception:
@@ -238,13 +244,13 @@ class LLMCore:
         finally:
             _record_llm_call(task, backend, model, (_t.monotonic() - _t0) * 1000, _ok)
 
-    def _ollama_sync(self, prompt, model, system, temperature, num_predict, timeout, priority="normal") -> str:
+    def _ollama_sync(self, prompt, model, system, temperature, num_predict, timeout, priority="normal", fmt=None) -> str:
         import requests
 
         with self._ollama_gate_sync(priority):  # yerel-CPU vanası (thread) + öncelik
             r = requests.post(
                 f"{self._ollama}/api/generate",
-                json=self._payload(prompt, model, system, temperature, num_predict),
+                json=self._payload(prompt, model, system, temperature, num_predict, fmt),
                 timeout=timeout,
             )
             r.raise_for_status()
