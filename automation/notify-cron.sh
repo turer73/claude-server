@@ -223,13 +223,23 @@ ${ts}"
     fi
 
     # klipper #100224: kaynak-bazlı Telegram cooldown (flood-bastir). Aynı kaynaktan son
-    # NOTIFY_COOLDOWN_SECONDS (default 300=5dk) içinde mesaj gittiyse bu event'i sil
-    # (notified=1 yap) ama Telegram'a GÖNDERME. Root-fix'ler yürürken anlık flood kesici.
-    # review-fix: critical ASLA cooldown'la susturulmaz — warn→critical escalation kaçmasın
-    # (monitoring-honesty). Cooldown yalnız warn-flapping'i bastırır; critical hep geçer.
+    # cooldown-penceresi içinde mesaj gittiyse bu event'i sil (notified=1 yap) ama
+    # Telegram'a GÖNDERME. Root-fix'ler yürürken anlık flood kesici.
+    #
+    # warn  → NOTIFY_COOLDOWN_SECONDS (default 300=5dk): warn-flapping'i bastırır.
+    # critical → CRITICAL_COOLDOWN_SECONDS (default 900=15dk): İLK critical HER ZAMAN
+    #   geçer (warn→critical escalation kaçmaz: yalnız 'notified=1 + severity=critical'
+    #   geçmişine bakılır, warn-geçmişi tetiklemez). Sadece aynı-kaynağın YAKIN-ZAMANDA
+    #   ZATEN-BİLDİRİLMİŞ critical'i varsa SONRAKİLER collapse olur. Hedef: restart-storm
+    #   (in-memory _active_alerts sıfırlanıp _detect aynı critical'i yeniden emit eder)
+    #   + flapping (resolve→re-alert) + outage-burst. save_discovery zaten cooldown-ÖNCESİ
+    #   çalıştığı için collapse'ta bile hata-hafızası/auto-bug yaşar — yalnız Telegram susar.
+    #   escalation:/remediation: önekleri MUAF — devops _escalate_persistent'te zaten
+    #   30dk'da-bir throttle'lı kasıtlı hatırlatmalar (çift-throttle yok).
     NOTIFY_COOLDOWN_SECONDS="${NOTIFY_COOLDOWN_SECONDS:-300}"
+    CRITICAL_COOLDOWN_SECONDS="${CRITICAL_COOLDOWN_SECONDS:-900}"
     COOLDOWN_OK=1
-    if [ "${NOTIFY_COOLDOWN_SECONDS}" -gt 0 ] && [ "$TG_OK" = "1" ] && [ "$sev" != "critical" ]; then
+    if [ "$TG_OK" = "1" ] && [ "$sev" != "critical" ] && [ "${NOTIFY_COOLDOWN_SECONDS}" -gt 0 ]; then
         last_notified_age=$(sqlite3 "$DB_PATH" \
             "SELECT CAST((julianday('now') - julianday(MAX(timestamp))) * 86400 AS INTEGER)
              FROM events WHERE source='${src//\'/}' AND notified=1;" 2>/dev/null)
@@ -238,6 +248,20 @@ ${ts}"
             echo "[$(date -Iseconds)] COOLDOWN id=${id} src=${SAFE_SRC} last=${last_notified_age}s<${NOTIFY_COOLDOWN_SECONDS}s" >> "$LOG"
             COOLDOWN_OK=0
         fi
+    elif [ "$TG_OK" = "1" ] && [ "$sev" = "critical" ] && [ "${CRITICAL_COOLDOWN_SECONDS}" -gt 0 ]; then
+        case "$src" in
+            escalation:*|remediation:*) : ;;  # MUAF: devops 30dk-throttle'lı kasıtlı hatırlatma
+            *)
+                last_crit_age=$(sqlite3 "$DB_PATH" \
+                    "SELECT CAST((julianday('now') - julianday(MAX(timestamp))) * 86400 AS INTEGER)
+                     FROM events WHERE source='${src//\'/}' AND severity='critical' AND notified=1;" 2>/dev/null)
+                if [ -n "$last_crit_age" ] && [ "$last_crit_age" -lt "$CRITICAL_COOLDOWN_SECONDS" ] 2>/dev/null; then
+                    sqlite3 "$DB_PATH" "UPDATE events SET notified=1 WHERE id=${id};" 2>>"$LOG" || true
+                    echo "[$(date -Iseconds)] COOLDOWN-CRIT id=${id} src=${SAFE_SRC} last=${last_crit_age}s<${CRITICAL_COOLDOWN_SECONDS}s (collapse; ilk-critical zaten bildirildi)" >> "$LOG"
+                    COOLDOWN_OK=0
+                fi
+                ;;
+        esac
     fi
 
     # Telegram gönderimi (yalnız TG_OK ve cooldown geçmişse). Memory-only modda atlanır.
