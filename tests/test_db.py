@@ -33,6 +33,50 @@ async def test_initialize_sets_wal_and_busy_timeout(db):
 
 
 @pytest.mark.anyio
+async def test_admin_key_insert_is_race_safe_idempotent(db):
+    """#1197: lifespan admin-key bootstrap atomik INSERT...WHERE NOT EXISTS — 2-worker
+    startup race'inde (her ikisi de INSERT çalıştırsa) en fazla TEK admin-key kalır.
+    İlk INSERT rowcount=1 (ekler), ikinci rowcount=0 (no-op) → tek satır."""
+    sql = "INSERT INTO api_keys (key_hash, name, permissions) SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM api_keys)"
+    c1 = await db.execute(sql, ("hash-a", "admin", "admin"))
+    assert c1.rowcount == 1  # ilk worker ekledi
+    c2 = await db.execute(sql, ("hash-b", "admin", "admin"))
+    assert c2.rowcount == 0  # ikinci worker no-op (race-safe)
+    rows = await db.fetch_all("SELECT key_hash FROM api_keys")
+    assert len(rows) == 1
+    assert rows[0]["key_hash"] == "hash-a"  # ilk-yazan kalır, ikinci sızmaz
+
+
+@pytest.mark.anyio
+async def test_ensure_admin_key_generates_and_returns_on_first_boot(db, monkeypatch):
+    """#1198: DEFAULT_API_KEY yok + boş DB → key üretilir VE döndürülür (kurtarılabilir)."""
+    from app import main as m
+
+    monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
+    generated = await m._ensure_admin_key(db)
+    assert generated  # üretilen plaintext döndü (eskiden kayıptı)
+    rows = await db.fetch_all("SELECT name FROM api_keys")
+    assert len(rows) == 1
+    assert rows[0]["name"] == "admin"
+    # idempotent: ikinci çağrı key zaten var → üretmez/döndürmez (no-op)
+    assert await m._ensure_admin_key(db) is None
+    assert len(await db.fetch_all("SELECT id FROM api_keys")) == 1
+
+
+@pytest.mark.anyio
+async def test_ensure_admin_key_uses_env_and_does_not_leak(db, monkeypatch):
+    """DEFAULT_API_KEY set → o key kullanılır, plaintext DÖNDÜRÜLMEZ (zaten biliniyor, log'lama yok)."""
+    from app import main as m
+    from app.auth.api_key import hash_api_key
+
+    monkeypatch.setenv("DEFAULT_API_KEY", "env-secret-key")
+    assert await m._ensure_admin_key(db) is None  # env-key → sızdırma/log yok
+    rows = await db.fetch_all("SELECT key_hash FROM api_keys")
+    assert len(rows) == 1
+    assert rows[0]["key_hash"] == hash_api_key("env-secret-key")
+
+
+@pytest.mark.anyio
 async def test_migrate_adds_acked_to_existing_events(tmp_path):
     """Eski-şema (acked'siz) prod events tablosu -> initialize() ALTER ile acked ekler.
     CREATE TABLE IF NOT EXISTS mevcut tabloya kolon EKLEMEZ; _migrate ALTER yapar.
