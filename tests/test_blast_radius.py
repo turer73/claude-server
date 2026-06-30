@@ -31,7 +31,7 @@ def test_events_py_blast_radius_clean():
     # FAZ3.2 wiring consumer'ları yüzeye çıkmalı
     assert "scripts/emit-event.sh" in out
     assert "scripts/klipper-cron-wrap.sh" in out
-    assert "app/core/devops_agent.py" in out  # emit_event import eder
+    assert "app/core/devops/metrics.py" in out  # devops mixin'leri emit_event import eder (facade değil)
     # false-positive OLMAMALI (Python import / prose "from")
     for fp in ("__future__", "- app\n", "- os\n", "- json\n", "- sqlite3"):
         assert fp not in out, f"false-positive tablo: {fp!r}"

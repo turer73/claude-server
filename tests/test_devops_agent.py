@@ -418,7 +418,7 @@ async def test_store_alert_bridge_emit_failure_is_safe(tmp_path, monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("emit blew up")
 
-    monkeypatch.setattr("app.core.devops_agent.emit_event", _boom)
+    monkeypatch.setattr("app.core.devops.metrics.emit_event", _boom)
 
     agent = DevOpsAgent(db=db, interval=60)
     alert = Alert(
@@ -1135,7 +1135,7 @@ async def test_escalate_persistent_critical_after_interval(monkeypatch):
     # yanlış hesaplanır, CI-fail; interval+10s öncesi her sistemde elapsed>=interval).
     agent._last_escalation["memory"] = _t.monotonic() - agent._escalation_interval - 10
     calls = []
-    monkeypatch.setattr(da, "emit_event", lambda **kw: calls.append(kw))
+    monkeypatch.setattr("app.core.devops.escalation.emit_event", lambda **kw: calls.append(kw))
     await agent._escalate_persistent()
 
     assert any(c.get("source") == "escalation:memory" and c.get("severity") == "critical" for c in calls)
@@ -1148,7 +1148,7 @@ async def test_escalate_persistent_first_seen_no_escalate(monkeypatch):
     agent = da.DevOpsAgent(db=None, interval=60)
     agent._active_alerts["cpu"] = _crit_alert("cpu")  # _last_escalation'da YOK
     calls = []
-    monkeypatch.setattr(da, "emit_event", lambda **kw: calls.append(kw))
+    monkeypatch.setattr("app.core.devops.escalation.emit_event", lambda **kw: calls.append(kw))
     await agent._escalate_persistent()
     assert calls == []  # ilk-görülme -> init, escalate yok
     assert "cpu" in agent._last_escalation  # saat başlatıldı
@@ -1167,7 +1167,7 @@ async def test_escalate_persistent_nonmetric_source(monkeypatch):
     # monotonic-göreceli geçmiş (taze-boot CI-safe, 0.0 değil)
     agent._last_escalation["service:linux-ai-server"] = _t.monotonic() - agent._escalation_interval - 10
     calls = []
-    monkeypatch.setattr(da, "emit_event", lambda **kw: calls.append(kw))
+    monkeypatch.setattr("app.core.devops.escalation.emit_event", lambda **kw: calls.append(kw))
     await agent._escalate_persistent()
 
     assert any(c.get("source") == "escalation:service:linux-ai-server" for c in calls)
@@ -1186,7 +1186,7 @@ async def test_escalate_skips_acked_source(client, app, monkeypatch):
     # acked event (aynı async-conn ile insert -> cross-conn race yok)
     await db.execute("INSERT INTO events (type, source, severity, title, acked) VALUES ('alert','memory','critical','x',1)")
     calls = []
-    monkeypatch.setattr(da, "emit_event", lambda **kw: calls.append(kw))
+    monkeypatch.setattr("app.core.devops.escalation.emit_event", lambda **kw: calls.append(kw))
     await agent._escalate_persistent()
     assert calls == []  # acked -> escalate YOK
 
@@ -1317,7 +1317,7 @@ async def test_force_remediate_verify_fail_escalates(monkeypatch):
 
     monkeypatch.setattr(agent, "_verify_remediation", _fail)
     emitted = []
-    monkeypatch.setattr(da, "emit_event", lambda **kw: emitted.append(kw))
+    monkeypatch.setattr("app.core.devops.remediation.emit_event", lambda **kw: emitted.append(kw))
     res = await agent.force_remediate("memory")
     assert res["verify"] == "fail"
     assert any(e.get("source") == "remediation:memory" and e.get("severity") == "critical" for e in emitted)

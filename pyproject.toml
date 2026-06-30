@@ -120,6 +120,7 @@ ignore = [
 "scripts/hooks/stop-save-session.py" = ["S310"]
 "scripts/workers/task_worker.py" = ["S310"]
 "app/core/devops_agent.py" = ["E501"]
+"app/core/devops/*.py" = ["E501"]  # split mixin'leri: shell-command/f-string komutları, wrap okunabilirliği bozar
 "app/core/task_queue.py" = ["E501"]
 # Config/auth literals are setting names, not real secrets
 "app/core/config.py" = ["S105", "S108"]
