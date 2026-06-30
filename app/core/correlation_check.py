@@ -10,7 +10,8 @@ watchdog:*). code-review (ayrı review-akışı), job-outcome/intent-liveness (r
 korelasyon-gürültüsü önleme. Kendi çıktısı (type=incident) de HARİÇ (recursive-önleme).
 
 emit_throttled (gap-2 helper, 4. tüketici): aynı incident (aynı kaynak-kümesi) 30dk pencerede
-re-emit edilmez. severity=warn (gap-2 #100139). Fail-safe (cron-bozmaz). Min 2 farklı-kaynak.
+re-emit edilmez. severity=warn (gap-2 #100139). Fail-safe (cron-bozmaz). Min 3 farklı-kaynak
+(2026-06-30 eval: 2-kaynak coincidental-FP elendi — aşağı bkz CORRELATION_MIN_SOURCES).
 """
 
 from __future__ import annotations
@@ -27,7 +28,13 @@ from app.db.data_layer import get_conn, server_db_path
 logger = logging.getLogger(__name__)
 
 CORRELATION_WINDOW_MIN = 15  # birlikte-oluşma penceresi (keep deseni: 15dk)
-CORRELATION_MIN_SOURCES = 2  # >= bu kadar FARKLI kaynak = korele incident (tek-sinyal incident değil)
+# >= bu kadar FARKLI kaynak = korele incident. 2→3 (2026-06-30 #1152 eval, canlı-veri):
+# tarihsel 23 incident'in 22'si (96%) kronik 'drift:sha + watchdog:heartbeat:last-code-review'
+# çiftiydi = coincidental-FP (heartbeat flood'u PR#229'da düzeldi; drift:sha kalıcı always-on,
+# 3günde 99). 2-kaynak eşiği "her-zaman-orada drift + tek-geçici-sinyal = incident" sahte-FP
+# motoruydu. Tek GERÇEK incident 5+ kaynaklıydı (exception:OperationalError + log-novelty x4) —
+# min-3 onu korur. min-3 = yapısal-FP-eler + gelecekteki kronik-kaynaklara karşı dayanıklı.
+CORRELATION_MIN_SOURCES = 3
 CORRELATION_DEDUP_SECONDS = 1800.0  # 30dk (aynı kaynak-kümesi re-emit-yok)
 # Korele edilen sistem-sağlık sinyal-tipleri (rutin/review gürültüsü hariç). watchdog source ile.
 SIGNAL_TYPES: tuple[str, ...] = ("exception", "anomaly", "drift", "log-novelty")
