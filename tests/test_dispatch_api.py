@@ -116,6 +116,26 @@ async def test_analyze_task_garbage_falls_back_to_surer(monkeypatch):
     assert res["klipper_cmds"] == []
 
 
+async def test_analyze_task_parses_clean_structured_json(monkeypatch):
+    """structured-output: Ollama temiz JSON objesi döner → regex'siz doğrudan json.loads."""
+    monkeypatch.setattr(
+        dp,
+        "_ollama_chat",
+        AsyncMock(return_value='{"route": "HYBRID", "klipper_cmds": ["uptime"], "ozet": "y"}'),
+    )
+    res = await dp._analyze_task("t", "p", "")
+    assert res["route"] == "HYBRID"
+    assert res["klipper_cmds"] == ["uptime"]
+
+
+async def test_analyze_task_passes_schema_to_chat(monkeypatch):
+    """fmt=_ANALYZE_SCHEMA çağrıya geçirilir (Ollama'yı geçerli analiz-objesine kısıtla)."""
+    mock = AsyncMock(return_value='{"route": "SURER", "ozet": "x"}')
+    monkeypatch.setattr(dp, "_ollama_chat", mock)
+    await dp._analyze_task("t", "p", "")
+    assert mock.await_args.kwargs.get("fmt") is dp._ANALYZE_SCHEMA
+
+
 # ── endpoint (HTTP katmanı) ──
 
 

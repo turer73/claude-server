@@ -305,9 +305,11 @@ class LLMCore:
         timeout: int = 120,
         raise_on_error: bool = False,
         priority: str = "normal",
+        fmt: dict | None = None,
     ) -> str:
         """Mesaj-listesi (/api/chat) → asistan içeriği (str). Yerel ollama chat (generate'in
         sohbet-eşi: rol'lü messages, /no_think çağrıcıda). Fail-silent "" veya raise_on_error.
+        fmt (Ollama JSON-schema) verilirse → garantili-geçerli structured output (generate ile simetrik).
         NOT: claude-chat YOK (3 çağrıcı da yerel-model RAG/dispatch/inference); gerekirse eklenir."""
         backend, route_model = self.route(task)
         model = model or route_model
@@ -319,11 +321,11 @@ class LLMCore:
         _tokens = None
         try:
             async with self._ollama_gate_async(prio):  # yerel-CPU vanası + öncelik
+                payload: dict = {"model": model, "messages": messages, "stream": False}
+                if fmt:
+                    payload["format"] = fmt  # Ollama structured-output (JSON-schema)
                 async with httpx.AsyncClient(timeout=timeout) as client:
-                    r = await client.post(
-                        f"{self._ollama}/api/chat",
-                        json={"model": model, "messages": messages, "stream": False},
-                    )
+                    r = await client.post(f"{self._ollama}/api/chat", json=payload)
                 r.raise_for_status()
                 resp = r.json() or {}
             _ok = True
