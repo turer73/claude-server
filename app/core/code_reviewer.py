@@ -58,6 +58,23 @@ _FP_FEEDBACK_MAX = int(read_env_var("CODE_REVIEW_FP_FEEDBACK_MAX") or "5")  # en
 
 _SEVERITIES = {"P1", "P2", "P3"}
 
+# klipper #100224: Ollama structured-output (JSON-schema) — model'i geçerli bulgu-dizisine
+# kısıtla → kırılgan substring-ayıklama (raw.find('[')...) yerine temiz json.loads(raw).
+# Ollama yok-sayarsa / claude-route'ta → substring-fallback korunur (_ask_coder).
+_FINDINGS_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "line": {"type": "integer"},
+            "severity": {"type": "string", "enum": ["P1", "P2", "P3"]},
+            "title": {"type": "string"},
+            "detail": {"type": "string"},
+        },
+        "required": ["line", "severity", "title", "detail"],
+    },
+}
+
 # Conservative prompt — sürekli-ajan için FP-sel KRİTİK. Sadece GERÇEK sorun, stil-nit YOK,
 # emin değilse boş dön. Katı-JSON (parse güvenli).
 _REVIEW_PROMPT = """Sen kıdemli bir güvenlik+correctness odaklı kod gözden geçiricisin. Aşağıdaki {lang} kodunu incele.
@@ -110,14 +127,18 @@ async def _ask_coder(prompt: str) -> list[dict]:
     NOT: model'i explicit GEÇME — route backend'i (ollama/claude) kendi modelini seçer. Explicit ``model=_MODEL``
     (qwen2.5-coder:7b) geçilirse claude backend'ine qwen adı gider → ``claude cli rc=1`` → sessiz boş (tarama ölür)."""
     try:
-        raw = await llm_core.generate(prompt, task="code-review", temperature=0.1, timeout=_TIMEOUT)
+        raw = await llm_core.generate(prompt, task="code-review", temperature=0.1, timeout=_TIMEOUT, fmt=_FINDINGS_SCHEMA)
         if not raw:
             return []
-        # JSON dizisini ayıkla (model bazen ```json sarması ekler)
-        start, end = raw.find("["), raw.rfind("]")
-        if start == -1 or end == -1 or end < start:
-            return []
-        parsed = json.loads(raw[start : end + 1])
+        # Structured-output: temiz JSON dizisi → doğrudan parse. Ollama yok-sayarsa / claude-
+        # route'ta serbest-metin gelir → substring-ayıkla (eski davranış, fail-safe fallback).
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            start, end = raw.find("["), raw.rfind("]")
+            if start == -1 or end == -1 or end < start:
+                return []
+            parsed = json.loads(raw[start : end + 1])
         out = []
         for f in parsed if isinstance(parsed, list) else []:
             if not isinstance(f, dict) or not f.get("title"):
