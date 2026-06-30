@@ -127,6 +127,28 @@ async def test_ask_coder_empty_on_llm_fail(monkeypatch):
     assert await cr._ask_coder("p") == []
 
 
+async def test_ask_coder_clean_json_structured(monkeypatch):
+    # klipper #100224 structured-output: temiz JSON dizi → doğrudan json.loads (substring-hack'siz).
+    _stub_llm(monkeypatch, '[{"line": 7, "severity": "P2", "title": "leak", "detail": "fd not closed"}]')
+    out = await cr._ask_coder("p")
+    assert len(out) == 1
+    assert out[0]["line"] == 7
+    assert out[0]["severity"] == "P2"
+
+
+async def test_ask_coder_passes_fmt_schema(monkeypatch):
+    # generate'e fmt=_FINDINGS_SCHEMA (enum-kısıtlı bulgu-dizisi) geçirilir.
+    captured = {}
+
+    async def fake_generate(prompt, **kw):
+        captured.update(kw)
+        return "[]"
+
+    monkeypatch.setattr(cr.llm_core, "generate", fake_generate)
+    await cr._ask_coder("p")
+    assert captured.get("fmt") == cr._FINDINGS_SCHEMA
+
+
 # ── #4 Adversarial-verify (FP-eleme) ──
 
 _F1 = {"severity": "P1", "title": "injection", "line": 5, "detail": "os.system"}
