@@ -156,25 +156,48 @@ async def _emit_dead_gate_discovery(name: str, reader: str) -> None:
         logger.exception("[DEAD-GATE] discovery emit basarisiz (warn dustu)")
 
 
+async def _ensure_admin_key(db) -> str | None:
+    """Hiç key yoksa default admin key oluştur (idempotent + race-safe). Üretilmiş
+    (env-dışı) plaintext key'i döndürür ki çağıran/test görebilsin; aksi → None.
+
+    #1197: uvicorn 2-worker startup race — eski SELECT-then-INSERT non-atomik'ti, iki
+    worker da boş görüp İKİ admin-key INSERT edebiliyordu. Atomik INSERT...WHERE NOT
+    EXISTS (WAL writer-serialize + busy_timeout=10s) → en fazla TEK key; rowcount=1
+    yalnız gerçekten ekleyen worker'da (diğeri 0 = no-op).
+    #1198: DEFAULT_API_KEY verilmemişse rastgele key üretilir — eskiden plaintext HİÇBİR
+    yere yazılmıyordu → admin asla kullanamıyordu (kurtarılamaz). Üreten worker
+    (rowcount=1 + env-yok) plaintext'i ilk-boot'ta WARNING log'lar → kurtarılabilir."""
+    import os
+
+    from app.auth.api_key import generate_api_key, hash_api_key
+
+    env_key = os.environ.get("DEFAULT_API_KEY")
+    default_key = env_key or generate_api_key()
+    cursor = await db.execute(
+        "INSERT INTO api_keys (key_hash, name, permissions) SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM api_keys)",
+        (hash_api_key(default_key), "admin", "admin"),
+    )
+    if cursor.rowcount and not env_key:
+        logger.warning(
+            "İlk-boot: admin API key ÜRETİLDİ (DEFAULT_API_KEY set değil). Bu key bir daha "
+            "GÖSTERİLMEZ — ŞİMDİ kaydet veya .env'de DEFAULT_API_KEY ile sabitle:\n  %s",
+            default_key,
+        )
+        return default_key
+    return None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     import os
 
-    from app.auth.api_key import generate_api_key, hash_api_key
     from app.db.database import DEFAULT_DB_PATH, Database
 
     db_path = os.environ.get("DB_PATH", DEFAULT_DB_PATH)
     db = Database(db_path)
     await db.initialize()
 
-    # Create default admin key if no keys exist
-    existing = await db.fetch_all("SELECT id FROM api_keys LIMIT 1")
-    if not existing:
-        default_key = os.environ.get("DEFAULT_API_KEY", generate_api_key())
-        await db.execute(
-            "INSERT INTO api_keys (key_hash, name, permissions) VALUES (?, ?, ?)",
-            (hash_api_key(default_key), "admin", "admin"),
-        )
+    await _ensure_admin_key(db)
 
     app.state.db = db
 
