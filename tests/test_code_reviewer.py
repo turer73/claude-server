@@ -121,6 +121,16 @@ async def test_ask_coder_empty_on_no_json(monkeypatch):
     assert await cr._ask_coder("p") == []
 
 
+async def test_ask_coder_recovers_dict_wrapper(monkeypatch):
+    """Codex #232 P2: {"findings":[...]} wrapper (Claude-route/fmt-yoksayım) → json.loads
+    geçer ama dizi değil; iç dizi kurtarılmalı, bulgular SESSİZCE düşürülmemeli."""
+    _stub_llm(monkeypatch, '{"findings": [{"line": 7, "severity": "P2", "title": "leak", "detail": "fd"}]}')
+    out = await cr._ask_coder("p")
+    assert len(out) == 1
+    assert out[0]["title"] == "leak"
+    assert out[0]["line"] == 7
+
+
 async def test_ask_coder_empty_on_llm_fail(monkeypatch):
     """LLMCore fail-silent → '' → _ask_coder boş döner (ajan döngüsü bozulmaz)."""
     _stub_llm(monkeypatch, "")

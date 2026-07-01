@@ -105,7 +105,7 @@ def test_repeat_critical_collapsed_within_window(tmp_path):
     cap = _run(tmp_path, {"CRITICAL_COOLDOWN_SECONDS": "900"})
 
     assert "sendMessage" not in cap  # Telegram'a GİTMEDİ (collapse)
-    assert _notified(srv, rid) == 1  # ama event handled (retry yok, no-loss)
+    assert _notified(srv, rid) == 2  # collapsed=2 (Codex #233 P1: gerçek-gönderim notified=1'den ayrık); handled (retry yok)
 
 
 def test_repeat_critical_sends_after_window(tmp_path):
@@ -146,6 +146,38 @@ def test_escalation_source_exempt_from_critical_cooldown(tmp_path):
 
     assert "sendMessage" in cap  # muaf -> gönderildi
     assert _notified(srv, rid) == 1
+
+
+def test_collapsed_event_does_not_advance_window(tmp_path):
+    """Codex #233 P1: collapsed satır (notified=2) cooldown penceresini İLERLETMEZ.
+    Gerçek gönderim 20dk önce (>15dk), araya 2dk önce collapsed(2) girmiş → yeni critical
+    HATIRLATMA olarak gitmeli (collapsed olay pencereyi sıfırlamadı). Eski hatalı davranışta
+    (collapse=notified=1) MAX(timestamp) 2dk'yı görür → yanlışlıkla susardı."""
+    srv = tmp_path / "srv.db"
+    _mk_srv(srv)
+    _event(srv, "disk", "-20 minutes", notified=1)  # GERÇEK gönderim (>15dk önce)
+    _event(srv, "disk", "-2 minutes", notified=2)  # collapsed (Telegram gitmedi) — pencereyi kirletmemeli
+    rid = _event(srv, "disk", "-5 seconds", notified=0)
+
+    cap = _run(tmp_path, {"CRITICAL_COOLDOWN_SECONDS": "900"})
+
+    assert "sendMessage" in cap  # 15dk geçti (gerçek-gönderimden) → hatırlatma gitti
+    assert _notified(srv, rid) == 1
+
+
+def test_outage_backlog_burst_collapsed_in_run(tmp_path):
+    """Codex #233 (send-time): outage-recover sonrası aynı-kaynak backlog'unda TEK critical
+    gider, kalanlar collapse (in-run guard — DB'nin eski emit-timestamp'i pencere-dışı görünse de)."""
+    srv = tmp_path / "srv.db"
+    _mk_srv(srv)
+    # 3 pending critical, hepsi outage-penceresi (>15dk) içinde emit — önceki gönderim YOK
+    _event(srv, "cpu", "-25 minutes", notified=0)
+    _event(srv, "cpu", "-22 minutes", notified=0)
+    _event(srv, "cpu", "-19 minutes", notified=0)
+
+    cap = _run(tmp_path, {"CRITICAL_COOLDOWN_SECONDS": "900"})
+
+    assert cap.count("sendMessage") == 1  # yalnız ilk critical gitti (burst kesildi)
 
 
 def test_critical_cooldown_disabled_when_zero(tmp_path):

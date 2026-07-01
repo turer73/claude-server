@@ -161,6 +161,11 @@ fi
 
 echo "[$(date -Iseconds)] notify-cron: pending events — processing..." >> "$LOG"
 sent=0; failed=0
+# Codex #233 P1 (send-time/outage-burst): bu run içinde GERÇEKTEN gönderilen critical
+# kaynakları. Outage-recover sonrası aynı-kaynak backlog'unda ilk critical gider,
+# sonrakiler collapse — DB satırının ESKİ timestamp'i pencere-dışı görünse bile
+# (cooldown olay-emit-zamanından değil, gerçek-gönderimden başlamalı).
+declare -A CRIT_SENT_RUN
 
 for id in $IDS; do
     [ -z "$id" ] && continue
@@ -244,7 +249,10 @@ ${ts}"
             "SELECT CAST((julianday('now') - julianday(MAX(timestamp))) * 86400 AS INTEGER)
              FROM events WHERE source='${src//\'/}' AND notified=1;" 2>/dev/null)
         if [ -n "$last_notified_age" ] && [ "$last_notified_age" -lt "$NOTIFY_COOLDOWN_SECONDS" ] 2>/dev/null; then
-            sqlite3 "$DB_PATH" "UPDATE events SET notified=1 WHERE id=${id};" 2>>"$LOG" || true
+            # notified=2 = collapsed/suppressed (Telegram GİTMEDİ). notified=1 SADECE gerçek
+            # gönderim → cooldown query'leri (notified=1) collapsed satırları saymaz, pencere
+            # yalnız gerçek-bildirimlerden ilerler (Codex #233 P1).
+            sqlite3 "$DB_PATH" "UPDATE events SET notified=2 WHERE id=${id};" 2>>"$LOG" || true
             echo "[$(date -Iseconds)] COOLDOWN id=${id} src=${SAFE_SRC} last=${last_notified_age}s<${NOTIFY_COOLDOWN_SECONDS}s" >> "$LOG"
             COOLDOWN_OK=0
         fi
@@ -252,12 +260,18 @@ ${ts}"
         case "$src" in
             escalation:*|remediation:*) : ;;  # MUAF: devops 30dk-throttle'lı kasıtlı hatırlatma
             *)
+                # notified=1 SADECE gerçek-gönderim (collapse'lar notified=2) → bu pencere
+                # yalnız gerçekten Telegram'a giden critical'lerden ilerler (Codex #233 P1:
+                # collapsed satır artık MAX(timestamp)'i kirletmez → 15dk sonra hatırlatma kaçmaz).
                 last_crit_age=$(sqlite3 "$DB_PATH" \
                     "SELECT CAST((julianday('now') - julianday(MAX(timestamp))) * 86400 AS INTEGER)
                      FROM events WHERE source='${src//\'/}' AND severity='critical' AND notified=1;" 2>/dev/null)
-                if [ -n "$last_crit_age" ] && [ "$last_crit_age" -lt "$CRITICAL_COOLDOWN_SECONDS" ] 2>/dev/null; then
-                    sqlite3 "$DB_PATH" "UPDATE events SET notified=1 WHERE id=${id};" 2>>"$LOG" || true
-                    echo "[$(date -Iseconds)] COOLDOWN-CRIT id=${id} src=${SAFE_SRC} last=${last_crit_age}s<${CRITICAL_COOLDOWN_SECONDS}s (collapse; ilk-critical zaten bildirildi)" >> "$LOG"
+                # in-run guard: bu run'da aynı kaynağın critical'i ZATEN gönderildiyse, DB
+                # satırının eski emit-timestamp'i pencere-dışı görünse de collapse (outage
+                # recover-backlog burst'ünü kes — cooldown gerçek-gönderim anından başlar).
+                if [ -n "${CRIT_SENT_RUN[$src]:-}" ] || { [ -n "$last_crit_age" ] && [ "$last_crit_age" -lt "$CRITICAL_COOLDOWN_SECONDS" ] 2>/dev/null; }; then
+                    sqlite3 "$DB_PATH" "UPDATE events SET notified=2 WHERE id=${id};" 2>>"$LOG" || true
+                    echo "[$(date -Iseconds)] COOLDOWN-CRIT id=${id} src=${SAFE_SRC} last=${last_crit_age:-none}s in_run=${CRIT_SENT_RUN[$src]:-0} (collapse; ilk-critical zaten bildirildi)" >> "$LOG"
                     COOLDOWN_OK=0
                 fi
                 ;;
@@ -277,8 +291,12 @@ ${ts}"
     fi
 
     if [ "$HTTP" = "200" ] || [ "$HTTP" = "cooldown" ]; then
-        [ "$HTTP" = "200" ] && sqlite3 "$DB_PATH" "UPDATE events SET notified=1 WHERE id=${id};" 2>>"$LOG" || true
-        [ "$HTTP" = "200" ] && echo "[$(date -Iseconds)] SENT id=${id} src=${SAFE_SRC} sev=${sev}" >> "$LOG"
+        if [ "$HTTP" = "200" ]; then
+            sqlite3 "$DB_PATH" "UPDATE events SET notified=1 WHERE id=${id};" 2>>"$LOG" || true
+            # gerçek critical gönderimi → in-run burst-guard'ı işaretle (Codex #233 P1)
+            [ "$sev" = "critical" ] && CRIT_SENT_RUN["$src"]=1
+            echo "[$(date -Iseconds)] SENT id=${id} src=${SAFE_SRC} sev=${sev}" >> "$LOG"
+        fi
         sent=$((sent + 1))
     elif [ "$TG_OK" = "0" ]; then
         # Memory-only: critical hafızaya YAZILDIYSA handled (notified=1). Yazılamadıysa

@@ -89,7 +89,10 @@ _ANALYZE_SCHEMA = {
         "proje": {"type": "string"},
         "ozet": {"type": "string"},
     },
-    "required": ["route", "ozet"],
+    # Codex #235 P2: klipper_cmds/surer_tasks ZORUNLU (boş dizi serbest). Aksi halde
+    # KLIPPER/HYBRID yanıtı klipper_cmds'i tümden atlayabilir → dispatch_task hiçbir şey
+    # çalıştırmaz ama "başarılı" döner (routed no-op); SURER detayı da sessizce düşer.
+    "required": ["route", "klipper_cmds", "surer_tasks", "ozet"],
 }
 
 
@@ -161,7 +164,17 @@ def _quick_route(task: str) -> str:
 
 async def _analyze_task(task: str, project: str, context: str) -> dict[str, Any]:
     prompt = f"Gorev: {task}\nProje: {project or 'belirtilmedi'}\nEk bilgi: {context or 'yok'}\n\nAnaliz et ve JSON donus yap."
-    raw = await _ollama_chat(prompt, system=ANALYZER_SYSTEM, fmt=_ANALYZE_SCHEMA)
+    try:
+        raw = await _ollama_chat(prompt, system=ANALYZER_SYSTEM, fmt=_ANALYZE_SCHEMA)
+    except Exception:
+        # Codex #235 P2: endpoint JSON-schema fmt'i desteklemiyorsa (eski Ollama / reddediyor)
+        # _ollama_chat raise_on_error=True raise eder → dispatch tümden 500 olurdu. fmt'siz
+        # retry → serbest-metin gelir, aşağıdaki regex-fallback ayıklar (graceful-degrade).
+        # İkinci hata (Ollama gerçekten down) → raw="" → default-SURER return.
+        try:
+            raw = await _ollama_chat(prompt, system=ANALYZER_SYSTEM)
+        except Exception:
+            raw = ""
     if raw:
         # Structured-output: temiz JSON objesi → doğrudan parse. Ollama yok-sayarsa /
         # claude-route'ta serbest-metin → regex-ayıkla (eski davranış, fail-safe fallback).

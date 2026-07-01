@@ -54,15 +54,20 @@ class EscalationMixin(_DevOpsAgentBase):
                 pass
 
     async def _source_acked(self, source: str) -> bool:
-        """Bu kaynağın EN SON alert/escalation event'i kullanıcı tarafından ACK'lendi mi
+        """Bu kaynak son _escalation_interval içinde kullanıcı tarafından ACK'lendi mi
         (events.acked). Telegram '✅ Gördüm' butonu poller'da acked=1 yapar -> escalation
-        durur. Best-effort (db yok/hata -> False = escalate-devam, fail-loud tercih)."""
+        durur. Best-effort (db yok/hata -> False = escalate-devam, fail-loud tercih).
+
+        Codex #233 P2: YALNIZ en-son satıra bakmak, restart-storm/flap'te araya giren
+        collapsed unacked critical'in ÖNCEKI ACK'i maskelemesine yol açardı → escalation
+        yanlışlıkla yeniden başlar. Pencere içindeki HERHANGI bir satır ACK'liyse
+        (MAX(acked)) kaynağı acked say; eski ACK'ler pencere-dışında doğal yaşlanır."""
         if not self._db:
             return False
         try:
             row = await self._db.fetch_one(
-                "SELECT acked FROM events WHERE source IN (?, ?) ORDER BY id DESC LIMIT 1",
-                (source, f"escalation:{source}"),
+                "SELECT MAX(acked) AS acked FROM events WHERE source IN (?, ?) AND timestamp >= datetime('now', ?)",
+                (source, f"escalation:{source}", f"-{self._escalation_interval} seconds"),
             )
             return bool(row and row.get("acked"))
         except Exception:

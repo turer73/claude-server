@@ -135,12 +135,26 @@ async def _ask_coder(prompt: str) -> list[dict]:
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError:
+            parsed = None
+        # Structured JSON dizisi beklenir; ama dict-wrapper {"findings":[...]} (Claude-route
+        # veya Ollama fmt'yi yok-sayınca yaygın) ya da serbest-metin gelebilir → iç diziyi
+        # kurtar (Codex #232 P2: aksi halde temiz-parse-dict'te isinstance(list) kontrolü
+        # TÜM bulguları sessizce düşürür, substring-fallback hiç çalışmaz).
+        if isinstance(parsed, dict):
+            for _k in ("findings", "results", "items", "issues"):
+                if isinstance(parsed.get(_k), list):
+                    parsed = parsed[_k]
+                    break
+        if not isinstance(parsed, list):
             start, end = raw.find("["), raw.rfind("]")
             if start == -1 or end == -1 or end < start:
                 return []
-            parsed = json.loads(raw[start : end + 1])
+            try:
+                parsed = json.loads(raw[start : end + 1])
+            except json.JSONDecodeError:
+                return []
         out = []
-        for f in parsed if isinstance(parsed, list) else []:
+        for f in parsed:
             if not isinstance(f, dict) or not f.get("title"):
                 continue
             sev = str(f.get("severity", "P3")).upper()

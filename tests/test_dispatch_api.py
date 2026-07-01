@@ -136,6 +136,43 @@ async def test_analyze_task_passes_schema_to_chat(monkeypatch):
     assert mock.await_args.kwargs.get("fmt") is dp._ANALYZE_SCHEMA
 
 
+async def test_analyze_task_retries_without_fmt_on_schema_reject(monkeypatch):
+    """Codex #235 P2: endpoint fmt'i reddederse (ilk çağrı raise) fmt'siz retry → serbest-metin
+    ayıklanır (graceful-degrade); dispatch 500 olmaz, default-SURER'e körlemesine düşmez."""
+    calls = []
+
+    async def fake_chat(prompt, system="", fmt=None):
+        calls.append(fmt)
+        if fmt is not None:
+            raise RuntimeError("format not supported")
+        return '{"route": "KLIPPER", "klipper_cmds": ["uptime"], "surer_tasks": [], "ozet": "z"}'
+
+    monkeypatch.setattr(dp, "_ollama_chat", fake_chat)
+    res = await dp._analyze_task("t", "p", "")
+    assert calls == [dp._ANALYZE_SCHEMA, None]  # önce fmt'li, sonra fmt'siz retry
+    assert res["route"] == "KLIPPER"
+    assert res["klipper_cmds"] == ["uptime"]
+
+
+async def test_analyze_task_default_surer_when_both_calls_fail(monkeypatch):
+    """Ollama gerçekten down (her iki çağrı raise) → default-SURER (shell'e komut YOK)."""
+
+    async def boom(prompt, system="", fmt=None):
+        raise RuntimeError("ollama down")
+
+    monkeypatch.setattr(dp, "_ollama_chat", boom)
+    res = await dp._analyze_task("görev", "p", "")
+    assert res["route"] == "SURER"
+    assert res["klipper_cmds"] == []
+
+
+def test_analyze_schema_requires_command_arrays():
+    """Codex #235 P2: klipper_cmds/surer_tasks required → structured-output routed-no-op üretemez."""
+    req = dp._ANALYZE_SCHEMA["required"]
+    assert "klipper_cmds" in req
+    assert "surer_tasks" in req
+
+
 # ── endpoint (HTTP katmanı) ──
 
 
