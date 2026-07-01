@@ -53,6 +53,10 @@ cp -rT "$SRC_DIR/app" /opt/linux-ai-server/app
 cp -rT "$SRC_DIR/scripts" /opt/linux-ai-server/scripts
 cp -rT "$SRC_DIR/extensions" /opt/linux-ai-server/extensions
 cp "$SRC_DIR/pyproject.toml" /opt/linux-ai-server/
+# ci_fixer fail-CLOSED (#242): CI_FIXER_SETTINGS varsayılanı automation/ci-fixer-settings.json'a
+# çözülür; dosya yoksa ci_fixer ABORT eder → paketli-deploy'da da gelsin.
+mkdir -p /opt/linux-ai-server/automation
+cp "$SRC_DIR/automation/ci-fixer-settings.json" /opt/linux-ai-server/automation/
 rm -rf /etc/linux-ai-server/config
 cp -r "$SRC_DIR/config" /etc/linux-ai-server/
 cp "$SRC_DIR/config/env" /etc/linux-ai-server/env 2>/dev/null || true
