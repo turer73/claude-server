@@ -42,7 +42,7 @@ def _run(run_id, timestamp, total, passed, failed, details):
 
 
 def test_ci_health_empty_when_no_db(monkeypatch, tmp_path):
-    monkeypatch.setattr(core_digest, "COVERAGE_DB_PATH", str(tmp_path / "missing.db"))
+    monkeypatch.setattr("app.core.digest.sources.COVERAGE_DB_PATH", str(tmp_path / "missing.db"))
     assert core_digest.ci_health() == {}
 
 
@@ -61,7 +61,7 @@ def test_ci_health_fresh_clean_run(monkeypatch, tmp_path):
             )
         ],
     )
-    monkeypatch.setattr(core_digest, "COVERAGE_DB_PATH", path)
+    monkeypatch.setattr("app.core.digest.sources.COVERAGE_DB_PATH", path)
     ci = core_digest.ci_health()
     assert ci["total"] == 2396
     assert ci["failed"] == 0
@@ -84,7 +84,7 @@ def test_ci_health_stale_and_failing(monkeypatch, tmp_path):
             )
         ],
     )
-    monkeypatch.setattr(core_digest, "COVERAGE_DB_PATH", path)
+    monkeypatch.setattr("app.core.digest.sources.COVERAGE_DB_PATH", path)
     ci = core_digest.ci_health()
     assert ci["age_days"] >= 38
     assert ci["stale"] is True
@@ -102,7 +102,7 @@ def test_ci_trend_growth_no_regression(monkeypatch, tmp_path):
             _run(62, today, 766, 766, 0, {"panola": {"passed": 766, "failed": 0}}),
         ],
     )
-    monkeypatch.setattr(core_digest, "COVERAGE_DB_PATH", path)
+    monkeypatch.setattr("app.core.digest.sources.COVERAGE_DB_PATH", path)
     ci = core_digest.ci_health()
     assert ci["regressions"] == []
     assert ci["trend"] == [{"project": "panola", "kind": "delta", "from": 760, "to": 766, "delta": 6}]
@@ -117,7 +117,7 @@ def test_ci_trend_regression_and_drop(monkeypatch, tmp_path):
             _run(62, today, 90, 90, 0, {"panola": {"passed": 90, "failed": 0}}),  # panola dropped, old-proj vanished
         ],
     )
-    monkeypatch.setattr(core_digest, "COVERAGE_DB_PATH", path)
+    monkeypatch.setattr("app.core.digest.sources.COVERAGE_DB_PATH", path)
     ci = core_digest.ci_health()
     kinds = {r["project"]: r["kind"] for r in ci["regressions"]}
     assert kinds == {"panola": "delta", "old-proj": "dropped"}

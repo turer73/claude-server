@@ -35,7 +35,7 @@ def _make_cron_db(tmp_path, rows):
 
 
 def test_cron_outcomes_empty_when_no_db(monkeypatch, tmp_path):
-    monkeypatch.setattr(core_digest, "_server_db_path", lambda: str(tmp_path / "missing.db"))
+    monkeypatch.setattr("app.core.digest.sources._server_db_path", lambda: str(tmp_path / "missing.db"))
     assert core_digest.cron_outcomes_health() == {}
 
 
@@ -48,7 +48,7 @@ def test_cron_outcomes_latest_per_job_and_bad(monkeypatch, tmp_path):
             ("test-runner", "partial", 0, "predicate", "passed=3600 failed=34", "-2 hours"),
         ],
     )
-    monkeypatch.setattr(core_digest, "_server_db_path", lambda: path)
+    monkeypatch.setattr("app.core.digest.sources._server_db_path", lambda: path)
     out = core_digest.cron_outcomes_health()
     by_job = {j["job"]: j for j in out["jobs"]}
     assert by_job["demo-reset"]["result"] == "pass"  # MAX(id) per job
@@ -61,7 +61,7 @@ def test_cron_outcomes_excludes_stale(monkeypatch, tmp_path):
         tmp_path,
         [("backup", "fail", 1, "predicate", "old run", "-2 days")],  # outside 24h window
     )
-    monkeypatch.setattr(core_digest, "_server_db_path", lambda: path)
+    monkeypatch.setattr("app.core.digest.sources._server_db_path", lambda: path)
     out = core_digest.cron_outcomes_health()
     assert out["jobs"] == []
     assert out["bad"] == []
