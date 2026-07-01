@@ -193,6 +193,20 @@ class TestUnauthenticatedAccess:
         assert resp.status_code == 401
 
     @pytest.mark.anyio
+    async def test_ws_status_requires_memory_key(self, client, monkeypatch):
+        """GÜVENLIK: /api/v1/ws/status public değil — yanlış key → 401."""
+        monkeypatch.setattr("app.api.memory.MEMORY_API_KEY", "correct-key")
+        resp = await client.get("/api/v1/ws/status", headers={"X-Memory-Key": "wrong-key"})
+        assert resp.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_metrics_requires_memory_key(self, client, monkeypatch):
+        """GÜVENLIK: /metrics public değil — yanlış key → 401."""
+        monkeypatch.setattr("app.api.memory.MEMORY_API_KEY", "correct-key")
+        resp = await client.get("/metrics", headers={"X-Memory-Key": "wrong-key"})
+        assert resp.status_code == 401
+
+    @pytest.mark.anyio
     async def test_health_does_not_require_auth(self, client):
         resp = await client.get("/health")
         assert resp.status_code == 200
