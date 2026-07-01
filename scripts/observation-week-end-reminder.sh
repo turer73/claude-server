@@ -68,7 +68,7 @@ C) Bilge Arena ONCELIK modu resmilestir:
 Detay: memory #555, #560, #568 + notes #102, #103, #104.
 \`bash /opt/linux-ai-server/scripts/claude-memory.sh get 568\`'
 
-curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+curl --max-time 15 --connect-timeout 5 -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
     -d chat_id="${TELEGRAM_CHAT_ID}" \
     -d parse_mode="Markdown" \
     -d disable_web_page_preview="true" \

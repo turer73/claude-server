@@ -8,7 +8,7 @@ MAX_AGE_HOURS=28  # 28 saatten eski = backup alınmamış
 LOG_TAG="backup-monitor"
 
 send_telegram() {
-    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+    curl --max-time 15 --connect-timeout 5 -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
         -d chat_id="$TELEGRAM_CHAT_ID" -d parse_mode="Markdown" -d text="$1" >/dev/null 2>&1
 }
 

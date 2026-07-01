@@ -33,7 +33,7 @@ CH_DATABASE='plausible_events_db'
 CH_TABLES='events_v2 sessions_v2 location_data ingest_counters schema_migrations'
 
 send_telegram() {
-  curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+  curl --max-time 15 --connect-timeout 5 -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
     -d chat_id="$TELEGRAM_CHAT_ID" -d parse_mode="Markdown" -d text="$1" >/dev/null 2>&1
 }
 

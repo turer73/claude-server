@@ -28,7 +28,7 @@ COOLDOWN_FILE="/tmp/bilge-arena-failover-cooldown"
 COOLDOWN_SECONDS=300  # 5 dk cooldown — recovery sonrasi hemen tekrar failover yapma
 
 send_telegram() {
-    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+    curl --max-time 15 --connect-timeout 5 -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
         -d chat_id="$TELEGRAM_CHAT_ID" -d parse_mode="Markdown" -d text="$1" >/dev/null 2>&1
 }
 

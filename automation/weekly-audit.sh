@@ -63,7 +63,7 @@ $REPORT
 Toplam: $TOTAL_VULNS yüksek/kritik zafiyet
 🕐 $(date '+%d/%m/%Y')"
 
-  curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+  curl --max-time 15 --connect-timeout 5 -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
     -d chat_id="$TELEGRAM_CHAT_ID" \
     -d parse_mode="Markdown" \
     -d text="$MSG" > /dev/null 2>&1 || true
