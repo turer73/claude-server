@@ -279,12 +279,20 @@ async def dispatch_task(body: DispatchRequest) -> DispatchResult:
     # 3. Kural bos ise ML karari kullan
     route = quick or analysis.get("route", "SURER")
 
+    # Codex #238: KLIPPER/HYBRID yönlendirmesi ama klipper_cmds BOŞ → routed-no-op
+    # (sahte-başarı, sessiz-drop). Olur: (a) fmt-less analiz schema-kısıtsız
+    # {"route":"KLIPPER"} döner (required-arrays uygulanmaz), (b) quick-route KLIPPER der
+    # ama analiz (Ollama down) komut üretemez. Çalıştıracak komut yoksa SURER'e düşür.
+    klipper_cmds = analysis.get("klipper_cmds") or []
+    if route in ("KLIPPER", "HYBRID") and not klipper_cmds:
+        route = "SURER"
+
     klipper_results: list[str] = []
     surer_note_id: int | None = None
 
     # 4. Klipper komutlarini uygula
     if route in ("KLIPPER", "HYBRID"):
-        for cmd in analysis.get("klipper_cmds", [])[:5]:
+        for cmd in klipper_cmds[:5]:
             out = await _run_klipper_cmd(cmd)
             klipper_results.append(f"$ {cmd[:60]}\n{out[:200]}")
 

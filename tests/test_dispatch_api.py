@@ -225,6 +225,25 @@ async def test_dispatch_endpoint_surer_route(dispatch_client, monkeypatch):
     run_mock.assert_not_called()  # SURER rotasında shell'e komut GİTMEZ
 
 
+async def test_dispatch_endpoint_klipper_no_cmds_falls_back_to_surer(dispatch_client, monkeypatch):
+    """Codex #238: quick-route KLIPPER der ('docker ps bak') ama analiz komut üretemezse
+    (Ollama down / fmt-less no-op) → SURER'e düşer; routed-no-op sahte-başarı YOK."""
+    monkeypatch.setattr(
+        dp,
+        "_analyze_task",
+        AsyncMock(return_value={"route": "SURER", "klipper_cmds": [], "surer_tasks": [], "ozet": "o", "proje": "p"}),
+    )
+    run_mock = AsyncMock()
+    monkeypatch.setattr(dp, "_run_klipper_cmd", run_mock)
+    monkeypatch.setattr(dp, "_send_to_surer", AsyncMock(return_value=7))
+
+    resp = await dispatch_client.post("/api/v1/dispatch/task", json={"task": "docker ps bak"})  # quick=KLIPPER
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["routed_to"] == "surer"  # KLIPPER DEĞİL (komut yok → downgrade, sessiz-drop yok)
+    run_mock.assert_not_called()  # hiçbir shell komutu çalışmadı
+
+
 async def test_dispatch_endpoint_requires_memory_key(client, monkeypatch):
     """Auth gate: yanlış X-Memory-Key → 401 (fail-closed)."""
     from app.api import memory as mem
