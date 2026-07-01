@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
@@ -18,7 +19,7 @@ router = APIRouter(tags=["webhooks"])
 class WebhookEvent(BaseModel):
     source: str
     event: str
-    data: dict | None = None
+    data: dict[str, Any] | None = None
 
 
 class WebhookResponse(BaseModel):
@@ -28,12 +29,12 @@ class WebhookResponse(BaseModel):
 
 
 # In-memory event store (last 100 events)
-_events: list[dict] = []
+_events: list[dict[str, Any]] = []
 MAX_EVENTS = 100
 
 
 @router.post("/receive", response_model=WebhookResponse)
-async def receive_webhook(event: WebhookEvent, _: dict = Depends(require_admin)):
+async def receive_webhook(event: WebhookEvent, _: dict[str, Any] = Depends(require_admin)):
     """Receive webhook from n8n or external sources."""
     event_id = str(uuid.uuid4())[:8]
     entry = {
@@ -54,13 +55,13 @@ async def receive_webhook(event: WebhookEvent, _: dict = Depends(require_admin))
 
 
 @router.get("/events")
-async def list_events(limit: int = 20, _: dict = Depends(require_admin)):
+async def list_events(limit: int = 20, _: dict[str, Any] = Depends(require_admin)):
     """List recent webhook events."""
     return {"events": _events[-limit:]}
 
 
 @router.post("/trigger/{action}")
-async def trigger_action(action: str, request: Request, _: dict = Depends(require_admin)):
+async def trigger_action(action: str, request: Request, _: dict[str, Any] = Depends(require_admin)):
     """Trigger predefined actions (for n8n workflow integration).
 
     Supported actions:
@@ -71,7 +72,7 @@ async def trigger_action(action: str, request: Request, _: dict = Depends(requir
     """
     from app.core.monitor_agent import MonitorAgent
 
-    body: dict = {}
+    body: dict[str, Any] = {}
     try:
         body = await request.json()
     except Exception:

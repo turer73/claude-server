@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import WebSocket
 
@@ -55,7 +56,7 @@ class ConnectionManager:
         if conn:
             conn.last_ping = datetime.now(UTC).isoformat()
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> dict[str, Any]:
         return {
             "active_connections": self.active_count(),
             "total_connected": self._total_connected,
@@ -71,7 +72,7 @@ class ConnectionManager:
             ],
         }
 
-    async def broadcast(self, message: dict) -> None:
+    async def broadcast(self, message: dict[str, Any]) -> None:
         dead = []
         for conn_id, conn in self._connections.items():
             try:

@@ -8,6 +8,8 @@ key ?api_key= ile URL'e KONMAZ — log-replay riski, Codex #27.)
 
 from __future__ import annotations
 
+from typing import Any
+
 from jose import JWTError
 
 from app.auth.jwt_handler import decode_token
@@ -18,7 +20,7 @@ from app.exceptions import AuthenticationError
 WS_POLICY_VIOLATION = 1008
 
 
-async def authenticate_ws(websocket, require_admin: bool = False) -> dict | None:
+async def authenticate_ws(websocket, require_admin: bool = False) -> dict[str, Any] | None:
     """WS bağlantısını doğrula. Başarılı -> claims dict; başarısız -> socket'i
     1008 ile kapatır + None döner (çağıran hemen return etmeli, accept ETMEDEN).
 
@@ -32,7 +34,7 @@ async def authenticate_ws(websocket, require_admin: bool = False) -> dict | None
     # follow-up: WS-subprotocol/header auth + access-log query-param redaction.
     token = websocket.query_params.get("token")
 
-    claims: dict | None = None
+    claims: dict[str, Any] | None = None
     if token:
         try:
             claims = decode_token(token, settings.jwt_secret)

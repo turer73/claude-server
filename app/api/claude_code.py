@@ -7,6 +7,7 @@ import json
 import os
 import shlex
 import shutil
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse
@@ -137,7 +138,7 @@ def _is_authenticated() -> bool:
     return os.path.exists(os.path.expanduser("~/.claude/.credentials.json"))
 
 
-def _parse_claude_json(raw: str, cwd: str, stderr_text: str = "", host: str = "klipper") -> dict:
+def _parse_claude_json(raw: str, cwd: str, stderr_text: str = "", host: str = "klipper") -> dict[str, Any]:
     """CLI'dan donen JSON'i shape'e cevir. Hem lokal hem VPS yolu ayni.
 
     Claude Code bazen JSON'dan once kisa metin yaziyor (banner, hint),
@@ -150,7 +151,7 @@ def _parse_claude_json(raw: str, cwd: str, stderr_text: str = "", host: str = "k
             output = raw[i:]
             break
 
-    def _model_from_usage(d: dict) -> str | None:
+    def _model_from_usage(d: dict[str, Any]) -> str | None:
         mu = d.get("modelUsage") or {}
         return next(iter(mu.keys()), None) if isinstance(mu, dict) else None
 
@@ -193,7 +194,7 @@ def _parse_claude_json(raw: str, cwd: str, stderr_text: str = "", host: str = "k
         return {"ok": False, "raw": raw, "stderr": stderr_text, "host": host}
 
 
-async def _run_on_vps(body: ClaudePromptRequest) -> dict:
+async def _run_on_vps(body: ClaudePromptRequest) -> dict[str, Any]:
     """VPS uzerinde claude'u SSH araciligiyla calistir.
 
     Klipper'in lokal CLI yolunun aynisi ama cmd uzaktan tetikleniyor.

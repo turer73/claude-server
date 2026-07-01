@@ -11,6 +11,7 @@ import os
 import sys
 import uuid
 from datetime import datetime
+from typing import Any
 
 from app.exceptions import NotFoundError, RateLimitError
 
@@ -98,7 +99,7 @@ class TerminalSession:
         except (OSError, BlockingIOError):
             return ""
 
-    async def execute(self, command: str, timeout: int = 30) -> dict:
+    async def execute(self, command: str, timeout: int = 30) -> dict[str, Any]:
         """Execute a command (subprocess fallback mode)."""
         try:
             proc = await asyncio.create_subprocess_shell(
@@ -167,7 +168,7 @@ class TerminalManager:
         if session:
             session.close()
 
-    def list_sessions(self) -> list[dict]:
+    def list_sessions(self) -> list[dict[str, Any]]:
         return [{"id": sid, "created_at": s.created_at, "pty": s.is_pty} for sid, s in self._sessions.items()]
 
     def count(self) -> int:

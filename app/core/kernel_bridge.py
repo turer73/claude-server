@@ -18,6 +18,7 @@ from __future__ import annotations
 import glob
 import os
 import subprocess
+from typing import Any
 
 from app.exceptions import KernelError
 
@@ -73,7 +74,7 @@ class KernelBridge:
         except (FileNotFoundError, PermissionError, OSError):
             return None
 
-    def get_status(self) -> dict:
+    def get_status(self) -> dict[str, Any]:
         module_loaded = self.is_available()
         status = self.read_proc_status() if module_loaded else {}
         return {

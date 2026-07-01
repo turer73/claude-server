@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from datetime import UTC, datetime
+from typing import Any
 
 from app.core.config import get_settings, read_env_var
 from app.core.devops.diagnosis import DiagnosisMixin
@@ -88,10 +89,10 @@ class DevOpsAgent(
         self._vps_host = settings.vps_host
 
         # Latest VPS sample (for status/dashboard without a DB round-trip)
-        self._latest_vps: dict = {}
+        self._latest_vps: dict[str, Any] = {}
 
         # Rolling metrics for baseline (last 120 samples = 1 hour at 30s interval)
-        self._history: deque[dict] = deque(maxlen=120)
+        self._history: deque[dict[str, Any]] = deque(maxlen=120)
 
         # Active alerts (keyed by source)
         self._active_alerts: dict[str, Alert] = {}
@@ -111,7 +112,7 @@ class DevOpsAgent(
         # INTERV: auto-rollback durumu. source → {"kind","state","command"} (aksiyon-öncesi
         # yakalanan geri-alma bilgisi). _last_rollback: anti-flapping (aynı kaynağı kısa sürede
         # tekrar-tekrar geri-alma; cooldown içinde rollback ATLA, doğrudan escalate).
-        self._rollback_state: dict[str, dict] = {}
+        self._rollback_state: dict[str, dict[str, Any]] = {}
         self._last_rollback: dict[str, float] = {}
         self._rollback_cooldown = 600  # 10 dk: bu süre içinde aynı kaynak için 2. rollback yok
 
@@ -161,7 +162,7 @@ class DevOpsAgent(
                 pass
 
     @property
-    def status(self) -> dict:
+    def status(self) -> dict[str, Any]:
         return {
             "running": self._running,
             "started_at": self._started_at,

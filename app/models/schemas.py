@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -243,12 +243,12 @@ class AgentDefinition(BaseModel):
     schedule: str | None = None
     tools: list[str] = []
     system_prompt: str | None = None
-    steps: list[dict] | None = None
+    steps: list[dict[str, Any]] | None = None
 
 
 class AgentRunRequest(BaseModel):
     agent_name: str
-    params: dict | None = None
+    params: dict[str, Any] | None = None
 
 
 class AgentStatusResponse(BaseModel):

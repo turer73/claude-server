@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -18,7 +20,7 @@ async def require_auth(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     settings: Settings = Depends(get_settings),
-) -> dict:
+) -> dict[str, Any]:
     """Verify auth and return claims.
 
     Accepts either:
@@ -43,14 +45,14 @@ async def require_auth(
     return payload
 
 
-async def require_admin(claims: dict = Depends(require_auth)) -> dict:
+async def require_admin(claims: dict[str, Any] = Depends(require_auth)) -> dict:
     """Require admin permissions."""
     if claims.get("permissions") != "admin":
         raise AuthorizationError("Admin access required")
     return claims
 
 
-async def require_write(claims: dict = Depends(require_auth)) -> dict:
+async def require_write(claims: dict[str, Any] = Depends(require_auth)) -> dict:
     """Require write or admin permissions."""
     perms = claims.get("permissions", "")
     if perms not in ("admin", "write"):

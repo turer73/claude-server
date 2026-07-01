@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from typing import Any
 
 from app.exceptions import ShellExecutionError
 
@@ -26,7 +27,7 @@ class DevManager:
         except FileNotFoundError:
             raise ShellExecutionError("Git not installed")
 
-    def git_status(self, cwd: str) -> dict:
+    def git_status(self, cwd: str) -> dict[str, Any]:
         result = self._run_git(cwd, "status", "--porcelain=v1", "-b")
         lines = result.stdout.strip().split("\n") if result.stdout.strip() else []
 
@@ -52,7 +53,7 @@ class DevManager:
             "untracked": untracked,
         }
 
-    def git_log(self, cwd: str, limit: int = 10) -> list[dict]:
+    def git_log(self, cwd: str, limit: int = 10) -> list[dict[str, Any]]:
         result = self._run_git(cwd, "log", f"--max-count={limit}", "--format=%H|||%an|||%ai|||%s")
         entries = []
         for line in result.stdout.strip().split("\n"):

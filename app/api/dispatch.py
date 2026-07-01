@@ -113,7 +113,7 @@ class DispatchResult(BaseModel):
     duration_ms: int = 0
 
 
-async def _ollama_chat(user_msg: str, system: str = "", fmt: dict | None = None) -> str:
+async def _ollama_chat(user_msg: str, system: str = "", fmt: dict[str, Any] | None = None) -> str:
     from app.core.agents.llmcore import llm_core
 
     messages = []

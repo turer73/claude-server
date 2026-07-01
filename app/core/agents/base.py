@@ -14,7 +14,7 @@ kaçmadan, gerçek dedup + extensibility).
 from __future__ import annotations
 
 import logging
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class Action(Protocol):
     name: str
     description: str
 
-    async def run(self, **kwargs) -> dict: ...
+    async def run(self, **kwargs) -> dict[str, Any]: ...
 
 
 class ActionRegistry:
@@ -53,7 +53,7 @@ class ActionRegistry:
     def names(self) -> list[str]:
         return list(self._actions)
 
-    async def run(self, name: str, **kwargs) -> dict | None:
+    async def run(self, name: str, **kwargs) -> dict[str, Any] | None:
         """Action'ı çalıştır. Yoksa/hata → None (fail-silent, ajan döngüsünü bozmaz)."""
         action = self._actions.get(name)
         if action is None:

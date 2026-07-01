@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 
 
@@ -61,7 +63,7 @@ class WebOpsProxy:
         path: str,
         body: str | None = None,
         extra_headers: dict[str, str] | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         base_url = self.get_base_url(service)
         headers = self.get_headers(service)
         if extra_headers:

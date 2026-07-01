@@ -7,6 +7,8 @@ endpoint stay single-source. No writes to project codebases or DBs.
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends
 
 from app.core import digest as core_digest
@@ -16,7 +18,7 @@ router = APIRouter(prefix="/api/v1/digest", tags=["digest"])
 
 
 @router.get("/data")
-async def digest_data(_: None = Depends(require_auth)) -> dict:
+async def digest_data(_: None = Depends(require_auth)) -> dict[str, Any]:
     """Gather the 24h digest as JSON. Reads claude_memory.db, public
     GitHub feeds (private repos require GITHUB_TOKEN in .env), local
     self-pentest logs, and host service/disk/RAM. ~3s wall time on klipper."""
@@ -27,7 +29,7 @@ async def digest_data(_: None = Depends(require_auth)) -> dict:
 
 
 @router.post("/send")
-async def digest_send(_: None = Depends(require_auth)) -> dict:
+async def digest_send(_: None = Depends(require_auth)) -> dict[str, Any]:
     """Render the digest as HTML and push to the configured Telegram
     chat. Honors the same NOTHING_NEW guard as the CLI — silent runs
     return {"sent": False, "reason": "NOTHING_NEW"} without hitting Telegram."""

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from jose import JWTError, jwt
 
@@ -27,7 +28,7 @@ def create_token(
     return jwt.encode(payload, secret, algorithm=ALGORITHM)
 
 
-def decode_token(token: str, secret: str) -> dict:
+def decode_token(token: str, secret: str) -> dict[str, Any]:
     try:
         return jwt.decode(token, secret, algorithms=[ALGORITHM])
     except JWTError as e:

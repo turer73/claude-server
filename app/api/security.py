@@ -22,7 +22,7 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, field_validator
@@ -67,7 +67,7 @@ router = APIRouter(
 
 # In-process job registry. Lost on uvicorn restart — acceptable for v1.
 # If persistence becomes critical, move to claude_memory.db pentest_runs table.
-_JOBS: dict[str, dict] = {}
+_JOBS: dict[str, dict[str, Any]] = {}
 
 
 def _load_targets() -> list[str]:
@@ -103,7 +103,7 @@ class RunResponse(BaseModel):
 
 
 @router.get("/pentest/targets", dependencies=[Depends(rate_limit_read)])
-def list_targets() -> dict:
+def list_targets() -> dict[str, Any]:
     return {"targets": _load_targets(), "source": str(DOMAINS_FILE)}
 
 
@@ -150,7 +150,7 @@ def run_scan(req: RunRequest) -> RunResponse:
 
 
 @router.get("/pentest/runs/{job_id}", dependencies=[Depends(rate_limit_read)])
-def get_run(job_id: str, tail: int = 200) -> dict:
+def get_run(job_id: str, tail: int = 200) -> dict[str, Any]:
     record = _JOBS.get(job_id)
     if not record:
         raise HTTPException(status_code=404, detail="job not found")
@@ -220,7 +220,7 @@ def _derive_source(title: str | None) -> str:
     return "other"
 
 
-def _findings_scoped(projects: list[str], status: str | None, source: str | None, limit: int) -> list[dict]:
+def _findings_scoped(projects: list[str], status: str | None, source: str | None, limit: int) -> list[dict[str, Any]]:
     """type='bug' AND project IN (pentest-target domain'leri) — code-review/dev bulgularını DIŞLAR.
     list_discoveries ile aynı kolon-şekli. projects whitelist'ten (güvenli, parametreli).
 
@@ -239,7 +239,7 @@ def _findings_scoped(projects: list[str], status: str | None, source: str | None
             "rationale, read_count, date(created_at) as date FROM discoveries "
             f"WHERE type='bug' AND project IN ({ph})"  # noqa: S608 (projects whitelist'ten, value parametreli)
         )
-        params: list = list(projects)
+        params: list[Any] = list(projects)
         if status:
             q += " AND status=?"
             params.append(status)

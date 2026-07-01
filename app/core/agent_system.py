@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import asdict, dataclass, field
+from typing import Any
 
 import yaml
 
@@ -20,12 +21,12 @@ class AgentDefinition:
     schedule: str | None = None
     tools: list[str] = field(default_factory=list)
     system_prompt: str | None = None
-    steps: list[dict] | None = None
+    steps: list[dict[str, Any]] | None = None
     status: str = "idle"
     last_run: str | None = None
     last_result: str | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         # Remove runtime fields
         d.pop("status", None)
@@ -83,7 +84,7 @@ class AgentRegistry:
             raise NotFoundError(f"Agent '{name}' not found")
         return agent
 
-    def list_agents(self) -> list[dict]:
+    def list_agents(self) -> list[dict[str, Any]]:
         return [
             {
                 "name": a.name,
@@ -107,13 +108,13 @@ class AgentRegistry:
 class AgentRunner:
     """Execute agent steps using registered tools."""
 
-    def __init__(self, tool_registry: dict | None = None) -> None:
+    def __init__(self, tool_registry: dict[str, Any] | None = None) -> None:
         self._tools = tool_registry or {}
 
     def register_tool(self, name: str, func: callable) -> None:
         self._tools[name] = func
 
-    async def run(self, agent: AgentDefinition, params: dict | None = None) -> dict:
+    async def run(self, agent: AgentDefinition, params: dict[str, Any] | None = None) -> dict:
         results = []
         agent.status = "running"
         try:

@@ -21,6 +21,7 @@ import asyncio
 import logging
 import re
 import time
+from typing import Any
 
 from app.exceptions import AuthorizationError, ShellExecutionError
 
@@ -88,7 +89,7 @@ class ShellExecutor:
 
         return True
 
-    async def execute(self, command: str, timeout: int = 30, cwd: str | None = None) -> dict:
+    async def execute(self, command: str, timeout: int = 30, cwd: str | None = None) -> dict[str, Any]:
         self.validate_command(command)
 
         start = time.monotonic()

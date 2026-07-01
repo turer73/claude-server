@@ -1,3 +1,5 @@
+from typing import Any
+
 """Health + maintenance + spawn-failure DLQ router handler'ları (memory paketi).
 
 Gövdeler birebir taşındı (Faz 3).
@@ -179,7 +181,7 @@ async def list_spawn_failures(
     db = get_db()
     try:
         q = "SELECT * FROM spawn_failures WHERE 1=1"
-        params: list = []
+        params: list[Any] = []
         if status:
             q += " AND status=?"
             params.append(status)

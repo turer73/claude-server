@@ -6,12 +6,13 @@ import asyncio
 import ipaddress
 import socket
 import time
+from typing import Any
 
 import httpx
 import psutil
 
 # GUVENLIK: SSRF guard - bu ag araliklaarina HTTP istegi engellenir.
-_SSRF_BLOCKED: tuple = (
+_SSRF_BLOCKED: tuple[Any, ...] = (
     ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("::1/128"),
     ipaddress.ip_network("10.0.0.0/8"),
@@ -64,7 +65,7 @@ async def _assert_safe_url(url: str) -> None:
 class NetworkProxy:
     """Network operations proxy."""
 
-    def get_interfaces(self) -> list[dict]:
+    def get_interfaces(self) -> list[dict[str, Any]]:
         result = []
         addrs = psutil.net_if_addrs()
         for name, addr_list in addrs.items():
@@ -80,7 +81,7 @@ class NetworkProxy:
             result.append({"name": name, "addresses": addresses})
         return result
 
-    def get_connections(self) -> list[dict]:
+    def get_connections(self) -> list[dict[str, Any]]:
         conns = []
         for c in psutil.net_connections(kind="inet"):
             try:
@@ -99,7 +100,7 @@ class NetworkProxy:
                 continue
         return conns
 
-    async def dns_lookup(self, hostname: str) -> list[dict]:
+    async def dns_lookup(self, hostname: str) -> list[dict[str, Any]]:
         try:
             loop = asyncio.get_event_loop()
             results = await loop.run_in_executor(None, lambda: socket.getaddrinfo(hostname, None))
@@ -126,7 +127,7 @@ class NetworkProxy:
         headers: dict[str, str] | None = None,
         body: str | None = None,
         timeout: int = 30,
-    ) -> dict:
+    ) -> dict[str, Any]:
         start = time.monotonic()
         await _assert_safe_url(url)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:

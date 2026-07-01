@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Any
 
 import yaml
 from pydantic import field_validator
@@ -59,7 +59,7 @@ def read_env_var(name: str, env_file: str = DEFAULT_ENV_FILE) -> str:
     return ""
 
 
-def load_yaml_config(path: str) -> dict:
+def load_yaml_config(path: str) -> dict[str, Any]:
     """Load configuration from YAML file. Returns empty dict on failure."""
     try:
         with open(path) as f:

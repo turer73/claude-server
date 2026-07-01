@@ -26,6 +26,7 @@ import sqlite3
 import subprocess
 import time
 from collections.abc import Callable
+from typing import Any
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException
@@ -57,7 +58,7 @@ router = APIRouter(prefix="/api/v1/research", tags=["research"], dependencies=[D
 # ───────── kaynak fetchers ─────────
 
 
-def _qdrant_chunks(question: str, top_k: int = 5, project: str | None = None) -> list[dict]:
+def _qdrant_chunks(question: str, top_k: int = 5, project: str | None = None) -> list[dict[str, Any]]:
     """rag._embed + rag._search uzerinden Qdrant top-K."""
     vec = rag_module._embed(question)
     hits = rag_module._search(vec, top_k=top_k, project=project)
@@ -84,7 +85,7 @@ def _fts_q(q: str) -> str:
     return " OR ".join(tokens) if tokens else cleaned.strip()
 
 
-def _discovery_chunks(question: str, limit: int = 8) -> list[dict]:
+def _discovery_chunks(question: str, limit: int = 8) -> list[dict[str, Any]]:
     db = sqlite3.connect(MEMORY_DB, timeout=3)
     db.row_factory = sqlite3.Row
     try:
@@ -110,7 +111,7 @@ def _discovery_chunks(question: str, limit: int = 8) -> list[dict]:
         db.close()
 
 
-def _memory_chunks(question: str, limit: int = 5) -> list[dict]:
+def _memory_chunks(question: str, limit: int = 5) -> list[dict[str, Any]]:
     """memories.name+description LIKE — FTS yok."""
     terms = [t for t in re.findall(r"\w+", question, flags=re.UNICODE) if len(t) > 2][:5]
     if not terms:
@@ -142,7 +143,7 @@ def _memory_chunks(question: str, limit: int = 5) -> list[dict]:
         db.close()
 
 
-def _notes_chunks(question: str, limit: int = 3) -> list[dict]:
+def _notes_chunks(question: str, limit: int = 3) -> list[dict[str, Any]]:
     terms = [t for t in re.findall(r"\w+", question, flags=re.UNICODE) if len(t) > 2][:3]
     if not terms:
         return []
@@ -184,7 +185,7 @@ SYS_PROMPT = (
 )
 
 
-def _compose_context(chunks: list[dict]) -> str:
+def _compose_context(chunks: list[dict[str, Any]]) -> str:
     blocks = []
     for c in chunks:
         tag = f"[{c['type']}:{c['id']}]"
@@ -292,7 +293,7 @@ def _strip_html(s: str) -> str:
     return _htmllib.unescape(_TAG_RE.sub("", s)).strip()
 
 
-def _web_search(query: str, n: int = 5) -> list[dict]:
+def _web_search(query: str, n: int = 5) -> list[dict[str, Any]]:
     """DDG-lite anahtarsız web arama (FAZ2). HTML-parse toleranslı; ağ/parse fail → []
     (araştırma RAG'la devam eder). Skor rank-tabanlı sözde-skor (RAG ile karışsın, ezmesin)."""
     try:
@@ -309,7 +310,7 @@ def _web_search(query: str, n: int = 5) -> list[dict]:
         return []
     links = _WEB_LINK_RE.findall(page)
     snips = _WEB_SNIP_RE.findall(page)
-    cands: list[dict] = []
+    cands: list[dict[str, Any]] = []
     for i, (url, title) in enumerate(links):
         snippet = _strip_html(snips[i]) if i < len(snips) else ""
         cands.append({"url": url, "title": _strip_html(title)[:120] or url, "text": snippet[:600]})
@@ -334,7 +335,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb) if na and nb else 0.0
 
 
-def _token_filter(cands: list[dict], query: str, n: int) -> list[dict]:
+def _token_filter(cands: list[dict[str, Any]], query: str, n: int) -> list[dict[str, Any]]:
     """Ucuz token-örtüşme filtresi (anlamsal kapı kullanılamazsa fallback). ≥4-harf
     query token'ı title+snippet'te hiç geçmeyeni at; hiçbiri kalmazsa boş dön
     (ham-listeye dönmek off-topic kirliliği geri sokardı — dürüst boş daha iyi)."""
@@ -344,7 +345,7 @@ def _token_filter(cands: list[dict], query: str, n: int) -> list[dict]:
     return [c for c in cands if any(t in (c["title"] + " " + c["text"]).lower() for t in toks)][:n]
 
 
-def _filter_relevant(cands: list[dict], query: str, n: int) -> list[dict]:
+def _filter_relevant(cands: list[dict[str, Any]], query: str, n: int) -> list[dict[str, Any]]:
     """Off-topic web sonuçlarını anlamsal-benzerlikle ele. Token-örtüşmesi tek güçlü
     homonim token'da çuvallıyordu (ör. "klipper" hem bu-sunucu hem 3D-yazıcı firmware'i
     → printer sayfaları geçiyordu). bge-m3 embed + cosine: query'ye anlamsal yakınlığı
@@ -354,7 +355,7 @@ def _filter_relevant(cands: list[dict], query: str, n: int) -> list[dict]:
         return []
     try:
         qv = rag_module._embed(query)
-        scored: list[tuple[float, dict]] = []
+        scored: list[tuple[float, dict[str, Any]]] = []
         for c in cands[:WEB_RELEVANCE_MAX_EMBED]:
             cv = rag_module._embed(f"{c['title']} {c['text']}")
             scored.append((_cosine(qv, cv), c))
@@ -371,7 +372,7 @@ def _filter_relevant(cands: list[dict], query: str, n: int) -> list[dict]:
 _CITE_RE = re.compile(r"\[([a-z]+):([^\]\s]+)\]")
 
 
-def _validate_citations(answer: str, chunks: list[dict]) -> dict:
+def _validate_citations(answer: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
     """Cevaptaki [type:id] referanslari gercek chunk'larda mi?"""
     cited = set(_CITE_RE.findall(answer))
     valid_tags = {(c["type"], c["id"]) for c in chunks}
@@ -407,7 +408,7 @@ class AskRequest(BaseModel):
 @router.post("/ask")
 def research_ask(req: AskRequest):
     t0 = time.time()
-    chunks: list[dict] = []
+    chunks: list[dict[str, Any]] = []
     errors: dict[str, str] = {}
 
     if req.include_rag:
@@ -587,7 +588,7 @@ def research_run(config: ResearchConfig) -> ResearchReport:
 
 @router.get("/health")
 def research_health():
-    out: dict = {}
+    out: dict[str, Any] = {}
     try:
         r = requests.get(f"{OLLAMA_URL}/api/version", timeout=3)
         out["ollama"] = {"ok": r.ok, "version": r.json().get("version") if r.ok else None}

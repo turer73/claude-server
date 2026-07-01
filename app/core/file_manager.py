@@ -5,6 +5,7 @@ from __future__ import annotations
 import glob
 import os
 from datetime import datetime
+from typing import Any
 
 from app.exceptions import AuthorizationError, NotFoundError
 
@@ -27,7 +28,7 @@ class FileManager:
                 return real
         raise AuthorizationError(f"Path {path} not in allowed paths")
 
-    def read_file(self, path: str, offset: int = 0, limit: int = 1000) -> dict:
+    def read_file(self, path: str, offset: int = 0, limit: int = 1000) -> dict[str, Any]:
         path = self.validate_path(path)
         if not os.path.isfile(path):
             raise NotFoundError(f"File not found: {path}")
@@ -42,7 +43,7 @@ class FileManager:
             "lines": len(lines),
         }
 
-    def write_file(self, path: str, content: str, mode: str = "write") -> dict:
+    def write_file(self, path: str, content: str, mode: str = "write") -> dict[str, Any]:
         path = self.validate_path(path)
         write_mode = "a" if mode == "append" else "w"
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -50,7 +51,7 @@ class FileManager:
             f.write(content)
         return {"path": path, "size": os.path.getsize(path)}
 
-    def edit_file(self, path: str, old_string: str, new_string: str) -> dict:
+    def edit_file(self, path: str, old_string: str, new_string: str) -> dict[str, Any]:
         path = self.validate_path(path)
         if not os.path.isfile(path):
             raise NotFoundError(f"File not found: {path}")
@@ -70,7 +71,7 @@ class FileManager:
         os.remove(path)
         return True
 
-    def list_directory(self, path: str) -> list[dict]:
+    def list_directory(self, path: str) -> list[dict[str, Any]]:
         path = self.validate_path(path)
         if not os.path.isdir(path):
             raise NotFoundError(f"Directory not found: {path}")
@@ -93,7 +94,7 @@ class FileManager:
                 continue
         return entries
 
-    def get_file_info(self, path: str) -> dict:
+    def get_file_info(self, path: str) -> dict[str, Any]:
         path = self.validate_path(path)
         if not os.path.exists(path):
             raise NotFoundError(f"Path not found: {path}")

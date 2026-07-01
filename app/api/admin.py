@@ -11,6 +11,7 @@ import os
 import re
 import sqlite3
 import subprocess
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, field_validator
@@ -96,7 +97,7 @@ HELPER_PATH = "/opt/linux-ai-server/scripts/set-env-secret.sh"
 
 
 @router.get("/secrets")
-async def list_secrets(_: None = Depends(require_admin)) -> dict:
+async def list_secrets(_: None = Depends(require_admin)) -> dict[str, Any]:
     """.env'deki KEY listesi. Value asla donmez — sadece key + length."""
     if not os.path.exists(ENV_PATH):
         return {"count": 0, "keys": []}
@@ -118,7 +119,7 @@ async def list_secrets(_: None = Depends(require_admin)) -> dict:
 
 
 @router.post("/secrets")
-async def set_secret(data: SecretSet, _: None = Depends(require_admin)) -> dict:
+async def set_secret(data: SecretSet, _: None = Depends(require_admin)) -> dict[str, Any]:
     """.env'e KEY=VALUE upsert. Helper subprocess (idempotent).
 
     require_ADMIN (güvenlik fix): read-JWT'li biri .env secret yazabilir =
@@ -152,7 +153,7 @@ async def set_secret(data: SecretSet, _: None = Depends(require_admin)) -> dict:
 async def autonomous_timeline(
     limit: int = Query(50, ge=1, le=200),
     _: None = Depends(require_auth),
-) -> dict:
+) -> dict[str, Any]:
     """
     Otonom akis timeline: memories (autonomous-*) + spawn_failures + new_notes
     in-memory merge, DESC sort, son `limit` event.
@@ -244,7 +245,7 @@ async def autonomous_timeline(
 async def autonomous_stats(
     days: int = Query(7, ge=1, le=90),
     _: None = Depends(require_auth),
-) -> dict:
+) -> dict[str, Any]:
     """Otonom akis stats (son N gun): classification dagilim, DLQ counts, spawn_rate, alerts."""
     modifier = f"-{days} days"
     db = _get_db()

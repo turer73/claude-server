@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shlex
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -25,7 +26,7 @@ class VPSCommandRequest(BaseModel):
 
 
 @router.post("/exec")
-async def vps_exec(req: VPSCommandRequest, _: None = Depends(require_admin)) -> dict:
+async def vps_exec(req: VPSCommandRequest, _: None = Depends(require_admin)) -> dict[str, Any]:
     """Execute a command on the production VPS via SSH bridge."""
     settings = get_settings()
     executor = ShellExecutor(whitelist=settings.shell_whitelist)
@@ -38,7 +39,7 @@ async def vps_exec(req: VPSCommandRequest, _: None = Depends(require_admin)) -> 
 
 
 @router.get("/status")
-async def vps_status(_: None = Depends(require_admin)) -> dict:
+async def vps_status(_: None = Depends(require_admin)) -> dict[str, Any]:
     """Get VPS system status — hostname, uptime, resources, containers."""
     settings = get_settings()
     executor = ShellExecutor(whitelist=settings.shell_whitelist)
@@ -65,7 +66,7 @@ async def vps_status(_: None = Depends(require_admin)) -> dict:
 
 
 @router.get("/services")
-async def vps_services(_: None = Depends(require_admin)) -> dict:
+async def vps_services(_: None = Depends(require_admin)) -> dict[str, Any]:
     """Check VPS web services health."""
     settings = get_settings()
     executor = ShellExecutor(whitelist=settings.shell_whitelist)
@@ -90,7 +91,7 @@ async def vps_services(_: None = Depends(require_admin)) -> dict:
 
 
 @router.post("/deploy/{project}")
-async def vps_deploy(project: str, _: None = Depends(require_admin)) -> dict:
+async def vps_deploy(project: str, _: None = Depends(require_admin)) -> dict[str, Any]:
     """Trigger a deploy on VPS via Coolify webhook or git pull."""
     settings = get_settings()
     executor = ShellExecutor(whitelist=settings.shell_whitelist)

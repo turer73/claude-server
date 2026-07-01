@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends
 
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/ci", tags=["ci"])
 
 # In-memory store for last run status
-_last_run: dict | None = None
+_last_run: dict[str, Any] | None = None
 
 
 @router.post(
@@ -105,7 +106,7 @@ async def run_all():
     """Run tests for ALL projects, attempt fixes on failures, return report."""
     global _last_run
 
-    project_results: list[dict] = []
+    project_results: list[dict[str, Any]] = []
     total_tests = 0
     total_passed = 0
     total_failed = 0

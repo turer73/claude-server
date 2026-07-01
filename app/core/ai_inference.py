@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Any
 
 import httpx
 
@@ -24,7 +25,7 @@ class AIInference:
         model: str = "qwen3:1.7b",
         context: list[dict[str, str]] | None = None,
         think: bool = False,
-    ) -> dict:
+    ) -> dict[str, Any]:
         from app.core.agents.llmcore import llm_core
 
         # Kopya al — append() caller'ın listesini mutate etmesin (aliasing bug).
@@ -46,7 +47,7 @@ class AIInference:
             "elapsed_ms": round((time.monotonic() - start) * 1000, 1),
         }
 
-    async def list_models(self) -> list[dict]:
+    async def list_models(self) -> list[dict[str, Any]]:
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(f"{self._base_url}/api/tags")

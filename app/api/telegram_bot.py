@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 import threading
+from typing import Any
 
 import requests
 from fastapi import APIRouter, Header, HTTPException
@@ -45,7 +46,7 @@ def _send_message(chat_id: int, text: str, reply_to: int | None = None) -> None:
     ve mesaj SESSİZCE kaybolur -> DÜZ-METİN fallback (yanıt asla kaybolmasın)."""
     if not TELEGRAM_BOT_TOKEN:
         return
-    payload: dict = {
+    payload: dict[str, Any] = {
         "chat_id": chat_id,
         "text": text[:4000],  # Telegram limit 4096
         "parse_mode": "Markdown",
@@ -111,7 +112,7 @@ def _mark_event_acked(event_id: str) -> bool:
         return False
 
 
-def _force_remediate(event_id: str) -> dict:
+def _force_remediate(event_id: str) -> dict[str, Any]:
     """[🔧 Uygula] -> localhost devops force-remediate (internal-key). Poller AYRI
     process -> in-app agent'a erişemez -> HTTP. Owner-auth ÇAĞRAN katmanda yapıldı."""
     import os
@@ -152,7 +153,7 @@ def _claude_chat_lock(chat_id: int) -> threading.Lock:
         return lock
 
 
-def _run_claude(prompt: str, session_id: str | None = None) -> dict:
+def _run_claude(prompt: str, session_id: str | None = None) -> dict[str, Any]:
     """Owner-onaylı /claude -> localhost Claude Code run (internal-key, admin scope).
     Poller AYRI process -> in-app değil HTTP. session_id verilirse --resume (süreklilik)."""
     import os
@@ -161,7 +162,7 @@ def _run_claude(prompt: str, session_id: str | None = None) -> dict:
     # SALT-OKUNUR (read_only): Claude okur+analiz eder, mutasyon yapmaz. cwd=sunucu
     # repo'su (git log/dosya soruları doğru bağlamda koşsun; default ~/ git-repo değil).
     cwd = read_env_var("CLAUDE_TG_CWD") or os.environ.get("CLAUDE_TG_CWD") or "/opt/linux-ai-server"
-    body: dict = {"prompt": prompt, "max_turns": 40, "read_only": True, "cwd": cwd}
+    body: dict[str, Any] = {"prompt": prompt, "max_turns": 40, "read_only": True, "cwd": cwd}
     if session_id:
         body["session_id"] = session_id
     try:
@@ -213,7 +214,7 @@ def _save_finding(prompt: str, answer: str) -> bool:
         return False
 
 
-def _handle_claude(chat_id: int, prompt: str, msg_id: int | None, fresh: bool = False) -> dict:
+def _handle_claude(chat_id: int, prompt: str, msg_id: int | None, fresh: bool = False) -> dict[str, Any]:
     """Owner-onaylı /claude: Claude Code'u çağırır (threaded -> poller bloklanmaz),
     typing keep-alive, oturum-sürekliliği. Owner-auth ÇAĞRAN katmanda (process_update)."""
     if not prompt:
@@ -270,7 +271,7 @@ def _claude_worker(chat_id: int, prompt: str, msg_id: int | None, fresh: bool) -
     _send_message(chat_id, reply, reply_to=msg_id)
 
 
-def _handle_callback(cb: dict) -> dict:
+def _handle_callback(cb: dict[str, Any]) -> dict:
     """Inline-buton callback (ACK / Uygula). GÜVENLİK: yalnız sahip-chat (TELEGRAM_CHAT_ID)."""
     data = cb.get("data", "") or ""
     cb_id = cb.get("id")
@@ -312,7 +313,7 @@ def _md_escape(text: str) -> str:
     return re.sub(r"([`_*\[\]])", r"\\\1", text)
 
 
-def _format_reply(result: dict, q: str) -> str:
+def _format_reply(result: dict[str, Any], q: str) -> str:
     """Research API yanitini Telegram Markdown'a cevir.
 
     Yapı:
@@ -340,7 +341,7 @@ def _format_reply(result: dict, q: str) -> str:
     return "\n".join(parts)
 
 
-def process_update(update: dict) -> dict:
+def process_update(update: dict[str, Any]) -> dict:
     """Webhook + polling tarafindan paylasilan core handler — auth-bagimsiz."""
     # Inline-buton (ACK) callback'i — message'tan ÖNCE (owner-auth _handle_callback'te).
     if update.get("callback_query"):
@@ -430,7 +431,7 @@ def process_update(update: dict) -> dict:
 
 @router.post("/update")
 def telegram_update(
-    update: dict,
+    update: dict[str, Any],
     x_telegram_bot_api_secret_token: str | None = Header(None),
 ):
     """Telegram webhook receiver. Secret_token ile auth."""

@@ -1,3 +1,5 @@
+from typing import Any
+
 """
 RAG API + metric logging (Qdrant + Ollama bge-m3 + qwen2.5)
 """
@@ -187,8 +189,8 @@ def _hybrid_search(query, vec, top_k=5, project=None, source=None):
     pool = max(top_k * 4, 20)
     dense = _search(vec, top_k=pool, project=project, source=source)
     kw = _keyword_search(query, top_k=pool, project=project, source=source)
-    fused: dict = {}
-    keep: dict = {}
+    fused: dict[str, Any] = {}
+    keep: dict[str, Any] = {}
     for rank, h in enumerate(dense):
         pid = h["id"]
         fused[pid] = fused.get(pid, 0.0) + 1.0 / (RRF_K + rank + 1)

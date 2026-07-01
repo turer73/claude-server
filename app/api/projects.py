@@ -7,6 +7,7 @@ import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends
 
@@ -31,7 +32,7 @@ PROJECTS = [
 ]
 
 
-def _git_info(path: str) -> dict:
+def _git_info(path: str) -> dict[str, Any]:
     """Son commit bilgisi."""
     try:
         result = subprocess.run(
@@ -54,7 +55,7 @@ def _git_info(path: str) -> dict:
     return {}
 
 
-def _git_status(path: str) -> dict:
+def _git_status(path: str) -> dict[str, Any]:
     """Uncommitted changes count + ahead/behind vs origin/<branch>.
 
     Dort kanal:
@@ -110,7 +111,7 @@ def _git_status(path: str) -> dict:
         return {}
 
 
-def _dep_audit(path: str, project_type: str) -> dict:
+def _dep_audit(path: str, project_type: str) -> dict[str, Any]:
     """Dependency security audit."""
     try:
         if project_type == "python":
@@ -152,7 +153,7 @@ def _dep_audit(path: str, project_type: str) -> dict:
         return {"status": "error"}
 
 
-def _last_test_result() -> dict | None:
+def _last_test_result() -> dict[str, Any] | None:
     """En son test runner sonucu."""
     import glob
 

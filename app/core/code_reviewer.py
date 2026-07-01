@@ -17,6 +17,7 @@ import json
 import logging
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 from app.core.agents.llmcore import llm_core
 from app.core.config import read_env_var
@@ -122,7 +123,7 @@ def _lang(path: str) -> str:
     return {".py": "python", ".ts": "typescript", ".tsx": "tsx", ".js": "javascript", ".sh": "bash", ".sql": "sql"}.get(ext, "")
 
 
-async def _ask_coder(prompt: str) -> list[dict]:
+async def _ask_coder(prompt: str) -> list[dict[str, Any]]:
     """Tarama modeline sor (LLMCore route='code-review'), katı-JSON parse et. Hata/timeout → [] (fail-silent).
     NOT: model'i explicit GEÇME — route backend'i (ollama/claude) kendi modelini seçer. Explicit ``model=_MODEL``
     (qwen2.5-coder:7b) geçilirse claude backend'ine qwen adı gider → ``claude cli rc=1`` → sessiz boş (tarama ölür)."""
@@ -179,7 +180,7 @@ def _build_snippet(code: str) -> str:
     return code[:_MAX_BYTES] + _TRUNCATION_NOTE.format(total=len(code), shown=_MAX_BYTES)
 
 
-async def review_source(rel_path: str, code: str) -> list[dict]:
+async def review_source(rel_path: str, code: str) -> list[dict[str, Any]]:
     """Tek dosyayı incele → bulgu listesi (read-only)."""
     if not _ENABLED or not code.strip():
         return []
@@ -193,7 +194,7 @@ async def review_source(rel_path: str, code: str) -> list[dict]:
     return findings
 
 
-async def _verify_one(rel_path: str, code: str, f: dict) -> bool:
+async def _verify_one(rel_path: str, code: str, f: dict[str, Any]) -> bool:
     """Bağımsız skeptik 2. pass (güçlü model = claude/Sonnet, task='verify'). Üç sonuç:
     - yanıt 'FP' ile başlar → net-FP → ELE (False).
     - yanıt geldi ama FP değil (REAL/belirsiz/boş-yanıt) → KORU (True; gerçek-kaçırma > FP-survivor).
@@ -224,7 +225,7 @@ async def _verify_one(rel_path: str, code: str, f: dict) -> bool:
     return first.startswith("REAL")
 
 
-async def _verify_findings(rel_path: str, code: str, findings: list[dict]) -> list[dict]:
+async def _verify_findings(rel_path: str, code: str, findings: list[dict[str, Any]]) -> list[dict]:
     """TÜM bulguları skeptik-pass'ten geçir (FP ele). SIKILAŞTIRILDI (2026-06-22): P3 de verify edilir
     (eski P3-bypass FP-flood'a katkıydı — test_drift_check:20 gibi P3-FP'ler doğrudan geçiyordu)."""
     kept = []
@@ -315,7 +316,7 @@ def _fp_feedback_block() -> str:
     )
 
 
-async def review_file(abs_path: Path) -> list[dict]:
+async def review_file(abs_path: Path) -> list[dict[str, Any]]:
     try:
         rel = str(abs_path.relative_to(ROOT)) if abs_path.is_relative_to(ROOT) else abs_path.name
         return await review_source(rel, abs_path.read_text(errors="replace"))
@@ -323,7 +324,7 @@ async def review_file(abs_path: Path) -> list[dict]:
         return []
 
 
-def _record_finding(rel_path: str, f: dict) -> bool:
+def _record_finding(rel_path: str, f: dict[str, Any]) -> bool:
     """Bulguyu discoveries'e yaz (dedup: unique-active index). Yeni-kayıt ise True."""
     title = f"{rel_path}:{f['line']} {f['title']}"[:120]
     details = f"[{f['severity']}] {f['detail']}"
@@ -344,7 +345,7 @@ def _record_finding(rel_path: str, f: dict) -> bool:
         return False
 
 
-def record_findings(rel_path: str, findings: list[dict]) -> dict:
+def record_findings(rel_path: str, findings: list[dict[str, Any]]) -> dict:
     """Bulguları kaydet (dedup'lı). {new, dup, p1_titles} döner — çağıran Telegram'a karar verir."""
     new = dup = 0
     p1 = []

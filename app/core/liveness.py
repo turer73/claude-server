@@ -25,6 +25,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 SERVER_DB = "/opt/linux-ai-server/data/server.db"
 COVERAGE_DB = "/opt/linux-ai-server/data/coverage.db"
@@ -155,13 +156,13 @@ def _localize_vps_failure(
 # ── A-sınıfı: kadans-tabanlı staleness ──────────────────────────────────
 
 
-def metrics_liveness() -> dict:
+def metrics_liveness() -> dict[str, Any]:
     age = _age_s(_db_latest_ts(SERVER_DB, "SELECT MAX(timestamp) FROM metrics_history"))
     st, d = _verdict(age, 300)  # ~30s kadans, >5dk geç
     return {"source": "metrics_history", "klass": "A", "status": st, "detail": d}
 
 
-def vps_metrics_liveness() -> dict:
+def vps_metrics_liveness() -> dict[str, Any]:
     age = _age_s(_db_latest_ts(SERVER_DB, "SELECT MAX(timestamp) FROM vps_metrics_history"))
     st, d = _verdict(age, 600)  # ~150s kadans, >10dk geç
     if st == "stale":
@@ -172,13 +173,13 @@ def vps_metrics_liveness() -> dict:
     return {"source": "vps_metrics_history", "klass": "A", "status": st, "detail": d}
 
 
-def ci_liveness() -> dict:
+def ci_liveness() -> dict[str, Any]:
     age = _age_s(_db_latest_ts(COVERAGE_DB, "SELECT MAX(timestamp) FROM test_runs"))
     st, d = _verdict(age, 2 * 86400)  # günlük, >2g
     return {"source": "ci_test_runs", "klass": "A", "status": st, "detail": d}
 
 
-def cron_job_liveness(job: str, cadence_s: float, absent_status: str = "unknown") -> dict:
+def cron_job_liveness(job: str, cadence_s: float, absent_status: str = "unknown") -> dict[str, Any]:
     """A: wrapped cron'un cron_outcomes'taki son satır tazeliği + sonucu.
 
     absent_status: satır yoksa döndürülecek status (default "unknown"; kritik
@@ -209,7 +210,7 @@ def cron_job_liveness(job: str, cadence_s: float, absent_status: str = "unknown"
 # ── B-sınıfı: processor-heartbeat / canary / yaş-pencereli-backlog ───────
 
 
-def notes_poller_liveness(poll_interval_s: float = 30) -> dict:
+def notes_poller_liveness(poll_interval_s: float = 30) -> dict[str, Any]:
     """B (self-heartbeat): note-poller daemon her poll'da poller-state.json
     last_poll_at günceller. Liveness = o tazelik (note-SAYISI değil). Atıl=meşru."""
     # last_poll_at içeriği yerel-saat (tz'siz) → mtime kullan (dosya her poll'da
@@ -237,7 +238,7 @@ def _env_flag(key: str) -> str:
     return ""
 
 
-def notify_cron_liveness(cadence_s: float = 45 * 60) -> dict:
+def notify_cron_liveness(cadence_s: float = 45 * 60) -> dict[str, Any]:
     """notify-cron = alarm TESLİM-yolu. Codex P2: ENABLE-GATE — NOTIFY_CRON_ENABLED!=true
     ise cron-wrap koşup cron_outcomes yazsa BİLE teslim YOK (script en başta exit 0) ->
     dead. Enable ise cron_outcomes tazeliği (>45dk=dead)."""
@@ -253,7 +254,7 @@ def notify_cron_liveness(cadence_s: float = 45 * 60) -> dict:
     return r
 
 
-def alerts_evaluator_liveness() -> dict:
+def alerts_evaluator_liveness() -> dict[str, Any]:
     """B (self-heartbeat): alert-check.sh (*/5) her run alerts.log'a "OK ..."
     yazar (alert olmasa bile). Liveness = log son-satır tazeliği — alerts
     TABLOSU değil (o yalnız alert-anında yazılır → staleness=FP)."""
@@ -265,7 +266,7 @@ def alerts_evaluator_liveness() -> dict:
     return {"source": "alerts_evaluator", "klass": "B", "status": st, "detail": f"heartbeat {d}"}
 
 
-def autonomy_liveness(backlog_window_s: float = 7200) -> dict:
+def autonomy_liveness(backlog_window_s: float = 7200) -> dict[str, Any]:
     """B: PRIMARY = autonomous-retry cron_outcomes heartbeat (15dk wrapped).
     SECONDARY = poison (spawn_failures çözülmemiş) + YAŞ-PENCERELİ backlog
     (taze<2h pending). HAM pending-count KULLANMA: 144-stale-yetim kayıt kalıcı
@@ -321,7 +322,7 @@ def rag_canary_liveness(
     timeout: float = RAG_CANARY_TIMEOUT_S,
     retries: int = RAG_CANARY_RETRIES,
     backoff: float = RAG_CANARY_BACKOFF_S,
-) -> dict:
+) -> dict[str, Any]:
     """B (canary): /rag/health aktif-prob. Organik query-sayısından DECOUPLE —
     idle=meşru, canary-OK=canlı, canary-fail=ölü. /rag/* router-level verify_key
     ister → X-Memory-Key gönder (yoksa 401 = auth-FP, rag-ölü DEĞİL).
@@ -381,7 +382,7 @@ DOCKER_CONTAINERS = {
 DOCKER_BOOT_GRACE_S = 300.0
 
 
-def docker_containers_liveness(timeout: float = 2.5) -> list[dict]:
+def docker_containers_liveness(timeout: float = 2.5) -> list[dict[str, Any]]:
     """B (canary): beklenen Docker konteynerleri — docker ps + host'tan HTTP probu.
 
     2026-06-12 incident: kernel-reboot sonrası grafana+stirling-pdf 'Exited',
@@ -455,7 +456,7 @@ REGISTRY = [
 ]
 
 
-def check_all() -> dict:
+def check_all() -> dict[str, Any]:
     """Tüm registry kaynaklarını tara. Dönen: {results, dead, stale}.
     dead/stale = aksiyon gerektiren; alive/unknown sessiz."""
     results = []
