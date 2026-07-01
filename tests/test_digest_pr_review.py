@@ -43,8 +43,8 @@ def test_pr_review_aggregates_open_prs(monkeypatch):
         ],
     }
     codex_map = {"repos/turer73/claude-server/pulls/20/comments": 2}
-    monkeypatch.setattr(core_digest, "REVIEW_REPOS", ["turer73/claude-server"])
-    monkeypatch.setattr(core_digest, "_gh_json", _fake_gh(pr_map, codex_map))
+    monkeypatch.setattr("app.core.digest.sources.REVIEW_REPOS", ["turer73/claude-server"])
+    monkeypatch.setattr("app.core.digest.sources._gh_json", _fake_gh(pr_map, codex_map))
     out = core_digest.pr_review_health()
     assert len(out["prs"]) == 1  # draft hariç
     p = out["prs"][0]
@@ -57,8 +57,8 @@ def test_pr_review_aggregates_open_prs(monkeypatch):
 
 def test_pr_review_fetch_fail_not_silent(monkeypatch):
     # gh hata → fetch_fail=True (sessiz-sıfır DEĞİL; Codex-P1 dersi)
-    monkeypatch.setattr(core_digest, "REVIEW_REPOS", ["turer73/panola"])
-    monkeypatch.setattr(core_digest, "_gh_json", _fake_gh({}, fail_repos=("turer73/panola",)))
+    monkeypatch.setattr("app.core.digest.sources.REVIEW_REPOS", ["turer73/panola"])
+    monkeypatch.setattr("app.core.digest.sources._gh_json", _fake_gh({}, fail_repos=("turer73/panola",)))
     out = core_digest.pr_review_health()
     assert out["fetch_fail"] is True
     assert out["prs"] == []
@@ -129,8 +129,8 @@ def test_pr_review_codex_fetch_fail_is_unknown(monkeypatch):
     'codex:0/temiz' raporlama YOK — Codex-P2)."""
     pr_map = {"turer73/claude-server": [{"number": 9, "title": "x", "isDraft": False, "statusCheckRollup": [{"conclusion": "SUCCESS"}]}]}
     codex_map = {"repos/turer73/claude-server/pulls/9/comments": None}  # fetch-fail
-    monkeypatch.setattr(core_digest, "REVIEW_REPOS", ["turer73/claude-server"])
-    monkeypatch.setattr(core_digest, "_gh_json", _fake_gh(pr_map, codex_map))
+    monkeypatch.setattr("app.core.digest.sources.REVIEW_REPOS", ["turer73/claude-server"])
+    monkeypatch.setattr("app.core.digest.sources._gh_json", _fake_gh(pr_map, codex_map))
     out = core_digest.pr_review_health()
     assert out["prs"][0]["codex"] is None  # 0 DEĞİL, bilinmiyor
     assert out["fetch_fail"] is True

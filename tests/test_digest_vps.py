@@ -29,7 +29,7 @@ def _make_vps_db(tmp_path, rows):
 
 
 def test_vps_health_empty_when_no_db(monkeypatch, tmp_path):
-    monkeypatch.setattr(core_digest, "_server_db_path", lambda: str(tmp_path / "missing.db"))
+    monkeypatch.setattr("app.core.digest.sources._server_db_path", lambda: str(tmp_path / "missing.db"))
     assert core_digest.vps_health() == {}
 
 
@@ -41,7 +41,7 @@ def test_vps_health_returns_latest(monkeypatch, tmp_path):
             ("2026-06-01T11:00:00+00:00", 1, 32.5, 35.6, 20.0, 20, 18),  # latest
         ],
     )
-    monkeypatch.setattr(core_digest, "_server_db_path", lambda: path)
+    monkeypatch.setattr("app.core.digest.sources._server_db_path", lambda: path)
     v = core_digest.vps_health()
     assert v["online"] is True
     assert v["cpu"] == 32.5
