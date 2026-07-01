@@ -1211,6 +1211,32 @@ async def test_source_acked_db_error_returns_false():
     assert await agent._source_acked("memory") is False
 
 
+async def test_source_acked_collapsed_row_does_not_mask(client, app):
+    """Codex #233 P2: ACK'li gönderim sonrası araya giren collapsed (notified=2) unacked
+    critical, önceki ACK'i MASKELEMEMELI → _source_acked hâlâ True."""
+    from app.core import devops_agent as da
+
+    db = app.state.db
+    agent = da.DevOpsAgent(db=db, interval=60)
+    await db.execute("INSERT INTO events (type,source,severity,title,notified,acked) VALUES ('alert','memory','critical','sent',1,1)")
+    await db.execute("INSERT INTO events (type,source,severity,title,notified,acked) VALUES ('alert','memory','critical','collapsed',2,0)")
+    assert await agent._source_acked("memory") is True  # collapsed(2) hariç → son ACK görülür
+
+
+async def test_source_acked_preserved_when_ack_is_old(client, app):
+    """Codex #238: ACK event timestamp'i yenilenmez; uzun-açık alert'te bile ACK korunmalı
+    (zaman-penceresi YOK — eski ACK yaşlanıp escalation yanlış yeniden başlamamalı)."""
+    from app.core import devops_agent as da
+
+    db = app.state.db
+    agent = da.DevOpsAgent(db=db, interval=60)
+    await db.execute(
+        "INSERT INTO events (timestamp,type,source,severity,title,notified,acked) "
+        "VALUES (datetime('now','-3 hours'),'alert','disk','critical','old-ack',1,1)"
+    )
+    assert await agent._source_acked("disk") is True  # 3sa önceki ACK hâlâ geçerli
+
+
 # ── Slice-2: force_remediate ([🔧 Uygula]) ──────────────────────
 
 

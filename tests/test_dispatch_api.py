@@ -136,6 +136,43 @@ async def test_analyze_task_passes_schema_to_chat(monkeypatch):
     assert mock.await_args.kwargs.get("fmt") is dp._ANALYZE_SCHEMA
 
 
+async def test_analyze_task_retries_without_fmt_on_schema_reject(monkeypatch):
+    """Codex #235 P2: endpoint fmt'i reddederse (ilk çağrı raise) fmt'siz retry → serbest-metin
+    ayıklanır (graceful-degrade); dispatch 500 olmaz, default-SURER'e körlemesine düşmez."""
+    calls = []
+
+    async def fake_chat(prompt, system="", fmt=None):
+        calls.append(fmt)
+        if fmt is not None:
+            raise RuntimeError("format not supported")
+        return '{"route": "KLIPPER", "klipper_cmds": ["uptime"], "surer_tasks": [], "ozet": "z"}'
+
+    monkeypatch.setattr(dp, "_ollama_chat", fake_chat)
+    res = await dp._analyze_task("t", "p", "")
+    assert calls == [dp._ANALYZE_SCHEMA, None]  # önce fmt'li, sonra fmt'siz retry
+    assert res["route"] == "KLIPPER"
+    assert res["klipper_cmds"] == ["uptime"]
+
+
+async def test_analyze_task_default_surer_when_both_calls_fail(monkeypatch):
+    """Ollama gerçekten down (her iki çağrı raise) → default-SURER (shell'e komut YOK)."""
+
+    async def boom(prompt, system="", fmt=None):
+        raise RuntimeError("ollama down")
+
+    monkeypatch.setattr(dp, "_ollama_chat", boom)
+    res = await dp._analyze_task("görev", "p", "")
+    assert res["route"] == "SURER"
+    assert res["klipper_cmds"] == []
+
+
+def test_analyze_schema_requires_command_arrays():
+    """Codex #235 P2: klipper_cmds/surer_tasks required → structured-output routed-no-op üretemez."""
+    req = dp._ANALYZE_SCHEMA["required"]
+    assert "klipper_cmds" in req
+    assert "surer_tasks" in req
+
+
 # ── endpoint (HTTP katmanı) ──
 
 
@@ -186,6 +223,25 @@ async def test_dispatch_endpoint_surer_route(dispatch_client, monkeypatch):
     assert body["routed_to"] == "surer"
     assert body["surer_note_id"] == 42
     run_mock.assert_not_called()  # SURER rotasında shell'e komut GİTMEZ
+
+
+async def test_dispatch_endpoint_klipper_no_cmds_falls_back_to_surer(dispatch_client, monkeypatch):
+    """Codex #238: quick-route KLIPPER der ('docker ps bak') ama analiz komut üretemezse
+    (Ollama down / fmt-less no-op) → SURER'e düşer; routed-no-op sahte-başarı YOK."""
+    monkeypatch.setattr(
+        dp,
+        "_analyze_task",
+        AsyncMock(return_value={"route": "SURER", "klipper_cmds": [], "surer_tasks": [], "ozet": "o", "proje": "p"}),
+    )
+    run_mock = AsyncMock()
+    monkeypatch.setattr(dp, "_run_klipper_cmd", run_mock)
+    monkeypatch.setattr(dp, "_send_to_surer", AsyncMock(return_value=7))
+
+    resp = await dispatch_client.post("/api/v1/dispatch/task", json={"task": "docker ps bak"})  # quick=KLIPPER
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["routed_to"] == "surer"  # KLIPPER DEĞİL (komut yok → downgrade, sessiz-drop yok)
+    run_mock.assert_not_called()  # hiçbir shell komutu çalışmadı
 
 
 async def test_dispatch_endpoint_requires_memory_key(client, monkeypatch):
