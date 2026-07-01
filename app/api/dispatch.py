@@ -9,17 +9,10 @@ import httpx
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from app.api.memory import verify_key
 from app.core.config import get_settings, read_env_var
 from app.core.shell_executor import ShellExecutor
 from app.exceptions import AuthorizationError, ShellExecutionError
-
-try:
-    from app.api.memory import verify_key
-except ImportError:
-
-    async def verify_key() -> None:  # type: ignore[misc]
-        pass
-
 
 router = APIRouter(prefix="/api/v1/dispatch", tags=["dispatch"])
 
