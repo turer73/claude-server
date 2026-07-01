@@ -245,7 +245,8 @@ async def _call_claude_code(prompt: str, cwd: str) -> dict[str, Any]:
     if os.path.exists(CI_FIXER_SETTINGS):
         cmd += ["--settings", CI_FIXER_SETTINGS]
     else:
-        logger.warning("CI_FIXER_SETTINGS missing (%s) — running without restricted settings", CI_FIXER_SETTINGS)
+        logger.error("CI_FIXER_SETTINGS missing (%s) — aborting to prevent unrestricted execution", CI_FIXER_SETTINGS)
+        return {"answer": "", "session_id": None, "error": f"CI_FIXER_SETTINGS dosyasi bulunamadi: {CI_FIXER_SETTINGS}"}
 
     logger.info("Calling Claude Code: cwd=%s", cwd)
 

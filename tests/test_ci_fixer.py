@@ -12,6 +12,7 @@ import pytest
 
 from app.core.ci_fixer import (
     MAX_ATTEMPTS,
+    _call_claude_code,
     attempt_fix,
     build_fix_prompt,
     post_lesson_summary_to_memory_api,
@@ -802,3 +803,23 @@ async def test_post_lesson_summary_sanitizes_newlines_in_string_fields(monkeypat
     # No raw newlines or carriage returns anywhere in the serialized body
     assert b"\n" not in captured["body"]
     assert b"\r" not in captured["body"]
+
+
+# ---------------------------------------------------------------------------
+# _call_claude_code — fail-CLOSED when CI_FIXER_SETTINGS missing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_call_claude_code_aborts_when_settings_missing(monkeypatch):
+    """_call_claude_code must return an error dict (not execute Claude) when
+    CI_FIXER_SETTINGS file does not exist — fail-CLOSED, not fail-open."""
+    monkeypatch.setattr("app.core.ci_fixer._find_claude", lambda: "/usr/bin/claude")
+    monkeypatch.setattr("app.core.ci_fixer.os.path.exists", lambda _: False)
+
+    result = await _call_claude_code(prompt="fix this", cwd="/tmp")
+
+    assert result["error"] is not None
+    assert "CI_FIXER_SETTINGS" in result["error"]
+    assert result["answer"] == ""
+    assert result["session_id"] is None
