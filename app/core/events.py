@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from typing import Any
 
 from app.db.data_layer import get_conn, server_db_path
 
@@ -33,7 +34,7 @@ def _normalize_severity(severity: str | None) -> str:
     return s if s in SEVERITIES else "info"
 
 
-def _serialize_payload(payload: dict | None) -> str | None:
+def _serialize_payload(payload: dict[str, Any] | None) -> str | None:
     """payload -> JSON string (best-effort). datetime/Path/bytes gibi JSON-native
     olmayan değerler emit_event'i ASLA crash etmemeli (modül 'hata→None' sözleşmesi,
     Claude-heartbeat değil). default=str çoğunu çözer; kalan (circular vb.) için repr."""
@@ -51,7 +52,7 @@ def emit_event(
     title: str,
     severity: str = "info",
     detail: str | None = None,
-    payload: dict | None = None,
+    payload: dict[str, Any] | None = None,
 ) -> int | None:
     """Merkezi events tablosuna bir olay yaz. id döner (hata/geçersiz → None)."""
     severity = _normalize_severity(severity)
@@ -78,7 +79,7 @@ def _sev_at_least(min_severity: str) -> list[str]:
     return list(SEVERITIES[SEVERITIES.index(min_severity) :])
 
 
-def recent_events(hours: int = 24, min_severity: str | None = None) -> list[dict]:
+def recent_events(hours: int = 24, min_severity: str | None = None) -> list[dict[str, Any]]:
     """Son `hours` saatteki olaylar (min_severity ve üstü). Hata → []."""
     sevs = _sev_at_least(min_severity) if min_severity else list(SEVERITIES)
     placeholders = ",".join("?" * len(sevs))
@@ -98,7 +99,7 @@ def recent_events(hours: int = 24, min_severity: str | None = None) -> list[dict
     return [dict(r) for r in rows]
 
 
-def pending_notifications() -> list[dict]:
+def pending_notifications() -> list[dict[str, Any]]:
     """notified=0 + severity>=warn olaylar (bildirilecekler). Hata → []."""
     try:
         con = get_conn(_db_path(), readonly=True)

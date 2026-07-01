@@ -23,6 +23,7 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Any
 
 DB_PATH = "/opt/linux-ai-server/data/claude_memory.db"
 # Live test results: run-all-tests.sh writes coverage.db daily. (ci_tests.db is
@@ -61,7 +62,7 @@ def load_env() -> dict[str, str]:
     return env
 
 
-def memory_delta(window_hours: int) -> dict:
+def memory_delta(window_hours: int) -> dict[str, Any]:
     """24h delta from claude_memory.db — open bugs, recent flips, unread notes."""
     since = (dt.datetime.now() - dt.timedelta(hours=window_hours)).strftime("%Y-%m-%d %H:%M:%S")
     db = sqlite3.connect(DB_PATH)
@@ -106,7 +107,7 @@ def memory_delta(window_hours: int) -> dict:
         db.close()
 
 
-def github_commits(repo: str, since_iso: str, token: str | None = None, timeout: float = 4.0) -> list[dict]:
+def github_commits(repo: str, since_iso: str, token: str | None = None, timeout: float = 4.0) -> list[dict[str, Any]]:
     """GitHub commit feed. Public repos work without auth; private repos
     require GITHUB_TOKEN with `repo` scope. 404 → silently returns []."""
     url = f"https://api.github.com/repos/{repo}/commits?since={urllib.parse.quote(since_iso)}&per_page=20"
@@ -130,9 +131,9 @@ def github_commits(repo: str, since_iso: str, token: str | None = None, timeout:
     return out
 
 
-def all_commits(window_hours: int, token: str | None = None) -> dict[str, list[dict]]:
+def all_commits(window_hours: int, token: str | None = None) -> dict[str, list[dict[str, Any]]]:
     since_iso = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=window_hours)).isoformat(timespec="seconds")
-    out: dict[str, list[dict]] = {}
+    out: dict[str, list[dict[str, Any]]] = {}
     with ThreadPoolExecutor(max_workers=len(REPOS)) as ex:
         futs = {ex.submit(github_commits, repo, since_iso, token): proj for proj, repo in REPOS.items()}
         for fut in as_completed(futs):
@@ -144,9 +145,9 @@ def all_commits(window_hours: int, token: str | None = None) -> dict[str, list[d
     return out
 
 
-def cron_health() -> dict:
+def cron_health() -> dict[str, Any]:
     """Latest self-pentest run summary + age."""
-    out: dict = {"self_pentest": None}
+    out: dict[str, Any] = {"self_pentest": None}
     if not PENTEST_LOG_ROOT.exists():
         return out
     days = sorted([p for p in PENTEST_LOG_ROOT.iterdir() if p.is_dir()], reverse=True)
@@ -155,7 +156,7 @@ def cron_health() -> dict:
     latest = days[0]
     age = (dt.date.today() - dt.date.fromisoformat(latest.name)).days
     summary = latest / "summary.tsv"
-    findings: list[dict] = []
+    findings: list[dict[str, Any]] = []
     if summary.exists():
         for line in summary.read_text().splitlines():
             parts = line.split("|")
@@ -178,7 +179,7 @@ def cron_health() -> dict:
     return out
 
 
-def cron_outcomes_health() -> dict:
+def cron_outcomes_health() -> dict[str, Any]:
     """Latest REAL outcome per cron job from server.db.cron_outcomes (written by
     klipper-cron-wrap.sh, LIVESYS Faz 1). Surfaces jobs whose result — not just
     rc — is fail/partial within the window. Complements Uptime-Kuma ('never
@@ -227,7 +228,7 @@ def _gh_json(args: list[str], timeout: float = 8.0):
         return None
 
 
-def _pr_ci_state(rollup: list) -> str:
+def _pr_ci_state(rollup: list[Any]) -> str:
     """statusCheckRollup → green | failing | pending | unknown. CheckRun(.status/
     .conclusion) + legacy StatusContext(.state) ikisini de değerlendirir."""
     if not rollup:
@@ -246,11 +247,11 @@ def _pr_ci_state(rollup: list) -> str:
     return "unknown"
 
 
-def pr_review_health() -> dict:
+def pr_review_health() -> dict[str, Any]:
     """LIVESYS PR-review FAZ1 (ÜCRETSİZ): 7 repo açık PR + Codex-inline + CI durumu
     topla → digest review-triyaj sinyali. Pure observer (gh okuma; otonom Claude
     YOK = token-maliyeti yok). fetch-fail ayırt edilir (sessiz-sıfır değil)."""
-    prs: list[dict] = []
+    prs: list[dict[str, Any]] = []
     fetch_fail = False
     for repo in REVIEW_REPOS:
         data = _gh_json(["pr", "list", "-R", repo, "--state", "open", "--json", "number,title,isDraft,statusCheckRollup"])
@@ -289,7 +290,7 @@ def pr_review_health() -> dict:
     return {"prs": prs, "signaled": prs, "fetch_fail": fetch_fail}
 
 
-def _liveness_health() -> dict:
+def _liveness_health() -> dict[str, Any]:
     """LIVESYS Faz 2 liveness monitor (app.core.liveness). dead/stale kaynakları
     yüzeye çıkarır. Hata/yokluk halinde {} (dijest yine de üretilir)."""
     try:
@@ -300,7 +301,7 @@ def _liveness_health() -> dict:
         return {}
 
 
-def system_health() -> dict:
+def system_health() -> dict[str, Any]:
     def _run(cmd: list[str]) -> str:
         try:
             return subprocess.run(cmd, capture_output=True, text=True, timeout=3).stdout.strip()
@@ -328,7 +329,7 @@ def _server_db_path() -> str:
     return os.environ.get("DB_PATH") or str(Path(DB_PATH).with_name("server.db"))
 
 
-def vps_health() -> dict:
+def vps_health() -> dict[str, Any]:
     """Latest VPS sample from server.db.vps_metrics_history (written by DevOpsAgent).
 
     Returns {} when no data exists yet — digest sections degrade gracefully.
@@ -355,7 +356,7 @@ def vps_health() -> dict:
     }
 
 
-def ci_health() -> dict:
+def ci_health() -> dict[str, Any]:
     """Latest test run from coverage.db — totals, failing projects, staleness.
 
     coverage.db.test_runs is written daily by run-all-tests.sh. Returns {} when
@@ -409,7 +410,7 @@ def ci_health() -> dict:
     }
 
 
-def _ci_projects(row) -> dict:
+def _ci_projects(row) -> dict[str, Any]:
     """{project: passed_count} from a test_runs.details JSON column."""
     if row is None:
         return {}
@@ -419,7 +420,7 @@ def _ci_projects(row) -> dict:
         return {}
 
 
-def _project_trend(cur_row, prev_row) -> tuple[list[dict], list[dict]]:
+def _project_trend(cur_row, prev_row) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Per-project passed-count delta of the latest run vs the previous one.
 
     Returns (all_changes, regressions). Consecutive-run window keeps day-to-day
@@ -429,7 +430,7 @@ def _project_trend(cur_row, prev_row) -> tuple[list[dict], list[dict]]:
     cur, prev = _ci_projects(cur_row), _ci_projects(prev_row)
     if not prev:
         return [], []
-    changes: list[dict] = []
+    changes: list[dict[str, Any]] = []
     for proj in sorted(set(cur) | set(prev)):
         if proj not in prev:
             changes.append({"project": proj, "kind": "new", "to": cur[proj]})
@@ -441,7 +442,7 @@ def _project_trend(cur_row, prev_row) -> tuple[list[dict], list[dict]]:
     return changes, regressions
 
 
-def _trend_tokens(trend: list[dict]) -> list[str]:
+def _trend_tokens(trend: list[dict[str, Any]]) -> list[str]:
     """Compact per-project change tokens, e.g. '↑bilge-arena +6', '⊘old-proj'."""
     toks: list[str] = []
     for c in trend:
@@ -456,7 +457,7 @@ def _trend_tokens(trend: list[dict]) -> list[str]:
     return toks
 
 
-def has_signal(d: dict) -> bool:
+def has_signal(d: dict[str, Any]) -> bool:
     """Decide whether to emit at all — 'NOTHING_NEW' if nothing actionable."""
     m = d["memory"]
     if m["new_bugs"] or m["unread_notes"]:
@@ -483,7 +484,7 @@ def has_signal(d: dict) -> bool:
     return bool(ci and ((ci.get("failed") or 0) > 0 or ci.get("stale") or ci.get("regressions")))
 
 
-def render_text(d: dict) -> str:
+def render_text(d: dict[str, Any]) -> str:
     L: list[str] = []
     today = dt.date.today().isoformat()
     L.append(f"═══ Digest — {today} ═══")
@@ -577,7 +578,7 @@ def render_text(d: dict) -> str:
     return "\n".join(L)
 
 
-def render_html(d: dict) -> str:
+def render_html(d: dict[str, Any]) -> str:
     """Telegram parse_mode=HTML — only <b>, <i>, <code>, <pre> are safe (no <br>)."""
     today = dt.date.today().isoformat()
     m = d["memory"]
@@ -677,7 +678,7 @@ def send_telegram(html: str, env: dict[str, str]) -> bool:
     return ok
 
 
-def gather(token: str | None = None) -> dict:
+def gather(token: str | None = None) -> dict[str, Any]:
     return {
         "memory": memory_delta(WINDOW_HOURS),
         "commits": all_commits(WINDOW_HOURS, token),

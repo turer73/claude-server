@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from typing import Any
 
 import requests
 from fastapi import APIRouter, Depends
@@ -27,9 +28,9 @@ GPU_BUSY_PATHS = [
 router = APIRouter(prefix="/api/v1/llm", tags=["llm"])
 
 
-def _ollama_models() -> dict:
+def _ollama_models() -> dict[str, Any]:
     """Ollama'da yuklu modeller + boyut + modified + currently loaded."""
-    out: dict = {"ok": False, "models": [], "loaded": []}
+    out: dict[str, Any] = {"ok": False, "models": [], "loaded": []}
     try:
         r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
         if r.ok:
@@ -66,7 +67,7 @@ def _ollama_models() -> dict:
     return out
 
 
-def _gpu_status() -> dict:
+def _gpu_status() -> dict[str, Any]:
     """Vulkan/GPU runtime — systemctl env probe + busy percent + Ollama log probe.
 
     Ollama process /proc/<pid>/environ permission 0400 ollama:ollama
@@ -75,7 +76,7 @@ def _gpu_status() -> dict:
     """
     import subprocess
 
-    info: dict = {
+    info: dict[str, Any] = {
         "vulkan_enabled": False,
         "backend": "cpu",
         "gpu_name": None,
@@ -134,7 +135,7 @@ def _gpu_status() -> dict:
     return info
 
 
-def _anthropic_status() -> dict:
+def _anthropic_status() -> dict[str, Any]:
     return {
         "configured": bool(ANTHROPIC_KEY),
         "model": ANTHROPIC_MODEL,
@@ -142,9 +143,9 @@ def _anthropic_status() -> dict:
     }
 
 
-def _usage_stats(hours: int = 24) -> dict:
+def _usage_stats(hours: int = 24) -> dict[str, Any]:
     """rag_metrics.db'den son N saat istatistik."""
-    out: dict = {"ok": False, "period_hours": hours, "total": 0}
+    out: dict[str, Any] = {"ok": False, "period_hours": hours, "total": 0}
     since = int(time.time()) - hours * 3600
     try:
         conn = sqlite3.connect(rag_module.METRICS_DB, timeout=2)

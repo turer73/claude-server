@@ -10,6 +10,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 
@@ -60,7 +61,7 @@ class ValidationReport:
     warning_count: int = 0
     info_count: int = 0
     errors: list[ValidationError] = field(default_factory=list)
-    by_game: dict[str, dict] = field(default_factory=dict)
+    by_game: dict[str, dict[str, Any]] = field(default_factory=dict)
     by_rule: dict[str, int] = field(default_factory=dict)
     duration_ms: float = 0.0
     timestamp: str = ""
@@ -91,7 +92,7 @@ class QuestionValidator:
         game: str | None = None,
         limit: int = 1000,
         offset: int = 0,
-    ) -> tuple[list[dict], int]:
+    ) -> tuple[list[dict[str, Any]], int]:
         """Fetch questions from Supabase with pagination. Returns (rows, total_count)."""
         url = f"{self._url}/rest/v1/questions"
         params: dict[str, str] = {
@@ -110,9 +111,9 @@ class QuestionValidator:
             total = int(resp.headers.get("content-range", "0/0").split("/")[-1] or 0)
             return resp.json(), total
 
-    async def fetch_all_questions(self, *, game: str | None = None) -> list[dict]:
+    async def fetch_all_questions(self, *, game: str | None = None) -> list[dict[str, Any]]:
         """Fetch all questions with automatic pagination."""
-        all_rows: list[dict] = []
+        all_rows: list[dict[str, Any]] = []
         offset = 0
         while True:
             rows, total = await self.fetch_questions(game=game, limit=self.PAGE_SIZE, offset=offset)
@@ -124,7 +125,7 @@ class QuestionValidator:
 
     # --- Single question validation ---
 
-    def validate_question(self, q: dict) -> list[ValidationError]:
+    def validate_question(self, q: dict[str, Any]) -> list[ValidationError]:
         """Validate a single question dict. Returns list of errors (empty = valid)."""
         errors: list[ValidationError] = []
         qid = q.get("id", "unknown")
@@ -177,7 +178,7 @@ class QuestionValidator:
 
     def _validate_options_and_answer(
         self,
-        content: dict,
+        content: dict[str, Any],
         errors: list[ValidationError],
         _add,
         *,
@@ -233,8 +234,8 @@ class QuestionValidator:
 
     def _validate_standard(
         self,
-        q: dict,
-        content: dict,
+        q: dict[str, Any],
+        content: dict[str, Any],
         errors: list[ValidationError],
         _add,
     ) -> list[ValidationError]:
@@ -268,8 +269,8 @@ class QuestionValidator:
 
     def _validate_cloze_test(
         self,
-        q: dict,
-        content: dict,
+        q: dict[str, Any],
+        content: dict[str, Any],
         errors: list[ValidationError],
         _add,
     ) -> list[ValidationError]:
@@ -310,8 +311,8 @@ class QuestionValidator:
 
     def _validate_dialogue(
         self,
-        q: dict,
-        content: dict,
+        q: dict[str, Any],
+        content: dict[str, Any],
         errors: list[ValidationError],
         _add,
     ) -> list[ValidationError]:
@@ -347,7 +348,7 @@ class QuestionValidator:
             timestamp=datetime.now(UTC).isoformat(),
         )
 
-        game_stats: dict[str, dict] = {}
+        game_stats: dict[str, dict[str, Any]] = {}
 
         for q in questions:
             q_game = q.get("game", "unknown")
@@ -383,7 +384,7 @@ class QuestionValidator:
         report.duration_ms = (time.monotonic() - start) * 1000
         return report
 
-    async def get_summary(self) -> dict:
+    async def get_summary(self) -> dict[str, Any]:
         """Quick summary: total per game from Supabase."""
         summary = {}
         for game in VALID_GAMES:

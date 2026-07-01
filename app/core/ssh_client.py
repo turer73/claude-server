@@ -7,6 +7,7 @@ import hashlib
 import logging
 import uuid
 from datetime import datetime
+from typing import Any
 
 import paramiko
 
@@ -78,7 +79,7 @@ class SSHClient:
         client: paramiko.SSHClient,
         command: str,
         timeout: int = 30,
-    ) -> dict:
+    ) -> dict[str, Any]:
         try:
             stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
             exit_code = stdout.channel.recv_exit_status()
@@ -124,7 +125,7 @@ class SSHSessionManager:
 
     def __init__(self, max_sessions: int = 5) -> None:
         self._max = max_sessions
-        self._sessions: dict[str, dict] = {}
+        self._sessions: dict[str, dict[str, Any]] = {}
 
     def add(self, host: str, username: str, client: paramiko.SSHClient) -> str:
         if len(self._sessions) >= self._max:
@@ -149,7 +150,7 @@ class SSHSessionManager:
         if session:
             session["client"].close()
 
-    def list_sessions(self) -> list[dict]:
+    def list_sessions(self) -> list[dict[str, Any]]:
         return [
             {"id": sid, "host": s["host"], "username": s["username"], "connected_at": s["connected_at"]}
             for sid, s in self._sessions.items()

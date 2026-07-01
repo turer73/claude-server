@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from app.db.database import Database
@@ -142,7 +142,7 @@ async def fetch_lesson_context(
     project: str,
     signature: str,
     limit: int = 5,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Return past lessons matching (project, signature), newest first."""
     rows = await db.fetch_all(
         """

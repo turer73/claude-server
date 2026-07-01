@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 
 from app.core import code_reviewer as cr
 from app.core.agents.base import ActionRegistry
@@ -17,7 +18,7 @@ class ReviewAction:
     name = "review"
     description = "Bir dosyayı qwen-coder ile incele → bulgular (read-only, dedup'lı kaydet)"
 
-    async def run(self, path: Path | None = None, **kwargs) -> dict:
+    async def run(self, path: Path | None = None, **kwargs) -> dict[str, Any]:
         if path is None:
             return {"new": 0, "dup": 0, "p1_titles": []}
         findings = await cr.review_file(path)
@@ -32,7 +33,7 @@ class LearnAction:
     name = "learn"
     description = "Tekrar-eden bulgu desenini 'learning' dersine sentezle"
 
-    async def run(self, **kwargs) -> dict:
+    async def run(self, **kwargs) -> dict[str, Any]:
         created = await asyncio.to_thread(cr.synthesize_lesson)
         return {"created": created}
 
@@ -41,7 +42,7 @@ class ResearchAction:
     name = "research"
     description = "Bir stack-topic için web-araştır → benimsenecek yeni-yapı bulgusu"
 
-    async def run(self, topic: str = "", **kwargs) -> dict:
+    async def run(self, topic: str = "", **kwargs) -> dict[str, Any]:
         found = await cr.research_new_structure(topic)
         return {"found": found, "topic": topic}
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import platform
 import time
+from typing import Any
 
 import psutil
 
@@ -14,7 +15,7 @@ from app.exceptions import NotFoundError, ShellExecutionError
 class SystemManager:
     """System management operations."""
 
-    def get_system_info(self) -> dict:
+    def get_system_info(self) -> dict[str, Any]:
         mem = psutil.virtual_memory()
         disk = psutil.disk_usage("/")
         try:
@@ -38,7 +39,7 @@ class SystemManager:
             "load_avg": load,
         }
 
-    def get_processes(self, limit: int = 20, sort_by: str = "cpu") -> list[dict]:
+    def get_processes(self, limit: int = 20, sort_by: str = "cpu") -> list[dict[str, Any]]:
         procs = []
         for p in psutil.process_iter(["pid", "name", "cpu_percent", "memory_info", "status", "username"]):
             try:

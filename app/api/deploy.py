@@ -7,6 +7,7 @@ import os
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -21,7 +22,7 @@ PROJECTS_FILE = "/data/claude/projects/registry.json"
 WORKSPACE = "/data/claude/workspace"
 
 
-def _load_registry() -> dict:
+def _load_registry() -> dict[str, Any]:
     try:
         with open(PROJECTS_FILE) as f:
             return json.load(f)
@@ -29,7 +30,7 @@ def _load_registry() -> dict:
         return {"projects": {}}
 
 
-def _save_registry(data: dict) -> None:
+def _save_registry(data: dict[str, Any]) -> None:
     os.makedirs(os.path.dirname(PROJECTS_FILE), exist_ok=True)
     with open(PROJECTS_FILE, "w") as f:
         json.dump(data, f, indent=2)
@@ -45,7 +46,7 @@ class SelfDeployRequest(BaseModel):
 
 
 @router.post("/self")
-async def deploy_self(req: SelfDeployRequest, _: None = Depends(require_admin)) -> dict:
+async def deploy_self(req: SelfDeployRequest, _: None = Depends(require_admin)) -> dict[str, Any]:
     """Rebuild and restart the linux-ai-server from /opt/linux-ai-server."""
     settings = get_settings()
     executor = ShellExecutor(whitelist=settings.shell_whitelist)
@@ -83,7 +84,7 @@ class ProjectRegister(BaseModel):
 
 
 @router.post("/projects/register")
-async def register_project(req: ProjectRegister, _: None = Depends(require_admin)) -> dict:
+async def register_project(req: ProjectRegister, _: None = Depends(require_admin)) -> dict[str, Any]:
     """Register a project for tracking."""
     registry = _load_registry()
     registry["projects"][req.name] = {
@@ -100,14 +101,14 @@ async def register_project(req: ProjectRegister, _: None = Depends(require_admin
 
 
 @router.get("/projects")
-async def list_projects(_: None = Depends(require_admin)) -> dict:
+async def list_projects(_: None = Depends(require_admin)) -> dict[str, Any]:
     """List all tracked projects."""
     registry = _load_registry()
     return registry
 
 
 @router.get("/projects/{name}")
-async def get_project(name: str, _: None = Depends(require_admin)) -> dict:
+async def get_project(name: str, _: None = Depends(require_admin)) -> dict[str, Any]:
     """Get project details including git status."""
     registry = _load_registry()
     project = registry["projects"].get(name)
@@ -136,7 +137,7 @@ async def get_project(name: str, _: None = Depends(require_admin)) -> dict:
 
 
 @router.delete("/projects/{name}")
-async def unregister_project(name: str, _: None = Depends(require_admin)) -> dict:
+async def unregister_project(name: str, _: None = Depends(require_admin)) -> dict[str, Any]:
     """Remove a project from tracking."""
     registry = _load_registry()
     if name in registry["projects"]:
@@ -155,7 +156,7 @@ class DeployProjectRequest(BaseModel):
 
 
 @router.post("/projects/{name}/deploy")
-async def deploy_project(name: str, _: None = Depends(require_admin)) -> dict:
+async def deploy_project(name: str, _: None = Depends(require_admin)) -> dict[str, Any]:
     """Deploy a tracked project — git pull + build + restart."""
     registry = _load_registry()
     project = registry["projects"].get(name)
@@ -186,7 +187,7 @@ async def deploy_project(name: str, _: None = Depends(require_admin)) -> dict:
 
 
 @router.get("/memory/context")
-async def memory_context(request: Request) -> dict:
+async def memory_context(request: Request) -> dict[str, Any]:
     """Full session context from memory DB for Claude hooks. API-key auth (no JWT)."""
     from app.exceptions import AuthenticationError
 
@@ -225,7 +226,7 @@ async def memory_context(request: Request) -> dict:
 
 
 @router.get("/workspace/notes")
-async def list_notes(_: None = Depends(require_admin)) -> dict:
+async def list_notes(_: None = Depends(require_admin)) -> dict[str, Any]:
     """List Claude's workspace notes."""
     notes_dir = Path(WORKSPACE)
     notes = []
@@ -259,7 +260,7 @@ def _safe_note_path(name: str) -> Path:
 
 
 @router.post("/workspace/notes")
-async def save_note(req: NoteRequest, _: None = Depends(require_admin)) -> dict:
+async def save_note(req: NoteRequest, _: None = Depends(require_admin)) -> dict[str, Any]:
     """Save a note to Claude's workspace."""
     Path(WORKSPACE).mkdir(parents=True, exist_ok=True)
     path = _safe_note_path(req.name)
@@ -268,7 +269,7 @@ async def save_note(req: NoteRequest, _: None = Depends(require_admin)) -> dict:
 
 
 @router.get("/workspace/notes/{name}")
-async def read_note(name: str, _: None = Depends(require_admin)) -> dict:
+async def read_note(name: str, _: None = Depends(require_admin)) -> dict[str, Any]:
     """Read a workspace note."""
     path = _safe_note_path(name)
     if not path.is_file():

@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 import psutil
 
@@ -51,7 +52,7 @@ class CodeReviewAgent:
             except asyncio.CancelledError:
                 pass
 
-    def status(self) -> dict:
+    def status(self) -> dict[str, Any]:
         # Display GERÇEK route'u yansıtsın (cr._MODEL sabiti DEĞİL) — LLM_ROUTE_* override'ları
         # tarama=Haiku / kontrol+sentez=Sonnet'i gösterir.
         from app.core.agents.llmcore import llm_core

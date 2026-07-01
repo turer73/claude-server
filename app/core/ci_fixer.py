@@ -12,6 +12,7 @@ import logging
 import os
 import shutil
 import uuid
+from typing import Any
 
 import httpx
 
@@ -128,7 +129,7 @@ def _find_claude() -> str | None:
     return shutil.which("claude")
 
 
-def _build_env() -> dict:
+def _build_env() -> dict[str, Any]:
     """Build environment dict with OAuth token."""
     env = {**os.environ}
     oauth = _load_claude_token()
@@ -167,7 +168,7 @@ def build_fix_prompt(
     error: str,
     source_file: str | None = None,
     prev_errors: list[str] | None = None,
-    context_lessons: list[dict] | None = None,
+    context_lessons: list[dict[str, Any]] | None = None,
 ) -> str:
     """Build a prompt for Claude Code to fix a failing test.
 
@@ -217,7 +218,7 @@ def build_fix_prompt(
 # ---------------------------------------------------------------------------
 
 
-async def _call_claude_code(prompt: str, cwd: str) -> dict:
+async def _call_claude_code(prompt: str, cwd: str) -> dict[str, Any]:
     """Call Claude Code CLI and return parsed result.
 
     Returns::
@@ -313,7 +314,7 @@ async def attempt_fix(
     error: str,
     source_file: str | None = None,
     max_attempts: int = MAX_ATTEMPTS,
-) -> dict:
+) -> dict[str, Any]:
     """Attempt to fix a failing test using Claude Code.
 
     Loops up to *max_attempts* times: builds prompt, calls Claude Code,
@@ -353,7 +354,7 @@ async def attempt_fix(
     try:
         cwd = PROJECT_REGISTRY[project]["path"]
         prev_errors: list[str] = []
-        claude_responses: list[dict] = []
+        claude_responses: list[dict[str, Any]] = []
 
         for attempt in range(1, max_attempts + 1):
             logger.info(
@@ -375,7 +376,7 @@ async def attempt_fix(
             # 1. Dedup check: if the same signature failed in >=2 recent runs,
             #    switch to context-enriched strategy and fetch past lessons.
             strategy = "fix-direct"
-            context_rows: list[dict] | None = None
+            context_rows: list[dict[str, Any]] | None = None
             if _dedup_enabled() and db is not None:
                 try:
                     recent = await get_recent_occurrences(db, signature, window=3)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Any
 
 import aiosqlite
 
@@ -240,17 +241,17 @@ class Database:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         return self._conn
 
-    async def execute(self, sql: str, params: tuple = ()) -> aiosqlite.Cursor:
+    async def execute(self, sql: str, params: tuple[Any, ...] = ()) -> aiosqlite.Cursor:
         cursor = await self.conn.execute(sql, params)
         await self.conn.commit()
         return cursor
 
-    async def fetch_all(self, sql: str, params: tuple = ()) -> list[dict]:
+    async def fetch_all(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         cursor = await self.conn.execute(sql, params)
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
-    async def fetch_one(self, sql: str, params: tuple = ()) -> dict | None:
+    async def fetch_one(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
         cursor = await self.conn.execute(sql, params)
         row = await cursor.fetchone()
         return dict(row) if row else None

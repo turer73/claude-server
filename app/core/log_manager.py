@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 from collections import Counter
+from typing import Any
 
 
 class LogManager:
@@ -59,7 +60,7 @@ class LogManager:
                     break
         return results
 
-    def stats(self) -> dict:
+    def stats(self) -> dict[str, Any]:
         total = 0
         source_counts: dict[str, int] = {}
         level_counts: Counter = Counter()

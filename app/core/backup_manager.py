@@ -7,6 +7,7 @@ import sqlite3
 import tarfile
 import tempfile
 from datetime import datetime
+from typing import Any
 
 from app.exceptions import NotFoundError
 
@@ -39,7 +40,7 @@ class BackupManager:
         self._backup_dir = backup_dir
         self._retention = retention_days
 
-    def create_backup(self, label: str = "") -> dict:
+    def create_backup(self, label: str = "") -> dict[str, Any]:
         """Tarball backup. SQLite .db files use online backup API to avoid
         mid-transaction snapshots (fixes concurrent 'database is locked' race
         with live writers). -wal/-shm sidecars are excluded — they're only
@@ -115,7 +116,7 @@ class BackupManager:
             "created": datetime.now().isoformat(),
         }
 
-    def list_backups(self) -> list[dict]:
+    def list_backups(self) -> list[dict[str, Any]]:
         if not os.path.isdir(self._backup_dir):
             return []
         backups = []

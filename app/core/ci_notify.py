@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 
@@ -16,7 +17,7 @@ async def notify_ci_result(
     total: int,
     passed: int,
     failed: int,
-    projects: list[dict],
+    projects: list[dict[str, Any]],
     run_id: int | None = None,
     trigger: str = "manual",
 ) -> None:

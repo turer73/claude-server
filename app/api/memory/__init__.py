@@ -5,7 +5,7 @@ Duplicate koruması, FTS arama, read tracking, lifecycle yönetimi.
 
 import asyncio
 import re
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -112,7 +112,7 @@ async def _send_telegram(message: str, parse_mode: str = "HTML"):
         pass
 
 
-async def _fire_event(event: str, payload: dict):
+async def _fire_event(event: str, payload: dict[str, Any]):
     try:
         db = get_db()
         _ensure_webhooks_table(db)
@@ -199,9 +199,9 @@ class SessionCreate(BaseModel):
     device_name: str
     session_num: int | None = None
     summary: str
-    tasks_completed: list | None = None
-    files_changed: list | None = None
-    bugs_found: list | None = None
+    tasks_completed: list[Any] | None = None
+    files_changed: list[Any] | None = None
+    bugs_found: list[Any] | None = None
     notes: str | None = None
 
 
@@ -227,7 +227,7 @@ class TaskLogCreate(BaseModel):
     project: str
     task: str
     status: str | None = "completed"
-    files_changed: list | None = None
+    files_changed: list[Any] | None = None
     details: str | None = None
     rationale: str | None = None
 

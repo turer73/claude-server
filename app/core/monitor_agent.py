@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import psutil
 
@@ -10,7 +11,7 @@ import psutil
 class MonitorAgent:
     """Collects system metrics and checks alert thresholds."""
 
-    def collect_metrics(self) -> dict:
+    def collect_metrics(self) -> dict[str, Any]:
         cpu = psutil.cpu_percent(interval=0.1)
         mem = psutil.virtual_memory()
         disk = psutil.disk_usage("/")
@@ -59,7 +60,7 @@ class MonitorAgent:
             "network_recv_mb": round(net.bytes_recv / (1024 * 1024), 2),
         }
 
-    def check_alerts(self, metrics: dict, thresholds: dict) -> list[dict]:
+    def check_alerts(self, metrics: dict[str, Any], thresholds: dict) -> list[dict]:
         alerts = []
         checks = [
             ("cpu", "cpu_percent", "cpu_percent"),

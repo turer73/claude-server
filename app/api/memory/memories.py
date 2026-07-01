@@ -1,3 +1,5 @@
+from typing import Any
+
 """Memory CRUD + surface/world-model router handler'ları (memory paketi).
 
 Gövdeler birebir taşındı (Faz 3). _has_merged_into / _surface_query yalnız bu
@@ -39,7 +41,7 @@ def _surface_query(type: str | None, limit: int, offset: int):
     db = get_db()
     try:
         cond = "active=1" + (" AND merged_into IS NULL" if _has_merged_into(db) else "")
-        wparams: list = []
+        wparams: list[Any] = []
         if type:
             cond += " AND type=?"
             wparams.append(type)

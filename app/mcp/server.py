@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from typing import Any
 
 from app.mcp.tools import execute_tool, get_tool_definitions
 
@@ -53,7 +54,7 @@ class MCPServer:
                 }
             )
 
-    def _handle_initialize(self, msg_id: int, params: dict) -> str:
+    def _handle_initialize(self, msg_id: int, params: dict[str, Any]) -> str:
         self._initialized = True
         return json.dumps(
             {
@@ -77,7 +78,7 @@ class MCPServer:
             }
         )
 
-    def _handle_tools_call(self, msg_id: int, params: dict) -> str:
+    def _handle_tools_call(self, msg_id: int, params: dict[str, Any]) -> str:
         name = params.get("name", "")
         arguments = params.get("arguments", {})
         result_text = execute_tool(name, arguments)

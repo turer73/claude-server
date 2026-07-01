@@ -18,6 +18,7 @@ import asyncio
 import logging
 import threading
 from contextlib import asynccontextmanager, contextmanager
+from typing import Any
 
 import httpx
 
@@ -144,11 +145,13 @@ class LLMCore:
                 yield
 
     @staticmethod
-    def _payload(prompt: str, model: str, system: str | None, temperature: float, num_predict: int | None, fmt: dict | None = None) -> dict:
-        options: dict = {"temperature": temperature}
+    def _payload(
+        prompt: str, model: str, system: str | None, temperature: float, num_predict: int | None, fmt: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        options: dict[str, Any] = {"temperature": temperature}
         if num_predict:
             options["num_predict"] = num_predict
-        payload: dict = {"model": model, "prompt": prompt, "stream": False, "options": options}
+        payload: dict[str, Any] = {"model": model, "prompt": prompt, "stream": False, "options": options}
         if system:
             payload["system"] = system
         if fmt:
@@ -167,7 +170,7 @@ class LLMCore:
         timeout: int = 60,
         raise_on_error: bool = False,
         priority: str = "normal",
-        fmt: dict | None = None,
+        fmt: dict[str, Any] | None = None,
     ) -> str:
         """Async üretim. Hata → "" (fail-silent) veya raise_on_error ise istisna. model routing'i ezer.
         priority='high' (veya task∈_HIGH_PRIORITY_TASKS) → rutin-işi geçer (rezerv-permit).
@@ -216,7 +219,7 @@ class LLMCore:
         timeout: int = 60,
         raise_on_error: bool = False,
         priority: str = "normal",
-        fmt: dict | None = None,
+        fmt: dict[str, Any] | None = None,
     ) -> str:
         """Sync üretim (requests) — FastAPI threadpool çağrıcıları için. Aynı routing/raise/öncelik.
         fmt (Ollama JSON-schema) → garantili structured output (claude'da yok-sayılır)."""
@@ -262,10 +265,10 @@ class LLMCore:
         *,
         task: str = "default",
         model: str | None = None,
-        options: dict | None = None,
+        options: dict[str, Any] | None = None,
         timeout: int = 300,
         raise_on_error: bool = False,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """HAM yanıt dict'i (response + eval_count/eval_duration metrikleri) — metrik+özel-options
         isteyen sync çağrıcılar için (rag /ask: num_ctx, tps). generate_sync string döndürür; bu dict.
         Routing/env-override yine geçerli. Hata → {} (veya raise_on_error)."""
@@ -298,14 +301,14 @@ class LLMCore:
 
     async def chat(
         self,
-        messages: list[dict],
+        messages: list[dict[str, Any]],
         *,
         task: str = "default",
         model: str | None = None,
         timeout: int = 120,
         raise_on_error: bool = False,
         priority: str = "normal",
-        fmt: dict | None = None,
+        fmt: dict[str, Any] | None = None,
     ) -> str:
         """Mesaj-listesi (/api/chat) → asistan içeriği (str). Yerel ollama chat (generate'in
         sohbet-eşi: rol'lü messages, /no_think çağrıcıda). Fail-silent "" veya raise_on_error.
@@ -321,7 +324,7 @@ class LLMCore:
         _tokens = None
         try:
             async with self._ollama_gate_async(prio):  # yerel-CPU vanası + öncelik
-                payload: dict = {"model": model, "messages": messages, "stream": False}
+                payload: dict[str, Any] = {"model": model, "messages": messages, "stream": False}
                 if fmt:
                     payload["format"] = fmt  # Ollama structured-output (JSON-schema)
                 async with httpx.AsyncClient(timeout=timeout) as client:

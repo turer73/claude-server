@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -65,7 +66,7 @@ class RAGEngine:
                 chunks.append(chunk)
         return chunks
 
-    async def index_text(self, text: str, source: str = "unknown", metadata: dict | None = None) -> dict:
+    async def index_text(self, text: str, source: str = "unknown", metadata: dict[str, Any] | None = None) -> dict:
         """Index a text document into ChromaDB."""
         col_id = await self._ensure_collection()
         chunks = self._chunk_text(text)
@@ -95,7 +96,7 @@ class RAGEngine:
 
         return {"indexed": len(chunks), "source": source}
 
-    async def index_file(self, path: str) -> dict:
+    async def index_file(self, path: str) -> dict[str, Any]:
         """Read and index a file."""
         p = Path(path)
         if not p.exists():
@@ -106,7 +107,7 @@ class RAGEngine:
         text = p.read_text(errors="replace")
         return await self.index_text(text, source=str(p.name))
 
-    async def index_directory(self, directory: str, pattern: str = "*.md") -> dict:
+    async def index_directory(self, directory: str, pattern: str = "*.md") -> dict[str, Any]:
         """Index all matching files in a directory."""
         p = Path(directory)
         if not p.is_dir():
@@ -124,7 +125,7 @@ class RAGEngine:
                     continue
         return {"files": files, "chunks": total, "directory": directory, "pattern": pattern}
 
-    async def query(self, question: str, n_results: int = 5, generate: bool = True) -> dict:
+    async def query(self, question: str, n_results: int = 5, generate: bool = True) -> dict[str, Any]:
         """Search for relevant chunks and optionally generate an answer."""
         col_id = await self._ensure_collection()
         q_embedding = await self._embed([question])
@@ -180,7 +181,7 @@ Answer:"""
             "sources": results,
         }
 
-    async def stats(self) -> dict:
+    async def stats(self) -> dict[str, Any]:
         """Get collection statistics."""
         col_id = await self._ensure_collection()
         url = f"{self._chroma}/api/v2/tenants/{self._tenant}/databases/{self._database}/collections/{col_id}/count"
@@ -188,7 +189,7 @@ Answer:"""
             resp = await client.get(url)
         return {"collection": self._collection, "document_count": resp.json()}
 
-    async def delete_collection(self) -> dict:
+    async def delete_collection(self) -> dict[str, Any]:
         """Delete the entire collection."""
         url = f"{self._chroma}/api/v2/tenants/{self._tenant}/databases/{self._database}/collections/{self._collection}"
         async with httpx.AsyncClient(timeout=10) as client:

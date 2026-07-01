@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Any
 
 from app.core.kernel_bridge import KernelBridge
 from app.core.log_manager import LogManager
@@ -16,7 +17,7 @@ from app.core.system_manager import SystemManager
 _MCP_FILE_ROOTS = ["/opt/linux-ai-server", "/var/log", "/tmp"]  # noqa: S108 (kasıtlı kök kapsamı, geçici-dosya değil)
 
 
-def get_tool_definitions() -> list[dict]:
+def get_tool_definitions() -> list[dict[str, Any]]:
     """Return all available MCP tools in MCP protocol format."""
     return [
         {
@@ -456,7 +457,7 @@ def _run_async(coro):
     return asyncio.run(coro)
 
 
-def execute_tool(name: str, arguments: dict) -> str:
+def execute_tool(name: str, arguments: dict[str, Any]) -> str:
     """Execute a tool and return JSON result."""
     try:
         if name == "kernel_status":

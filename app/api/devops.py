@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
@@ -16,7 +18,7 @@ def _get_agent(request: Request):
 
 
 @router.get("/status")
-async def agent_status(request: Request, _: None = Depends(require_auth)) -> dict:
+async def agent_status(request: Request, _: None = Depends(require_auth)) -> dict[str, Any]:
     """Get DevOps agent status — running state, check count, active alerts."""
     agent = _get_agent(request)
     if not agent:
@@ -25,7 +27,7 @@ async def agent_status(request: Request, _: None = Depends(require_auth)) -> dic
 
 
 @router.get("/alerts")
-async def active_alerts(request: Request, _: None = Depends(require_auth)) -> dict:
+async def active_alerts(request: Request, _: None = Depends(require_auth)) -> dict[str, Any]:
     """Get currently active (unresolved) alerts."""
     agent = _get_agent(request)
     if not agent:
@@ -39,7 +41,7 @@ async def alerts_history(
     limit: int = 50,
     severity: str | None = None,
     _: None = Depends(require_auth),
-) -> dict:
+) -> dict[str, Any]:
     """Get alert history from database."""
     agent = _get_agent(request)
     if not agent:
@@ -53,7 +55,7 @@ async def metrics_history(
     request: Request,
     minutes: int = 30,
     _: None = Depends(require_auth),
-) -> dict:
+) -> dict[str, Any]:
     """Get metrics history (last N minutes)."""
     agent = _get_agent(request)
     if not agent:
@@ -63,7 +65,7 @@ async def metrics_history(
 
 
 @router.get("/metrics/buffer")
-async def metrics_buffer(request: Request, _: None = Depends(require_auth)) -> dict:
+async def metrics_buffer(request: Request, _: None = Depends(require_auth)) -> dict[str, Any]:
     """Get in-memory metrics buffer (last ~1 hour)."""
     agent = _get_agent(request)
     if not agent:
@@ -72,7 +74,7 @@ async def metrics_buffer(request: Request, _: None = Depends(require_auth)) -> d
 
 
 @router.get("/vps/latest")
-async def vps_latest(request: Request, _: None = Depends(require_auth)) -> dict:
+async def vps_latest(request: Request, _: None = Depends(require_auth)) -> dict[str, Any]:
     """Latest VPS sample collected by the agent (in-memory, no DB round-trip)."""
     agent = _get_agent(request)
     if not agent:
@@ -85,7 +87,7 @@ async def vps_metrics_history(
     request: Request,
     minutes: int = 60,
     _: None = Depends(require_auth),
-) -> dict:
+) -> dict[str, Any]:
     """Get persisted VPS metric history (last N minutes)."""
     agent = _get_agent(request)
     if not agent:
@@ -95,7 +97,7 @@ async def vps_metrics_history(
 
 
 @router.get("/remediation/log")
-async def remediation_log(request: Request, _: None = Depends(require_auth)) -> dict:
+async def remediation_log(request: Request, _: None = Depends(require_auth)) -> dict[str, Any]:
     """Get remediation action history."""
     agent = _get_agent(request)
     if not agent:
@@ -104,7 +106,7 @@ async def remediation_log(request: Request, _: None = Depends(require_auth)) -> 
 
 
 @router.get("/playbooks")
-async def list_playbooks(_: None = Depends(require_auth)) -> dict:
+async def list_playbooks(_: None = Depends(require_auth)) -> dict[str, Any]:
     """List all defined remediation playbooks."""
     from app.core.config import get_settings
     from app.core.devops_agent import PLAYBOOKS
@@ -127,7 +129,7 @@ class ForceRemediateRequest(BaseModel):
 
 
 @router.post("/remediate/force")
-async def force_remediate(req: ForceRemediateRequest, request: Request, _: None = Depends(require_admin)) -> dict:
+async def force_remediate(req: ForceRemediateRequest, request: Request, _: None = Depends(require_admin)) -> dict[str, Any]:
     """Telegram [🔧 Uygula] -> playbook'u ELLE çalıştır (remediation_mode BYPASS;
     tıklama = açık insan-onayı). Auth: internal-key (admin scope) -> owner-chat
     kontrolü telegram_bot katmanında. event_id verilirse source DB'den çözülür."""

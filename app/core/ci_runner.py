@@ -13,6 +13,7 @@ import os
 import re
 import signal
 import time
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Project registry
 # ---------------------------------------------------------------------------
 
-PROJECT_REGISTRY: dict[str, dict] = {
+PROJECT_REGISTRY: dict[str, dict[str, Any]] = {
     # Tüm Node projeleri scripts/run-all-tests.sh ile aynı path/cmd
     # kullanir (2026-05-01: Windows -> Linux migrasyon, env=local).
     "panola": {
@@ -92,7 +93,7 @@ VPS_SSH_TIMEOUT = 10
 # ---------------------------------------------------------------------------
 
 
-def parse_vitest_json(raw: str) -> dict:
+def parse_vitest_json(raw: str) -> dict[str, Any]:
     """Parse vitest ``--reporter=json`` output into a normalised result dict.
 
     Returns::
@@ -149,7 +150,7 @@ def parse_vitest_json(raw: str) -> dict:
         if end and start:
             total_duration_ms += end - start
 
-    failures: list[dict] = []
+    failures: list[dict[str, Any]] = []
     for suite in data.get("testResults", []):
         suite_file = suite.get("name", "unknown")
         for assertion in suite.get("assertionResults", []):
@@ -193,7 +194,7 @@ _PYTEST_FAILURE_RE = re.compile(r"^(tests?/\S+\.py):(\d+):\s+(.+)$", re.MULTILIN
 _PYTEST_FAILED_RE = re.compile(r"^FAILED\s+(\S+)::(\S+)\s*-\s*(.+)$", re.MULTILINE)
 
 
-def parse_pytest_output(raw: str) -> dict:
+def parse_pytest_output(raw: str) -> dict[str, Any]:
     """Parse pytest ``-q --tb=line`` output into a normalised result dict.
 
     Returns same shape as :func:`parse_vitest_json`.
@@ -211,7 +212,7 @@ def parse_pytest_output(raw: str) -> dict:
     total = passed + failed
 
     # Extract individual failure lines from --tb=line output
-    failures: list[dict] = []
+    failures: list[dict[str, Any]] = []
     seen = set()
     for match in _PYTEST_FAILURE_RE.finditer(raw):
         filepath = match.group(1)
@@ -258,7 +259,7 @@ def parse_pytest_output(raw: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-async def run_project_tests(project: str) -> dict:
+async def run_project_tests(project: str) -> dict[str, Any]:
     """Run tests for *project* and return a normalised result dict.
 
     Raises :class:`ValueError` if *project* is not in the registry.
@@ -366,7 +367,7 @@ async def _communicate_or_kill(proc: asyncio.subprocess.Process, timeout: int) -
         raise
 
 
-async def _run_local(cfg: dict) -> tuple[str, str, int]:
+async def _run_local(cfg: dict[str, Any]) -> tuple[str, str, int]:
     """Execute test command locally via asyncio subprocess."""
     cmd = cfg["test_cmd"]
     cwd = cfg["path"]
@@ -387,7 +388,7 @@ async def _run_local(cfg: dict) -> tuple[str, str, int]:
     )
 
 
-async def _run_ssh(cfg: dict) -> tuple[str, str, int]:
+async def _run_ssh(cfg: dict[str, Any]) -> tuple[str, str, int]:
     """Execute test command on VPS via SSH subprocess."""
     remote_cmd = cfg["test_cmd"]
     ssh_cmd = f"ssh -o ConnectTimeout={VPS_SSH_TIMEOUT} -o StrictHostKeyChecking=accept-new {VPS_SSH_USER}@{VPS_SSH_HOST} '{remote_cmd}'"
