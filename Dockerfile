@@ -21,6 +21,8 @@ COPY --from=builder /install /usr/local
 COPY app/ /app/app/
 COPY config/ /app/config/
 COPY scripts/ /app/scripts/
+# ci_fixer fail-CLOSED (#242): settings dosyası yoksa ci_fixer abort eder → paketle gelsin
+COPY automation/ci-fixer-settings.json /app/automation/ci-fixer-settings.json
 
 WORKDIR /app
 
