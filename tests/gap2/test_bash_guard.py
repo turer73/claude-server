@@ -12,6 +12,7 @@ bash/python3 yoksa ( or. Windows lokal) modul skip edilir; otoriter dogrulama CI
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -37,6 +38,11 @@ def _python3_works() -> bool:
         return False
 
 
+def _on_ci() -> bool:
+    # GitHub Actions ve cogu CI 'CI=true' set eder.
+    return os.environ.get("CI", "").lower() in ("1", "true") or bool(os.environ.get("GITHUB_ACTIONS"))
+
+
 _SKIP_REASON = None
 if not _GUARD.exists():
     _SKIP_REASON = f"guard yok: {_GUARD}"
@@ -44,6 +50,14 @@ elif shutil.which("bash") is None:
     _SKIP_REASON = "bash yok (PATH)"
 elif not _python3_works():
     _SKIP_REASON = "calisan python3 yok (guard komut cikarimi icin gerekli; Windows shim degil)"
+
+# CI otoriter (Codex P2 #7): CI'de prereq eksikse SKIP = guard'i sessizce test-etmemek =
+# fail-open. CI'de eksik-prereq'i HATA yap; Windows-lokal skip'i koru.
+if _SKIP_REASON is not None and _on_ci():
+    raise RuntimeError(
+        f"bash-guard gate CI'de calistirilamadi ({_SKIP_REASON}) — CI otoriter, skip yok. "
+        "Prereq (bash+python3+guard) CI imajinda saglanmali."
+    )
 
 pytestmark = pytest.mark.skipif(_SKIP_REASON is not None, reason=str(_SKIP_REASON))
 
@@ -60,8 +74,6 @@ def _run_guard(cmd: str) -> int:
     HOOK_LOG_DIR temp'e yonlendirilir (/opt yazmasin); HOOK_DESTRUCTIVE_ACK env'den temizlenir.
     """
     payload = json.dumps({"tool_input": {"command": cmd}})
-    import os
-
     env = dict(os.environ)
     env.pop("HOOK_DESTRUCTIVE_ACK", None)  # env-ack ile tehlikeli komut bypass olmasin
     env.pop("HOOK_AUTONOMY", None)  # supervised (default) test et
