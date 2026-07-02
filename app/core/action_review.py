@@ -208,9 +208,7 @@ def _is_trivial_assert(line: str) -> bool:
     if re.search(r"expect\(\s*(true|1)\s*\)\.(toBe|toEqual|toBeTruthy)\(", s):
         return True
     m2 = re.search(r"expect\(\s*(.+?)\s*\)\.(?:toBe|toEqual)\(\s*(.+?)\s*\)", s)
-    if m2 and m2.group(1) == m2.group(2):
-        return True
-    return False
+    return bool(m2 and m2.group(1) == m2.group(2))
 
 
 def _normalize_argv(line: str) -> str:
