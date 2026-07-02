@@ -3,7 +3,7 @@ import pytest
 from app.auth.jwt_handler import create_token, decode_token
 from app.core.file_manager import FileManager
 from app.core.shell_executor import ShellExecutor
-from app.exceptions import AuthenticationError, AuthorizationError
+from app.exceptions import AuthenticationError, AuthorizationError, ValidationError
 
 
 class TestPathTraversal:
@@ -32,11 +32,26 @@ class TestPathTraversal:
             pytest.skip("Cannot create symlinks on this system")
 
     def test_null_byte(self, fm, tmp_path):
-        """Null bytes in path should be rejected."""
-        try:
+        """Null bytes in path should be rejected (either error is acceptable, but one MUST raise)."""
+        with pytest.raises((AuthorizationError, ValueError)):
             fm.validate_path(str(tmp_path / "file\x00.txt"))
-        except (AuthorizationError, ValueError):
-            pass  # Either is acceptable
+
+    def test_search_files_rejects_absolute_pattern(self, fm, tmp_path):
+        """Absolute pattern would let glob escape allowed paths (os.path.join drops base)."""
+        with pytest.raises(ValidationError):
+            fm.search_files(str(tmp_path), "/etc/passwd")
+
+    def test_search_files_rejects_traversal_pattern(self, fm, tmp_path):
+        with pytest.raises(ValidationError):
+            fm.search_files(str(tmp_path), "../../../etc/passwd")
+
+    def test_read_file_size_limit(self, fm, tmp_path):
+        """read_file must enforce _max_size before loading the whole file into RAM."""
+        big = tmp_path / "big.txt"
+        big.write_text("x" * 100)
+        fm._max_size = 10
+        with pytest.raises(ValidationError):
+            fm.read_file(str(big))
 
 
 class TestShellSecurity:

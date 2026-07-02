@@ -40,7 +40,8 @@ class AIInference:
         try:
             content = await llm_core.chat(messages, model=model, timeout=300, raise_on_error=True)
         except Exception as e:
-            raise ServerError(f"AI inference failed: {e}")
+            logger.error("AI inference failed: %s", e)
+            raise ServerError("AI inference failed") from e
         return {
             "response": content,
             "model": model,

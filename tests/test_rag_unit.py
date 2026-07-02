@@ -47,6 +47,7 @@ def test_chunk_text_overlap(engine):
 @pytest.mark.anyio
 async def test_embed(engine):
     mock_resp = MagicMock()
+    mock_resp.status_code = 200
     mock_resp.json.return_value = {"embeddings": [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]}
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp):
@@ -58,6 +59,7 @@ async def test_embed(engine):
 @pytest.mark.anyio
 async def test_embed_empty_response(engine):
     mock_resp = MagicMock()
+    mock_resp.status_code = 200
     mock_resp.json.return_value = {}
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp):
@@ -68,6 +70,7 @@ async def test_embed_empty_response(engine):
 @pytest.mark.anyio
 async def test_ensure_collection_existing(engine):
     mock_resp = MagicMock()
+    mock_resp.status_code = 200
     mock_resp.json.return_value = [{"name": "documents", "id": "abc-123"}]
 
     with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp):
@@ -78,9 +81,11 @@ async def test_ensure_collection_existing(engine):
 @pytest.mark.anyio
 async def test_ensure_collection_create(engine):
     mock_get = MagicMock()
+    mock_get.status_code = 200
     mock_get.json.return_value = []  # no existing collections
 
     mock_post = MagicMock()
+    mock_post.status_code = 200
     mock_post.json.return_value = {"id": "new-123"}
 
     with (
@@ -164,6 +169,7 @@ async def test_index_directory_not_found(engine):
 @pytest.mark.anyio
 async def test_query_search_only(engine):
     mock_query_resp = MagicMock()
+    mock_query_resp.status_code = 200
     mock_query_resp.json.return_value = {
         "documents": [["doc1", "doc2"]],
         "metadatas": [[{"source": "a.md"}, {"source": "b.md"}]],
@@ -184,6 +190,7 @@ async def test_query_search_only(engine):
 @pytest.mark.anyio
 async def test_stats(engine):
     mock_resp = MagicMock()
+    mock_resp.status_code = 200
     mock_resp.json.return_value = 42
 
     with (
@@ -202,3 +209,16 @@ async def test_delete_collection(engine):
     with patch("httpx.AsyncClient.delete", new_callable=AsyncMock, return_value=mock_resp):
         result = await engine.delete_collection()
         assert result["deleted"] == "documents"
+
+
+@pytest.mark.anyio
+async def test_embed_http_error_raises(engine):
+    """4xx/5xx from Ollama must raise ServerError, not crash on .json()."""
+    from app.exceptions import ServerError
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 500
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp):
+        with pytest.raises(ServerError, match="embed failed"):
+            await engine._embed(["test"])
