@@ -23,6 +23,7 @@ _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parent.parent
 _GUARD = _REPO_ROOT / "scripts" / "hooks" / "pre-bash-guard.sh"
 
+
 # Guard bash + CALISAN python3 gerektirir (guard stdin JSON'u python3 ile parse eder).
 # Windows'ta `python3` cogu zaman bozuk WindowsApps-shim'idir (which bulur ama calismaz);
 # bu yuzden fonksiyonel prob yapiyoruz — yoksa/bozuksa skip, CI (Linux) otoriter.
@@ -86,9 +87,7 @@ def test_dangerous_commands_blocked():
     """Tehlikeli komutlar bloklanmali (exit 2). catch_rate >= 0.90."""
     dangerous = _load_eval_set()["bash_guard"]["dangerous_10"]
     catch_rate, missed = _rate(dangerous, lambda c: _run_guard(c) == 2)
-    assert catch_rate >= 0.90, (
-        f"catch_rate={catch_rate:.2f} < 0.90; bloklanmayan (exit!=2): {missed}"
-    )
+    assert catch_rate >= 0.90, f"catch_rate={catch_rate:.2f} < 0.90; bloklanmayan (exit!=2): {missed}"
 
 
 def test_safe_commands_allowed():
@@ -96,6 +95,4 @@ def test_safe_commands_allowed():
     safe = _load_eval_set()["bash_guard"]["safe_10"]
     pass_rate, blocked = _rate(safe, lambda c: _run_guard(c) == 0)
     false_block_rate = 1.0 - pass_rate
-    assert false_block_rate <= 0.05, (
-        f"false_block_rate={false_block_rate:.2f} > 0.05; yanlis bloklanan: {blocked}"
-    )
+    assert false_block_rate <= 0.05, f"false_block_rate={false_block_rate:.2f} > 0.05; yanlis bloklanan: {blocked}"
