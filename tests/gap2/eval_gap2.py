@@ -40,11 +40,14 @@ REPORT_PATH = _HERE / "last_eval_report.json"
 
 # Kod-dogrulanmis gercek event type'lari (grep app/core/*.py). "exception"/"watchdog"
 # type'lari YOK; watchdog type=agent-health (source=watchdog:*) emit eder (Codex P2 #5).
+# Producer-key -> etiket. gap-7 watchdog RAW type 'agent-health' emit eder (source 'watchdog:*');
+# bu yuzden key='watchdog' ve eslesme _producer_key()'de source-bazli yapilir (Codex P2 #4).
 PRODUCER_TYPES = {
+    "exception": "gap-2 exception",
     "log-novelty": "gap-3 log-novelty",
     "anomaly": "gap-4 anomaly",
     "incident": "gap-5 correlation",
-    "agent-health": "gap-7 watchdog",
+    "watchdog": "gap-7 watchdog",
     "drift": "gap-8 drift",
 }
 
@@ -157,11 +160,12 @@ def eval_producers() -> dict:
         return {"skipped": f"events DB yok: {db_path} (DB_PATH set et)", "db_path": db_path, "tmp_fallback": is_tmp}
 
     # recent_events() LIMIT 50 kapali (Codex P2 #3) — TAM 7g penceresini dogrudan sorgula.
+    # source de cekilir: watchdog'u agent-health icinden ayiklamak icin (Codex P2 #4).
     try:
         con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         try:
             rows = con.execute(
-                "SELECT type, severity, notified FROM events WHERE timestamp > datetime('now', ?)",
+                "SELECT type, source, severity, notified FROM events WHERE timestamp > datetime('now', ?)",
                 (f"-{WINDOW_HOURS} hours",),
             ).fetchall()
         finally:
@@ -169,19 +173,31 @@ def eval_producers() -> dict:
     except sqlite3.Error as e:
         return {"skipped": f"events sorgu hata: {str(e)[:120]}", "db_path": db_path}
 
-    per_type: dict[str, dict] = {}
-    for t, sev, notified in rows:
-        b = per_type.setdefault(t or "?", {"count": 0, "by_severity": {}, "notified": 0})
+    def _producer_key(ev_type: str, source: str | None) -> str | None:
+        # watchdog type='agent-health' + source 'watchdog:*' emit eder (Codex P2 #4);
+        # agent-health'in diger source'lari (or. agent-health-report) watchdog DEGIL.
+        if ev_type == "agent-health":
+            return "watchdog" if (source or "").startswith("watchdog:") else None
+        return ev_type if ev_type in PRODUCER_TYPES else None
+
+    per: dict[str, dict] = {k: {"count": 0, "by_severity": {}, "notified": 0} for k in PRODUCER_TYPES}
+    other: dict[str, int] = {}
+    for ev_type, source, sev, notified in rows:
+        key = _producer_key(ev_type or "?", source)
+        if key is None:
+            other[ev_type or "?"] = other.get(ev_type or "?", 0) + 1
+            continue
+        b = per[key]
         b["count"] += 1
         b["by_severity"][sev or "info"] = b["by_severity"].get(sev or "info", 0) + 1
         if notified:
             b["notified"] += 1
 
     per_producer = {}
-    for t, label in PRODUCER_TYPES.items():
-        b = per_type.get(t, {"count": 0, "by_severity": {}, "notified": 0})
+    for key, label in PRODUCER_TYPES.items():
+        b = per[key]
         cnt = b["count"]
-        per_producer[t] = {
+        per_producer[key] = {
             "producer": label,
             "signal_count_7d": cnt,
             "by_severity": b["by_severity"],
@@ -194,8 +210,11 @@ def eval_producers() -> dict:
         "tmp_fallback": is_tmp,  # True => producer metrikleri supheli (yanlis-DB)
         "total_events_7d": len(rows),
         "per_producer": per_producer,
-        "other_types": {t: v["count"] for t, v in per_type.items() if t not in PRODUCER_TYPES},
-        "not": "sinyal-kalitesi (hacim+severity+notified); labelli-catch DEGIL (ground-truth yok)",
+        "other_types": other,
+        "not": (
+            "sinyal-kalitesi (hacim+severity+notified); labelli-catch DEGIL (ground-truth yok). "
+            "gap-7=agent-health+source 'watchdog:' (Codex P2 #4)."
+        ),
     }
 
 
