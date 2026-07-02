@@ -7,7 +7,7 @@ import os
 from datetime import datetime
 from typing import Any
 
-from app.exceptions import AuthorizationError, NotFoundError
+from app.exceptions import AuthorizationError, NotFoundError, ValidationError
 
 
 class FileManager:
@@ -32,6 +32,10 @@ class FileManager:
         path = self.validate_path(path)
         if not os.path.isfile(path):
             raise NotFoundError(f"File not found: {path}")
+        size = os.path.getsize(path)
+        # DoS koruması: readlines() dosyanın tamamını RAM'e alır — _max_size'ı burada uygula.
+        if size > self._max_size:
+            raise ValidationError(f"File too large: {size} bytes (max {self._max_size})")
         with open(path, errors="replace") as f:
             lines = f.readlines()
         selected = lines[offset : offset + limit]
@@ -39,7 +43,7 @@ class FileManager:
         return {
             "path": path,
             "content": content,
-            "size": os.path.getsize(path),
+            "size": size,
             "lines": len(lines),
         }
 
@@ -109,6 +113,19 @@ class FileManager:
         }
 
     def search_files(self, path: str, pattern: str, max_results: int = 50) -> list[str]:
-        path = self.validate_path(path)
-        results = glob.glob(os.path.join(path, "**", pattern), recursive=True)
-        return results[:max_results]
+        base = self.validate_path(path)
+        # GÜVENLIK: mutlak/traversal pattern os.path.join'de base'i ATAR (mutlak arg öne
+        # geçer) → glob("/etc/passwd") allowed-path dışına kaçar. Reddet + her sonucu revalide et.
+        if os.path.isabs(pattern) or ".." in pattern:
+            raise ValidationError("pattern must be relative and cannot contain '..'")
+        results = glob.glob(os.path.join(base, "**", pattern), recursive=True)
+        safe: list[str] = []
+        for r in results:
+            try:
+                self.validate_path(r)  # symlink kaçışını da yakalar (realpath)
+            except AuthorizationError:
+                continue
+            safe.append(r)
+            if len(safe) >= max_results:
+                break
+        return safe

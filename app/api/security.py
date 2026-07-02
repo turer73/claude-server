@@ -16,6 +16,7 @@ existing read/exec buckets.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import subprocess
@@ -29,6 +30,8 @@ from pydantic import BaseModel, field_validator
 
 from app.api import memory as _memory
 from app.middleware.dependencies import rate_limit_exec, rate_limit_read
+
+logger = logging.getLogger(__name__)
 
 ROOT = Path("/opt/linux-ai-server")
 DOMAINS_FILE = ROOT / "automation" / "self-pentest.domains"
@@ -132,7 +135,8 @@ def run_scan(req: RunRequest) -> RunResponse:
         )
     except OSError as e:
         log_fh.close()
-        raise HTTPException(status_code=500, detail=f"spawn failed: {e}") from e
+        logger.error("self-pentest spawn failed: %s", e)
+        raise HTTPException(status_code=500, detail="failed to start pentest process") from e
 
     started_at = time.time()
     _JOBS[job_id] = {
