@@ -133,6 +133,13 @@ def test_file_info_missing_raises_notfound(fm, tmp_path):
         fm.get_file_info(str(tmp_path / "does_not_exist.txt"))
 
 
+def test_file_info_stat_oserror_not_500(fm, tmp_path):
+    # Codex #251-P2: ENAMETOOLONG gibi diğer OSError'lar da raw-500 değil NotFound olmalı
+    # (eski os.path.exists() hepsini yutuyordu). 5000-char component → OSError(ENAMETOOLONG).
+    with pytest.raises(NotFoundError, match="Path not found"):
+        fm.get_file_info(str(tmp_path / ("x" * 5000)))
+
+
 def test_search_files(fm, tmp_path):
     (tmp_path / "match_this.py").write_text("x")
     (tmp_path / "other.txt").write_text("y")

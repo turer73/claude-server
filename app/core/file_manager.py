@@ -101,12 +101,14 @@ class FileManager:
 
     def get_file_info(self, path: str) -> dict[str, Any]:
         path = self.validate_path(path)
-        # TOCTOU: exists()+stat() ayrı-syscall'da dosya silinirse stat FileNotFoundError
-        # atar → tek stat() dene, ENOENT'i NotFoundError'a çevir. is_dir de aynı st'den
-        # gelsin (ikinci os.path.isdir stat'ı yok).
+        # TOCTOU: exists()+stat() ayrı-syscall'da dosya silinirse stat OSError atar →
+        # tek stat() dene. os.path.exists() eskiden TÜM OSError'ları yutup False→NotFound
+        # dönüyordu; aynı semantiği koru — ENOENT/ENOTDIR/ENAMETOOLONG/ELOOP hepsi raw
+        # 500 değil NotFoundError olsun (Codex #251-P2). is_dir de aynı st'den (ikinci
+        # os.path.isdir syscall'ı yok).
         try:
             st = os.stat(path)
-        except (FileNotFoundError, NotADirectoryError) as e:
+        except OSError as e:
             raise NotFoundError(f"Path not found: {path}") from e
         return {
             "path": path,
