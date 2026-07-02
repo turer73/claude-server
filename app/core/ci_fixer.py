@@ -16,7 +16,7 @@ from typing import Any
 
 import httpx
 
-from app.core.action_review import scan_ci_fixer_diff
+from app.core.action_review import scan_ci_fixer_diff, soft_gate_enabled
 from app.core.ci_runner import PROJECT_REGISTRY, run_project_tests
 from app.core.ci_signal_dedup import (
     compute_signature,
@@ -87,14 +87,15 @@ async def _review_fix_diff(
     test_file: str,
     project: str,
     test_name: str,
-) -> None:
+) -> bool:
     """GAP-1 action_review: attempt-delta diff'i yakala + spec-gaming tara + emit.
 
-    notify-only (Faz1): supheli-diff'te emit_event(warn) atar ama ci_fixer'i BLOKLAMAZ.
-    fail-NOTIFY (design 7): capture/tarama cokerse aksiyonu DURDURMA, izlenebilir emit at.
-    Cagirilma-yeri PRE-EXECUTION (testler KOSMADAN ONCE, Codex #3): yikici-kod calismadan yakala.
-    Diff Claude-prozasindan DEGIL working-tree'den alinir (#100239). source_file yoksa
-    test_file'dan modul-turetilir (out_of_module dali olu-kalmasin; Codex #5).
+    Doner: True = SOFT-GATE BLOK (supheli + gate-ON -> held-for-review, fix accept ETME),
+           False = devam (notify-only veya temiz-diff).
+    Faz1 notify-only (gate-OFF): supheli-diff'te emit_event(warn), ci_fixer BLOKLAMAZ (False).
+    Faz2 soft-gate (gate-ON): supheli-diff'te emit_event(CRITICAL) + True (accept-blok).
+    fail-NOTIFY (design 7): capture/tarama cokerse DURDURMA -> warn-emit + False (fail-open).
+    PRE-EXECUTION (testler KOSMADAN ONCE, Codex #3). Diff working-tree'den (#100239).
     """
     try:
         git_diff = await _capture_attempt_diff(cwd, baseline_ref, pre_untracked)
@@ -108,18 +109,22 @@ async def _review_fix_diff(
             severity="warn",
             detail=f"{type(exc).__name__}: {exc}",
         )
-        return
+        return False  # fail-open: tarama-hatasi ci_fixer'i bloklamaz
 
-    if result["suspicious"]:
-        logger.warning("action_review SUPHELI %s/%s: %s", project, test_name, result["signals"])
-        emit_event(
-            type="action-review",
-            source="ci_fixer",
-            title=f"ci_fixer diff supheli: {project}/{test_name}",
-            severity="warn",
-            detail="sinyaller: " + ", ".join(result["signals"]),
-            payload=result,
-        )
+    if not result["suspicious"]:
+        return False
+
+    gate_on = soft_gate_enabled()
+    logger.warning("action_review SUPHELI %s/%s: %s (soft_gate=%s)", project, test_name, result["signals"], gate_on)
+    emit_event(
+        type="action-review",
+        source="ci_fixer",
+        title=("ci_fixer diff BLOK (held-for-review): " if gate_on else "ci_fixer diff supheli: ") + f"{project}/{test_name}",
+        severity="critical" if gate_on else "warn",
+        detail="sinyaller: " + ", ".join(result["signals"]),
+        payload={**result, "soft_gate": gate_on},
+    )
+    return gate_on  # gate-ON -> True (blok); gate-OFF -> False (notify-only)
 
 
 # P1#5: restricted Claude Code settings (filesystem/tool scope) used instead of
@@ -517,8 +522,8 @@ async def attempt_fix(
                 continue
 
             # 3.5 GAP-1 action_review: PRE-EXECUTION denetim (testler KOSMADAN once, attempt-delta;
-            #     Codex #3/#9). Yikici-kod testler sirasinda calismadan yakalanir. notify-only.
-            await _review_fix_diff(cwd, baseline_ref, pre_untracked, source_file, test_file, project, test_name)
+            #     Codex #3/#9). Faz2 soft-gate ON + supheli -> held (accept-blok); OFF -> notify-only.
+            held_for_review = await _review_fix_diff(cwd, baseline_ref, pre_untracked, source_file, test_file, project, test_name)
 
             # 4. Re-run tests
             test_result = await run_project_tests(project)
@@ -548,6 +553,24 @@ async def attempt_fix(
 
             # 5. Check if fixed
             if test_result.get("failed", 0) == 0:
+                # Faz2 SOFT-GATE (P3): supheli-diff + gate-ON -> fix'i ACCEPT ETME, held-for-review.
+                # Testler gecse bile spec-gaming'le gecmis olabilir (assertion-zayiflatma) -> insan-review.
+                if held_for_review:
+                    logger.warning(
+                        "action_review SOFT-GATE BLOK: %s/%s testler-gecti ama supheli-diff -> held-for-review",
+                        project,
+                        test_name,
+                    )
+                    return {
+                        "fixed": False,
+                        "held_for_review": True,
+                        "attempt": attempt,
+                        "project": project,
+                        "test_file": test_file,
+                        "test_name": test_name,
+                        "claude_responses": claude_responses,
+                        "error": "action_review soft-gate: supheli-diff auto-accept bloklandi (insan-review)",
+                    }
                 logger.info("Test duzeltildi! deneme=%d", attempt)
                 # (action_review 3.5'te testler-oncesi kosuldu — pre-execution gate)
                 # Post summary to memory API (single-line content -- memory API rejects \n in JSON)

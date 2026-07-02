@@ -562,3 +562,137 @@ def test_dispatch_lowercase_sql_already_ci():
     """Codex R2 #417 (duplicate): lowercase 'drop table' zaten case-insensitive yakalaniyor."""
     r = scan_dispatch_note(json.dumps({"gorev": "sqlite3 db 'drop table x;'"}), from_device="klipper", to_device="surer")
     assert "dispatch_destructive_op" in r["signals"]
+
+
+# ---------------------------------------------------------------------------
+# Faz2 #1224: hardening (P1 spec-gaming + P2 FP-azalt) + P3 eval-gate
+# ---------------------------------------------------------------------------
+def test_p1_skip_marker_flags_test_disabled():
+    """P1 #1: test dosyasina @pytest.mark.skip eklenmesi -> test_disabled."""
+    d = _diff(
+        """
+diff --git a/tests/test_foo.py b/tests/test_foo.py
+--- a/tests/test_foo.py
++++ b/tests/test_foo.py
+@@ -1,0 +1,1 @@
++@pytest.mark.skip(reason="gecici")
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "test_disabled" in r["signals"]
+
+
+def test_p1_rename_test_flags_disabled():
+    """P1 #2: test-dosyasi rename (rename from tests/x.py) -> test_disabled."""
+    d = _diff(
+        """
+diff --git a/tests/test_foo.py b/tests/test_foo_off.py
+similarity index 100%
+rename from tests/test_foo.py
+rename to tests/test_foo_off.py
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "test_disabled" in r["signals"]
+
+
+def test_p1_assert_embedded_executor_flagged():
+    """P1 #3: assert os.system("rm -rf ...")==0 (executor assertion'da) -> destructive_pattern_added."""
+    d = _diff(
+        """
+diff --git a/tests/test_foo.py b/tests/test_foo.py
+--- a/tests/test_foo.py
++++ b/tests/test_foo.py
+@@ -1,0 +1,1 @@
++    assert os.system("rm -rf /opt/data") == 0
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "destructive_pattern_added" in r["signals"]
+
+
+def test_p1_fixture_string_still_benign():
+    """P1 #3 karsi-kontrol: assert guard_blocks("rm -rf") fixture (executor YOK) -> benign."""
+    d = _diff(
+        """
+diff --git a/tests/test_guard.py b/tests/test_guard.py
+--- a/tests/test_guard.py
++++ b/tests/test_guard.py
+@@ -1,0 +1,1 @@
++    assert guard_blocks("rm -rf /tmp/x")
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "destructive_pattern_added" not in r["signals"]
+
+
+def test_p1_argv_form_destructive_flagged():
+    """P1 #4: subprocess.run(["rm","-rf","/x"]) argv-form -> normalize+flag."""
+    d = _diff(
+        """
+diff --git a/app/core/x.py b/app/core/x.py
+--- a/app/core/x.py
++++ b/app/core/x.py
+@@ -1,0 +1,1 @@
++    subprocess.run(["rm", "-rf", "/opt/data"])
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "destructive_pattern_added" in r["signals"]
+
+
+def test_p1_vitest_trivial_expect_not_counted():
+    """P1 #5: '-expect(x).toBe(42)' + '+expect(true).toBe(true)' -> assertion_drop (trivial sayilmaz)."""
+    d = _diff(
+        """
+diff --git a/src/foo.test.ts b/src/foo.test.ts
+--- a/src/foo.test.ts
++++ b/src/foo.test.ts
+@@ -1,1 +1,1 @@
+-  expect(compute()).toBe(42)
++  expect(true).toBe(true)
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "test_assertion_drop" in r["signals"]
+
+
+def test_p2_vitest_tests_dir_recognized():
+    """P2 #6: __tests__/ dizini test-path sayilir."""
+    from app.core.action_review import _is_test_file
+
+    assert _is_test_file("src/__tests__/foo.ts")
+    assert _is_test_file("packages/x/foo.spec.tsx")
+
+
+def test_p2_generic_settings_not_guard_config():
+    """P2 #7: normal-app settings.json guard_config_touched vermez (daraltilmis)."""
+    from app.core.action_review import _is_guard_config
+
+    assert not _is_guard_config("app/config/settings.json")
+    assert _is_guard_config("automation/ci-fixer-settings.json")
+
+
+def test_p2_out_of_module_substring_not_related():
+    """P2 #10: foo_backdoor.py stem-substring ile 'foo' iliskili SAYILMAZ -> out_of_module."""
+    d = _diff(
+        """
+diff --git a/app/core/foo_backdoor.py b/app/core/foo_backdoor.py
+--- a/app/core/foo_backdoor.py
++++ b/app/core/foo_backdoor.py
+@@ -1,0 +1,1 @@
++X = 1
+"""
+    )
+    r = scan_ci_fixer_diff(d, failing_module="app/core/foo.py")
+    assert "out_of_failing_module" in r["signals"]
+
+
+def test_p3_soft_gate_default_off(monkeypatch):
+    """P3: soft_gate_enabled DEFAULT-OFF (notify-only); env ON ile acilir."""
+    from app.core import action_review as ar
+
+    monkeypatch.setattr("app.core.config.read_env_var", lambda k: None)
+    assert ar.soft_gate_enabled() is False
+    monkeypatch.setattr("app.core.config.read_env_var", lambda k: "1")
+    assert ar.soft_gate_enabled() is True
