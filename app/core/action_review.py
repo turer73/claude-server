@@ -149,6 +149,27 @@ def _is_comment_only(line: str) -> bool:
     return s.startswith("#") or s.startswith("//")
 
 
+_ASSERTION_LINE_RE = re.compile(r"^(assert\b|self\.assert|await\s+expect\(|expect\(|pytest\.raises)")
+
+
+def _is_assertion_line(line: str) -> bool:
+    """Satir bir assertion/expectation MI (test-fixture/test-DATA). Test dosyasinda
+    destructive-string tasisa bile benign (Codex #6); EXECUTABLE statement DEGIL."""
+    return bool(_ASSERTION_LINE_RE.match(line.strip()))
+
+
+def _is_trivial_assert(line: str) -> bool:
+    """Tautology/trivial assertion mi (assert True/1/None, assert X==X, pass) — Codex #5.
+    Bunlar 'added' sayilmaz: '-assert real()==42' + '+assert True' net=0 ile maskelenmesin."""
+    s = line.strip()
+    if s == "pass":
+        return True
+    if re.match(r"assert\s+(True|1|None)(\s+is\s+(True|None))?\s*$", s):
+        return True
+    m = re.match(r"assert\s+(.+?)\s*==\s*(.+?)\s*$", s)
+    return bool(m and m.group(1) == m.group(2))
+
+
 def _is_test_file(path: str) -> bool:
     return bool(_TEST_PATH_RE.search(path))
 
@@ -194,15 +215,17 @@ def scan_ci_fixer_diff(git_diff: str, failing_module: str | None = None) -> dict
 
     files = _parse_diff(git_diff)
 
-    # Sinyal 1: HER test dosyasinda assertion-sayisi DUSTU mu (PER-DOSYA — Codex P2).
-    #   Toplam-kiyas, bir testten assert-silip baska teste trivial-assert-ekleyerek maskelenebilirdi.
+    # Sinyal 1: HER test dosyasinda GERCEK assertion-sayisi DUSTU mu (PER-DOSYA).
+    #   Eklenen TRIVIAL/tautology assert'ler (assert True, assert x==x, pass) SAYILMAZ (Codex #5):
+    #   '-assert compute()==42' + '+assert True' net=0 ile maskeleniyordu. Toplam-kiyas ayrica
+    #   bir-testten-sil+baska-teste-trivial-ekle ile de maskelenebilirdi -> per-dosya (Codex P2).
     test_files = [p for p in files if _is_test_file(p)]
-    dropped = {
-        p: {"removed": r, "added": a}
-        for p in test_files
-        for r, a in [(_count_assertions(files[p]["removed"]), _count_assertions(files[p]["added"]))]
-        if r - a > 0
-    }
+    dropped: dict[str, dict[str, int]] = {}
+    for p in test_files:
+        removed = _count_assertions(files[p]["removed"])
+        added = sum(_count_assertions([ln]) for ln in files[p]["added"] if not _is_trivial_assert(ln))
+        if removed - added > 0:
+            dropped[p] = {"removed": removed, "added": added}
     if dropped:
         signals.append("test_assertion_drop")
         detail["assertion_delta"] = dropped
@@ -228,17 +251,19 @@ def scan_ci_fixer_diff(git_diff: str, failing_module: str | None = None) -> dict
 
     # Sinyal 5: eklenen ('+') satirlarda yikici-desen — BAGLAMSAL-WHITELIST cekirdegi.
     #   '-'/context/prose taranmaz: bahsetmek != yapmak (3x-FP kok-cozumu).
-    #   TEST dosyalari ATLANIR (Codex P2 #6): mesru fixture 'assert guard_blocks("rm -rf")'
-    #   destructive-string tasir = benign; test-zayiflatmayi test_assertion_drop zaten yakalar.
+    #   TEST dosyalarinda (Codex #4, #6 revizyonu): fixture/assertion satiri (test-DATA,
+    #   'assert guard_blocks("rm -rf")') benign ATLANIR AMA test-icine eklenen EXECUTABLE
+    #   yikici-statement (os.system(rm -rf)) YINE taranir — 'tum-test-atla' cok-genisti.
     patterns = _load_destructive_patterns()
     hits: list[dict[str, str]] = []
     for path, blocks in files.items():
-        if _is_test_file(path):
-            continue
+        in_test = _is_test_file(path)
         for ln in blocks["added"]:
             # Yorum-ONLY '+' satir = benign (aciklama, kod-degil; design 3 "bahsetmek!=yapmak").
-            # Trailing-comment'li KOD satiri ATLANMAZ — desen kod-kisminda olabilir.
             if _is_comment_only(ln):
+                continue
+            # Test dosyasi: yalniz assertion/fixture satiri benign; executable-statement taranir.
+            if in_test and _is_assertion_line(ln):
                 continue
             for name, rx in patterns:
                 if rx.search(ln):

@@ -222,6 +222,56 @@ diff --git a/x.py b/x.py
     assert "destructive_pattern_added" in r["signals"]
 
 
+def test_tautology_assertion_swap_flagged():
+    """'-assert compute()==42' + '+assert True' (bire-bir tautology-swap) -> assertion_drop (Codex #5)."""
+    d = _diff(
+        """
+diff --git a/tests/test_foo.py b/tests/test_foo.py
+--- a/tests/test_foo.py
++++ b/tests/test_foo.py
+@@ -5,1 +5,1 @@
+-    assert compute() == 42
++    assert True
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "test_assertion_drop" in r["signals"]
+
+
+def test_self_compare_and_pass_are_trivial():
+    """'+assert x == x' ve '+pass' trivial -> gercek-assert silinince yine flag."""
+    d = _diff(
+        """
+diff --git a/tests/test_foo.py b/tests/test_foo.py
+--- a/tests/test_foo.py
++++ b/tests/test_foo.py
+@@ -5,2 +5,2 @@
+-    assert real() is True
+-    assert other() == 7
++    assert x == x
++    pass
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "test_assertion_drop" in r["signals"]
+
+
+def test_executable_destructive_in_test_file_flagged():
+    """Yeni tests/test_cleanup.py'ye EXECUTABLE os.system(rm -rf) -> flag (Codex #4, fixture DEGIL)."""
+    d = _diff(
+        """
+diff --git a/tests/test_cleanup.py b/tests/test_cleanup.py
+--- a/tests/test_cleanup.py
++++ b/tests/test_cleanup.py
+@@ -1,0 +1,2 @@
++def test_cleanup():
++    os.system("rm -rf /opt/linux-ai-server/data")
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "destructive_pattern_added" in r["signals"]
+
+
 def test_deleted_test_file_flags_assertion_drop():
     """Fail-eden testin SILINMESI (+++ /dev/null) -> removed-assert korunur -> assertion_drop."""
     d = _diff(

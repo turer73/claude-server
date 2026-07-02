@@ -48,39 +48,56 @@ async def _git(cwd: str, *args: str) -> tuple[int, str, str]:
     return proc.returncode or 0, out.decode("utf-8", errors="replace"), err.decode("utf-8", errors="replace")
 
 
-async def _capture_working_tree_diff(cwd: str) -> str:
-    """Tracked (staged+unstaged, vs HEAD) + UNTRACKED dosyalari birlesik diff olarak yakala.
+async def _snapshot_baseline(cwd: str) -> tuple[str, set[str]]:
+    """Claude-fix ONCESI baseline: (tracked-baseline-ref, untracked-set). Codex #9:
+    'git stash create' mevcut-WIP'i commit-object'e alir (working-tree DEGISMEZ); clean-tree'de
+    bos -> 'HEAD'. Sonraki `git diff <baseline>` YALNIZ bu-attempt'in ekledigini gosterir
+    (onceden-kirli dosyalarin attempt'e-atfedilme FP'si kalkar)."""
+    _, sha, _ = await _git(cwd, "stash", "create")
+    baseline = sha.strip() or "HEAD"
+    rc, others, _ = await _git(cwd, "ls-files", "--others", "--exclude-standard")
+    pre_untracked = {f.strip() for f in others.splitlines() if f.strip()} if rc == 0 else set()
+    return baseline, pre_untracked
 
-    - `git diff HEAD`: staged-de (Claude `git add` edebilir, Codex P1) + unstaged tracked.
-    - untracked: `ls-files --others` + `diff --no-index /dev/null <f>` (yeni-dosyayla test-gecirme,
-      Codex P2 #3). Plain `git diff` ikisini de kacirirdi.
-    `git diff HEAD` non-zero (git-worktree-degil/HEAD-yok) => RuntimeError (caller fail-NOTIFY eder).
-    """
-    rc, tracked, err = await _git(cwd, "diff", "HEAD")
+
+async def _capture_attempt_diff(cwd: str, baseline_ref: str, pre_untracked: set[str]) -> str:
+    """baseline'dan-bu-yana tracked-delta (staged Claude-add dahil, Codex P1) + bu-attempt'te
+    OLUSAN untracked dosyalar (Codex #3). `git diff <baseline>` non-zero => RuntimeError
+    (caller fail-NOTIFY). Onceden-var untracked (pre_untracked) haric = yalniz attempt-delta."""
+    rc, tracked, err = await _git(cwd, "diff", baseline_ref)
     if rc != 0:
-        raise RuntimeError(f"git diff HEAD rc={rc}: {err.strip()[:200]}")
+        raise RuntimeError(f"git diff {baseline_ref} rc={rc}: {err.strip()[:200]}")
     parts = [tracked]
     rc2, others, _ = await _git(cwd, "ls-files", "--others", "--exclude-standard")
     if rc2 == 0:
-        for f in others.splitlines():
-            f = f.strip()
-            if f:
+        for line in others.splitlines():
+            f = line.strip()
+            if f and f not in pre_untracked:  # yalniz bu-attempt'te olusan untracked
                 # --no-index differ'da rc=1 (normal); ciktisini al, hata-degil.
                 _, d, _ = await _git(cwd, "diff", "--no-index", "--", "/dev/null", f)
                 parts.append(d)
     return "\n".join(p for p in parts if p)
 
 
-async def _review_fix_diff(cwd: str, source_file: str | None, test_file: str, project: str, test_name: str) -> None:
-    """GAP-1 action_review: working-tree diff'i yakala + spec-gaming tara + emit.
+async def _review_fix_diff(
+    cwd: str,
+    baseline_ref: str,
+    pre_untracked: set[str],
+    source_file: str | None,
+    test_file: str,
+    project: str,
+    test_name: str,
+) -> None:
+    """GAP-1 action_review: attempt-delta diff'i yakala + spec-gaming tara + emit.
 
     notify-only (Faz1): supheli-diff'te emit_event(warn) atar ama ci_fixer'i BLOKLAMAZ.
     fail-NOTIFY (design 7): capture/tarama cokerse aksiyonu DURDURMA, izlenebilir emit at.
+    Cagirilma-yeri PRE-EXECUTION (testler KOSMADAN ONCE, Codex #3): yikici-kod calismadan yakala.
     Diff Claude-prozasindan DEGIL working-tree'den alinir (#100239). source_file yoksa
-    test_file'dan modul-turetilir (out_of_module dali olu-kalmasin; Codex P2 #5).
+    test_file'dan modul-turetilir (out_of_module dali olu-kalmasin; Codex #5).
     """
     try:
-        git_diff = await _capture_working_tree_diff(cwd)
+        git_diff = await _capture_attempt_diff(cwd, baseline_ref, pre_untracked)
         result = scan_ci_fixer_diff(git_diff, failing_module=source_file or test_file)
     except Exception as exc:  # noqa: BLE001 — fail-NOTIFY, ci_fixer'i durdurma
         logger.warning("action_review taranamadi %s/%s: %s", project, test_name, exc)
@@ -489,7 +506,8 @@ async def attempt_fix(
                 context_lessons=context_rows,
             )
 
-            # 3. Call Claude Code
+            # 3. Baseline snapshot (Claude-ONCESI) + Call Claude Code
+            baseline_ref, pre_untracked = await _snapshot_baseline(cwd)
             claude_result = await _call_claude_code(prompt, cwd)
             claude_responses.append(claude_result)
 
@@ -497,6 +515,10 @@ async def attempt_fix(
                 logger.warning("Claude Code hatasi: %s", claude_result["error"])
                 prev_errors.append(claude_result["error"])
                 continue
+
+            # 3.5 GAP-1 action_review: PRE-EXECUTION denetim (testler KOSMADAN once, attempt-delta;
+            #     Codex #3/#9). Yikici-kod testler sirasinda calismadan yakalanir. notify-only.
+            await _review_fix_diff(cwd, baseline_ref, pre_untracked, source_file, test_file, project, test_name)
 
             # 4. Re-run tests
             test_result = await run_project_tests(project)
@@ -527,8 +549,7 @@ async def attempt_fix(
             # 5. Check if fixed
             if test_result.get("failed", 0) == 0:
                 logger.info("Test duzeltildi! deneme=%d", attempt)
-                # GAP-1 action_review: kabul-oncesi cikti-tarafi denetim (notify-only).
-                await _review_fix_diff(cwd, source_file, test_file, project, test_name)
+                # (action_review 3.5'te testler-oncesi kosuldu — pre-execution gate)
                 # Post summary to memory API (single-line content -- memory API rejects \n in JSON)
                 await post_lesson_summary_to_memory_api(
                     lesson_type="lesson_learned",
