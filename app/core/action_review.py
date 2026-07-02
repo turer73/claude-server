@@ -41,6 +41,8 @@ _GUARD_CONFIG_RE = re.compile(
     r"pre-bash-guard\.sh$|(^|/)settings\.json$|ci-fixer-settings\.json$|"
     r"(^|/)conftest\.py$|(^|/)\.env(\.[^/]+)?$"
 )
+# 'diff --git a/X b/X' -> b-side path (mode-only/silme/++'siz durumda da dosya kaydi icin).
+_DIFF_GIT_RE = re.compile(r"^diff --git a/.+ b/(.+)$")
 
 # POSIX karakter-sinifi -> Python re cevirisi (grep-ERE desenlerini re'ye uyarlar).
 _POSIX_MAP = {
@@ -92,30 +94,41 @@ def _load_destructive_patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
             except re.error:
                 continue  # cevrilemeyen deseni atla (fail-safe)
 
-    if not compiled:  # parse basarisiz -> fallback
-        compiled = [(name, re.compile(rx)) for name, rx in _FALLBACK_PATTERNS]
+    # UNION (Codex P2 #2): guard-turevi + fallback HER ZAMAN birlesir. Guard'da OLMAYAN
+    # desenler (chmod-x-guard, MEMORY_API_KEY=, permissions.allow) yalniz fallback'te —
+    # 'ya guard ya fallback' olsa parse-basarisinda bunlar kaybolurdu (design'da yikici sayilir).
+    for name, rx in _FALLBACK_PATTERNS:
+        try:
+            compiled.append((name, re.compile(rx)))
+        except re.error:
+            continue
     return tuple(compiled)
 
 
 def _parse_diff(git_diff: str) -> dict[str, dict[str, list[str]]]:
     """Unified-diff'i {path: {'added': [...], 'removed': [...]}} olarak ayristir.
 
-    Yalniz icerik satirlari; '+++'/'---' basliklari ve hunk-header'lari (@@) haric.
+    Dosya, 'diff --git a/X b/X' basligindan kaydedilir (Codex P2 #4/#deleted):
+    - MODE-ONLY degisiklik (yalniz exec-bit) '+++' icermez -> baslik'tan yine 'touched' sayilir.
+    - SILME '+++ /dev/null' -> baslik'tan gelen path + removed-lines KORUNUR (assertion-drop icin).
+    Yalniz icerik satirlari sayilir; '+++'/'---'/@@ haric.
     """
     files: dict[str, dict[str, list[str]]] = {}
     cur: dict[str, list[str]] | None = None
     for line in git_diff.splitlines():
-        if line.startswith("+++ "):
-            path = line[4:].strip()
-            if path.startswith("b/"):
-                path = path[2:]
-            if path == "/dev/null":
-                cur = None
-                continue
-            cur = files.setdefault(path, {"added": [], "removed": []})
-        elif line.startswith("--- ") or line.startswith("diff --git"):
-            if line.startswith("diff --git"):
-                cur = None  # +++ gorulene dek satir sayma
+        if line.startswith("diff --git "):
+            m = _DIFF_GIT_RE.match(line)
+            path = m.group(1) if m else None
+            cur = files.setdefault(path, {"added": [], "removed": []}) if path else None
+        elif line.startswith("+++ "):
+            p = line[4:].strip()
+            if p.startswith("b/"):
+                p = p[2:]
+            if p != "/dev/null":
+                cur = files.setdefault(p, {"added": [], "removed": []})
+            # '+++ /dev/null' (silme): diff --git'ten gelen cur'u KORU (path + removed-lines lazim)
+        elif line.startswith("--- "):
+            continue
         elif line.startswith("+") and not line.startswith("+++"):
             if cur is not None:
                 cur["added"].append(line[1:])
@@ -145,7 +158,14 @@ def _is_guard_config(path: str) -> bool:
 
 
 def _module_stem(module: str) -> str:
-    return Path(module).stem
+    """Modul stem'i (test_ prefix / _test suffix soyulur). test_file fallback'inde
+    'tests/test_foo.py' -> 'foo' => fix'lenen kaynak foo.py ile eslesir (Codex P2 #5)."""
+    stem = Path(module).stem
+    if stem.startswith("test_"):
+        stem = stem[5:]
+    elif stem.endswith("_test"):
+        stem = stem[:-5]
+    return stem
 
 
 def _is_related(path: str, failing_module: str) -> bool:
@@ -174,14 +194,18 @@ def scan_ci_fixer_diff(git_diff: str, failing_module: str | None = None) -> dict
 
     files = _parse_diff(git_diff)
 
-    # Sinyal 1: test dosyasinda assertion-sayisi DUSTU ('+' vs '-' kiyas — baglamsal).
+    # Sinyal 1: HER test dosyasinda assertion-sayisi DUSTU mu (PER-DOSYA — Codex P2).
+    #   Toplam-kiyas, bir testten assert-silip baska teste trivial-assert-ekleyerek maskelenebilirdi.
     test_files = [p for p in files if _is_test_file(p)]
-    if test_files:
-        removed = sum(_count_assertions(files[p]["removed"]) for p in test_files)
-        added = sum(_count_assertions(files[p]["added"]) for p in test_files)
-        if removed - added > 0:
-            signals.append("test_assertion_drop")
-            detail["assertion_delta"] = {"removed": removed, "added": added, "test_files": test_files}
+    dropped = {
+        p: {"removed": r, "added": a}
+        for p in test_files
+        for r, a in [(_count_assertions(files[p]["removed"]), _count_assertions(files[p]["added"]))]
+        if r - a > 0
+    }
+    if dropped:
+        signals.append("test_assertion_drop")
+        detail["assertion_delta"] = dropped
 
     # Sinyal 2: guard/config zayiflatma (path-bazli).
     guard_touched = [p for p in files if _is_guard_config(p)]
@@ -204,9 +228,13 @@ def scan_ci_fixer_diff(git_diff: str, failing_module: str | None = None) -> dict
 
     # Sinyal 5: eklenen ('+') satirlarda yikici-desen — BAGLAMSAL-WHITELIST cekirdegi.
     #   '-'/context/prose taranmaz: bahsetmek != yapmak (3x-FP kok-cozumu).
+    #   TEST dosyalari ATLANIR (Codex P2 #6): mesru fixture 'assert guard_blocks("rm -rf")'
+    #   destructive-string tasir = benign; test-zayiflatmayi test_assertion_drop zaten yakalar.
     patterns = _load_destructive_patterns()
     hits: list[dict[str, str]] = []
     for path, blocks in files.items():
+        if _is_test_file(path):
+            continue
         for ln in blocks["added"]:
             # Yorum-ONLY '+' satir = benign (aciklama, kod-degil; design 3 "bahsetmek!=yapmak").
             # Trailing-comment'li KOD satiri ATLANMAZ — desen kod-kisminda olabilir.

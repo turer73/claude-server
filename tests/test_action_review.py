@@ -76,7 +76,8 @@ diff --git a/tests/test_foo.py b/tests/test_foo.py
     r = scan_ci_fixer_diff(d)
     assert r["suspicious"] is True
     assert "test_assertion_drop" in r["signals"]
-    assert r["detail"]["assertion_delta"]["removed"] > r["detail"]["assertion_delta"]["added"]
+    delta = r["detail"]["assertion_delta"]["tests/test_foo.py"]
+    assert delta["removed"] > delta["added"]
 
 
 def test_guard_config_weakening():
@@ -219,6 +220,116 @@ diff --git a/x.py b/x.py
         )
     )
     assert "destructive_pattern_added" in r["signals"]
+
+
+def test_deleted_test_file_flags_assertion_drop():
+    """Fail-eden testin SILINMESI (+++ /dev/null) -> removed-assert korunur -> assertion_drop."""
+    d = _diff(
+        """
+diff --git a/tests/test_foo.py b/tests/test_foo.py
+deleted file mode 100644
+--- a/tests/test_foo.py
++++ /dev/null
+@@ -1,3 +0,0 @@
+-    assert foo() == 42
+-    assert bar() == 7
+-    assert baz() is None
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "test_assertion_drop" in r["signals"]
+
+
+def test_mode_only_guard_change_flags():
+    """Guard'in yalniz exec-bit'i degisince (+++'siz, mode-only) -> guard_config_touched."""
+    d = _diff(
+        """
+diff --git a/scripts/hooks/pre-bash-guard.sh b/scripts/hooks/pre-bash-guard.sh
+old mode 100755
+new mode 100644
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "guard_config_touched" in r["signals"]
+
+
+def test_test_fixture_destructive_string_is_benign():
+    """Test dosyasindaki mesru fixture 'assert guard_blocks(rm -rf)' -> destructive_pattern_added YOK."""
+    d = _diff(
+        """
+diff --git a/tests/test_guard.py b/tests/test_guard.py
+--- a/tests/test_guard.py
++++ b/tests/test_guard.py
+@@ -1,0 +1,2 @@
++    assert guard_blocks("rm -rf /tmp/x")
++    assert guard_blocks("git push --force")
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "destructive_pattern_added" not in r["signals"]
+
+
+def test_per_file_assertion_drop_not_masked():
+    """Bir testten assert-sil + baska teste trivial-assert-ekle -> PER-DOSYA yine flag."""
+    d = _diff(
+        """
+diff --git a/tests/test_a.py b/tests/test_a.py
+--- a/tests/test_a.py
++++ b/tests/test_a.py
+@@ -1,2 +1,0 @@
+-    assert real() == 42
+-    assert important() is True
+diff --git a/tests/test_b.py b/tests/test_b.py
+--- a/tests/test_b.py
++++ b/tests/test_b.py
+@@ -1,0 +1,2 @@
++    assert True
++    assert 1 == 1
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "test_assertion_drop" in r["signals"]
+    assert "tests/test_a.py" in r["detail"]["assertion_delta"]
+
+
+def test_fallback_only_pattern_credential_write():
+    """Guard'da OLMAYAN fallback-desen (MEMORY_API_KEY=) kaynak-satirda -> UNION sayesinde flag."""
+    d = _diff(
+        """
+diff --git a/app/core/config.py b/app/core/config.py
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -1,0 +1,1 @@
++    os.system("echo 'MEMORY_API_KEY=ATTACKER' >> .env")
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "destructive_pattern_added" in r["signals"]
+
+
+def test_source_related_via_test_file_stem():
+    """failing_module=tests/test_foo.py iken foo.py=iliskili(flag-yok), bar.py=out_of_module."""
+    foo = _diff(
+        """
+diff --git a/app/core/foo.py b/app/core/foo.py
+--- a/app/core/foo.py
++++ b/app/core/foo.py
+@@ -1,1 +1,1 @@
+-    x = 1
++    x = 2
+"""
+    )
+    bar = _diff(
+        """
+diff --git a/app/core/bar.py b/app/core/bar.py
+--- a/app/core/bar.py
++++ b/app/core/bar.py
+@@ -1,0 +1,1 @@
++    y = 3
+"""
+    )
+    assert "out_of_failing_module" not in scan_ci_fixer_diff(foo, failing_module="tests/test_foo.py")["signals"]
+    assert "out_of_failing_module" in scan_ci_fixer_diff(bar, failing_module="tests/test_foo.py")["signals"]
 
 
 def test_contextual_whitelist_same_string_added_vs_removed():

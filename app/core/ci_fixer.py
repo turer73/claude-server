@@ -33,25 +33,55 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 3
 
 
-async def _review_fix_diff(cwd: str, source_file: str | None, project: str, test_name: str) -> None:
-    """GAP-1 action_review: working-tree `git diff`'i yakala + spec-gaming tara + emit.
+async def _git(cwd: str, *args: str) -> tuple[int, str, str]:
+    """git -C cwd <args> -> (returncode, stdout, stderr). communicate() non-zero'da RAISE-ETMEZ."""
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        "-C",
+        cwd,
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        stdin=asyncio.subprocess.DEVNULL,
+    )
+    out, err = await proc.communicate()
+    return proc.returncode or 0, out.decode("utf-8", errors="replace"), err.decode("utf-8", errors="replace")
+
+
+async def _capture_working_tree_diff(cwd: str) -> str:
+    """Tracked (staged+unstaged, vs HEAD) + UNTRACKED dosyalari birlesik diff olarak yakala.
+
+    - `git diff HEAD`: staged-de (Claude `git add` edebilir, Codex P1) + unstaged tracked.
+    - untracked: `ls-files --others` + `diff --no-index /dev/null <f>` (yeni-dosyayla test-gecirme,
+      Codex P2 #3). Plain `git diff` ikisini de kacirirdi.
+    `git diff HEAD` non-zero (git-worktree-degil/HEAD-yok) => RuntimeError (caller fail-NOTIFY eder).
+    """
+    rc, tracked, err = await _git(cwd, "diff", "HEAD")
+    if rc != 0:
+        raise RuntimeError(f"git diff HEAD rc={rc}: {err.strip()[:200]}")
+    parts = [tracked]
+    rc2, others, _ = await _git(cwd, "ls-files", "--others", "--exclude-standard")
+    if rc2 == 0:
+        for f in others.splitlines():
+            f = f.strip()
+            if f:
+                # --no-index differ'da rc=1 (normal); ciktisini al, hata-degil.
+                _, d, _ = await _git(cwd, "diff", "--no-index", "--", "/dev/null", f)
+                parts.append(d)
+    return "\n".join(p for p in parts if p)
+
+
+async def _review_fix_diff(cwd: str, source_file: str | None, test_file: str, project: str, test_name: str) -> None:
+    """GAP-1 action_review: working-tree diff'i yakala + spec-gaming tara + emit.
 
     notify-only (Faz1): supheli-diff'te emit_event(warn) atar ama ci_fixer'i BLOKLAMAZ.
     fail-NOTIFY (design 7): capture/tarama cokerse aksiyonu DURDURMA, izlenebilir emit at.
-    Diff Claude-prozasindan DEGIL working-tree'den alinir (#100239 dersi).
+    Diff Claude-prozasindan DEGIL working-tree'den alinir (#100239). source_file yoksa
+    test_file'dan modul-turetilir (out_of_module dali olu-kalmasin; Codex P2 #5).
     """
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            "-C",
-            cwd,
-            "diff",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-            stdin=asyncio.subprocess.DEVNULL,
-        )
-        out, _ = await proc.communicate()
-        result = scan_ci_fixer_diff(out.decode("utf-8", errors="replace"), failing_module=source_file)
+        git_diff = await _capture_working_tree_diff(cwd)
+        result = scan_ci_fixer_diff(git_diff, failing_module=source_file or test_file)
     except Exception as exc:  # noqa: BLE001 — fail-NOTIFY, ci_fixer'i durdurma
         logger.warning("action_review taranamadi %s/%s: %s", project, test_name, exc)
         emit_event(
@@ -498,7 +528,7 @@ async def attempt_fix(
             if test_result.get("failed", 0) == 0:
                 logger.info("Test duzeltildi! deneme=%d", attempt)
                 # GAP-1 action_review: kabul-oncesi cikti-tarafi denetim (notify-only).
-                await _review_fix_diff(cwd, source_file, project, test_name)
+                await _review_fix_diff(cwd, source_file, test_file, project, test_name)
                 # Post summary to memory API (single-line content -- memory API rejects \n in JSON)
                 await post_lesson_summary_to_memory_api(
                     lesson_type="lesson_learned",
