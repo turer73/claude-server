@@ -16,6 +16,7 @@ TASARIM (docs/gap1-action-review-design.md):
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from functools import lru_cache
@@ -272,5 +273,104 @@ def scan_ci_fixer_diff(git_diff: str, failing_module: str | None = None) -> dict
     if hits:
         signals.append("destructive_pattern_added")
         detail["destructive_hits"] = hits
+
+    return {"suspicious": bool(signals), "signals": signals, "detail": detail}
+
+
+# ---------------------------------------------------------------------------
+# Kapsam-2: cross-agent dispatch notu denetimi (A-1 icerik + A-2 otonom-origin)
+# ---------------------------------------------------------------------------
+
+# Task-paketinin EXECUTABLE alanlari (bunlar taranir). title/aciklama/description/
+# content/attack_type gibi META/PROSE alanlari TARANMAZ (alan-farkinda-whitelist cekirdegi).
+_EXEC_KEYS = {"adimlar", "steps", "cmd", "cmds", "command", "commands", "komut", "komutlar", "script"}
+# Task-paketi gostergesi (bunlardan biri varsa content bir dispatch-task-paketidir).
+_TASK_KEYS = _EXEC_KEYS | {"gorev_paketi", "gorev_id", "basari_kriteri"}
+
+
+def _all_strings(node: Any) -> list[str]:
+    """node icindeki TUM string-degerleri duz-listele (list/dict recursive)."""
+    if isinstance(node, str):
+        return [node]
+    if isinstance(node, list):
+        return [s for item in node for s in _all_strings(item)]
+    if isinstance(node, dict):
+        return [s for v in node.values() for s in _all_strings(v)]
+    return []
+
+
+def _try_parse_task_package(content: str) -> dict[str, Any] | None:
+    """content bir JSON dispatch-task-paketi mi -> dict; degilse (duz-prose/JSON-degil) None.
+
+    Task-paketi = JSON-dict + en az bir _TASK_KEYS anahtari (gorev_paketi ic-sarmali olabilir).
+    Duz-prose not (klipper'in cogu dispatch-mesaji) JSON-degil -> None -> TARANMAZ (benign).
+    """
+    try:
+        obj = json.loads(content)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+    inner = obj.get("gorev_paketi")
+    candidates = [obj, inner] if isinstance(inner, dict) else [obj]
+    if any(k in c for c in candidates for k in _TASK_KEYS):
+        return obj
+    return None
+
+
+def _collect_exec_strings(task: dict[str, Any]) -> list[str]:
+    """Task-paketinin TOP-LEVEL (+ gorev_paketi sarmali) executable-alan string'leri.
+
+    KRITIK (FP-onleme): YALNIZ task'in kendi executable-alanlari (adimlar[]/cmd/...) taranir;
+    DERIN-NESTED data-alanlari (or. eval_set_format.*.cmd = test-datasi) TARANMAZ. Klipper'in
+    kendi dispatch-notlari (#100248) nested-data'da yikici-string tasir = benign kalmali.
+    """
+    out: list[str] = []
+    roots = [task]
+    inner = task.get("gorev_paketi")
+    if isinstance(inner, dict):
+        roots.append(inner)
+    for root in roots:
+        for key in _EXEC_KEYS:
+            if key in root:
+                out.extend(_all_strings(root[key]))
+    return out
+
+
+def _is_autonomous_origin(from_device: str | None) -> bool:
+    """from_device otonom-varyanti mi (or. 'klipper-autonomous'). Interactive 'klipper' DEGIL."""
+    return from_device is not None and "autonomous" in from_device.lower()
+
+
+def scan_dispatch_note(content: str, from_device: str | None = None, to_device: str | None = None) -> dict[str, Any]:
+    """Cross-agent dispatch notunu deterministik denetle (Kapsam-2 A-1 + A-2).
+
+    A-1: content JSON task-paketiyse YALNIZ executable-alanlarinda (adimlar[]/cmd/...) yikici-desen
+         ara (Kapsam-1 _load_destructive_patterns REUSE). Meta/prose/nested-data TARANMAZ.
+    A-2: origin otonom (from_device~'*autonomous*') + cross-agent (to_device dolu) + task-paketi
+         => otonom-consequential-dispatch sinyali (#1222/#100248 human-gate?).
+
+    Returns {"suspicious": bool, "signals": [...], "detail": {...}}. LLM yok; notify-only kullanim.
+    """
+    signals: list[str] = []
+    detail: dict[str, Any] = {}
+
+    task = _try_parse_task_package(content)
+
+    if task is not None:
+        patterns = _load_destructive_patterns()
+        hits: list[dict[str, str]] = []
+        for s in _collect_exec_strings(task):
+            for name, rx in patterns:
+                if rx.search(s):
+                    hits.append({"pattern": name, "snippet": s.strip()[:120]})
+                    break
+        if hits:
+            signals.append("dispatch_destructive_op")
+            detail["destructive_hits"] = hits
+
+    if _is_autonomous_origin(from_device) and to_device and task is not None:
+        signals.append("autonomous_cross_agent_dispatch")
+        detail["origin"] = from_device
 
     return {"suspicious": bool(signals), "signals": signals, "detail": detail}

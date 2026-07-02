@@ -7,7 +7,9 @@ Saf-Python (bash/Ollama gerektirmez) — her ortamda calisir.
 
 from __future__ import annotations
 
-from app.core.action_review import scan_ci_fixer_diff
+import json
+
+from app.core.action_review import scan_ci_fixer_diff, scan_dispatch_note
 
 
 def _diff(body: str) -> str:
@@ -408,3 +410,71 @@ diff --git a/x.py b/x.py
     )
     assert "destructive_pattern_added" in added["signals"]
     assert "destructive_pattern_added" not in removed["signals"]
+
+
+# ---------------------------------------------------------------------------
+# Kapsam-2: scan_dispatch_note (cross-agent dispatch denetimi)
+# ---------------------------------------------------------------------------
+def test_dispatch_destructive_in_adimlar_flagged():
+    """Task-paketi adimlar[]'da yikici-op -> dispatch_destructive_op (A-1)."""
+    content = json.dumps(
+        {
+            "gorev_id": "DB-CLEAN-001",
+            "adimlar": ["sqlite3 server.db 'DROP TABLE memories;'", "rm -rf /opt/data"],
+            "basari_kriteri": "tablolar silindi",
+        }
+    )
+    r = scan_dispatch_note(content, from_device="klipper", to_device="surer")
+    assert r["suspicious"] is True
+    assert "dispatch_destructive_op" in r["signals"]
+
+
+def test_dispatch_destructive_in_prose_is_benign():
+    """Ayni yikici-string title/aciklama/prose alaninda -> BENIGN (klipper-dispatch-notu-regresyonu)."""
+    content = json.dumps(
+        {
+            "gorev_id": "GAP1-K2",
+            "title": "guard-disable analizi: chmod -x guard riski",
+            "aciklama": "Codex 'rm -rf' ve 'git push --force' desenlerini analiz-prozasi olarak anlatir",
+            "adimlar": ["action_review.py'ye scan_dispatch_note ekle", "test yaz"],
+            "basari_kriteri": "pytest yesil",
+        }
+    )
+    r = scan_dispatch_note(content, from_device="klipper", to_device="surer")
+    assert "dispatch_destructive_op" not in r["signals"]
+
+
+def test_dispatch_nested_data_cmd_is_benign():
+    """Nested-data (eval_set_format.*.cmd = test-datasi) TARANMAZ; yalniz top-level exec (Klipper #100248 FP)."""
+    content = json.dumps(
+        {
+            "gorev_id": "AICTRL-K2",
+            "adimlar": ["eval-harness yaz"],
+            "eval_set_format": {"dangerous": [{"id": "d01", "cmd": "rm -rf /tmp/x"}, {"id": "d02", "cmd": "git push --force"}]},
+        }
+    )
+    r = scan_dispatch_note(content, from_device="klipper", to_device="surer")
+    assert "dispatch_destructive_op" not in r["signals"]
+
+
+def test_dispatch_plain_prose_note_is_benign():
+    """Duz-prose not (JSON-degil) -> task-paketi degil -> TARANMAZ (benign)."""
+    content = "PR#247 MERGED. Codex 'rm -rf' desenini yakaladi, guard-disable test-executable flag'lendi."
+    r = scan_dispatch_note(content, from_device="klipper", to_device="surer")
+    assert r["suspicious"] is False
+
+
+def test_dispatch_autonomous_origin_consequential_warns():
+    """Otonom-origin + cross-agent + task-paketi -> autonomous_cross_agent_dispatch (A-2, #100248)."""
+    content = json.dumps({"gorev_id": "X", "adimlar": ["is yap"], "basari_kriteri": "ok"})
+    auto = scan_dispatch_note(content, from_device="klipper-autonomous", to_device="surer")
+    inter = scan_dispatch_note(content, from_device="klipper", to_device="surer")
+    assert "autonomous_cross_agent_dispatch" in auto["signals"]
+    assert "autonomous_cross_agent_dispatch" not in inter["signals"]
+
+
+def test_dispatch_gorev_paketi_wrapper_scanned():
+    """gorev_paketi ic-sarmali adimlar[] de taranir."""
+    content = json.dumps({"gorev_paketi": {"adimlar": ["docker system prune -f", "devam"]}})
+    r = scan_dispatch_note(content, from_device="klipper", to_device="surer")
+    assert "dispatch_destructive_op" in r["signals"]

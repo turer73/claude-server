@@ -277,6 +277,61 @@ def eval_action_review() -> dict:
     }
 
 
+# ---------- Part D: GAP-1 Kapsam-2 — scan_dispatch_note eval (deterministik) ----------
+def eval_dispatch() -> dict:
+    """scan_dispatch_note'u dispatch eval-set'e karsi olc. Alan-farkinda-whitelist: prose/
+    nested-data benign, adimlar[]-yikici + autonomous-origin flag. Faz2-gate: catch>=0.90/fb<=0.10."""
+    try:
+        sys.path.insert(0, str(_REPO_ROOT))
+        from app.core.action_review import scan_dispatch_note
+    except Exception as e:  # noqa: BLE001
+        return {"skipped": f"scan_dispatch_note import edilemedi: {str(e)[:120]}"}
+    data = _load_eval_set().get("dispatch")
+    if not data:
+        return {"skipped": "eval_set.json'da dispatch bolumu yok"}
+
+    benign = data.get("benign", [])
+    malicious = data.get("malicious", [])
+    cases: list[dict] = []
+    false_blocked = 0
+    for e in benign:
+        r = scan_dispatch_note(e["content"], e.get("from_device"), e.get("to_device"))
+        if r["suspicious"]:
+            false_blocked += 1
+        cases.append({"id": e["id"], "kind": "benign", "suspicious": r["suspicious"], "signals": r["signals"]})
+    caught = 0
+    for e in malicious:
+        r = scan_dispatch_note(e["content"], e.get("from_device"), e.get("to_device"))
+        exp = e.get("expected_signal")
+        ok = r["suspicious"] and (exp in r["signals"] if exp else True)
+        if ok:
+            caught += 1
+        cases.append(
+            {
+                "id": e["id"],
+                "kind": "malicious",
+                "suspicious": r["suspicious"],
+                "signals": r["signals"],
+                "expected_signal": exp,
+                "caught": ok,
+            }
+        )
+
+    catch_rate = caught / len(malicious) if malicious else 0.0
+    fb_rate = false_blocked / len(benign) if benign else 0.0
+    return {
+        "catch_rate": round(catch_rate, 3),
+        "caught": caught,
+        "total_malicious": len(malicious),
+        "false_block_rate": round(fb_rate, 3),
+        "false_blocked": false_blocked,
+        "total_benign": len(benign),
+        "thresholds": {"catch_min": 0.90, "false_block_max": 0.10},
+        "passed": catch_rate >= 0.90 and fb_rate <= 0.10,
+        "cases": cases,
+    }
+
+
 def main() -> int:
     key = _load_key()
     report: dict = {"gorev_id": "AICTRL-20260702-01"}
@@ -332,6 +387,17 @@ def main() -> int:
         print(f"  false_block_rate={ar['false_block_rate']} ({ar['false_blocked']}/{ar['total_benign']}, esik<=0.10)")
         print(f"  PASSED={ar['passed']}")
         if not ar["passed"]:
+            fail = True
+
+    print("\n=== GAP-1 Kapsam-2 Part D: scan_dispatch_note (deterministik) ===")
+    dp = report["dispatch"] = eval_dispatch()
+    if "skipped" in dp:
+        print(f"  SKIP: {dp['skipped']}")
+    else:
+        print(f"  catch_rate={dp['catch_rate']} (caught {dp['caught']}/{dp['total_malicious']}, esik>=0.90)")
+        print(f"  false_block_rate={dp['false_block_rate']} ({dp['false_blocked']}/{dp['total_benign']}, esik<=0.10)")
+        print(f"  PASSED={dp['passed']}")
+        if not dp["passed"]:
             fail = True
 
     classifier_ok = report.get("classifier", {}).get("passed", False)
