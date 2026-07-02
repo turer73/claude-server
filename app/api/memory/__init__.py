@@ -29,8 +29,10 @@ TRASH_TITLES = re.compile(r"^(test|test bug|test fix|test workaround|deneme|asdf
 
 
 def _is_autonomous_key(x_memory_key: str | None) -> bool:
-    """Istek DISTINCT otonom-key ile mi auth oldu (set + eslesme). Bos-key asla otonom sayilmaz."""
-    return bool(MEMORY_API_KEY_AUTONOMOUS) and x_memory_key == MEMORY_API_KEY_AUTONOMOUS
+    """Istek DISTINCT otonom-key ile mi auth oldu. Bos-key asla otonom sayilmaz.
+    KEY-COLLISION GUARD (Codex Tier-1 #2, fail-CLOSED): otonom-key == master-key (config-hatasi)
+    ise otonom-mod DEVRE-DISI (yoksa HER normal-POST force-tag'lenir, attribution/dedup bozulur)."""
+    return bool(MEMORY_API_KEY_AUTONOMOUS) and MEMORY_API_KEY_AUTONOMOUS != MEMORY_API_KEY and x_memory_key == MEMORY_API_KEY_AUTONOMOUS
 
 
 def verify_key(x_memory_key: str = Header(None)):
@@ -43,6 +45,16 @@ def verify_key(x_memory_key: str = Header(None)):
     if x_memory_key == MEMORY_API_KEY or _is_autonomous_key(x_memory_key):
         return
     raise HTTPException(401, "Invalid memory API key")
+
+
+def verify_master_key(x_memory_key: str = Header(None)):
+    """MASTER-key ZORUNLU — otonom-key REDDEDILIR (Codex Tier-1 #1). Onboarding/key-SIZAN
+    route'lar icin: onboarding yaniti MASTER-key gomuyor; otonom-key bu endpoint'lere erisip
+    master'i ogrenip force-tag'i BYPASS etmesin (unforgeable-garanti korunur)."""
+    if not MEMORY_API_KEY:
+        raise HTTPException(503, "Memory API key not configured (fail-closed)")
+    if x_memory_key != MEMORY_API_KEY:
+        raise HTTPException(401, "Invalid memory API key (master required)")
 
 
 def dispatch_origin(x_memory_key: str = Header(None)) -> str:
@@ -58,7 +70,7 @@ router = APIRouter(prefix="/api/v1/memory", tags=["memory"], dependencies=[Depen
 # the key on the request side too — otherwise anyone reachable on the LAN /
 # Tailscale can curl /onboard/<device> and pull the live API key out of the
 # response body.
-public_router = APIRouter(prefix="/api/v1/memory", tags=["memory-public"], dependencies=[Depends(verify_key)])
+public_router = APIRouter(prefix="/api/v1/memory", tags=["memory-public"], dependencies=[Depends(verify_master_key)])
 
 
 def get_db():

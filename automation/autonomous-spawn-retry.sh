@@ -236,6 +236,12 @@ Result: <bir-iki cumle>"
     spawn_log="${HOOK_LOG_DIR}/autonomous-claude-retry-spawn-${note_id}-$(date +%s).log"
 
     set +e
+    # GAP-1 item-D (Codex #3): DLQ-retry spawn'i da otonom-key kullansin -> not-yazimlari
+    # A-2 tagged (retried-otonom-is normal-key ile untagged yazmasin). autonomous-claude.sh ile ayni.
+    _retry_env="${HOOK_ENV_FILE:-/opt/linux-ai-server/.env}"
+    _retry_key=$(grep '^MEMORY_API_KEY_AUTONOMOUS=' "$_retry_env" 2>/dev/null | cut -d= -f2- | tr -d '"' | head -c 200)
+    [ -z "$_retry_key" ] && _retry_key=$(grep '^MEMORY_API_KEY=' "$_retry_env" 2>/dev/null | cut -d= -f2- | tr -d '"' | head -c 200)
+    MEMORY_API_KEY="$_retry_key" \
     claude -p "$prompt" \
         --append-system-prompt "$(cat "$GUARDRAILS")" \
         --settings "$SETTINGS_FILE" \

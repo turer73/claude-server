@@ -282,3 +282,36 @@ async def test_autonomous_key_dormant_when_unset(client, memory_db, monkeypatch)
     row = conn.execute("SELECT from_device FROM notes WHERE id=?", (nid,)).fetchone()
     conn.close()
     assert row[0] == "klipper"
+
+
+@pytest.mark.anyio
+async def test_onboarding_rejects_autonomous_key(client, memory_db, monkeypatch):
+    """Codex Tier-1 #1: otonom-key ONBOARDING'e erisemez (master-key sizdiriyor -> force-tag bypass)."""
+    import app.api.memory as mem_module
+
+    monkeypatch.setattr(mem_module, "MEMORY_API_KEY_AUTONOMOUS", "auto-test-key-xyz")
+    # otonom-key ile onboarding -> 401 (master-only)
+    resp = await client.get("/api/v1/memory/onboard/surer", headers={"X-Memory-Key": "auto-test-key-xyz"})
+    assert resp.status_code == 401
+    # master-key (default header) auth'u GECER (cihaz-kayitli-degilse 404 ama 401-DEGIL = auth-ok)
+    resp2 = await client.get("/api/v1/memory/onboard/surer")
+    assert resp2.status_code != 401
+
+
+@pytest.mark.anyio
+async def test_key_collision_disables_autonomous_mode(client, memory_db, monkeypatch):
+    """Codex Tier-1 #2: otonom-key == master (config-hatasi) -> otonom-mod DORMANT (fail-closed)."""
+    import app.api.memory as mem_module
+    from tests.conftest import TEST_MEMORY_KEY
+
+    monkeypatch.setattr(mem_module, "MEMORY_API_KEY_AUTONOMOUS", TEST_MEMORY_KEY)
+    resp = await client.post(  # normal master-key (default) POST
+        "/api/v1/memory/notes",
+        json={"from_device": "surer", "to_device": "klipper", "title": "collision", "content": "x"},
+    )
+    assert resp.status_code == 200
+    nid = resp.json()["id"]
+    conn = sqlite3.connect(str(memory_db))
+    row = conn.execute("SELECT from_device FROM notes WHERE id=?", (nid,)).fetchone()
+    conn.close()
+    assert row[0] == "surer"  # collision-guard: force-tag YOK
