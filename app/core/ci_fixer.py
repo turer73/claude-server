@@ -33,9 +33,7 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 3
 
 
-async def _review_fix_diff(
-    cwd: str, source_file: str | None, project: str, test_name: str
-) -> None:
+async def _review_fix_diff(cwd: str, source_file: str | None, project: str, test_name: str) -> None:
     """GAP-1 action_review: working-tree `git diff`'i yakala + spec-gaming tara + emit.
 
     notify-only (Faz1): supheli-diff'te emit_event(warn) atar ama ci_fixer'i BLOKLAMAZ.
@@ -75,6 +73,7 @@ async def _review_fix_diff(
             detail="sinyaller: " + ", ".join(result["signals"]),
             payload=result,
         )
+
 
 # P1#5: restricted Claude Code settings (filesystem/tool scope) used instead of
 # --dangerously-skip-permissions. Repo-relative path; env-overridable.
