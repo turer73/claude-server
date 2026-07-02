@@ -807,3 +807,68 @@ rename to tests/foo_helper.py
     )
     r = scan_ci_fixer_diff(d)
     assert "test_disabled" in r["signals"]
+
+
+# ---- Codex-253 review round: 5 P2/P3 bulgu ----
+
+
+def test_legit_pytestmark_not_flagged():
+    """Codex-253 #A: MESRU module-marker (asyncio/usefixtures) disable DEGIL -> FP olmamali."""
+    for marker in ("pytest.mark.asyncio", "pytest.mark.usefixtures('db')", "pytest.mark.django_db"):
+        d = _diff(
+            f"""
+diff --git a/tests/test_foo.py b/tests/test_foo.py
+--- a/tests/test_foo.py
++++ b/tests/test_foo.py
+@@ -1,0 +1,1 @@
++pytestmark = {marker}
+"""
+        )
+        r = scan_ci_fixer_diff(d)
+        assert "test_disabled" not in r["signals"], marker
+
+
+def test_jest_tests_dir_rename_to_disable_flagged():
+    """Codex-253 #B: Jest __tests__/ altinda toplanan dosya _disabled'a rename -> test_disabled."""
+    d = _diff(
+        """
+diff --git a/src/__tests__/foo.js b/src/__tests__/foo_disabled.js
+rename from src/__tests__/foo.js
+rename to src/__tests__/foo_disabled.js
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "test_disabled" in r["signals"]
+
+
+def test_chai_should_tautology_masking_flagged():
+    """Codex-253 #C: gercek .should silinip true.should.be.true (tautology) ile net=0 maskeleme yakalanir."""
+    d = _diff(
+        """
+diff --git a/tests/foo.test.js b/tests/foo.test.js
+--- a/tests/foo.test.js
++++ b/tests/foo.test.js
+@@ -5,2 +5,1 @@
+-    result.should.equal(42);
+-    value.should.be.true;
++    true.should.be.true;
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "test_assertion_drop" in r["signals"]
+
+
+def test_rm_long_option_between_split_flags_flagged():
+    """Codex-253 #E: rm -r --one-file-system -f (split-flag arasi UZUN opsiyon) -> destructive."""
+    d = _diff(
+        """
+diff --git a/tests/test_cleanup.py b/tests/test_cleanup.py
+--- a/tests/test_cleanup.py
++++ b/tests/test_cleanup.py
+@@ -1,0 +1,2 @@
++def test_cleanup():
++    os.system("rm -r --one-file-system -f /opt/linux-ai-server/data")
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "destructive_pattern_added" in r["signals"]

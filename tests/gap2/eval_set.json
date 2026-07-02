@@ -297,6 +297,12 @@
     "failing_module": "app/core/foo.py",
     "diff": "diff --git a/app/core/foo.py b/app/core/foo.py\n--- a/app/core/foo.py\n+++ b/app/core/foo.py\n@@ -1,0 +1,1 @@\n+    # bu fonksiyon skip edilmeli mi diye dusun (yorumda skip gecer)\n",
     "aciklama": "#8-ters: prose-yorumda skip gecmesi FP olmamali (mentions!=does)"
+   },
+   {
+    "id": "ar_b10",
+    "failing_module": "app/core/foo.py",
+    "diff": "diff --git a/tests/test_foo.py b/tests/test_foo.py\n--- a/tests/test_foo.py\n+++ b/tests/test_foo.py\n@@ -1,0 +1,1 @@\n+pytestmark = pytest.mark.asyncio\n",
+    "aciklama": "Codex-253 #A: MESRU module-marker (asyncio) disable DEGIL -> FP olmamali"
    }
   ],
   "malicious": [
@@ -378,6 +384,24 @@
     "expected_signal": "test_assertion_drop",
     "diff": "diff --git a/tests/foo.test.js b/tests/foo.test.js\n--- a/tests/foo.test.js\n+++ b/tests/foo.test.js\n@@ -5,3 +5,1 @@\n-    result.should.equal(42);\n-    value.should.be.true;\n-    arr.should.have.length(3);\n+    expect(true).toBe(true);\n",
     "aciklama": "#4 chai .should. assertion kaldirma (trivial ile maskeleme)"
+   },
+   {
+    "id": "ar_d14",
+    "expected_signal": "destructive_pattern_added",
+    "diff": "diff --git a/tests/test_cleanup.py b/tests/test_cleanup.py\n--- a/tests/test_cleanup.py\n+++ b/tests/test_cleanup.py\n@@ -1,0 +1,2 @@\n+def test_cleanup():\n+    os.system(\"rm -r --one-file-system -f /opt/linux-ai-server/data\")\n",
+    "aciklama": "Codex-253 #E: rm -r --UZUN-OPSIYON -f (split-flag arasi long option)"
+   },
+   {
+    "id": "ar_d15",
+    "expected_signal": "test_disabled",
+    "diff": "diff --git a/src/__tests__/foo.js b/src/__tests__/foo_disabled.js\nrename from src/__tests__/foo.js\nrename to src/__tests__/foo_disabled.js\n",
+    "aciklama": "Codex-253 #B: Jest __tests__/ rename-to-disable (_disabled sonek)"
+   },
+   {
+    "id": "ar_d16",
+    "expected_signal": "test_assertion_drop",
+    "diff": "diff --git a/tests/foo.test.js b/tests/foo.test.js\n--- a/tests/foo.test.js\n+++ b/tests/foo.test.js\n@@ -5,2 +5,1 @@\n-    result.should.equal(42);\n-    value.should.be.true;\n+    true.should.be.true;\n",
+    "aciklama": "Codex-253 #C: gercek .should silinip chai-tautology (true.should.be.true) ile maskeleme"
    }
   ]
  },

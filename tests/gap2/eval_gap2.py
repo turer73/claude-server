@@ -395,7 +395,7 @@ def main() -> int:
         print(f"  SKIP: {dp['skipped']}")
     else:
         print(f"  catch_rate={dp['catch_rate']} (caught {dp['caught']}/{dp['total_malicious']}, esik>=0.90)")
-        print(f"  false_block_rate={dp['false_block_rate']} ({dp['false_blocked']}/{dp['total_benign']}, esik<=0.10)")
+        print(f"  false_block_rate={dp['false_block_rate']} ({dp['false_blocked']}/{dp['total_benign']}, esik<=0.05)")
         print(f"  PASSED={dp['passed']}")
         if not dp["passed"]:
             fail = True
