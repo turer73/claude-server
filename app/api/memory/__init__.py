@@ -47,7 +47,7 @@ def verify_key(x_memory_key: str = Header(None)):
     raise HTTPException(401, "Invalid memory API key")
 
 
-def verify_master_key(x_memory_key: str = Header(None)):
+def verify_master_key(x_memory_key: str = Header(None)) -> None:
     """MASTER-key ZORUNLU — otonom-key REDDEDILIR (Codex Tier-1 #1). Onboarding/key-SIZAN
     route'lar icin: onboarding yaniti MASTER-key gomuyor; otonom-key bu endpoint'lere erisip
     master'i ogrenip force-tag'i BYPASS etmesin (unforgeable-garanti korunur)."""
