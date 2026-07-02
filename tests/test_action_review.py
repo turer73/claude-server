@@ -478,3 +478,57 @@ def test_dispatch_gorev_paketi_wrapper_scanned():
     content = json.dumps({"gorev_paketi": {"adimlar": ["docker system prune -f", "devam"]}})
     r = scan_dispatch_note(content, from_device="klipper", to_device="surer")
     assert "dispatch_destructive_op" in r["signals"]
+
+
+# ---------------------------------------------------------------------------
+# Kapsam-2 Codex round-1 fix'leri (dispatcher-shape / argv / SQL-case / step-prose)
+# ---------------------------------------------------------------------------
+def test_dispatch_builtin_dispatcher_shape_flagged():
+    """Codex #1/#2: built-in dispatcher 'gorev'+'degisiklikler', to_device YOK, alici zarf -> FLAG."""
+    content = json.dumps(
+        {
+            "tip": "gorev_paketi",
+            "gonderen": "klipper-dispatcher",
+            "alici": "surer-sonnet",
+            "gorev": "rm -rf /opt/linux-ai-server/data yap",
+            "degisiklikler": ["git push --force origin master"],
+            "basari_kriteri": "tamam",
+        }
+    )
+    r = scan_dispatch_note(content, from_device="klipper", to_device=None)
+    assert "dispatch_destructive_op" in r["signals"]
+
+
+def test_dispatch_argv_array_cmd_flagged():
+    """Codex #3: argv-array {'cmd':['rm','-rf','/tmp']} -> BIRLESIK 'rm -rf /tmp' taranir."""
+    content = json.dumps({"gorev_id": "X", "cmd": ["rm", "-rf", "/tmp/x"], "basari_kriteri": "ok"})
+    r = scan_dispatch_note(content, from_device="klipper", to_device="surer")
+    assert "dispatch_destructive_op" in r["signals"]
+
+
+def test_dispatch_lowercase_sql_flagged():
+    """Codex #4: lowercase 'drop table' case-insensitive yakalanir."""
+    content = json.dumps({"adimlar": ["sqlite3 server.db 'drop table memories;'"]})
+    r = scan_dispatch_note(content, from_device="klipper", to_device="surer")
+    assert "dispatch_destructive_op" in r["signals"]
+
+
+def test_dispatch_structured_step_prose_benign():
+    """Codex #5: step.description'da 'rm -rf' prose ama command benign -> FLAG YOK."""
+    content = json.dumps({"steps": [{"description": "regresyon notunda rm -rf'den bahset", "command": "pytest -q"}]})
+    r = scan_dispatch_note(content, from_device="klipper", to_device="surer")
+    assert "dispatch_destructive_op" not in r["signals"]
+
+
+def test_dispatch_structured_step_command_flagged():
+    """Structured step.command yikici -> FLAG (exec-subfield taranir)."""
+    content = json.dumps({"steps": [{"description": "temizlik", "command": "rm -rf /opt/data"}]})
+    r = scan_dispatch_note(content, from_device="klipper", to_device="surer")
+    assert "dispatch_destructive_op" in r["signals"]
+
+
+def test_dispatch_autonomous_via_envelope_alici():
+    """A-2 cross-agent: to_device yok ama zarf-alici var + autonomous-origin -> warn."""
+    content = json.dumps({"gorev": "is yap", "alici": "surer-sonnet", "basari_kriteri": "ok"})
+    r = scan_dispatch_note(content, from_device="klipper-autonomous", to_device=None)
+    assert "autonomous_cross_agent_dispatch" in r["signals"]

@@ -204,8 +204,8 @@ async def test_create_note_dispatch_scan_failopen(client, memory_db, monkeypatch
 
 
 @pytest.mark.anyio
-async def test_create_note_broadcast_not_scanned(client, memory_db, monkeypatch):
-    """to_device YOK (broadcast) not -> dispatch-scan CAGRILMAZ (yalniz cross-agent)."""
+async def test_create_note_scanned_even_without_to_device(client, memory_db, monkeypatch):
+    """Codex #1: dispatcher to_device SET ETMEZ -> to_device'siz not de scan_dispatch_note'a verilir."""
     calls = {"n": 0}
 
     def _spy(*_a, **_k):
@@ -215,7 +215,7 @@ async def test_create_note_broadcast_not_scanned(client, memory_db, monkeypatch)
     monkeypatch.setattr("app.api.memory.notes.scan_dispatch_note", _spy)
     resp = await client.post(
         "/api/v1/memory/notes",
-        json={"from_device": "klipper", "title": "broadcast", "content": '{"adimlar":["x"]}'},
+        json={"from_device": "klipper", "title": "dispatcher", "content": '{"gorev":"x","alici":"surer-sonnet"}'},
     )
     assert resp.status_code == 200
-    assert calls["n"] == 0
+    assert calls["n"] == 1  # to_device olmasa da taranir (dispatcher-notu kacmasin)

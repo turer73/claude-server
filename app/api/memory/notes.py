@@ -17,9 +17,13 @@ def _review_dispatch_note(from_device: str, to_device: str | None, content: str 
     """GAP-1 Kapsam-2: cross-agent dispatch notunu deterministik denetle (notify-only).
 
     FAIL-OPEN: bu fonksiyon ASLA raise ETMEZ — not zaten INSERT edildi, koordinasyon-kanali
-    kritik. Yalniz cross-agent (to_device dolu) notlar taranir. Scan-hata -> warn-emit, not durur.
+    kritik. Scan-hata -> warn-emit, not durur.
+
+    NOT (Codex P1 #1): built-in dispatcher (_send_to_surer) to_device SET ETMEZ (content-zarfinda
+    alici='surer-sonnet' tasir). Bu yuzden to_device'a gate KOYULMAZ — her not scan_dispatch_note'a
+    verilir; o, JSON-task-paketi degilse (duz-prose/broadcast) zaten benign doner (ucuz).
     """
-    if not to_device or not content:  # yonlendirilmemis/bos not = dispatch degil, atla
+    if not content:  # bos content = taranacak sey yok
         return
     try:
         result = scan_dispatch_note(content, from_device, to_device)

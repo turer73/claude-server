@@ -71,11 +71,12 @@ _FALLBACK_PATTERNS: list[tuple[str, str]] = [
 
 
 @lru_cache(maxsize=1)
-def _load_destructive_patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
-    """Yikici-desenleri pre-bash-guard.sh'ten TURET (DRY). Parse/derleme hatasi = fail-safe.
+def _destructive_pattern_sources() -> tuple[tuple[str, str], ...]:
+    """Yikici-desen KAYNAKLARI (name, regex-str) — pre-bash-guard.sh'ten TURET (DRY) + fallback UNION.
 
-    Guard bulunamaz/parse-edilemezse minimal fallback dizisi kullanilir (bloklamaz, sadece
-    daha-az kapsar). Bu Kapsam-1 icin yeterli; ana sinyaller assertion-drop/guard-config.
+    Parse/derleme hatasi = fail-safe (guard yoksa minimal fallback). guard-turevi + _FALLBACK
+    HER ZAMAN birlesir (guard'da olmayan chmod-x-guard/MEMORY_API_KEY=/permissions.allow korunur).
+    Kaynak-ayrimi: hem case-sensitive (Kapsam-1 diff) hem case-insensitive (Kapsam-2 dispatch) derlensin.
     """
     raw = ""
     try:
@@ -84,26 +85,31 @@ def _load_destructive_patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
         raw = ""
 
     m = re.search(r"DANGEROUS_PATTERNS=\((.*?)\n\)", raw, re.S) if raw else None
-    compiled: list[tuple[str, re.Pattern[str]]] = []
+    sources: list[tuple[str, str]] = []
     if m:
         for i, ere in enumerate(re.findall(r"'([^']+)'", m.group(1))):
             py = ere
             for posix, repl in _POSIX_MAP.items():
                 py = py.replace(posix, repl)
             try:
-                compiled.append((f"guard[{i}]", re.compile(py)))
+                re.compile(py)  # derlenebilir mi (fail-safe)
             except re.error:
-                continue  # cevrilemeyen deseni atla (fail-safe)
+                continue
+            sources.append((f"guard[{i}]", py))
+    sources.extend(_FALLBACK_PATTERNS)
+    return tuple(sources)
 
-    # UNION (Codex P2 #2): guard-turevi + fallback HER ZAMAN birlesir. Guard'da OLMAYAN
-    # desenler (chmod-x-guard, MEMORY_API_KEY=, permissions.allow) yalniz fallback'te —
-    # 'ya guard ya fallback' olsa parse-basarisinda bunlar kaybolurdu (design'da yikici sayilir).
-    for name, rx in _FALLBACK_PATTERNS:
-        try:
-            compiled.append((name, re.compile(rx)))
-        except re.error:
-            continue
-    return tuple(compiled)
+
+@lru_cache(maxsize=1)
+def _load_destructive_patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
+    """Case-SENSITIVE derlenmis yikici-desenler (Kapsam-1 ci_fixer diff — kod case'i onemli)."""
+    return tuple((name, re.compile(p)) for name, p in _destructive_pattern_sources())
+
+
+@lru_cache(maxsize=1)
+def _load_destructive_patterns_ci() -> tuple[tuple[str, re.Pattern[str]], ...]:
+    """Case-INSENSITIVE (Kapsam-2 dispatch — SQL/komut case-bagimsiz, Codex #4 'drop table')."""
+    return tuple((name, re.compile(p, re.IGNORECASE)) for name, p in _destructive_pattern_sources())
 
 
 def _parse_diff(git_diff: str) -> dict[str, dict[str, list[str]]]:
@@ -281,21 +287,59 @@ def scan_ci_fixer_diff(git_diff: str, failing_module: str | None = None) -> dict
 # Kapsam-2: cross-agent dispatch notu denetimi (A-1 icerik + A-2 otonom-origin)
 # ---------------------------------------------------------------------------
 
-# Task-paketinin EXECUTABLE alanlari (bunlar taranir). title/aciklama/description/
+# Task-paketinin EXECUTABLE alanlari (bunlar taranir). title/aciklama/description/ozet/
 # content/attack_type gibi META/PROSE alanlari TARANMAZ (alan-farkinda-whitelist cekirdegi).
-_EXEC_KEYS = {"adimlar", "steps", "cmd", "cmds", "command", "commands", "komut", "komutlar", "script"}
+# NOT (Codex #2): built-in dispatcher (_send_to_surer) 'gorev'+'degisiklikler'(=surer_tasks)
+# kullanir; interactive-klipper 'adimlar[]' yazar. Ikisi de kapsanmali.
+_EXEC_KEYS = {
+    "adimlar",
+    "steps",
+    "cmd",
+    "cmds",
+    "command",
+    "commands",
+    "komut",
+    "komutlar",
+    "script",
+    "gorev",
+    "degisiklikler",
+    "surer_tasks",
+    "klipper_cmds",
+}
+# Cross-agent dispatch-zarfi gostergeleri (built-in dispatcher to_device set ETMEZ; Codex #1).
+_ENVELOPE_KEYS = {"alici", "gonderen", "to", "recipient", "tip"}
 # Task-paketi gostergesi (bunlardan biri varsa content bir dispatch-task-paketidir).
-_TASK_KEYS = _EXEC_KEYS | {"gorev_paketi", "gorev_id", "basari_kriteri"}
+_TASK_KEYS = _EXEC_KEYS | _ENVELOPE_KEYS | {"gorev_paketi", "gorev_id", "basari_kriteri"}
 
 
-def _all_strings(node: Any) -> list[str]:
-    """node icindeki TUM string-degerleri duz-listele (list/dict recursive)."""
-    if isinstance(node, str):
-        return [node]
-    if isinstance(node, list):
-        return [s for item in node for s in _all_strings(item)]
-    if isinstance(node, dict):
-        return [s for v in node.values() for s in _all_strings(v)]
+def _exec_value_strings(value: Any) -> list[str]:
+    """Bir EXECUTABLE-alan degerinden taranacak string'ler (alan-farkinda, derinlemesine).
+
+    - string -> [string]
+    - argv-array ['rm','-rf','/x'] -> tek-tek + BIRLESIK 'rm -rf /x' (Codex #3: desenler
+      komut+flag'i ayni string'de arar).
+    - structured-steps [{'description': prose, 'command': 'pytest'}] -> YALNIZ exec-subfield
+      (command/cmd/...); 'description'/prose subfield'lari TARANMAZ (Codex #5).
+    - dict -> yalniz exec-subfield'leri.
+    """
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        out: list[str] = []
+        strs = [v for v in value if isinstance(v, str)]
+        out.extend(strs)
+        if strs:
+            out.append(" ".join(strs))  # argv-join (#3)
+        for item in value:
+            if isinstance(item, (dict, list)):
+                out.extend(_exec_value_strings(item))
+        return out
+    if isinstance(value, dict):
+        out = []
+        for k, v in value.items():
+            if k in _EXEC_KEYS:
+                out.extend(_exec_value_strings(v))
+        return out
     return []
 
 
@@ -321,9 +365,9 @@ def _try_parse_task_package(content: str) -> dict[str, Any] | None:
 def _collect_exec_strings(task: dict[str, Any]) -> list[str]:
     """Task-paketinin TOP-LEVEL (+ gorev_paketi sarmali) executable-alan string'leri.
 
-    KRITIK (FP-onleme): YALNIZ task'in kendi executable-alanlari (adimlar[]/cmd/...) taranir;
-    DERIN-NESTED data-alanlari (or. eval_set_format.*.cmd = test-datasi) TARANMAZ. Klipper'in
-    kendi dispatch-notlari (#100248) nested-data'da yikici-string tasir = benign kalmali.
+    KRITIK (FP-onleme): YALNIZ executable-alanlar (adimlar[]/gorev/cmd/...) taranir; DERIN-NESTED
+    data (eval_set_format.*.cmd = test-datasi) + prose-subfield'ler (step.description) TARANMAZ.
+    Klipper'in kendi dispatch-notlari (#100248) nested-data'da yikici-string tasir = benign kalmali.
     """
     out: list[str] = []
     roots = [task]
@@ -333,7 +377,7 @@ def _collect_exec_strings(task: dict[str, Any]) -> list[str]:
     for root in roots:
         for key in _EXEC_KEYS:
             if key in root:
-                out.extend(_all_strings(root[key]))
+                out.extend(_exec_value_strings(root[key]))
     return out
 
 
@@ -342,13 +386,21 @@ def _is_autonomous_origin(from_device: str | None) -> bool:
     return from_device is not None and "autonomous" in from_device.lower()
 
 
+def _is_cross_agent(to_device: str | None, task: dict[str, Any] | None) -> bool:
+    """Cross-agent dispatch mi: to_device dolu VEYA content-zarfinda alici/gonderen/tip var.
+    Built-in dispatcher to_device set ETMEZ ama content'te alici='surer-sonnet' tasir (Codex #1)."""
+    if to_device:
+        return True
+    return task is not None and any(k in task for k in _ENVELOPE_KEYS)
+
+
 def scan_dispatch_note(content: str, from_device: str | None = None, to_device: str | None = None) -> dict[str, Any]:
     """Cross-agent dispatch notunu deterministik denetle (Kapsam-2 A-1 + A-2).
 
-    A-1: content JSON task-paketiyse YALNIZ executable-alanlarinda (adimlar[]/cmd/...) yikici-desen
-         ara (Kapsam-1 _load_destructive_patterns REUSE). Meta/prose/nested-data TARANMAZ.
-    A-2: origin otonom (from_device~'*autonomous*') + cross-agent (to_device dolu) + task-paketi
-         => otonom-consequential-dispatch sinyali (#1222/#100248 human-gate?).
+    A-1: content JSON task-paketiyse YALNIZ executable-alanlarinda (adimlar/gorev/cmd/...) yikici-desen
+         ara (case-INSENSITIVE, Codex #4). Meta/prose/nested-data/step-prose TARANMAZ.
+    A-2: origin otonom (from_device~'*autonomous*') + cross-agent (to_device VEYA zarf-alici) +
+         task-paketi => otonom-consequential-dispatch sinyali (#1222/#100248 human-gate?).
 
     Returns {"suspicious": bool, "signals": [...], "detail": {...}}. LLM yok; notify-only kullanim.
     """
@@ -358,7 +410,7 @@ def scan_dispatch_note(content: str, from_device: str | None = None, to_device: 
     task = _try_parse_task_package(content)
 
     if task is not None:
-        patterns = _load_destructive_patterns()
+        patterns = _load_destructive_patterns_ci()  # dispatch = case-insensitive (Codex #4)
         hits: list[dict[str, str]] = []
         for s in _collect_exec_strings(task):
             for name, rx in patterns:
@@ -369,7 +421,7 @@ def scan_dispatch_note(content: str, from_device: str | None = None, to_device: 
             signals.append("dispatch_destructive_op")
             detail["destructive_hits"] = hits
 
-    if _is_autonomous_origin(from_device) and to_device and task is not None:
+    if _is_autonomous_origin(from_device) and _is_cross_agent(to_device, task) and task is not None:
         signals.append("autonomous_cross_agent_dispatch")
         detail["origin"] = from_device
 
