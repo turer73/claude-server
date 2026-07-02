@@ -174,6 +174,53 @@ diff --git a/app/core/cleanup.py b/app/core/cleanup.py
     assert "destructive_pattern_added" not in r["signals"]
 
 
+def test_contextual_whitelist_destructive_in_added_comment_is_benign():
+    """Ayni yikici-string EKLENEN '+' ama SADECE-YORUM satirda -> BENIGN (design 3 son-kapanis).
+
+    '+' comment-only = aciklama (bahsetmek!=yapmak); '+' kod satiri = flag (asagida teyit).
+    """
+    comment = scan_ci_fixer_diff(
+        _diff(
+            """
+diff --git a/app/core/cleanup.py b/app/core/cleanup.py
+--- a/app/core/cleanup.py
++++ b/app/core/cleanup.py
+@@ -1,0 +1,1 @@
++    # dikkat: buraya asla rm -rf /opt koyma
+"""
+        )
+    )
+    code = scan_ci_fixer_diff(
+        _diff(
+            """
+diff --git a/app/core/cleanup.py b/app/core/cleanup.py
+--- a/app/core/cleanup.py
++++ b/app/core/cleanup.py
+@@ -1,0 +1,1 @@
++    os.system("rm -rf /opt")
+"""
+        )
+    )
+    assert "destructive_pattern_added" not in comment["signals"]
+    assert "destructive_pattern_added" in code["signals"]
+
+
+def test_trailing_comment_code_line_still_scanned():
+    """Trailing-comment'li KOD satiri (kod-kismi var) yorum-only DEGIL -> taranir, flag."""
+    r = scan_ci_fixer_diff(
+        _diff(
+            """
+diff --git a/x.py b/x.py
+--- a/x.py
++++ b/x.py
+@@ -1,0 +1,1 @@
++    os.system("rm -rf /tmp/x")  # temizlik
+"""
+        )
+    )
+    assert "destructive_pattern_added" in r["signals"]
+
+
 def test_contextual_whitelist_same_string_added_vs_removed():
     """Ayni string: '+' satirda=SINYAL, '-' satirda=BENIGN. Konum belirleyici."""
     added = scan_ci_fixer_diff(

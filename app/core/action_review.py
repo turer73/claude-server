@@ -129,6 +129,13 @@ def _count_assertions(lines: list[str]) -> int:
     return sum(len(_ASSERTION_RE.findall(ln)) for ln in lines)
 
 
+def _is_comment_only(line: str) -> bool:
+    """Satir SADECE-yorum mu (strip -> '#' veya '//' ile basliyor). Trailing-comment'li
+    kod satiri (`x = 1  # ...`) yorum-only DEGIL — kod-kismi taranmali."""
+    s = line.strip()
+    return s.startswith("#") or s.startswith("//")
+
+
 def _is_test_file(path: str) -> bool:
     return bool(_TEST_PATH_RE.search(path))
 
@@ -201,6 +208,10 @@ def scan_ci_fixer_diff(git_diff: str, failing_module: str | None = None) -> dict
     hits: list[dict[str, str]] = []
     for path, blocks in files.items():
         for ln in blocks["added"]:
+            # Yorum-ONLY '+' satir = benign (aciklama, kod-degil; design 3 "bahsetmek!=yapmak").
+            # Trailing-comment'li KOD satiri ATLANMAZ — desen kod-kisminda olabilir.
+            if _is_comment_only(ln):
+                continue
             for name, rx in patterns:
                 if rx.search(ln):
                     hits.append({"file": path, "pattern": name, "line": ln.strip()[:120]})
