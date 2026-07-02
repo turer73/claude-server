@@ -8,7 +8,43 @@ import asyncio
 from fastapi import HTTPException
 
 from app.api.memory import NoteCreate, _ensure_read_by, _fire_event, _unread_pred, get_db, router
+from app.core.action_review import scan_dispatch_note
+from app.core.events import emit_event
 from app.core.privacy import redact
+
+
+def _review_dispatch_note(from_device: str, to_device: str | None, content: str | None, note_id: int | None) -> None:
+    """GAP-1 Kapsam-2: cross-agent dispatch notunu deterministik denetle (notify-only).
+
+    FAIL-OPEN: bu fonksiyon ASLA raise ETMEZ — not zaten INSERT edildi, koordinasyon-kanali
+    kritik. Scan-hata -> warn-emit, not durur.
+
+    NOT (Codex P1 #1): built-in dispatcher (_send_to_surer) to_device SET ETMEZ (content-zarfinda
+    alici='surer-sonnet' tasir). Bu yuzden to_device'a gate KOYULMAZ — her not scan_dispatch_note'a
+    verilir; o, JSON-task-paketi degilse (duz-prose/broadcast) zaten benign doner (ucuz).
+    """
+    if not content:  # bos content = taranacak sey yok
+        return
+    try:
+        result = scan_dispatch_note(content, from_device, to_device)
+    except Exception as exc:  # noqa: BLE001 — FAIL-OPEN, not-yazimi bozulmaz
+        emit_event(
+            type="action-review",
+            source="dispatch",
+            title=f"dispatch-scan taranamadi: note#{note_id}",
+            severity="warn",
+            detail=f"{type(exc).__name__}: {exc}",
+        )
+        return
+    if result["suspicious"]:
+        emit_event(
+            type="action-review",
+            source="dispatch",
+            title=f"cross-agent dispatch supheli: {from_device}->{to_device} note#{note_id}",
+            severity="warn",
+            detail="sinyaller: " + ", ".join(result["signals"]),
+            payload={"note_id": note_id, **result},
+        )
 
 
 @router.get("/notes")
@@ -82,6 +118,9 @@ async def create_note(data: NoteCreate):
             (data.from_device, data.to_device, data.title, content_clean),
         )
         db.commit()
+
+        # GAP-1 Kapsam-2: cross-agent dispatch denetimi (notify-only + FAIL-OPEN; not ZATEN yazildi).
+        _review_dispatch_note(data.from_device, data.to_device, content_clean, cur.lastrowid)
 
         asyncio.create_task(
             _fire_event(

@@ -15,6 +15,9 @@ Eğer başka notlara dokunursan: thread sapmasi, double-processing, gereksiz har
 
 1. **Note gönderme yasak.** Sürer ya da başka cihaza yeni not GÖNDERME — bu polling loop riski yaratır.
    - İstisna: aciliyet maddesi "[autonomous-reply-ok]" tag'i içeren note'lara cevap verebilirsin.
+   - **Zorunlu (GAP-1 A-2 origin-tag):** İstisna gereği not gönderirsen `from_device` alanını
+     **`klipper-autonomous`** yaz (interactive `klipper` DEĞİL). Böylece create_note otonom
+     cross-agent dispatch'i işaretleyebilir (#1222/#100248). Interactive-klipper `klipper` kalır.
 
 2. **Yıkıcı işlem yasak.** `rm -rf`, `git push --force`, `docker rm`, `dropdb`, `systemctl stop`, VPS prod write hiçbiri yapılamaz.
    - Sen sandbox'tasın; risk → mark read + defer to user.

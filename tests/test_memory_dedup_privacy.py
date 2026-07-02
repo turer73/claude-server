@@ -177,3 +177,45 @@ async def test_dedup_respects_window_age(client, memory_db):
     r2 = await client.post("/api/v1/memory/discoveries", json=payload)
     assert r2.json()["status"] == "created"  # yeni row, eskiden olan etkiliyemedi
     assert r2.json()["id"] != first_id
+
+
+# ───────────────────────── GAP-1 Kapsam-2 dispatch fail-open ─────────────────────────
+
+
+@pytest.mark.anyio
+async def test_create_note_dispatch_scan_failopen(client, memory_db, monkeypatch):
+    """GAP-1 Kapsam-2: dispatch-scan cokerse bile not YINE INSERT edilir (fail-open)."""
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("dispatch scan patladi")
+
+    monkeypatch.setattr("app.api.memory.notes.scan_dispatch_note", _boom)
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={
+            "from_device": "klipper",
+            "to_device": "surer",
+            "title": "dispatch-failopen-test",
+            "content": '{"gorev_id":"X","adimlar":["is yap"]}',
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "created"
+
+
+@pytest.mark.anyio
+async def test_create_note_scanned_even_without_to_device(client, memory_db, monkeypatch):
+    """Codex #1: dispatcher to_device SET ETMEZ -> to_device'siz not de scan_dispatch_note'a verilir."""
+    calls = {"n": 0}
+
+    def _spy(*_a, **_k):
+        calls["n"] += 1
+        return {"suspicious": False, "signals": [], "detail": {}}
+
+    monkeypatch.setattr("app.api.memory.notes.scan_dispatch_note", _spy)
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={"from_device": "klipper", "title": "dispatcher", "content": '{"gorev":"x","alici":"surer-sonnet"}'},
+    )
+    assert resp.status_code == 200
+    assert calls["n"] == 1  # to_device olmasa da taranir (dispatcher-notu kacmasin)
