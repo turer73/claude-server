@@ -37,6 +37,8 @@ class RAGEngine:
                 f"{self._ollama}/api/embed",
                 json={"model": self._embed_model, "input": texts},
             )
+        if resp.status_code >= 400:
+            raise ServerError(f"Ollama embed failed (HTTP {resp.status_code})")
         data = resp.json()
         return data.get("embeddings", [])
 
@@ -46,6 +48,8 @@ class RAGEngine:
         async with httpx.AsyncClient(timeout=10) as client:
             # Check existing
             resp = await client.get(url)
+            if resp.status_code >= 400:
+                raise ServerError(f"ChromaDB list collections failed (HTTP {resp.status_code})")
             for col in resp.json():
                 if col.get("name") == self._collection:
                     return col["id"]
@@ -54,6 +58,8 @@ class RAGEngine:
                 url,
                 json={"name": self._collection, "metadata": {"description": "RAG document store"}},
             )
+            if resp.status_code >= 400:
+                raise ServerError(f"ChromaDB create collection failed (HTTP {resp.status_code})")
             return resp.json()["id"]
 
     def _chunk_text(self, text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
@@ -142,6 +148,8 @@ class RAGEngine:
                     "include": ["documents", "metadatas", "distances"],
                 },
             )
+        if resp.status_code >= 400:
+            raise ServerError(f"ChromaDB query failed (HTTP {resp.status_code})")
         data = resp.json()
 
         docs = data.get("documents", [[]])[0]
@@ -187,6 +195,8 @@ Answer:"""
         url = f"{self._chroma}/api/v2/tenants/{self._tenant}/databases/{self._database}/collections/{col_id}/count"
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(url)
+        if resp.status_code >= 400:
+            raise ServerError(f"ChromaDB count failed (HTTP {resp.status_code})")
         return {"collection": self._collection, "document_count": resp.json()}
 
     async def delete_collection(self) -> dict[str, Any]:

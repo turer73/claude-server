@@ -104,6 +104,7 @@ class ShellExecutor:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except TimeoutError:
             proc.kill()
+            await proc.wait()  # reap the killed child — kill() alone leaves a zombie
             raise ShellExecutionError(f"Command timed out after {timeout}s")
         except FileNotFoundError:
             raise ShellExecutionError("Command not found in shell")

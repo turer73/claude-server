@@ -72,11 +72,12 @@ class MonitorAgent:
             value = metrics.get(metric_key)
             limit = thresholds.get(threshold_key)
             if value is not None and limit is not None and value > limit:
+                unit = "°C" if source == "temperature" else "%"
                 alerts.append(
                     {
                         "severity": "warning" if value <= limit + 10 else "critical",
                         "source": source,
-                        "message": f"{source} at {value}% (threshold: {limit}%)",
+                        "message": f"{source} at {value}{unit} (threshold: {limit}{unit})",
                         "value": value,
                         "threshold": limit,
                     }

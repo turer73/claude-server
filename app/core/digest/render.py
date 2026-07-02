@@ -150,12 +150,13 @@ def render_html(d: dict[str, Any]) -> str:
     """Telegram parse_mode=HTML — only <b>, <i>, <code>, <pre> are safe (no <br>)."""
     today = dt.date.today().isoformat()
     m = d["memory"]
+    esc = html.escape  # serbest-metin (bug/commit/cron/liveness) parse_mode=HTML'i bozmasın
     parts: list[str] = []
     parts.append(f"<b>Digest — {today}</b>")
     parts.append("")
     parts.append(f"<b>Açık bug ({len(m['open_bugs'])})</b>")
     for b in m["open_bugs"][:10]:
-        parts.append(f"  [<code>{b['project']}</code>] #{b['id']} {b['title'][:70]}")
+        parts.append(f"  [<code>{esc(b['project'])}</code>] #{b['id']} {esc(b['title'][:70])}")
     if len(m["open_bugs"]) > 10:
         parts.append(f"  … (+{len(m['open_bugs']) - 10})")
     parts.append("")
@@ -167,9 +168,9 @@ def render_html(d: dict[str, Any]) -> str:
         if not commits:
             continue
         any_commits = True
-        parts.append(f"  <i>{proj}</i> ({len(commits)})")
+        parts.append(f"  <i>{esc(proj)}</i> ({len(commits)})")
         for c in commits[:3]:
-            parts.append(f"    <code>{c['sha']}</code> {c['msg']}")
+            parts.append(f"    <code>{c['sha']}</code> {esc(c['msg'])}")
     if not any_commits:
         parts.append("  (none)")
     parts.append("")
@@ -178,12 +179,12 @@ def render_html(d: dict[str, Any]) -> str:
         parts.append(f"<b>Pentest ({sp['date']}):</b> {len(sp['findings'])} bulgulu")
         for f in sp["findings"]:
             sub = ", ".join(f"{k}={f[k]}" for k in ("content", "headers", "tls", "cookies", "bundles") if f[k])
-            parts.append(f"  ⚠ <code>{f['domain']}</code> {sub}")
+            parts.append(f"  ⚠ <code>{esc(f['domain'])}</code> {esc(sub)}")
     cj = d.get("cron_jobs") or {}
     if cj.get("bad"):
         parts.append(f"<b>Cron ({len(cj['bad'])} sorunlu / {len(cj['jobs'])}):</b>")
         for j in cj["bad"]:
-            parts.append(f"  ⚠ <code>{j['job']}</code> {j['result']} (rc={j['rc']}) {(j.get('detail') or '')[:50]}")
+            parts.append(f"  ⚠ <code>{esc(j['job'])}</code> {esc(j['result'])} (rc={j['rc']}) {esc((j.get('detail') or '')[:50])}")
     elif cj.get("jobs"):
         parts.append(f"<b>Cron:</b> ✓ {len(cj['jobs'])} iş pass")
     pr = d.get("pr_review") or {}
@@ -193,7 +194,7 @@ def render_html(d: dict[str, Any]) -> str:
         for p in pr_list:
             cx = " codex:?" if p.get("codex") is None else (f" codex:{p['codex']}" if p["codex"] else "")
             # PR title HTML-escape: <>& parse_mode=HTML dijesti bozabilir (Codex-P2).
-            parts.append(f"  • <code>{p['repo']}#{p['num']}</code> [CI:{p['ci']}{cx}] {html.escape(p['title'])}")
+            parts.append(f"  • <code>{p['repo']}#{p['num']}</code> [CI:{p['ci']}{cx}] {esc(p['title'])}")
         if pr.get("fetch_fail"):
             parts.append("  ⚠ fetch-fail: bir+ repo taranamadı")
     lv = d.get("liveness") or {}
@@ -201,7 +202,7 @@ def render_html(d: dict[str, Any]) -> str:
     if bad_lv:
         parts.append(f"<b>Liveness ({len(lv.get('dead') or [])} ölü / {len(lv.get('stale') or [])} stale):</b>")
         for r in bad_lv:
-            parts.append(f"  {'☠' if r['status'] == 'dead' else '⚠'} <code>{r['source']}</code> {r['detail'][:50]}")
+            parts.append(f"  {'☠' if r['status'] == 'dead' else '⚠'} <code>{esc(r['source'])}</code> {esc(r['detail'][:50])}")
     s = d["system"]
     parts.append(f"<b>Sistem:</b> {s['service']} | disk {s['disk_used_pct']} | ram {s['mem_used_mb']}/{s['mem_total_mb']}MB")
     v = d.get("vps") or {}
@@ -218,7 +219,7 @@ def render_html(d: dict[str, Any]) -> str:
         age = "?" if ci["age_days"] is None else f"{ci['age_days']}g önce"
         stale = " ⚠ BAYAT" if ci.get("stale") else ""
         fp = ci.get("failing_projects", [])
-        fp_note = (" — fail: " + ", ".join(p["project"] for p in fp)) if fp else ""
+        fp_note = (" — fail: " + ", ".join(esc(p["project"]) for p in fp)) if fp else ""
         parts.append(
             f"<b>CI:</b> {ci['started_at'][:10]} ({age}{stale}) | {ci['passed']}/{ci['total']} geçti, {ci['failed']} fail{fp_note}"
         )
