@@ -696,3 +696,114 @@ def test_p3_soft_gate_default_off(monkeypatch):
     assert ar.soft_gate_enabled() is False
     monkeypatch.setattr("app.core.config.read_env_var", lambda k: "1")
     assert ar.soft_gate_enabled() is True
+
+
+# ---------------------------------------------------------------------------
+# Faz2 hardening — kacan detection-sub-variant'lar (#4/#7/#9) + FP (#5)
+# ---------------------------------------------------------------------------
+
+
+def test_argv_split_flags_destructive_flagged():
+    """#9: subprocess.run(["rm","-r","-f",...]) AYRIK flag — birlesik -rf beklerken evade ediyordu."""
+    d = _diff(
+        """
+diff --git a/tests/test_cleanup.py b/tests/test_cleanup.py
+--- a/tests/test_cleanup.py
++++ b/tests/test_cleanup.py
+@@ -1,0 +1,2 @@
++def test_cleanup():
++    subprocess.run(["rm", "-r", "-f", "/opt/linux-ai-server/data"])
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "destructive_pattern_added" in r["signals"]
+
+
+def test_module_level_pytestmark_skip_flagged():
+    """#7: MODULE-level `pytestmark = pytest.mark.skip(...)` (atama) — @-dekorator degil, evade ediyordu."""
+    d = _diff(
+        """
+diff --git a/tests/test_foo.py b/tests/test_foo.py
+--- a/tests/test_foo.py
++++ b/tests/test_foo.py
+@@ -1,0 +1,1 @@
++pytestmark = pytest.mark.skip(reason="wip")
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "test_disabled" in r["signals"]
+
+
+def test_pytestmark_in_comment_is_benign():
+    """#7/#8 contextual-whitelist: YORUMDA gecen pytest.mark.skip = prose, FP olmamali (bahsetmek!=yapmak)."""
+    d = _diff(
+        """
+diff --git a/tests/test_foo.py b/tests/test_foo.py
+--- a/tests/test_foo.py
++++ b/tests/test_foo.py
+@@ -1,0 +1,1 @@
++    # not: pytestmark = pytest.mark.skip kullanmayi dusun
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "test_disabled" not in r["signals"]
+
+
+def test_chai_should_assertion_drop_flagged():
+    """#4: chai `.should.` assertion'lari silinip trivial ile maskeleme -> test_assertion_drop."""
+    d = _diff(
+        """
+diff --git a/tests/foo.test.js b/tests/foo.test.js
+--- a/tests/foo.test.js
++++ b/tests/foo.test.js
+@@ -5,3 +5,1 @@
+-    result.should.equal(42);
+-    value.should.be.true;
+-    arr.should.have.length(3);
++    expect(true).toBe(true);
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "test_assertion_drop" in r["signals"]
+
+
+def test_prose_should_not_counted_as_assertion():
+    """#4 FP-guvenligi: DOT-onsuz 'should' (prose/docstring) assertion sayilmaz."""
+    d = _diff(
+        """
+diff --git a/tests/test_foo.py b/tests/test_foo.py
+--- a/tests/test_foo.py
++++ b/tests/test_foo.py
+@@ -1,2 +1,1 @@
+-    # this should work correctly and should return
++    x = 1
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "test_assertion_drop" not in r["signals"]
+
+
+def test_test_to_test_rename_is_benign():
+    """#5 FP: test->test rename MESRU refactor (pytest hala toplar) -> test_disabled ATILMAZ."""
+    d = _diff(
+        """
+diff --git a/tests/test_foo.py b/tests/test_bar.py
+rename from tests/test_foo.py
+rename to tests/test_bar.py
+"""
+    )
+    r = scan_ci_fixer_diff(d, failing_module="app/core/foo.py")
+    assert "test_disabled" not in r["signals"]
+
+
+def test_test_to_nontest_rename_flagged():
+    """#5 pozitif-kontrol: test->test-OLMAYAN rename (rename-to-disable) -> test_disabled."""
+    d = _diff(
+        """
+diff --git a/tests/test_foo.py b/tests/foo_helper.py
+rename from tests/test_foo.py
+rename to tests/foo_helper.py
+"""
+    )
+    r = scan_ci_fixer_diff(d)
+    assert "test_disabled" in r["signals"]
