@@ -57,6 +57,16 @@ get_key() {
     grep '^MEMORY_API_KEY=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"' | head -c 200
 }
 
+# GAP-1 item-D (#1222 A-2): otonom-spawn'in KENDI not-yazimlari icin DISTINCT key.
+# Spawn bu key ile POST edince create_note from_device'i 'klipper-autonomous'a ZORLA-override
+# eder (unforgeable, sunucu-tarafi). Key .env'de yoksa normal-key'e duser (A-2 dormant kalir
+# ama spawn calismaya devam eder — geriye-uyumlu). Contract: .env MEMORY_API_KEY_AUTONOMOUS=<yeni>.
+get_key_autonomous() {
+    local ak
+    ak=$(grep '^MEMORY_API_KEY_AUTONOMOUS=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"' | head -c 200)
+    if [ -n "$ak" ]; then printf '%s' "$ak"; else get_key; fi
+}
+
 if [ $# -lt 4 ]; then
     log "usage: $0 <NOTE_ID> <FROM> <TITLE> <PREVIEW>"
     exit 2
@@ -274,6 +284,8 @@ Plan en fazla 15 satir. Kisa, somut, gerceklesir tut.
 Cevabin son satiri: PLAN_END
 "
         set +e
+        # GAP-1 item-D: spawn'in not-yazimlari otonom-key kullansin (env-first) -> A-2 origin-tag.
+        MEMORY_API_KEY="$(get_key_autonomous)" \
         claude -p "$planner_prompt" \
             --settings "$SETTINGS_FILE" \
             --output-format json \
@@ -443,6 +455,8 @@ Result: <bir-iki cumle>"
     # zorluyoruz. SessionStart hook'tan gelen dashboard context'i Claude
     # gormekle birlikte guardrails "sadece bu noteu isle, baska hicbir
     # seye dokunma" diyor.
+    # GAP-1 item-D: spawn'in not-yazimlari otonom-key kullansin (env-first) -> A-2 origin-tag.
+    MEMORY_API_KEY="$(get_key_autonomous)" \
     claude -p "$prompt" \
         --append-system-prompt "$(cat "$GUARDRAILS")" \
         --settings "$SETTINGS_FILE" \

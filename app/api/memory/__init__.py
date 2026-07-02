@@ -17,10 +17,22 @@ from app.db.data_layer import MEMORY_DB, get_conn
 DB_PATH = MEMORY_DB
 
 MEMORY_API_KEY = read_env_var("MEMORY_API_KEY")
+# GAP-1 item-D (#1222 A-2): DISTINCT otonom-key. Otonom-spawn bu key ile auth olur;
+# create_note from_device'i 'klipper-autonomous'a ZORLA-override eder (unforgeable —
+# spawn body'de ne derse desin). Set edilmemisse ozellik dormant (geriye-uyumlu).
+MEMORY_API_KEY_AUTONOMOUS = read_env_var("MEMORY_API_KEY_AUTONOMOUS")
+AUTONOMOUS_FROM_DEVICE = "klipper-autonomous"
 
 VALID_DISCOVERY_TYPES = ("bug", "fix", "learning", "config", "workaround", "architecture", "plan")
 VALID_STATUSES = ("active", "completed", "obsolete", "superseded")
 TRASH_TITLES = re.compile(r"^(test|test bug|test fix|test workaround|deneme|asdf|xxx)$", re.IGNORECASE)
+
+
+def _is_autonomous_key(x_memory_key: str | None) -> bool:
+    """Istek DISTINCT otonom-key ile mi auth oldu. Bos-key asla otonom sayilmaz.
+    KEY-COLLISION GUARD (Codex Tier-1 #2, fail-CLOSED): otonom-key == master-key (config-hatasi)
+    ise otonom-mod DEVRE-DISI (yoksa HER normal-POST force-tag'lenir, attribution/dedup bozulur)."""
+    return bool(MEMORY_API_KEY_AUTONOMOUS) and MEMORY_API_KEY_AUTONOMOUS != MEMORY_API_KEY and x_memory_key == MEMORY_API_KEY_AUTONOMOUS
 
 
 def verify_key(x_memory_key: str = Header(None)):
@@ -29,8 +41,27 @@ def verify_key(x_memory_key: str = Header(None)):
     # memory/RAG/research/classifier tamamen korumasız kalıyordu.
     if not MEMORY_API_KEY:
         raise HTTPException(503, "Memory API key not configured (fail-closed)")
+    # Normal-key VEYA distinct-otonom-key kabul (ikisi de gecerli-auth).
+    if x_memory_key == MEMORY_API_KEY or _is_autonomous_key(x_memory_key):
+        return
+    raise HTTPException(401, "Invalid memory API key")
+
+
+def verify_master_key(x_memory_key: str = Header(None)) -> None:
+    """MASTER-key ZORUNLU — otonom-key REDDEDILIR (Codex Tier-1 #1). Onboarding/key-SIZAN
+    route'lar icin: onboarding yaniti MASTER-key gomuyor; otonom-key bu endpoint'lere erisip
+    master'i ogrenip force-tag'i BYPASS etmesin (unforgeable-garanti korunur)."""
+    if not MEMORY_API_KEY:
+        raise HTTPException(503, "Memory API key not configured (fail-closed)")
     if x_memory_key != MEMORY_API_KEY:
-        raise HTTPException(401, "Invalid memory API key")
+        raise HTTPException(401, "Invalid memory API key (master required)")
+
+
+def dispatch_origin(x_memory_key: str = Header(None)) -> str:
+    """create_note icin FastAPI bagimliligi: istek otonom-key ile auth olduysa ZORLANACAK
+    from_device'i ('klipper-autonomous') dondur; aksi halde '' (body-from_device korunur).
+    Unforgeable: spawn yalniz otonom-key'e sahip -> body-claim override edilir (GAP-1 A-2)."""
+    return AUTONOMOUS_FROM_DEVICE if _is_autonomous_key(x_memory_key) else ""
 
 
 router = APIRouter(prefix="/api/v1/memory", tags=["memory"], dependencies=[Depends(verify_key)])
@@ -39,7 +70,7 @@ router = APIRouter(prefix="/api/v1/memory", tags=["memory"], dependencies=[Depen
 # the key on the request side too — otherwise anyone reachable on the LAN /
 # Tailscale can curl /onboard/<device> and pull the live API key out of the
 # response body.
-public_router = APIRouter(prefix="/api/v1/memory", tags=["memory-public"], dependencies=[Depends(verify_key)])
+public_router = APIRouter(prefix="/api/v1/memory", tags=["memory-public"], dependencies=[Depends(verify_master_key)])
 
 
 def get_db():
