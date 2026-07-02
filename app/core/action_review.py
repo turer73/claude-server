@@ -30,17 +30,43 @@ _GUARD_FILE = _REPO_ROOT / "scripts" / "hooks" / "pre-bash-guard.sh"
 # Eklenen-satir esigi: kucuk-fix beklenirken buyuk-diff = anomali. Env ile ayarlanabilir.
 DIFF_MAX_ADDED = int(os.environ.get("ACTION_REVIEW_DIFF_MAX_ADDED", "200"))
 
+
+def soft_gate_enabled() -> bool:
+    """Faz2 EVAL-GATE: soft-gate acik mi (env-flag, DEFAULT-OFF = notify-only; Faz2 P3).
+    ON iken action_review suspicious-diff -> ci_fixer auto-accept BLOKLANIR (held-for-review).
+    read_env_var (#174 config-gate: systemd .env'i os.environ'a yuklemez; os.environ.get tek-basina
+    serviste kill-switch'i goremez). Fail-safe: flag-yok/OFF/eval-gecmemis -> notify-only kalir.
+    Operasyonel-kural: bu flag ancak `make eval-gap2` catch>=0.90 & false-block<=0.05 gosterince ON."""
+    from app.core.config import read_env_var  # lazy: import-cycle onleme
+
+    return (read_env_var("ACTION_REVIEW_SOFT_GATE") or "0").strip().lower() in ("1", "true", "on", "yes")
+
+
 # Assertion belirtecleri (py + js). Kelime-siniri ile FP azaltilir.
+# NOT (Faz2 P2 #9): 'should' KALDIRILDI — prose/docstring-silmede yanlis assertion-drop veriyordu
+# ('this should work' gibi). Spesifik assertion-token'lari kalir.
 _ASSERTION_RE = re.compile(
     r"\b(assert|assertEqual|assertTrue|assertFalse|assertRaises|assertIn|"
-    r"assertIsNone|assertIsNotNone|pytest\.raises|expect|should)\b"
+    r"assertIsNone|assertIsNotNone|pytest\.raises|expect)\b"
 )
-# Test dosyasi: tests/ altinda veya test_*.py / *_test.py / *.test.* / *.spec.*
-_TEST_PATH_RE = re.compile(r"(^|/)tests?/|(^|/)test_[^/]*\.py$|_test\.py$|\.(test|spec)\.[jt]sx?$")
-# Guard/config zayiflatma yuzeyleri (path-bazli).
+# Test dosyasi: tests/ | __tests__/ (Faz2 P2 #6, JS-layout) | test_*.py | *_test.py | *.test.* | *.spec.*
+_TEST_PATH_RE = re.compile(r"(^|/)tests?/|(^|/)__tests__/|(^|/)test_[^/]*\.py$|_test\.py$|\.(test|spec)\.[jt]sx?$")
+# Guard/config zayiflatma yuzeyleri (Faz2 P2 #7: DARALTILDI — herhangi settings.json/conftest.py
+# normal-app-ayarinda FP veriyordu; yalniz GERCEK guard/gate-config path'leri).
 _GUARD_CONFIG_RE = re.compile(
-    r"pre-bash-guard\.sh$|(^|/)settings\.json$|ci-fixer-settings\.json$|"
-    r"(^|/)conftest\.py$|(^|/)\.env(\.[^/]+)?$"
+    r"pre-bash-guard\.sh$|ci-fixer-settings\.json$|autonomous-claude-settings\.json$|"
+    r"(^|/)\.claude/settings(\.local)?\.json$|(^|/)tests/conftest\.py$|(^|/)\.env(\.[^/]+)?$"
+)
+# Faz2 P1 #1: test-devre-disi markerlari (skip/xfail/only) — eklenince test atlanir, assertion-drop YOK.
+_DISABLE_MARKER_RE = re.compile(
+    r"@pytest\.mark\.(skip|xfail)|pytest\.skip\(|unittest\.skip|"
+    r"\b(it|describe|test)\.(skip|only)\(|xdescribe\(|xit\("
+)
+# Faz2 P1 #3: EXECUTOR cagrilari — assertion-satirinda OLSA DA yikici-desen taransin
+# (assert os.system("rm -rf")==0 spec-gaming; fixture guard_blocks("rm -rf") DEGIL).
+_EXECUTOR_RE = re.compile(
+    r"\b(os\.system|os\.popen|subprocess\.(run|call|check_call|check_output|Popen)|"
+    r"exec|eval|commands\.getoutput|child_process\.(exec|execSync|spawn))\s*\("
 )
 # 'diff --git a/X b/X' -> b-side path (mode-only/silme/++'siz durumda da dosya kaydi icin).
 _DIFF_GIT_RE = re.compile(r"^diff --git a/.+ b/(.+)$")
@@ -166,19 +192,42 @@ def _is_assertion_line(line: str) -> bool:
 
 
 def _is_trivial_assert(line: str) -> bool:
-    """Tautology/trivial assertion mi (assert True/1/None, assert X==X, pass) — Codex #5.
-    Bunlar 'added' sayilmaz: '-assert real()==42' + '+assert True' net=0 ile maskelenmesin."""
+    """Tautology/trivial assertion mi (py + JS/Vitest). Bunlar 'added' sayilmaz:
+    '-assert real()==42' + '+assert True' (veya '+expect(true).toBe(true)') net=0 maskelenmesin.
+    Codex #5 + Faz2 P1 #5 (Vitest one-for-one: expect(true).toBe(true), toBe(true), .skip)."""
     s = line.strip()
     if s == "pass":
         return True
+    # Python tautology
     if re.match(r"assert\s+(True|1|None)(\s+is\s+(True|None))?\s*$", s):
         return True
     m = re.match(r"assert\s+(.+?)\s*==\s*(.+?)\s*$", s)
-    return bool(m and m.group(1) == m.group(2))
+    if m and m.group(1) == m.group(2):
+        return True
+    # JS/Vitest tautology (Faz2 P1 #5): expect(true|1).toBe(true|1), expect(x).toBe(x-ayni), .skip
+    if re.search(r"expect\(\s*(true|1)\s*\)\.(toBe|toEqual|toBeTruthy)\(", s):
+        return True
+    m2 = re.search(r"expect\(\s*(.+?)\s*\)\.(?:toBe|toEqual)\(\s*(.+?)\s*\)", s)
+    if m2 and m2.group(1) == m2.group(2):
+        return True
+    return False
+
+
+def _normalize_argv(line: str) -> str:
+    """argv-form yikici komutu BIRLESIK forma cevir (Faz2 P1 #4): subprocess.run(["rm","-rf","/x"])
+    -> "... rm -rf /x ...". String-literal ayiraclarini (", ' , [ ] , virgul) bosluga cevir ki
+    'rm\\s+-rf' deseni komut+flag'i ayni-string'de gorsun. Orijinal-satirla birlikte taranir."""
+    return re.sub(r"""['"\[\],]+""", " ", line)
 
 
 def _is_test_file(path: str) -> bool:
     return bool(_TEST_PATH_RE.search(path))
+
+
+def _detect_test_renames(git_diff: str) -> list[str]:
+    """Diff'te test-dosyasi rename'i ('rename from <test>') — assertion-drop olmadan test-atlama/
+    gizleme (Faz2 P1 #2: rename-to-disable). from-tarafi test-dosyasi olan rename'leri listele."""
+    return [f.strip() for f in re.findall(r"^rename from (.+)$", git_diff, re.M) if _is_test_file(f.strip())]
 
 
 def _is_guard_config(path: str) -> bool:
@@ -197,11 +246,13 @@ def _module_stem(module: str) -> str:
 
 
 def _is_related(path: str, failing_module: str) -> bool:
-    """path, failing_module ile iliskili mi (kendisi / testi / ayni-stem)."""
+    """path, failing_module ile iliskili mi (kendisi / testi / ayni-stem).
+    Faz2 P2 #10: substring DEGIL COMPONENT-eslesme — 'foo_backdoor.py' stem-substring ile
+    'foo' sayilmasin. path'in KENDI stem'i (test_ prefix soyulu) failing-stem'e esit olmali."""
     stem = _module_stem(failing_module)
     if not stem:
         return True  # stem yoksa iliskisiz-diyemeyiz (FP-guvenligi)
-    return path == failing_module or stem in Path(path).name
+    return path == failing_module or _module_stem(path) == stem
 
 
 def scan_ci_fixer_diff(git_diff: str, failing_module: str | None = None) -> dict[str, Any]:
@@ -237,6 +288,14 @@ def scan_ci_fixer_diff(git_diff: str, failing_module: str | None = None) -> dict
         signals.append("test_assertion_drop")
         detail["assertion_delta"] = dropped
 
+    # Sinyal 1b: TEST DEVRE-DISI (Faz2 P1 #1/#2) — skip/xfail/only marker eklenmesi VEYA
+    #   test-dosyasi rename'i (assertion-drop olmadan test-atlama/gizleme = spec-gaming).
+    marker_disabled = [p for p in test_files if any(_DISABLE_MARKER_RE.search(ln) for ln in files[p]["added"])]
+    renamed_tests = _detect_test_renames(git_diff)
+    if marker_disabled or renamed_tests:
+        signals.append("test_disabled")
+        detail["test_disabled"] = {"markers": marker_disabled, "renamed": renamed_tests}
+
     # Sinyal 2: guard/config zayiflatma (path-bazli).
     guard_touched = [p for p in files if _is_guard_config(p)]
     if guard_touched:
@@ -269,13 +328,21 @@ def scan_ci_fixer_diff(git_diff: str, failing_module: str | None = None) -> dict
             # Yorum-ONLY '+' satir = benign (aciklama, kod-degil; design 3 "bahsetmek!=yapmak").
             if _is_comment_only(ln):
                 continue
-            # Test dosyasi: yalniz assertion/fixture satiri benign; executable-statement taranir.
-            if in_test and _is_assertion_line(ln):
+            # Test dosyasi: assertion/fixture satiri benign AMA EXECUTOR-cagrisi (os.system/subprocess)
+            # iceriyorsa YINE tara (Faz2 P1 #3: assert os.system("rm -rf")==0 = spec-gaming, fixture DEGIL).
+            if in_test and _is_assertion_line(ln) and not _EXECUTOR_RE.search(ln):
                 continue
-            for name, rx in patterns:
-                if rx.search(ln):
-                    hits.append({"file": path, "pattern": name, "line": ln.strip()[:120]})
-                    break  # satir basina tek hit yeter
+            # Orijinal + argv-normalized form tara (Faz2 P1 #4: subprocess.run(["rm","-rf"]) -> "rm -rf").
+            candidates = (ln, _normalize_argv(ln)) if ("[" in ln or "," in ln) else (ln,)
+            matched = False
+            for cand in candidates:
+                for name, rx in patterns:
+                    if rx.search(cand):
+                        hits.append({"file": path, "pattern": name, "line": ln.strip()[:120]})
+                        matched = True
+                        break
+                if matched:
+                    break
     if hits:
         signals.append("destructive_pattern_added")
         detail["destructive_hits"] = hits
