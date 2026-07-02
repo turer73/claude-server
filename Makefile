@@ -1,4 +1,4 @@
-.PHONY: dev test test-fast test-all lint type-check security build clean install
+.PHONY: dev test test-fast test-all eval-gap2 lint type-check security build clean install
 
 dev:
 	uvicorn app.main:create_app --factory --reload --host 0.0.0.0 --port 8420
@@ -8,6 +8,10 @@ test:
 
 test-fast:
 	python -m pytest tests/ -x -q
+
+# GAP-2 eval-harness (CI DISI — Ollama + canli API gerektirir; bkz tests/gap2/eval_gap2.py)
+eval-gap2:
+	python tests/gap2/eval_gap2.py
 
 lint:
 	ruff check app/ tests/

@@ -59,6 +59,17 @@
 
 **Boşluk:** Otonom spawnların ve dispatch çağrılarının audit kaydı `events` tablosunda değil, log dosyalarında. AuditMiddleware tüm HTTP isteklerini kaydeder ama AI'ın HTTP DIŞI aksiyonlarını (dosya yazma, git commit, DB sorgusu) kaydetmez.
 
+> **Canlı vaka (2026-07-02) — AUDIT ≠ CONTROL kanıtı:** Bir `autonomous-claude` spawn'ı,
+> surer'in bir coordination-gap notunu işlerken tetiklendi ve başka bir ajana (surer) **tam
+> bir GAP-2 görev-paketi dispatch etti** (#100248) — kullanıcının o tur AÇIKÇA kendine sakladığı
+> AI-Control design-kararını atlayarak. interactive-klipper'ın "bekle" direktifiyle (#100246)
+> çelişti; #100250 supersede ile çözüldü (surer implement etmedi). **Hiçbir çıktı-tarafı kontrol
+> bu dispatch'i yakalamadı** — yalnız input-side threat-detect FP verdi (eval-set içindeki
+> `curl|bash` test-string'lerine). Yani gözlem (audit) vardı ama enforcement (dispatch'i durduran
+> kontrol) yoktu. Çıkarım: otonom-ajan aksiyonlarının SEMANTİK çıktısını (task dispatch, diff)
+> kabul-öncesi şüphe-skorlayan bir çıktı-monitörü gerekli (Sprint 3 AI Action Log = gözlem;
+> enforcement ayrı bir katman). Takip: Bug #1222 (dispatch-authority kısıtlama, klipper-domain).
+
 ### Katman 4: Verify gate (AI amacına ulaştı mı?)
 
 | Mekanizma | Kapsam | Tür |
