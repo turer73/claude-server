@@ -56,3 +56,6 @@ e2e-live/results.json
 e2e-live/report/
 e2e-live/node_modules/
 tmp/
+
+# GAP-2 eval-harness raporu (her calismada uretilir)
+tests/gap2/last_eval_report.json
