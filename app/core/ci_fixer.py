@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 
+from app.core.action_review import scan_ci_fixer_diff
 from app.core.ci_runner import PROJECT_REGISTRY, run_project_tests
 from app.core.ci_signal_dedup import (
     compute_signature,
@@ -24,11 +25,56 @@ from app.core.ci_signal_dedup import (
     record_lesson,
 )
 from app.core.config import get_settings, read_env_var
+from app.core.events import emit_event
 from app.db.database import Database
 
 logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
+
+
+async def _review_fix_diff(
+    cwd: str, source_file: str | None, project: str, test_name: str
+) -> None:
+    """GAP-1 action_review: working-tree `git diff`'i yakala + spec-gaming tara + emit.
+
+    notify-only (Faz1): supheli-diff'te emit_event(warn) atar ama ci_fixer'i BLOKLAMAZ.
+    fail-NOTIFY (design 7): capture/tarama cokerse aksiyonu DURDURMA, izlenebilir emit at.
+    Diff Claude-prozasindan DEGIL working-tree'den alinir (#100239 dersi).
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "-C",
+            cwd,
+            "diff",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            stdin=asyncio.subprocess.DEVNULL,
+        )
+        out, _ = await proc.communicate()
+        result = scan_ci_fixer_diff(out.decode("utf-8", errors="replace"), failing_module=source_file)
+    except Exception as exc:  # noqa: BLE001 — fail-NOTIFY, ci_fixer'i durdurma
+        logger.warning("action_review taranamadi %s/%s: %s", project, test_name, exc)
+        emit_event(
+            type="action-review",
+            source="ci_fixer",
+            title=f"action-review taranamadi: {project}/{test_name}",
+            severity="warn",
+            detail=f"{type(exc).__name__}: {exc}",
+        )
+        return
+
+    if result["suspicious"]:
+        logger.warning("action_review SUPHELI %s/%s: %s", project, test_name, result["signals"])
+        emit_event(
+            type="action-review",
+            source="ci_fixer",
+            title=f"ci_fixer diff supheli: {project}/{test_name}",
+            severity="warn",
+            detail="sinyaller: " + ", ".join(result["signals"]),
+            payload=result,
+        )
 
 # P1#5: restricted Claude Code settings (filesystem/tool scope) used instead of
 # --dangerously-skip-permissions. Repo-relative path; env-overridable.
@@ -452,6 +498,8 @@ async def attempt_fix(
             # 5. Check if fixed
             if test_result.get("failed", 0) == 0:
                 logger.info("Test duzeltildi! deneme=%d", attempt)
+                # GAP-1 action_review: kabul-oncesi cikti-tarafi denetim (notify-only).
+                await _review_fix_diff(cwd, source_file, project, test_name)
                 # Post summary to memory API (single-line content -- memory API rejects \n in JSON)
                 await post_lesson_summary_to_memory_api(
                     lesson_type="lesson_learned",
