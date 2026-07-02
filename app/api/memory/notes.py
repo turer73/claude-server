@@ -159,15 +159,25 @@ async def mark_note_read(note_id: int, device: str | None = None):
     try:
         _ensure_read_by(db)
         if device:
-            row = db.execute("SELECT read_by FROM notes WHERE id=?", (note_id,)).fetchone()
-            if row is None:
+            # ATOMIK append-if-absent — eski SELECT→Python-modify→UPDATE lost-update
+            # race'liydi (2 device eşzamanlı okununca biri düşerdi, #1226/#1228).
+            # read_by invariantı '|dev1|dev2|' (boş='') → tek UPDATE ile serialize et.
+            cur = db.execute(
+                """UPDATE notes SET read_by =
+                     CASE
+                       WHEN read_by IS NULL OR read_by = '' THEN '|' || ? || '|'
+                       WHEN instr(read_by, '|' || ? || '|') > 0 THEN read_by
+                       ELSE read_by || ? || '|'
+                     END
+                   WHERE id = ?""",
+                (device, device, device, note_id),
+            )
+            if cur.rowcount == 0:
+                db.rollback()
                 raise HTTPException(status_code=404, detail="note not found")
-            devs = [d for d in (row[0] or "").strip("|").split("|") if d]
-            if device not in devs:
-                devs.append(device)
-            new_rb = "|" + "|".join(devs) + "|" if devs else ""
-            db.execute("UPDATE notes SET read_by=? WHERE id=?", (new_rb, note_id))
             db.commit()
+            row = db.execute("SELECT read_by FROM notes WHERE id=?", (note_id,)).fetchone()
+            devs = [d for d in (row[0] or "").strip("|").split("|") if d]
             return {"status": "read", "device": device, "read_by": devs}
         db.execute("UPDATE notes SET read=1 WHERE id=?", (note_id,))
         db.commit()

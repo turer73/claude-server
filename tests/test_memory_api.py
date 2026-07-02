@@ -610,6 +610,31 @@ async def test_notes_per_device_read(client, memory_db):
     resp = await client.put(f"/api/v1/memory/notes/{nid}/read?device=klipper")
     assert resp.json()["read_by"].count("klipper") == 1
 
+    # olmayan not → 404
+    resp = await client.put("/api/v1/memory/notes/999999/read?device=klipper")
+    assert resp.status_code == 404
+
+
+async def test_notes_multi_device_read_accumulates(client, memory_db):
+    """#1226/#1228: çok device art-arda okundu → hepsi read_by'da birikmeli, format
+    bozulmamalı. (Not: gerçek lost-update race 2 OS-thread/worker gerektirir; tek-loop
+    test-harness'ta await-yokluğu interleave etmez. Bu test atomik-UPDATE'in doğruluğunu
+    doğrular — asıl race'i eleyen tek-statement SQL'in kendisidir.)"""
+    import asyncio
+
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={"from_device": "surer", "title": "race", "content": "x"},
+    )
+    nid = resp.json()["id"]
+
+    devices = [f"dev{i}" for i in range(12)]
+    await asyncio.gather(*(client.put(f"/api/v1/memory/notes/{nid}/read?device={d}") for d in devices))
+
+    # tüm 12 device read_by'da olmalı → hiçbiri için okunmamış kalmaz
+    final = await client.put(f"/api/v1/memory/notes/{nid}/read?device={devices[0]}")
+    assert set(final.json()["read_by"]) == set(devices)
+
 
 async def test_notes_legacy_read_marks_all_devices(client, memory_db):
     """Geri-uyum: device'sız mark-read (legacy) → tüm device'lar için okundu (read=1)."""

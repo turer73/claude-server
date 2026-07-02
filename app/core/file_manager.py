@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import glob
 import os
+import stat
 from datetime import datetime
 from typing import Any
 
@@ -100,13 +101,17 @@ class FileManager:
 
     def get_file_info(self, path: str) -> dict[str, Any]:
         path = self.validate_path(path)
-        if not os.path.exists(path):
-            raise NotFoundError(f"Path not found: {path}")
-        st = os.stat(path)
+        # TOCTOU: exists()+stat() ayrı-syscall'da dosya silinirse stat FileNotFoundError
+        # atar → tek stat() dene, ENOENT'i NotFoundError'a çevir. is_dir de aynı st'den
+        # gelsin (ikinci os.path.isdir stat'ı yok).
+        try:
+            st = os.stat(path)
+        except (FileNotFoundError, NotADirectoryError) as e:
+            raise NotFoundError(f"Path not found: {path}") from e
         return {
             "path": path,
             "size": st.st_size,
-            "is_dir": os.path.isdir(path),
+            "is_dir": stat.S_ISDIR(st.st_mode),
             "permissions": oct(st.st_mode)[-3:],
             "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
             "owner": str(st.st_uid),
