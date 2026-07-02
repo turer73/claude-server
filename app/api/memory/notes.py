@@ -159,8 +159,13 @@ async def mark_note_read(note_id: int, device: str | None = None):
     try:
         _ensure_read_by(db)
         if device:
+            # Lost-update (#1226): SELECT→UPDATE read-modify-write'ı yazma kilidiyle
+            # sarmala — iki device eşzamanlı işaretlerse biri kayboluyordu
+            # (create_note'un BEGIN IMMEDIATE precedenti).
+            db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT read_by FROM notes WHERE id=?", (note_id,)).fetchone()
             if row is None:
+                db.rollback()
                 raise HTTPException(status_code=404, detail="note not found")
             devs = [d for d in (row[0] or "").strip("|").split("|") if d]
             if device not in devs:

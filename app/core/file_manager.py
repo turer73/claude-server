@@ -100,9 +100,13 @@ class FileManager:
 
     def get_file_info(self, path: str) -> dict[str, Any]:
         path = self.validate_path(path)
-        if not os.path.exists(path):
-            raise NotFoundError(f"Path not found: {path}")
-        st = os.stat(path)
+        # TOCTOU (#1220): exists()→stat() arasında dosya silinirse FileNotFoundError
+        # 500'e düşüyordu — stat'ı tek otorite yap, OSError'ı 404'e çevir
+        # (list_directory'nin OSError-toleransıyla tutarlı).
+        try:
+            st = os.stat(path)
+        except OSError as exc:
+            raise NotFoundError(f"Path not found: {path}") from exc
         return {
             "path": path,
             "size": st.st_size,

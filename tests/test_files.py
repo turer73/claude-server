@@ -120,6 +120,13 @@ def test_file_info(fm, tmp_path):
     assert info["is_dir"] is False
 
 
+def test_file_info_missing_raises_not_found(fm, tmp_path):
+    """#1220 TOCTOU: var-olmayan (veya stat-öncesi silinen) path OSError yerine
+    NotFoundError vermeli — API katmanında 500 değil 404."""
+    with pytest.raises(NotFoundError, match="Path not found"):
+        fm.get_file_info(str(tmp_path / "ghost.txt"))
+
+
 def test_search_files(fm, tmp_path):
     (tmp_path / "match_this.py").write_text("x")
     (tmp_path / "other.txt").write_text("y")

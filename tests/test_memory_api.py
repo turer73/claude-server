@@ -611,6 +611,43 @@ async def test_notes_per_device_read(client, memory_db):
     assert resp.json()["read_by"].count("klipper") == 1
 
 
+async def test_notes_read_device_404_rolls_back(client, memory_db):
+    """#1226 fix'in 404 dalı: BEGIN IMMEDIATE açıldıktan sonra not yoksa rollback +
+    404 — kilit takılı kalmamalı (ardından normal işlem çalışabilmeli)."""
+    resp = await client.put("/api/v1/memory/notes/999999/read?device=klipper")
+    assert resp.status_code == 404
+    # kilit bırakıldı mı: yeni not + mark-read sorunsuz çalışmalı
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={"from_device": "surer", "title": "post-404", "content": "kilit-serbest"},
+    )
+    nid = resp.json()["id"]
+    resp = await client.put(f"/api/v1/memory/notes/{nid}/read?device=klipper")
+    assert resp.status_code == 200
+    assert resp.json()["read_by"] == ["klipper"]
+
+
+async def test_notes_concurrent_device_reads_no_lost_update(client, memory_db):
+    """#1226 lost-update: iki device eşzamanlı mark-read → İKİSİ de read_by'da
+    kalmalı. (Tek event-loop'ta handler serileşir — gerçek race multi-worker'da;
+    bu test sözleşmeyi korur, BEGIN IMMEDIATE kilidi cross-process'i kapatır.)"""
+    import asyncio as _asyncio
+
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={"from_device": "surer", "title": "yarış", "content": "eşzamanlı-okuma"},
+    )
+    nid = resp.json()["id"]
+    r1, r2 = await _asyncio.gather(
+        client.put(f"/api/v1/memory/notes/{nid}/read?device=klipper"),
+        client.put(f"/api/v1/memory/notes/{nid}/read?device=opencode"),
+    )
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    resp = await client.put(f"/api/v1/memory/notes/{nid}/read?device=klipper")
+    assert set(resp.json()["read_by"]) == {"klipper", "opencode"}
+
+
 async def test_notes_legacy_read_marks_all_devices(client, memory_db):
     """Geri-uyum: device'sız mark-read (legacy) → tüm device'lar için okundu (read=1)."""
     resp = await client.post(
