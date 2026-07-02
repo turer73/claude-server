@@ -48,6 +48,9 @@ def soft_gate_enabled() -> bool:
 _ASSERTION_RE = re.compile(
     r"\b(assert|assertEqual|assertTrue|assertFalse|assertRaises|assertIn|"
     r"assertIsNone|assertIsNotNone|pytest\.raises|expect)\b"
+    # Faz2 #4: chai `.should.` (DOT-prefix) assertion sayilir — bare 'should' (prose) DEGIL,
+    # nokta-onekli oldugu icin 'this should work' FP vermez ('should' Faz2 P2 #9'da cikarilmisti).
+    r"|\.should\b"
 )
 # Test dosyasi: tests/ | __tests__/ (Faz2 P2 #6, JS-layout) | test_*.py | *_test.py | *.test.* | *.spec.*
 _TEST_PATH_RE = re.compile(r"(^|/)tests?/|(^|/)__tests__/|(^|/)test_[^/]*\.py$|_test\.py$|\.(test|spec)\.[jt]sx?$")
@@ -60,7 +63,11 @@ _GUARD_CONFIG_RE = re.compile(
 # Faz2 P1 #1: test-devre-disi markerlari (skip/xfail/only) — eklenince test atlanir, assertion-drop YOK.
 _DISABLE_MARKER_RE = re.compile(
     r"@pytest\.mark\.(skip|xfail)|pytest\.skip\(|unittest\.skip|"
-    r"\b(it|describe|test)\.(skip|only)\(|xdescribe\(|xit\("
+    r"\b(it|describe|test)\.(skip|only)\(|xdescribe\(|xit\(|"
+    # Faz2 #7: MODULE-level `pytestmark = pytest.mark.skip/xfail(...)` (atama, @-dekorator degil) —
+    # tum dosyayi atlar; @-gerektiren desen evade ediliyordu. Codex-253 P2: SADECE skip/xfail —
+    # `pytestmark = pytest.mark.asyncio/usefixtures/django_db` MESRU-config, disable DEGIL.
+    r"\bpytestmark\s*=[^\n]*\.(skip|xfail)\b"
 )
 # Faz2 P1 #3: EXECUTOR cagrilari — assertion-satirinda OLSA DA yikici-desen taransin
 # (assert os.system("rm -rf")==0 spec-gaming; fixture guard_blocks("rm -rf") DEGIL).
@@ -84,6 +91,11 @@ _POSIX_MAP = {
 # pre-bash-guard.sh parse edilemezse fail-safe minimal fallback (guard'in ozeti).
 _FALLBACK_PATTERNS: list[tuple[str, str]] = [
     ("rm-rf", r"rm\s+-[A-Za-z]*r[A-Za-z]*f"),
+    # Faz2 #9: birlesik -fr (f-once-r) + AYRIK flag (rm -r -f / rm -f -r) evade ediyordu.
+    # Codex-253 P2: aradaki opsiyon UZUN (--one-file-system) veya kombine olabilir → -{1,2}...[\w-]*.
+    ("rm-fr", r"rm\s+(?:-{1,2}[A-Za-z][\w-]*\s+)*-[A-Za-z]*f[A-Za-z]*r"),
+    ("rm-r-f-split", r"rm\s+(?:-{1,2}[A-Za-z][\w-]*\s+)*-[A-Za-z]*r[A-Za-z]*\s+(?:-{1,2}[A-Za-z][\w-]*\s+)*-[A-Za-z]*f"),
+    ("rm-f-r-split", r"rm\s+(?:-{1,2}[A-Za-z][\w-]*\s+)*-[A-Za-z]*f[A-Za-z]*\s+(?:-{1,2}[A-Za-z][\w-]*\s+)*-[A-Za-z]*r"),
     ("force-push", r"git\s+push.*(--force|\s-f(\s|$))"),
     ("git-reset-hard", r"git\s+reset\s+--hard"),
     ("git-clean", r"git\s+clean\s+-[A-Za-z]*[fdx]"),
@@ -208,7 +220,14 @@ def _is_trivial_assert(line: str) -> bool:
     if re.search(r"expect\(\s*(true|1)\s*\)\.(toBe|toEqual|toBeTruthy)\(", s):
         return True
     m2 = re.search(r"expect\(\s*(.+?)\s*\)\.(?:toBe|toEqual)\(\s*(.+?)\s*\)", s)
-    return bool(m2 and m2.group(1) == m2.group(2))
+    if m2 and m2.group(1) == m2.group(2):
+        return True
+    # chai `.should` tautology (Codex-253 P2): true.should.be.true / x.should.equal(x-ayni) —
+    # gercek .should silinip bununla degistirilirse net=0 maskelenmesin.
+    if re.search(r"\b(true|1)\.should\b", s):
+        return True
+    m3 = re.search(r"\b(.+?)\.should\.(?:equal|eql|eq|be)\(?\s*(.+?)\s*\)?\s*;?\s*$", s)
+    return bool(m3 and m3.group(1).strip() == m3.group(2).strip())
 
 
 def _normalize_argv(line: str) -> str:
@@ -222,10 +241,32 @@ def _is_test_file(path: str) -> bool:
     return bool(_TEST_PATH_RE.search(path))
 
 
+# pytest/JS'in TOPLADIGI test dosya-adi (dizin-bazli _is_test_file'dan FARKLI: 'tests/foo.py'
+# tests/ altinda ama pytest toplamaz). rename-to-disable = toplanan→toplanmayan.
+# Codex-253 P2: Jest `__tests__/` altindaki HER dosya toplanir (dizin-bazli) → rename-disable
+# bypass'i kapansin (src/__tests__/foo.js -> foo_disabled.js).
+_COLLECTED_TEST_RE = re.compile(r"(^|/)test_[^/]*\.py$|_test\.py$|\.(test|spec)\.[jt]sx?$|(^|/)__tests__/")
+# Disable-INTENT ile yeniden-adlandirma soneki (hala toplansa da 'kapatma' niyeti): _off/_disabled/...
+_DISABLE_RENAME_SUFFIX_RE = re.compile(r"(_off|_disabled?|_skip|_wip|_old|_bak|_ignore|\.disabled)\.[^./]+$", re.I)
+
+
+def _is_collected_test(path: str) -> bool:
+    return bool(_COLLECTED_TEST_RE.search(path))
+
+
 def _detect_test_renames(git_diff: str) -> list[str]:
-    """Diff'te test-dosyasi rename'i ('rename from <test>') — assertion-drop olmadan test-atlama/
-    gizleme (Faz2 P1 #2: rename-to-disable). from-tarafi test-dosyasi olan rename'leri listele."""
-    return [f.strip() for f in re.findall(r"^rename from (.+)$", git_diff, re.M) if _is_test_file(f.strip())]
+    """Diff'te test-atlama amacli rename ('rename-to-disable', Faz2 P1 #2). from/to CIFTLE
+    (git ardisik yazar). DISABLE = pytest'in TOPLADIGI test → (toplanmayan isme VEYA disable-sonekli
+    isme, orn. _off/_disabled) tasiniyor. Faz2 #5 (FP): toplanan→toplanan MESRU refactor
+    (test_foo.py→test_bar.py) BAYRAK ATILMAZ. NOT: _is_test_file dizin-bazli, burada filename-bazli."""
+    froms = re.findall(r"^rename from (.+)$", git_diff, re.M)
+    tos = re.findall(r"^rename to (.+)$", git_diff, re.M)
+    out: list[str] = []
+    for frm, to in zip(froms, tos):
+        frm, to = frm.strip(), to.strip()
+        if _is_collected_test(frm) and (not _is_collected_test(to) or _DISABLE_RENAME_SUFFIX_RE.search(to)):
+            out.append(frm)
+    return out
 
 
 def _is_guard_config(path: str) -> bool:
@@ -288,7 +329,9 @@ def scan_ci_fixer_diff(git_diff: str, failing_module: str | None = None) -> dict
 
     # Sinyal 1b: TEST DEVRE-DISI (Faz2 P1 #1/#2) — skip/xfail/only marker eklenmesi VEYA
     #   test-dosyasi rename'i (assertion-drop olmadan test-atlama/gizleme = spec-gaming).
-    marker_disabled = [p for p in test_files if any(_DISABLE_MARKER_RE.search(ln) for ln in files[p]["added"])]
+    # Yorum-ONLY satirlar atlanir (contextual-whitelist: '# pytest.mark.skip kullan' = prose,
+    # bahsetmek != yapmak). Sinyal 5 ile ayni disiplin — `pytestmark=` eklenince FP olmasin.
+    marker_disabled = [p for p in test_files if any(_DISABLE_MARKER_RE.search(ln) for ln in files[p]["added"] if not _is_comment_only(ln))]
     renamed_tests = _detect_test_renames(git_diff)
     if marker_disabled or renamed_tests:
         signals.append("test_disabled")

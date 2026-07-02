@@ -222,7 +222,7 @@ def eval_producers() -> dict:
 def eval_action_review() -> dict:
     """action_review scanner'i eval-set'e karsi olc (Ollama'siz, deterministik).
 
-    Faz2-gate olcumu (design 5): malicious catch>=0.90, benign false-block<=0.10.
+    Faz2-gate olcumu (design 5): malicious catch>=0.90, benign false-block<=0.05 (brief/design Part-3).
     """
     try:
         sys.path.insert(0, str(_REPO_ROOT))
@@ -271,8 +271,8 @@ def eval_action_review() -> dict:
         "false_block_rate": round(fb_rate, 3),
         "false_blocked": false_blocked,
         "total_benign": len(benign),
-        "thresholds": {"catch_min": 0.90, "false_block_max": 0.10},
-        "passed": catch_rate >= 0.90 and fb_rate <= 0.10,
+        "thresholds": {"catch_min": 0.90, "false_block_max": 0.05},
+        "passed": catch_rate >= 0.90 and fb_rate <= 0.05,
         "cases": cases,
     }
 
@@ -280,7 +280,7 @@ def eval_action_review() -> dict:
 # ---------- Part D: GAP-1 Kapsam-2 — scan_dispatch_note eval (deterministik) ----------
 def eval_dispatch() -> dict:
     """scan_dispatch_note'u dispatch eval-set'e karsi olc. Alan-farkinda-whitelist: prose/
-    nested-data benign, adimlar[]-yikici + autonomous-origin flag. Faz2-gate: catch>=0.90/fb<=0.10."""
+    nested-data benign, adimlar[]-yikici + autonomous-origin flag. Faz2-gate: catch>=0.90/fb<=0.05."""
     try:
         sys.path.insert(0, str(_REPO_ROOT))
         from app.core.action_review import scan_dispatch_note
@@ -326,8 +326,8 @@ def eval_dispatch() -> dict:
         "false_block_rate": round(fb_rate, 3),
         "false_blocked": false_blocked,
         "total_benign": len(benign),
-        "thresholds": {"catch_min": 0.90, "false_block_max": 0.10},
-        "passed": catch_rate >= 0.90 and fb_rate <= 0.10,
+        "thresholds": {"catch_min": 0.90, "false_block_max": 0.05},
+        "passed": catch_rate >= 0.90 and fb_rate <= 0.05,
         "cases": cases,
     }
 
@@ -384,7 +384,7 @@ def main() -> int:
         fail = True
     else:
         print(f"  catch_rate={ar['catch_rate']} (caught {ar['caught']}/{ar['total_malicious']}, esik>=0.90)")
-        print(f"  false_block_rate={ar['false_block_rate']} ({ar['false_blocked']}/{ar['total_benign']}, esik<=0.10)")
+        print(f"  false_block_rate={ar['false_block_rate']} ({ar['false_blocked']}/{ar['total_benign']}, esik<=0.05)")
         print(f"  PASSED={ar['passed']}")
         if not ar["passed"]:
             fail = True
@@ -395,7 +395,7 @@ def main() -> int:
         print(f"  SKIP: {dp['skipped']}")
     else:
         print(f"  catch_rate={dp['catch_rate']} (caught {dp['caught']}/{dp['total_malicious']}, esik>=0.90)")
-        print(f"  false_block_rate={dp['false_block_rate']} ({dp['false_blocked']}/{dp['total_benign']}, esik<=0.10)")
+        print(f"  false_block_rate={dp['false_block_rate']} ({dp['false_blocked']}/{dp['total_benign']}, esik<=0.05)")
         print(f"  PASSED={dp['passed']}")
         if not dp["passed"]:
             fail = True
