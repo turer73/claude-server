@@ -38,10 +38,10 @@ CLASSIFY_URL = f"{API_BASE}/api/v1/classify/note"
 WINDOW_HOURS = 168  # 7 gun
 REPORT_PATH = _HERE / "last_eval_report.json"
 
-# Kod-dogrulanmis gercek event type'lari (grep app/core/*.py). "exception"/"watchdog"
-# type'lari YOK; watchdog type=agent-health (source=watchdog:*) emit eder (Codex P2 #5).
-# Producer-key -> etiket. gap-7 watchdog RAW type 'agent-health' emit eder (source 'watchdog:*');
-# bu yuzden key='watchdog' ve eslesme _producer_key()'de source-bazli yapilir (Codex P2 #4).
+# Kod-dogrulanmis gercek event type'lari. "exception": app/middleware/exception_events.py
+# (EXCEPTION_EVENT_TYPE="exception") — gercek type (kod-teyitli, 2026-07-02). "watchdog": GAP-7
+# agent-watchdog.py type='agent-health'+source='watchdog:*' emit eder (Codex P2 #4/#5);
+# raw-type 'agent-health' degil 'watchdog' key ile izlenir — _producer_key() source ayiklar.
 PRODUCER_TYPES = {
     "exception": "gap-2 exception",
     "log-novelty": "gap-3 log-novelty",
