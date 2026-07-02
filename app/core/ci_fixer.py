@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 
+from app.core.action_review import scan_ci_fixer_diff
 from app.core.ci_runner import PROJECT_REGISTRY, run_project_tests
 from app.core.ci_signal_dedup import (
     compute_signature,
@@ -24,11 +25,102 @@ from app.core.ci_signal_dedup import (
     record_lesson,
 )
 from app.core.config import get_settings, read_env_var
+from app.core.events import emit_event
 from app.db.database import Database
 
 logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
+
+
+async def _git(cwd: str, *args: str) -> tuple[int, str, str]:
+    """git -C cwd <args> -> (returncode, stdout, stderr). communicate() non-zero'da RAISE-ETMEZ."""
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        "-C",
+        cwd,
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        stdin=asyncio.subprocess.DEVNULL,
+    )
+    out, err = await proc.communicate()
+    return proc.returncode or 0, out.decode("utf-8", errors="replace"), err.decode("utf-8", errors="replace")
+
+
+async def _snapshot_baseline(cwd: str) -> tuple[str, set[str]]:
+    """Claude-fix ONCESI baseline: (tracked-baseline-ref, untracked-set). Codex #9:
+    'git stash create' mevcut-WIP'i commit-object'e alir (working-tree DEGISMEZ); clean-tree'de
+    bos -> 'HEAD'. Sonraki `git diff <baseline>` YALNIZ bu-attempt'in ekledigini gosterir
+    (onceden-kirli dosyalarin attempt'e-atfedilme FP'si kalkar)."""
+    _, sha, _ = await _git(cwd, "stash", "create")
+    baseline = sha.strip() or "HEAD"
+    rc, others, _ = await _git(cwd, "ls-files", "--others", "--exclude-standard")
+    pre_untracked = {f.strip() for f in others.splitlines() if f.strip()} if rc == 0 else set()
+    return baseline, pre_untracked
+
+
+async def _capture_attempt_diff(cwd: str, baseline_ref: str, pre_untracked: set[str]) -> str:
+    """baseline'dan-bu-yana tracked-delta (staged Claude-add dahil, Codex P1) + bu-attempt'te
+    OLUSAN untracked dosyalar (Codex #3). `git diff <baseline>` non-zero => RuntimeError
+    (caller fail-NOTIFY). Onceden-var untracked (pre_untracked) haric = yalniz attempt-delta."""
+    rc, tracked, err = await _git(cwd, "diff", baseline_ref)
+    if rc != 0:
+        raise RuntimeError(f"git diff {baseline_ref} rc={rc}: {err.strip()[:200]}")
+    parts = [tracked]
+    rc2, others, _ = await _git(cwd, "ls-files", "--others", "--exclude-standard")
+    if rc2 == 0:
+        for line in others.splitlines():
+            f = line.strip()
+            if f and f not in pre_untracked:  # yalniz bu-attempt'te olusan untracked
+                # --no-index differ'da rc=1 (normal); ciktisini al, hata-degil.
+                _, d, _ = await _git(cwd, "diff", "--no-index", "--", "/dev/null", f)
+                parts.append(d)
+    return "\n".join(p for p in parts if p)
+
+
+async def _review_fix_diff(
+    cwd: str,
+    baseline_ref: str,
+    pre_untracked: set[str],
+    source_file: str | None,
+    test_file: str,
+    project: str,
+    test_name: str,
+) -> None:
+    """GAP-1 action_review: attempt-delta diff'i yakala + spec-gaming tara + emit.
+
+    notify-only (Faz1): supheli-diff'te emit_event(warn) atar ama ci_fixer'i BLOKLAMAZ.
+    fail-NOTIFY (design 7): capture/tarama cokerse aksiyonu DURDURMA, izlenebilir emit at.
+    Cagirilma-yeri PRE-EXECUTION (testler KOSMADAN ONCE, Codex #3): yikici-kod calismadan yakala.
+    Diff Claude-prozasindan DEGIL working-tree'den alinir (#100239). source_file yoksa
+    test_file'dan modul-turetilir (out_of_module dali olu-kalmasin; Codex #5).
+    """
+    try:
+        git_diff = await _capture_attempt_diff(cwd, baseline_ref, pre_untracked)
+        result = scan_ci_fixer_diff(git_diff, failing_module=source_file or test_file)
+    except Exception as exc:  # noqa: BLE001 — fail-NOTIFY, ci_fixer'i durdurma
+        logger.warning("action_review taranamadi %s/%s: %s", project, test_name, exc)
+        emit_event(
+            type="action-review",
+            source="ci_fixer",
+            title=f"action-review taranamadi: {project}/{test_name}",
+            severity="warn",
+            detail=f"{type(exc).__name__}: {exc}",
+        )
+        return
+
+    if result["suspicious"]:
+        logger.warning("action_review SUPHELI %s/%s: %s", project, test_name, result["signals"])
+        emit_event(
+            type="action-review",
+            source="ci_fixer",
+            title=f"ci_fixer diff supheli: {project}/{test_name}",
+            severity="warn",
+            detail="sinyaller: " + ", ".join(result["signals"]),
+            payload=result,
+        )
+
 
 # P1#5: restricted Claude Code settings (filesystem/tool scope) used instead of
 # --dangerously-skip-permissions. Repo-relative path; env-overridable.
@@ -414,7 +506,8 @@ async def attempt_fix(
                 context_lessons=context_rows,
             )
 
-            # 3. Call Claude Code
+            # 3. Baseline snapshot (Claude-ONCESI) + Call Claude Code
+            baseline_ref, pre_untracked = await _snapshot_baseline(cwd)
             claude_result = await _call_claude_code(prompt, cwd)
             claude_responses.append(claude_result)
 
@@ -422,6 +515,10 @@ async def attempt_fix(
                 logger.warning("Claude Code hatasi: %s", claude_result["error"])
                 prev_errors.append(claude_result["error"])
                 continue
+
+            # 3.5 GAP-1 action_review: PRE-EXECUTION denetim (testler KOSMADAN once, attempt-delta;
+            #     Codex #3/#9). Yikici-kod testler sirasinda calismadan yakalanir. notify-only.
+            await _review_fix_diff(cwd, baseline_ref, pre_untracked, source_file, test_file, project, test_name)
 
             # 4. Re-run tests
             test_result = await run_project_tests(project)
@@ -452,6 +549,7 @@ async def attempt_fix(
             # 5. Check if fixed
             if test_result.get("failed", 0) == 0:
                 logger.info("Test duzeltildi! deneme=%d", attempt)
+                # (action_review 3.5'te testler-oncesi kosuldu — pre-execution gate)
                 # Post summary to memory API (single-line content -- memory API rejects \n in JSON)
                 await post_lesson_summary_to_memory_api(
                     lesson_type="lesson_learned",
