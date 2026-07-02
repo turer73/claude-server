@@ -219,3 +219,66 @@ async def test_create_note_scanned_even_without_to_device(client, memory_db, mon
     )
     assert resp.status_code == 200
     assert calls["n"] == 1  # to_device olmasa da taranir (dispatcher-notu kacmasin)
+
+
+# ───────────────────────── GAP-1 item-D: otonom-key origin-tag HARD-enforce ─────────────────────────
+
+
+@pytest.mark.anyio
+async def test_create_note_autonomous_key_forces_from_device(client, memory_db, monkeypatch):
+    """item-D: otonom-key ile auth -> from_device 'klipper-autonomous'a ZORLA-override (body-claim gozardi)."""
+    import app.api.memory as mem_module
+
+    monkeypatch.setattr(mem_module, "MEMORY_API_KEY_AUTONOMOUS", "auto-test-key-xyz")
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        headers={"X-Memory-Key": "auto-test-key-xyz"},
+        json={
+            "from_device": "klipper",  # body yalan-soyluyor; override edilmeli
+            "to_device": "surer",
+            "title": "otonom-dispatch",
+            "content": '{"gorev":"is yap","alici":"surer-sonnet"}',
+        },
+    )
+    assert resp.status_code == 200
+    nid = resp.json()["id"]
+    conn = sqlite3.connect(str(memory_db))
+    row = conn.execute("SELECT from_device FROM notes WHERE id=?", (nid,)).fetchone()
+    conn.close()
+    assert row[0] == "klipper-autonomous"  # unforgeable server-side override
+
+
+@pytest.mark.anyio
+async def test_create_note_normal_key_preserves_from_device(client, memory_db, monkeypatch):
+    """Normal-key (default header) -> body from_device KORUNUR (override yok)."""
+    import app.api.memory as mem_module
+
+    monkeypatch.setattr(mem_module, "MEMORY_API_KEY_AUTONOMOUS", "auto-test-key-xyz")
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={"from_device": "surer", "to_device": "klipper", "title": "normal-not", "content": "duz-prose"},
+    )
+    assert resp.status_code == 200
+    nid = resp.json()["id"]
+    conn = sqlite3.connect(str(memory_db))
+    row = conn.execute("SELECT from_device FROM notes WHERE id=?", (nid,)).fetchone()
+    conn.close()
+    assert row[0] == "surer"
+
+
+@pytest.mark.anyio
+async def test_autonomous_key_dormant_when_unset(client, memory_db, monkeypatch):
+    """MEMORY_API_KEY_AUTONOMOUS set-degilse: bos-key otonom sayilmaz, normal-akis (dormant)."""
+    import app.api.memory as mem_module
+
+    monkeypatch.setattr(mem_module, "MEMORY_API_KEY_AUTONOMOUS", None)
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={"from_device": "klipper", "to_device": "surer", "title": "dormant", "content": "x"},
+    )
+    assert resp.status_code == 200
+    nid = resp.json()["id"]
+    conn = sqlite3.connect(str(memory_db))
+    row = conn.execute("SELECT from_device FROM notes WHERE id=?", (nid,)).fetchone()
+    conn.close()
+    assert row[0] == "klipper"

@@ -5,9 +5,17 @@ Gövdeler birebir taşındı (Faz 3).
 
 import asyncio
 
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException
 
-from app.api.memory import NoteCreate, _ensure_read_by, _fire_event, _unread_pred, get_db, router
+from app.api.memory import (
+    NoteCreate,
+    _ensure_read_by,
+    _fire_event,
+    _unread_pred,
+    dispatch_origin,
+    get_db,
+    router,
+)
 from app.core.action_review import scan_dispatch_note
 from app.core.events import emit_event
 from app.core.privacy import redact
@@ -69,11 +77,14 @@ async def list_notes(device: str | None = None, unread_only: bool = False):
 
 
 @router.post("/notes")
-async def create_note(data: NoteCreate):
+async def create_note(data: NoteCreate, forced_origin: str = Depends(dispatch_origin)):
     # Privacy + dedup
     # NOT: BEGIN IMMEDIATE ile race condition kapatildi (paralel POST iki
     # SELECT'inde de dup gormezken ikisi de INSERT eden senaryo — #169/#170
     # 9-saniye dup pattern'i).
+    # GAP-1 item-D (#1222 A-2): otonom-key ile auth olduysa from_device ZORLA-override
+    # ('klipper-autonomous') — body-claim gozardi (unforgeable). Normal-key -> body korunur.
+    from_device = forced_origin or data.from_device
     content_clean, redacted_labels = redact(data.content)
     db = get_db()
     try:
@@ -84,7 +95,7 @@ async def create_note(data: NoteCreate):
             "AND COALESCE(to_device,'')=COALESCE(?,'') "
             "AND title=? AND content=? "
             "AND created_at > datetime('now','-5 minutes')",
-            (data.from_device, data.to_device, data.title, content_clean),
+            (from_device, data.to_device, data.title, content_clean),
         ).fetchone()
         if recent_dup:
             db.rollback()
@@ -103,7 +114,7 @@ async def create_note(data: NoteCreate):
             "AND COALESCE(to_device,'')=COALESCE(?,'') "
             "AND title=? "
             "AND created_at > datetime('now','-30 seconds')",
-            (data.from_device, data.to_device, data.title),
+            (from_device, data.to_device, data.title),
         ).fetchone()
         if title_dup:
             db.rollback()
@@ -115,19 +126,19 @@ async def create_note(data: NoteCreate):
 
         cur = db.execute(
             "INSERT INTO notes (from_device, to_device, title, content) VALUES (?, ?, ?, ?)",
-            (data.from_device, data.to_device, data.title, content_clean),
+            (from_device, data.to_device, data.title, content_clean),
         )
         db.commit()
 
         # GAP-1 Kapsam-2: cross-agent dispatch denetimi (notify-only + FAIL-OPEN; not ZATEN yazildi).
-        _review_dispatch_note(data.from_device, data.to_device, content_clean, cur.lastrowid)
+        _review_dispatch_note(from_device, data.to_device, content_clean, cur.lastrowid)
 
         asyncio.create_task(
             _fire_event(
                 "note_created",
                 {
                     "id": cur.lastrowid,
-                    "from_device": data.from_device,
+                    "from_device": from_device,
                     "to_device": data.to_device,
                     "title": data.title,
                 },
