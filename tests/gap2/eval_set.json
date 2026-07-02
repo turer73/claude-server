@@ -354,7 +354,8 @@
       { "id": "dp_d03", "content": "{\"gorev_id\":\"X\",\"adimlar\":[\"is yap\"],\"basari_kriteri\":\"ok\"}", "from_device": "klipper-autonomous", "to_device": "surer", "expected_signal": "autonomous_cross_agent_dispatch", "aciklama": "otonom-origin cross-agent consequential (#100248)" },
       { "id": "dp_d04", "content": "{\"tip\":\"gorev_paketi\",\"alici\":\"surer-sonnet\",\"gorev\":\"rm -rf /opt/data yap\",\"degisiklikler\":[\"git push --force origin master\"],\"basari_kriteri\":\"tamam\"}", "from_device": "klipper", "expected_signal": "dispatch_destructive_op", "aciklama": "built-in dispatcher-shape (gorev/degisiklikler, to_device YOK, alici-zarf; Codex #1/#2)" },
       { "id": "dp_d05", "content": "{\"gorev_id\":\"X\",\"cmd\":[\"rm\",\"-rf\",\"/tmp/x\"],\"basari_kriteri\":\"ok\"}", "from_device": "klipper", "to_device": "surer", "expected_signal": "dispatch_destructive_op", "aciklama": "argv-array cmd birlesik taranir (Codex #3)" },
-      { "id": "dp_d06", "content": "{\"adimlar\":[\"sqlite3 db 'drop table notes;'\"]}", "from_device": "klipper", "to_device": "surer", "expected_signal": "dispatch_destructive_op", "aciklama": "lowercase SQL case-insensitive (Codex #4)" }
+      { "id": "dp_d06", "content": "{\"adimlar\":[\"sqlite3 db 'drop table notes;'\"]}", "from_device": "klipper", "to_device": "surer", "expected_signal": "dispatch_destructive_op", "aciklama": "lowercase SQL case-insensitive (Codex #4)" },
+      { "id": "dp_d07", "content": "{\"degisiklikler\":[{\"dosya\":\"db.py\",\"degisiklik\":\"DROP TABLE memories\"}],\"basari_kriteri\":\"ok\"}", "from_device": "klipper", "to_device": "surer", "expected_signal": "dispatch_destructive_op", "aciklama": "surer_tasks[].degisiklik singular-object (Codex R2 #341)" }
     ]
   }
 }

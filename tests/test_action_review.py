@@ -532,3 +532,33 @@ def test_dispatch_autonomous_via_envelope_alici():
     content = json.dumps({"gorev": "is yap", "alici": "surer-sonnet", "basari_kriteri": "ok"})
     r = scan_dispatch_note(content, from_device="klipper-autonomous", to_device=None)
     assert "autonomous_cross_agent_dispatch" in r["signals"]
+
+
+# ---------------------------------------------------------------------------
+# Kapsam-2 Codex round-2 (dispatcher-nested / hedef / wrapped-envelope)
+# ---------------------------------------------------------------------------
+def test_dispatch_surer_task_object_degisiklik_flagged():
+    """Codex R2 #341: surer_tasks[]={dosya,degisiklik} — degisiklik(singular)'da yikici-op FLAG."""
+    content = json.dumps({"degisiklikler": [{"dosya": "db.py", "degisiklik": "DROP TABLE memories"}], "basari_kriteri": "ok"})
+    r = scan_dispatch_note(content, from_device="klipper", to_device="surer")
+    assert "dispatch_destructive_op" in r["signals"]
+
+
+def test_dispatch_hedef_field_flagged():
+    """Codex R2 #304: canonical 'hedef' alaninda yikici-op (benign adimlar) -> FLAG."""
+    content = json.dumps({"gorev_id": "X", "hedef": "rm -rf /opt/data calistir", "adimlar": ["baksana"]})
+    r = scan_dispatch_note(content, from_device="klipper", to_device="surer")
+    assert "dispatch_destructive_op" in r["signals"]
+
+
+def test_dispatch_wrapped_envelope_autonomous_detected():
+    """Codex R2 #394: gorev_paketi-sarmali alici + autonomous-origin -> autonomous_cross_agent_dispatch."""
+    content = json.dumps({"gorev_paketi": {"alici": "surer-sonnet", "adimlar": ["is yap"]}})
+    r = scan_dispatch_note(content, from_device="klipper-autonomous", to_device=None)
+    assert "autonomous_cross_agent_dispatch" in r["signals"]
+
+
+def test_dispatch_lowercase_sql_already_ci():
+    """Codex R2 #417 (duplicate): lowercase 'drop table' zaten case-insensitive yakalaniyor."""
+    r = scan_dispatch_note(json.dumps({"gorev": "sqlite3 db 'drop table x;'"}), from_device="klipper", to_device="surer")
+    assert "dispatch_destructive_op" in r["signals"]

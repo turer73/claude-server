@@ -305,6 +305,10 @@ _EXEC_KEYS = {
     "degisiklikler",
     "surer_tasks",
     "klipper_cmds",
+    # canonical/dispatcher ic-alanlar (Codex round-2): surer_tasks[].degisiklik (singular,
+    # executable-degisiklik-metni; dispatch.py:79) + hedef (tek-cumle ne-yapilacak; sistem-tanimi.md:66).
+    "degisiklik",
+    "hedef",
 }
 # Cross-agent dispatch-zarfi gostergeleri (built-in dispatcher to_device set ETMEZ; Codex #1).
 _ENVELOPE_KEYS = {"alici", "gonderen", "to", "recipient", "tip"}
@@ -388,10 +392,17 @@ def _is_autonomous_origin(from_device: str | None) -> bool:
 
 def _is_cross_agent(to_device: str | None, task: dict[str, Any] | None) -> bool:
     """Cross-agent dispatch mi: to_device dolu VEYA content-zarfinda alici/gonderen/tip var.
-    Built-in dispatcher to_device set ETMEZ ama content'te alici='surer-sonnet' tasir (Codex #1)."""
+    Built-in dispatcher to_device set ETMEZ ama content'te alici='surer-sonnet' tasir (Codex #1).
+    Zarf-anahtarlari gorev_paketi-SARMALI ic-obje'de de olabilir (Codex round-2)."""
     if to_device:
         return True
-    return task is not None and any(k in task for k in _ENVELOPE_KEYS)
+    if task is None:
+        return False
+    candidates = [task]
+    inner = task.get("gorev_paketi")
+    if isinstance(inner, dict):
+        candidates.append(inner)
+    return any(k in c for c in candidates for k in _ENVELOPE_KEYS)
 
 
 def scan_dispatch_note(content: str, from_device: str | None = None, to_device: str | None = None) -> dict[str, Any]:
