@@ -76,6 +76,10 @@ DB="${HOOK_DB:-/opt/linux-ai-server/data/claude_memory.db}"
 SETTINGS_FILE="${AUTONOMOUS_SETTINGS:-/opt/linux-ai-server/automation/autonomous-claude-settings.json}"
 GUARDRAILS="${AUTONOMOUS_GUARDRAILS:-/opt/linux-ai-server/automation/autonomous-claude-guardrails.md}"
 MODEL="${AUTONOMOUS_MODEL:-claude-sonnet-4-6}"
+# Spawn hang-korumasi (audit B-track / #100327): timeout'suz claude -p flock icinde hang
+# ederse lock tutulur -> sonraki retry-cron skip = sessiz-stall. Comert-default + env-override
+# (autonomous-claude.sh ile ayni). -k 30: TERM sonrasi 30s KILL. rc=124 mevcut fail-path'e akar.
+SPAWN_TIMEOUT="${AUTONOMOUS_SPAWN_TIMEOUT:-900}"
 # Max-plan ABONELİK kimliğini zorla (autonomous-claude.sh deseni): ANTHROPIC_API_KEY set'liyken
 # claude CLI pay-as-you-go API kullanır → kredi bitince "Credit balance is too low" ile retry DÜŞER
 # (üstelik bu RETRY scripti → ölü-key'le sonsuz fail-retry döngüsü riski). Strip → ~/.claude OAuth
@@ -242,6 +246,7 @@ Result: <bir-iki cumle>"
     _retry_key=$(grep '^MEMORY_API_KEY_AUTONOMOUS=' "$_retry_env" 2>/dev/null | cut -d= -f2- | tr -d '"' | head -c 200)
     [ -z "$_retry_key" ] && _retry_key=$(grep '^MEMORY_API_KEY=' "$_retry_env" 2>/dev/null | cut -d= -f2- | tr -d '"' | head -c 200)
     MEMORY_API_KEY="$_retry_key" \
+    timeout -k 30 "$SPAWN_TIMEOUT" \
     claude -p "$prompt" \
         --append-system-prompt "$(cat "$GUARDRAILS")" \
         --settings "$SETTINGS_FILE" \
@@ -252,6 +257,7 @@ Result: <bir-iki cumle>"
     local rc=$?
     set -e
 
+    [ "$rc" -eq 124 ] && log "retry spawn TIMEOUT (${SPAWN_TIMEOUT}s) — hang-korumasi, fail-path'e akiyor"
     log "retry spawn done: note=#$note_id rc=$rc log=$spawn_log"
 
     if [ "$rc" -eq 0 ]; then
