@@ -102,8 +102,15 @@ async def _capture_attempt_diff(
             f = line.strip()
             if not f:
                 continue
-            if run_untracked_content is not None and f not in pre_untracked:
+            if run_untracked_content is not None and (f in run_untracked_content or f not in pre_untracked):
                 # run-ici olusan untracked: icerik-cache ile ONCEKI-attempt'e karsi izle.
+                # KRITIK (Codex #255-P2 r6 / klipper #100322 prod-leak): guard'da
+                # `f in run_untracked_content` SART. Gercek attempt_fix dongusunde pre_untracked
+                # HER attempt'te _snapshot_baseline ile yeniden alinir; att-1'de olusan dosya
+                # att-2'nin pre_untracked'INE girer -> yalniz `f not in pre_untracked` guard'i
+                # att-2'de FALSE verip cache-branch'i atlar, zayiflatma KACAR. Cache'te olan dosya =
+                # bu-run'da izledigimiz -> pre_untracked'te olsa bile izlemeye devam et.
+                # (Cache'te-YOK + pre_untracked'te-VAR = gercek run-oncesi junk -> hala dislanir, FP yok.)
                 try:
                     with open(os.path.join(cwd, f), errors="replace") as fh:
                         cur = fh.read()

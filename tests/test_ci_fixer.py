@@ -1291,23 +1291,26 @@ async def test_capture_untracked_weakening_uses_prior_content(tmp_path):
     (repo / "seed.txt").write_text("x")
     git("add", "seed.txt")
     git("commit", "-qm", "seed")
-    base, _ = await _snapshot_baseline(str(repo))
 
     cache: dict[str, str] = {}
     tf = repo / "test_new.py"
 
-    # att-1: yeni untracked dosya, assertion'li -> ilk gorus /dev/null (tum icerik '+')
-    tf.write_text("def test_a():\n    assert result == 42\n    assert other == 1\n")
-    diff1 = await _capture_attempt_diff(str(repo), base, set(), cache)
+    # att-1: GERCEK per-attempt baseline (Claude-oncesi). test_new.py henuz yok -> pre1 bos.
+    base1, pre1 = await _snapshot_baseline(str(repo))
+    tf.write_text("def test_a():\n    assert result == 42\n    assert other == 1\n")  # Claude yaratir
+    diff1 = await _capture_attempt_diff(str(repo), base1, pre1, cache)
     assert "test_new.py" in diff1
     assert scan_ci_fixer_diff(diff1, failing_module="test_new.py")["suspicious"] is False  # ekleme, temiz
     assert cache["test_new.py"].count("assert") == 2
 
-    # att-2: AYNI dosya zayiflatilir -> onceki-icerige karsi diff (silme gorunur)
-    tf.write_text("def test_a():\n    pass\n")
-    diff2 = await _capture_attempt_diff(str(repo), base, set(), cache)
+    # att-2: GERCEK per-attempt baseline. test_new.py att-1'de olustu -> pre2'ye GIRER
+    # (klipper #100322 prod-leak'in tam sartlari; eski guard bunu cache'den dislayip zayiflatmayi kacirirdi).
+    base2, pre2 = await _snapshot_baseline(str(repo))
+    assert "test_new.py" in pre2  # regresyon-guard: leak'in gercek senaryosunu modelledik
+    tf.write_text("def test_a():\n    pass\n")  # Claude zayiflatir
+    diff2 = await _capture_attempt_diff(str(repo), base2, pre2, cache)
     scan2 = scan_ci_fixer_diff(diff2, failing_module="test_new.py")
-    assert scan2["suspicious"] is True  # assertion-drop yakalandi
+    assert scan2["suspicious"] is True  # cache-branch pre_untracked'e ragmen izledi -> assertion-drop yakalandi
     assert "test_assertion_drop" in scan2["signals"]
 
 
