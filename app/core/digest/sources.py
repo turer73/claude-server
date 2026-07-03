@@ -9,7 +9,6 @@ import datetime as dt
 import json
 import os
 import re
-import sqlite3
 import subprocess
 import urllib.error
 import urllib.parse
@@ -17,6 +16,8 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
+
+from app.db.data_layer import get_conn
 
 DB_PATH = "/opt/linux-ai-server/data/claude_memory.db"
 
@@ -56,8 +57,7 @@ REVIEW_REPOS = [
 def memory_delta(window_hours: int) -> dict[str, Any]:
     """24h delta from claude_memory.db — open bugs, recent flips, unread notes."""
     since = (dt.datetime.now() - dt.timedelta(hours=window_hours)).strftime("%Y-%m-%d %H:%M:%S")
-    db = sqlite3.connect(DB_PATH)
-    db.row_factory = sqlite3.Row
+    db = get_conn(DB_PATH)  # P1-a: busy_timeout+WAL+Row (row_factory get_conn'da)
     try:
         open_bugs = [
             dict(r)
@@ -179,8 +179,7 @@ def cron_outcomes_health() -> dict[str, Any]:
     rc — is fail/partial within the window. Complements Uptime-Kuma ('never
     ran'); this catches 'ran but bad'. Returns {} on any error."""
     try:
-        db = sqlite3.connect(_server_db_path())
-        db.row_factory = sqlite3.Row
+        db = get_conn(_server_db_path())  # P1-a: busy_timeout+WAL+Row
         try:
             rows = db.execute(
                 "SELECT job, result, rc, source, detail, timestamp FROM cron_outcomes c "
@@ -318,8 +317,7 @@ def vps_health() -> dict[str, Any]:
     Returns {} when no data exists yet — digest sections degrade gracefully.
     """
     try:
-        db = sqlite3.connect(_server_db_path())
-        db.row_factory = sqlite3.Row
+        db = get_conn(_server_db_path())  # P1-a: busy_timeout+WAL+Row
         try:
             row = db.execute("SELECT * FROM vps_metrics_history ORDER BY timestamp DESC LIMIT 1").fetchone()
         finally:
@@ -347,8 +345,7 @@ def ci_health() -> dict[str, Any]:
     `stale` is True past CI_STALE_DAYS.
     """
     try:
-        db = sqlite3.connect(COVERAGE_DB_PATH)
-        db.row_factory = sqlite3.Row
+        db = get_conn(COVERAGE_DB_PATH)  # P1-a: busy_timeout+WAL+Row
         try:
             runs = db.execute("SELECT * FROM test_runs ORDER BY id DESC LIMIT 2").fetchall()
         finally:
