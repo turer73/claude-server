@@ -27,6 +27,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from app.db.data_layer import get_conn
+
 SERVER_DB = "/opt/linux-ai-server/data/server.db"
 COVERAGE_DB = "/opt/linux-ai-server/data/coverage.db"
 MEMORY_DB = "/opt/linux-ai-server/data/claude_memory.db"
@@ -89,7 +91,7 @@ def _file_age_s(path: str) -> float | None:
 
 def _db_latest_ts(db: str, query: str) -> str | None:
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        con = get_conn(db, readonly=True)
         try:
             row = con.execute(query).fetchone()
             return row[0] if row and row[0] is not None else None
@@ -187,7 +189,7 @@ def cron_job_liveness(job: str, cadence_s: float, absent_status: str = "unknown"
     """
     row = None
     try:
-        con = sqlite3.connect(f"file:{SERVER_DB}?mode=ro", uri=True)
+        con = get_conn(SERVER_DB, readonly=True)
         try:
             row = con.execute(
                 "SELECT timestamp, result FROM cron_outcomes WHERE job=? ORDER BY id DESC LIMIT 1",
@@ -274,7 +276,7 @@ def autonomy_liveness(backlog_window_s: float = 7200) -> dict[str, Any]:
     hb = cron_job_liveness("autonomous-retry", 35 * 60)  # 15dk×2+margin
     poison = fresh_backlog = None
     try:
-        con = sqlite3.connect(f"file:{MEMORY_DB}?mode=ro", uri=True)
+        con = get_conn(MEMORY_DB, readonly=True)
         try:
             poison = con.execute("SELECT COUNT(*) FROM spawn_failures WHERE status NOT IN ('resolved','obsolete','archived')").fetchone()[0]
             fresh_backlog = con.execute(
