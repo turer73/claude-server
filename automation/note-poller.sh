@@ -57,6 +57,15 @@ poll_once() {
     # korunur (yeni-not islenince asagida line ~173 spawned_max_id ile guncellenir).
     printf '{"last_seen_id": %s, "last_poll_at": "%s"}\n' "$last_seen" "$(ts)" > "$STATE_FILE"
 
+    # Policy-gate #1222: held dispatch OTONOM-SPAWN'a GITMEZ (poller = otonom-isleme tetikleyicisi;
+    # held burada sizarsa pending_notes.json'a girer -> autonomous-claude spawn eder = HOLD ETKISIZ,
+    # #1222'nin tam onlemek istedigi "otonom-consequential-dispatch insan-gate'siz islenir" senaryosu).
+    # Kolon-guard: status yoksa (fresh/merge-oncesi DB) filtre-yok (geri-uyum).
+    local status_filter=""
+    if [ "$(sqlite3 "$HOOK_DB" "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='status';" 2>/dev/null || echo 0)" -gt 0 ]; then
+        status_filter="AND COALESCE(status,'active')='active'"
+    fi
+
     # Klipper-targeted veya broadcast unread notlari
     local new_notes
     new_notes=$(sqlite3 -json "$HOOK_DB" "
@@ -65,6 +74,7 @@ poll_once() {
         WHERE (to_device='$HOOK_DEVICE' OR to_device IS NULL)
           AND read=0
           AND id > $last_seen
+          $status_filter
         ORDER BY id
     " 2>/dev/null || echo '[]')
 

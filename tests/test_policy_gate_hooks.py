@@ -104,3 +104,21 @@ def test_approval_view_sql_pattern_held_included(tmp_path):
     ).fetchall()
     con.close()
     assert [r[0] for r in held] == ["H"]  # held onay-gorunumunde GORUNUR
+
+
+def test_note_poller_spawn_excludes_held(tmp_path):
+    """EN KRITIK-2: note-poller (otonom-spawn tetikleyicisi) held-not'u pending-spawn'a ALMAZ.
+    Held burada sizarsa autonomous-claude spawn eder = HOLD tamamen etkisiz (#1222 ozu)."""
+    con, _ = _mk_notes_db(tmp_path)
+    con.execute("INSERT INTO notes (from_device,to_device,title,content,status) VALUES ('klipper-autonomous','klipper','A','x','active')")
+    con.execute("INSERT INTO notes (from_device,to_device,title,content,status) VALUES ('klipper-autonomous','klipper','H','y','held')")
+    con.commit()
+    # note-poller.sh'in KULLANDIGI sorgu-pattern'i (id>last_seen + status-filter)
+    rows = con.execute(
+        "SELECT title FROM notes WHERE (to_device='klipper' OR to_device IS NULL) "
+        "AND read=0 AND id > 0 AND COALESCE(status,'active')='active' ORDER BY id"
+    ).fetchall()
+    con.close()
+    titles = [r[0] for r in rows]
+    assert "A" in titles
+    assert "H" not in titles  # held SPAWN-pending'e girmez

@@ -69,6 +69,10 @@ if [ "${HAS_RB:-0}" -gt 0 ]; then
 else
     PRED="read=0"
 fi
+# Policy-gate #1222: held dispatch okunmamis-feed sayimina GIRMEZ (teslim-gorunumu; held ayri
+# session-start onay-bolumunde). Kolon-guard: status yoksa filtre-yok (geri-uyum).
+HAS_ST=$(q "$MEM_DB" "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='status'")
+[ "${HAS_ST:-0}" -gt 0 ] && PRED="$PRED AND COALESCE(status,'active')='active'"
 NCNT=$(q "$MEM_DB" "SELECT COUNT(*) FROM notes WHERE (to_device='$DEV' OR to_device IS NULL) AND $PRED")
 if [ "${NCNT:-0}" -gt 0 ]; then
     NTOP=$(q "$MEM_DB" "SELECT from_device || ': ' || substr(title,1,48) FROM notes WHERE (to_device='$DEV' OR to_device IS NULL) AND $PRED ORDER BY created_at DESC LIMIT 1")
