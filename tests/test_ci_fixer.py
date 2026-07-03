@@ -1003,6 +1003,45 @@ async def test_cumulative_suspicious_gate_off_is_notify_only(ci_db, monkeypatch)
     assert [r["outcome"] for r in rows] == ["passed"]  # held degil: gate-OFF'ta held yok
 
 
+@pytest.mark.asyncio
+async def test_run_baseline_failure_skips_cumulative_but_not_accept(ci_db, monkeypatch):
+    """Fail-open (pilot-tasarim 4): RUN-baseline snapshot cokerse kumulatif-review
+    DEVRE-DISI kalir (capture yalniz per-attempt icin cagrilir) ama accept BLOKLANMAZ."""
+
+    async def fake_open_ci_db():
+        return _NoCloseDB(ci_db)
+
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    # Ilk cagri = RUN-baseline (patlar) -> fail-open; ikinci = attempt-1 baseline (basarili).
+    snapshots = AsyncMock(side_effect=[RuntimeError("git stash patladi"), ("ATT-1", set())])
+    capture_calls: list[str] = []
+
+    async def fake_capture(cwd, baseline_ref, pre_untracked):
+        capture_calls.append(baseline_ref)
+        return _CLEAN_DIFF
+
+    with (
+        patch("app.core.ci_fixer._call_claude_code", _mock_claude()),
+        patch("app.core.ci_fixer.run_project_tests", AsyncMock(return_value=dict(_PASS_RESULT))),
+        patch("app.core.ci_fixer._snapshot_baseline", snapshots),
+        patch("app.core.ci_fixer._capture_attempt_diff", side_effect=fake_capture),
+        patch("app.core.ci_fixer.soft_gate_enabled", return_value=True),
+    ):
+        result = await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError",
+            source_file="app/foo.py",
+        )
+
+    assert result["fixed"] is True  # snapshot-hatasi accept'i bloklamadi
+    assert capture_calls == ["ATT-1"]  # kumulatif capture HIC cagrilmadi (run-baseline yok)
+    rows = await ci_db.fetch_all("SELECT outcome FROM ci_lesson_learned")
+    assert [r["outcome"] for r in rows] == ["passed"]
+
+
 def test_prompt_held_lesson_not_shown_as_passed_example():
     """#6: held-lesson prompt'a 'passed ornek' olarak SIZMAZ — diff'i gosterilmez,
     'ORNEK ALMA' uyarisiyla etiketlenir."""
