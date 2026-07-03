@@ -73,7 +73,7 @@ router = APIRouter(prefix="/api/v1/memory", tags=["memory"], dependencies=[Depen
 public_router = APIRouter(prefix="/api/v1/memory", tags=["memory-public"], dependencies=[Depends(verify_master_key)])
 
 
-def get_db():
+def get_db() -> Any:
     # Kanonik data_layer'a delege (tek-kaynak: busy_timeout=5000 + WAL + Row).
     # Eskiden inline'dı; lock-flap dersi (server.db corruption→45 spam) artık tek yerde.
     return get_conn(DB_PATH)
@@ -106,6 +106,27 @@ def _unread_pred(device):
     if device:
         return "read=0 AND (read_by IS NULL OR read_by NOT LIKE ?)", [f"%|{device}|%"]
     return "read=0", []
+
+
+_status_ready = False
+
+
+def _ensure_status(db: Any) -> None:
+    """notes.status kolonunu idempotent ekle (policy-gate #1222 — cross-agent dispatch HOLD).
+    Degerler: 'active' (default, teslim-edilebilir) / 'held' (otonom-suspicious, insan-onayi bekler,
+    aliciya teslim YOK) / 'rejected' (kalici-held, audit durur). Mevcut satirlar NULL -> COALESCE ile
+    'active' muamelesi (geri-uyum; gate-OFF davranisi degismez). _ensure_read_by ile ayni idempotent-desen."""
+    global _status_ready
+    if _status_ready:
+        return
+    try:
+        cols = [r[1] for r in db.execute("PRAGMA table_info(notes)").fetchall()]
+        if "status" not in cols:
+            db.execute("ALTER TABLE notes ADD COLUMN status TEXT DEFAULT 'active'")
+            db.commit()
+    except Exception:
+        pass
+    _status_ready = True
 
 
 # ============ Event / Webhook / Telegram Helpers ============

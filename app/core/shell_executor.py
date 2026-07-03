@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from typing import Any
@@ -89,8 +90,17 @@ class ShellExecutor:
 
         return True
 
+    def validate_cwd(self, cwd: str) -> str:
+        resolved = os.path.realpath(cwd)
+        if not os.path.isdir(resolved):
+            raise ShellExecutionError(f"cwd does not exist or is not a directory: {cwd!r}")
+        return resolved
+
     async def execute(self, command: str, timeout: int = 30, cwd: str | None = None) -> dict[str, Any]:
         self.validate_command(command)
+
+        if cwd is not None:
+            cwd = self.validate_cwd(cwd)
 
         start = time.monotonic()
 

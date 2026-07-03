@@ -42,6 +42,18 @@ def soft_gate_enabled() -> bool:
     return (read_env_var("ACTION_REVIEW_SOFT_GATE") or "0").strip().lower() in ("1", "true", "on", "yes")
 
 
+def dispatch_policy_gate_enabled() -> bool:
+    """Policy-gate #1222: cross-agent dispatch HOLD-enforcement acik mi (env-flag, DEFAULT-OFF).
+    ON iken otonom-origin + suspicious dispatch -> create_note status='held' (aliciya teslim yok,
+    insan-onayi bekler). soft_gate_enabled()'in DISPATCH tarafi ESI — AYRI env-key (soft-gate ci_fixer
+    ciktisini, policy-gate dispatch-kanalini gate'ler; ikisi bagimsiz flip). read_env_var (config-gate
+    dersi #174: os.environ.get systemd .env'i gormez). Fail-safe: flag-yok/OFF -> notify-only.
+    Operasyonel-kural: bu flag ancak `make eval-gap2` Part-D catch>=0.90 & fb<=0.05 gosterince ON."""
+    from app.core.config import read_env_var  # lazy: import-cycle onleme
+
+    return (read_env_var("DISPATCH_POLICY_GATE") or "0").strip().lower() in ("1", "true", "on", "yes")
+
+
 # Assertion belirtecleri (py + js). Kelime-siniri ile FP azaltilir.
 # NOT (Faz2 P2 #9): 'should' KALDIRILDI — prose/docstring-silmede yanlis assertion-drop veriyordu
 # ('this should work' gibi). Spesifik assertion-token'lari kalir.

@@ -94,7 +94,10 @@ case "$1" in
     ;;
   notes|n)
     if [ "$2" = "unread" ]; then
-      sqlite3 -header -column "$DB" "SELECT id, from_device as 'from', to_device as 'to', title, datetime(created_at) as time FROM notes WHERE read=0 ORDER BY created_at DESC;"
+      # Policy-gate #1222: 'unread' = islenecek-notlar -> held HARIC (teslim-filtresi). Kolon-guard.
+      HAS_ST=$(sqlite3 "$DB" "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='status';" 2>/dev/null)
+      NF=""; [ "${HAS_ST:-0}" -gt 0 ] && NF="AND COALESCE(status,'active')='active'"
+      sqlite3 -header -column "$DB" "SELECT id, from_device as 'from', to_device as 'to', title, datetime(created_at) as time FROM notes WHERE read=0 $NF ORDER BY created_at DESC;"
     else
       sqlite3 -header -column "$DB" "SELECT id, from_device as 'from', to_device as 'to', title, read, datetime(created_at) as time FROM notes ORDER BY created_at DESC LIMIT 20;"
     fi
