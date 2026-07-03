@@ -83,15 +83,18 @@ def memory_delta(window_hours: int) -> dict[str, Any]:
         # OLMADIĞI notlar (SessionStart hook ile aynı semantik). read_by kolonu yoksa
         # (eski/minimal DB) legacy global'e düş — savunmacı (_has_merged_into deseni).
         _note_cols = {r[1] for r in db.execute("PRAGMA table_info(notes)").fetchall()}
+        # Policy-gate #1222: held dispatch 'unread_notes' DIGEST-sayimina girmez — 'unread' semantik =
+        # islenecek/teslim-edilebilir; held = onay-bekleyen AYRI kavram (digest teslim-DEGIL, rapor;
+        # bu tutarlilik/dogruluk fix'i, HOLD-cekirdegi degil). Kolon-guard: status yoksa filtre-yok.
+        _status_f = " AND COALESCE(status,'active')='active'" if "status" in _note_cols else ""
         if "read_by" in _note_cols:
             _unread_q = (
                 "SELECT id, title, content FROM notes "
                 "WHERE (to_device='klipper' OR to_device IS NULL) "
-                "AND COALESCE(read,0)=0 AND (read_by IS NULL OR read_by NOT LIKE '%|klipper|%') "
-                "ORDER BY id DESC"
+                "AND COALESCE(read,0)=0 AND (read_by IS NULL OR read_by NOT LIKE '%|klipper|%')" + _status_f + " ORDER BY id DESC"
             )
         else:
-            _unread_q = "SELECT id, title, content FROM notes WHERE COALESCE(read,0)=0 ORDER BY id DESC"
+            _unread_q = "SELECT id, title, content FROM notes WHERE COALESCE(read,0)=0" + _status_f + " ORDER BY id DESC"
         unread_notes = [dict(r) for r in db.execute(_unread_q).fetchall()]
         return {"open_bugs": open_bugs, "new_bugs": new_bugs, "unread_notes": unread_notes}
     finally:
