@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from app.core.config import get_settings, read_env_var
 from app.core.shell_executor import ShellExecutor
+from app.db.data_layer import MEMORY_DB, get_conn
 from app.middleware.dependencies import require_admin
 
 router = APIRouter(prefix="/api/v1/deploy", tags=["deploy"])
@@ -199,14 +200,10 @@ async def memory_context(request: Request) -> dict[str, Any]:
     expected = read_env_var("INTERNAL_API_KEY")
     if not expected or api_key != expected:
         raise AuthenticationError("Invalid or missing API key")
-    import sqlite3
-
-    db = Path("/opt/linux-ai-server/data/claude_memory.db")
-    if not db.exists():
+    if not Path(MEMORY_DB).exists():
         return {"error": "memory DB not found"}
     try:
-        conn = sqlite3.connect(str(db))
-        conn.row_factory = sqlite3.Row
+        conn = get_conn(MEMORY_DB, readonly=True)
         c = conn.cursor()
         result = {}
         c.execute("SELECT name, description, content FROM memories WHERE type='project' AND active=1 ORDER BY updated_at DESC")
