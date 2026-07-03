@@ -7,6 +7,7 @@ and retries up to MAX_ATTEMPTS times.
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import logging
 import os
@@ -67,10 +68,30 @@ async def _snapshot_baseline(cwd: str) -> tuple[str, set[str]]:
     return baseline, pre_untracked
 
 
-async def _capture_attempt_diff(cwd: str, baseline_ref: str, pre_untracked: set[str]) -> str:
+def _difflib_git_diff(path: str, prior: str, cur: str) -> str:
+    """prior->cur icin git-diff-formatinda unified diff (scanner bunu tarayabiliyor).
+    Untracked dosyanin ONCEKI-attempt icerigine karsi diff'i icin — /dev/null-diff sadece
+    '+' gosterir (silme gizli), bu ise gercek '-'/'+' verir (Codex #255-P2 r6 untracked-weaken)."""
+    body = "".join(
+        difflib.unified_diff(prior.splitlines(keepends=True), cur.splitlines(keepends=True), fromfile=f"a/{path}", tofile=f"b/{path}")
+    )
+    return f"diff --git a/{path} b/{path}\n{body}"
+
+
+async def _capture_attempt_diff(
+    cwd: str,
+    baseline_ref: str,
+    pre_untracked: set[str],
+    run_untracked_content: dict[str, str] | None = None,
+) -> str:
     """baseline'dan-bu-yana tracked-delta (staged Claude-add dahil, Codex P1) + bu-attempt'te
     OLUSAN untracked dosyalar (Codex #3). `git diff <baseline>` non-zero => RuntimeError
-    (caller fail-NOTIFY). Onceden-var untracked (pre_untracked) haric = yalniz attempt-delta."""
+    (caller fail-NOTIFY). Onceden-var untracked (pre_untracked) haric = yalniz attempt-delta.
+
+    run_untracked_content (Codex #255-P2 r6, 574): run-boyunca-olusan untracked dosyalarin
+    icerik-cache'i. Verilirse: ilk-gorulen untracked /dev/null'a (tum icerik '+'); SONRAKI
+    gorusunde ONCEKI-icerige karsi difflenir (zayiflatma '-' olarak gorunur). Bu olmadan
+    attempt-2'de dosya pre_untracked olup capture'dan dusuyor -> untracked test zayiflatma kacar."""
     rc, tracked, err = await _git(cwd, "diff", baseline_ref)
     if rc != 0:
         raise RuntimeError(f"git diff {baseline_ref} rc={rc}: {err.strip()[:200]}")
@@ -79,8 +100,33 @@ async def _capture_attempt_diff(cwd: str, baseline_ref: str, pre_untracked: set[
     if rc2 == 0:
         for line in others.splitlines():
             f = line.strip()
-            if f and f not in pre_untracked:  # yalniz bu-attempt'te olusan untracked
-                # --no-index differ'da rc=1 (normal); ciktisini al, hata-degil.
+            if not f:
+                continue
+            if run_untracked_content is not None and (f in run_untracked_content or f not in pre_untracked):
+                # run-ici olusan untracked: icerik-cache ile ONCEKI-attempt'e karsi izle.
+                # KRITIK (Codex #255-P2 r6 / klipper #100322 prod-leak): guard'da
+                # `f in run_untracked_content` SART. Gercek attempt_fix dongusunde pre_untracked
+                # HER attempt'te _snapshot_baseline ile yeniden alinir; att-1'de olusan dosya
+                # att-2'nin pre_untracked'INE girer -> yalniz `f not in pre_untracked` guard'i
+                # att-2'de FALSE verip cache-branch'i atlar, zayiflatma KACAR. Cache'te olan dosya =
+                # bu-run'da izledigimiz -> pre_untracked'te olsa bile izlemeye devam et.
+                # (Cache'te-YOK + pre_untracked'te-VAR = gercek run-oncesi junk -> hala dislanir, FP yok.)
+                try:
+                    with open(os.path.join(cwd, f), errors="replace") as fh:
+                        cur = fh.read()
+                except OSError:
+                    continue
+                prior = run_untracked_content.get(f)
+                run_untracked_content[f] = cur
+                if prior is None:
+                    # ilk gorus: yeni dosya, /dev/null (tum icerik '+')
+                    _, d, _ = await _git(cwd, "diff", "--no-index", "--", "/dev/null", f)
+                    parts.append(d)
+                elif prior != cur:
+                    # var olan run-ici untracked degisti: onceki-icerige karsi gercek diff
+                    parts.append(_difflib_git_diff(f, prior, cur))
+            elif f not in pre_untracked:
+                # cache YOK (geri-uyum): mevcut davranis — /dev/null-diff.
                 _, d, _ = await _git(cwd, "diff", "--no-index", "--", "/dev/null", f)
                 parts.append(d)
     return "\n".join(p for p in parts if p)
@@ -94,17 +140,19 @@ async def _scan_fix_diff(
     test_file: str,
     project: str,
     test_name: str,
+    run_untracked_content: dict[str, str] | None = None,
 ) -> tuple[str | None, dict[str, Any] | None]:
     """Attempt-delta'yi yakala + spec-gaming tara (verdict-emit YOK — o _apply_review_verdict'te).
 
     KRITIK (Codex #255-P2): capture TESTLER KOSMADAN ONCE yapilmali — test-kosusunun mutate
     ettigi tracked dosyalar (yeni snapshot/golden/coverage-artifact) diff'e karisip sahte
     supheli-sinyal uretir (shadow-gozlem kirlenir; gate-ON'da temiz fix false-block yerdi).
+    run_untracked_content: run-ici untracked izleme cache'i (r6 574 — bkz _capture_attempt_diff).
     Doner: (diff-metni, scan-result). (None, None) = capture/tarama-hatasi (fail-open;
     taranamadi-warn emit edilir). Diff-metni kumulatif birlesime de girer (Codex r4).
     """
     try:
-        git_diff = await _capture_attempt_diff(cwd, baseline_ref, pre_untracked)
+        git_diff = await _capture_attempt_diff(cwd, baseline_ref, pre_untracked, run_untracked_content)
         return git_diff, scan_ci_fixer_diff(git_diff, failing_module=source_file or test_file)
     except Exception as exc:  # noqa: BLE001 — fail-NOTIFY, ci_fixer'i durdurma
         logger.warning("action_review taranamadi %s/%s: %s", project, test_name, exc)
@@ -494,6 +542,9 @@ async def attempt_fix(
         claude_deltas: list[str] = []
         # Codex r5: her attempt'in pre-test scan-sonucu (sticky supheli-tasima icin; index=attempt-1)
         attempt_scans: list[dict[str, Any] | None] = []
+        # Codex r6 (574): run-boyunca-olusan untracked dosyalarin icerik-cache'i — sonraki
+        # attempt'te ayni untracked dosya zayiflatilirsa onceki-icerige karsi diff (silme gorunur).
+        run_untracked_content: dict[str, str] = {}
 
         prev_errors: list[str] = []
         claude_responses: list[dict[str, Any]] = []
@@ -560,19 +611,25 @@ async def attempt_fix(
             claude_result = await _call_claude_code(prompt, cwd)
             claude_responses.append(claude_result)
 
-            if claude_result.get("error"):
-                logger.warning("Claude Code hatasi: %s", claude_result["error"])
-                prev_errors.append(claude_result["error"])
-                continue
-
-            # 3.5 GAP-1 action_review: PRE-EXECUTION denetim (testler KOSMADAN once, attempt-delta;
-            #     Codex #3/#9). Faz2 soft-gate ON + supheli -> held (accept-blok); OFF -> notify-only.
-            #     Delta ayni zamanda kumulatif birlesime girer (asagida).
-            attempt_diff, attempt_scan = await _scan_fix_diff(cwd, baseline_ref, pre_untracked, source_file, test_file, project, test_name)
+            # 3.5 GAP-1 action_review: PRE-EXECUTION denetim (attempt-delta; Codex #3/#9).
+            #     Codex r6 (571): capture HATA OLSA DA yapilir — timeout/parse-hatasi veren Claude
+            #     cagrisi working-tree'yi zaten degistirmis olabilir; yakalamazsak o zayiflatma
+            #     sonraki attempt'in baseline'ina "temiz" girer (launder). Delta+scan biriktirilir
+            #     (kumulatif+sticky'ye girer); sadece VERDICT/emit hatasiz-sonuca ozel degil —
+            #     hata durumunda da supheli-diff insan-gozune tasinmali.
+            claude_errored = bool(claude_result.get("error"))
+            attempt_diff, attempt_scan = await _scan_fix_diff(
+                cwd, baseline_ref, pre_untracked, source_file, test_file, project, test_name, run_untracked_content
+            )
             held_for_review = _apply_review_verdict(attempt_scan, "attempt", project, test_name)
             if attempt_diff is not None:
                 claude_deltas.append(attempt_diff)
             attempt_scans.append(attempt_scan)
+
+            if claude_errored:
+                logger.warning("Claude Code hatasi: %s", claude_result["error"])
+                prev_errors.append(claude_result["error"])
+                continue
 
             # 3.6 GAP-1 soft-gate pilot #1: KUMULATIF tarama — pre-test attempt-delta'larin
             # birlesimi uzerinde (Codex r2: capture pre-test; Codex r4: onceki attempt'lerin
