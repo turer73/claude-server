@@ -1042,6 +1042,90 @@ async def test_run_baseline_failure_skips_cumulative_but_not_accept(ci_db, monke
     assert [r["outcome"] for r in rows] == ["passed"]
 
 
+@pytest.mark.asyncio
+async def test_cumulative_capture_is_pre_test_runner_artifacts_ignored(ci_db, monkeypatch):
+    """Codex #255-P2 regresyonu: test-runner tracked dosya mutate ederse (snapshot/golden/
+    coverage) kumulatif diff KIRLENMEMELI — capture testlerden ONCE yapilir. Post-test
+    cekilseydi diff GAMING gorunecekti; pre-test temiz -> SUSPICIOUS-DEGIL, accept surer."""
+
+    async def fake_open_ci_db():
+        return _NoCloseDB(ci_db)
+
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    tests_ran = {"flag": False}
+    capture_after_tests: list[bool] = []
+
+    async def fake_capture(cwd, baseline_ref, pre_untracked):
+        capture_after_tests.append(tests_ran["flag"])
+        # Test-kosusu SONRASI cekilseydi runner-artifact'lari diff'e karisirdi (GAMING gibi
+        # pattern-match eden icerik); oncesinde temiz.
+        return _GAMING_DIFF if tests_ran["flag"] else _CLEAN_DIFF
+
+    async def fake_tests(project):
+        tests_ran["flag"] = True  # runner tracked-dosya mutate etti (simulasyon)
+        return dict(_PASS_RESULT)
+
+    with (
+        patch("app.core.ci_fixer._call_claude_code", _mock_claude()),
+        patch("app.core.ci_fixer.run_project_tests", side_effect=fake_tests),
+        patch("app.core.ci_fixer._snapshot_baseline", AsyncMock(return_value=("BASE", set()))),
+        patch("app.core.ci_fixer._capture_attempt_diff", side_effect=fake_capture),
+        patch("app.core.ci_fixer.soft_gate_enabled", return_value=True),
+    ):
+        result = await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError",
+            source_file="app/foo.py",
+        )
+
+    assert result["fixed"] is True  # runner-artifact sahte-held uretmedi
+    assert capture_after_tests  # capture gercekten cagrildi
+    assert all(v is False for v in capture_after_tests)  # TUM capture'lar pre-test
+
+
+@pytest.mark.asyncio
+async def test_cumulative_suspicious_but_tests_fail_no_cumulative_emit(ci_db, monkeypatch):
+    """Codex #255-P2 emit-timing: kumulatif diff supheli AMA testler FAIL -> kumulatif
+    verdict/emit YOK (sahte held-emit shadow-gozlemi kirletmesin). Attempt-scope emit'leri kalir."""
+
+    async def fake_open_ci_db():
+        return _NoCloseDB(ci_db)
+
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    emitted: list[dict] = []
+
+    def fake_emit(**kw):
+        emitted.append(kw)
+
+    async def fake_capture(cwd, baseline_ref, pre_untracked):
+        return _GAMING_DIFF  # her scope'ta supheli
+
+    with (
+        patch("app.core.ci_fixer._call_claude_code", _mock_claude()),
+        patch("app.core.ci_fixer.run_project_tests", AsyncMock(return_value=dict(_FAIL_RESULT))),
+        patch("app.core.ci_fixer._snapshot_baseline", AsyncMock(return_value=("BASE", set()))),
+        patch("app.core.ci_fixer._capture_attempt_diff", side_effect=fake_capture),
+        patch("app.core.ci_fixer.soft_gate_enabled", return_value=True),
+        patch("app.core.ci_fixer.emit_event", side_effect=fake_emit),
+    ):
+        result = await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError",
+        )
+
+    assert result["fixed"] is False
+    cumulative_emits = [e for e in emitted if (e.get("payload") or {}).get("scope") == "cumulative"]
+    assert cumulative_emits == []  # FAIL'li attempt'lerde kumulatif emit yasak
+    attempt_emits = [e for e in emitted if (e.get("payload") or {}).get("scope") == "attempt"]
+    assert attempt_emits  # attempt-scope erken-uyari korunur
+
+
 def test_prompt_held_lesson_not_shown_as_passed_example():
     """#6: held-lesson prompt'a 'passed ornek' olarak SIZMAZ — diff'i gosterilmez,
     'ORNEK ALMA' uyarisiyla etiketlenir."""

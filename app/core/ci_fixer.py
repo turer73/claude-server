@@ -79,7 +79,7 @@ async def _capture_attempt_diff(cwd: str, baseline_ref: str, pre_untracked: set[
     return "\n".join(p for p in parts if p)
 
 
-async def _review_fix_diff(
+async def _scan_fix_diff(
     cwd: str,
     baseline_ref: str,
     pre_untracked: set[str],
@@ -88,26 +88,18 @@ async def _review_fix_diff(
     project: str,
     test_name: str,
     scope: str = "attempt",
-) -> bool:
-    """GAP-1 action_review: diff'i yakala + spec-gaming tara + emit.
+) -> dict[str, Any] | None:
+    """Diff'i yakala + spec-gaming tara (verdict-emit YOK — o _apply_review_verdict'te).
 
-    scope="attempt": attempt-delta (PRE-EXECUTION, testler KOSMADAN once, Codex #3) — erken-uyari.
-    scope="cumulative": RUN-basi baseline'dan kumulatif diff (accept-KAPISI, soft-gate pilot #1) —
-      attempt-delta'nin goremedigi laundering'i yakalar (attempt-1 supheli+FAIL kalir tree'de,
-      attempt-2 temiz+PASS -> attempt-delta temiz gorunur; kumulatif diff gaming'i icerir).
-
-    Doner: True = SOFT-GATE BLOK (supheli + gate-ON -> held-for-review, fix accept ETME),
-           False = devam (notify-only veya temiz-diff).
-    Faz1 notify-only (gate-OFF): supheli-diff'te emit_event(warn), ci_fixer BLOKLAMAZ (False).
-    Faz2 soft-gate (gate-ON): supheli-diff'te emit_event(CRITICAL) + True (accept-blok).
-    fail-NOTIFY (design 7): capture/tarama cokerse DURDURMA -> warn-emit + False (fail-open) —
-    her iki scope icin (kumulatif-review hatasi accept'i BLOKLAMAZ, pilot-tasarim 4).
-    Diff working-tree'den (#100239).
+    KRITIK (Codex #255-P2): capture TESTLER KOSMADAN ONCE yapilmali — test-kosusunun mutate
+    ettigi tracked dosyalar (yeni snapshot/golden/coverage-artifact) diff'e karisip sahte
+    supheli-sinyal uretir (shadow-gozlem kirlenir; gate-ON'da temiz fix false-block yerdi).
+    Doner: scan-result dict, veya None = tarama-hatasi (fail-open; taranamadi-warn emit edilir).
     """
     scope_tag = " [kumulatif]" if scope == "cumulative" else ""
     try:
         git_diff = await _capture_attempt_diff(cwd, baseline_ref, pre_untracked)
-        result = scan_ci_fixer_diff(git_diff, failing_module=source_file or test_file)
+        return scan_ci_fixer_diff(git_diff, failing_module=source_file or test_file)
     except Exception as exc:  # noqa: BLE001 — fail-NOTIFY, ci_fixer'i durdurma
         logger.warning("action_review taranamadi%s %s/%s: %s", scope_tag, project, test_name, exc)
         emit_event(
@@ -117,11 +109,28 @@ async def _review_fix_diff(
             severity="warn",
             detail=f"{type(exc).__name__}: {exc}",
         )
-        return False  # fail-open: tarama-hatasi ci_fixer'i bloklamaz
+        return None  # fail-open: tarama-hatasi ci_fixer'i bloklamaz
 
-    if not result["suspicious"]:
+
+def _apply_review_verdict(
+    result: dict[str, Any] | None,
+    scope: str,
+    project: str,
+    test_name: str,
+) -> bool:
+    """Scan-sonucundan verdict cikar + supheliyse emit et.
+
+    Doner: True = SOFT-GATE BLOK (supheli + gate-ON -> held-for-review), False = devam.
+    Faz1 notify-only (gate-OFF): supheli-diff'te emit_event(warn), ci_fixer BLOKLAMAZ (False).
+    Faz2 soft-gate (gate-ON): supheli-diff'te emit_event(CRITICAL) + True (accept-blok).
+    result=None (tarama-hatasi) -> False (fail-open, pilot-tasarim 4).
+    Kumulatif scope'ta EMIT pass-dalinda cagrilarak yapilir — suspicious+FAIL attempt'te
+    sahte held-emit atilmaz (Codex #255-P2 emit-timing).
+    """
+    if result is None or not result["suspicious"]:
         return False
 
+    scope_tag = " [kumulatif]" if scope == "cumulative" else ""
     gate_on = soft_gate_enabled()
     logger.warning("action_review SUPHELI%s %s/%s: %s (soft_gate=%s)", scope_tag, project, test_name, result["signals"], gate_on)
     emit_event(
@@ -133,6 +142,27 @@ async def _review_fix_diff(
         payload={**result, "soft_gate": gate_on, "scope": scope},
     )
     return gate_on  # gate-ON -> True (blok); gate-OFF -> False (notify-only)
+
+
+async def _review_fix_diff(
+    cwd: str,
+    baseline_ref: str,
+    pre_untracked: set[str],
+    source_file: str | None,
+    test_file: str,
+    project: str,
+    test_name: str,
+    scope: str = "attempt",
+) -> bool:
+    """GAP-1 action_review: yakala + tara + verdict (tek-adim; attempt-scope kullanir).
+
+    scope="attempt": attempt-delta (PRE-EXECUTION, testler KOSMADAN once, Codex #3) — erken-uyari.
+    Kumulatif akis BUNU KULLANMAZ: capture pre-test / verdict post-pass ayrimi gerekir
+    (Codex #255-P2) -> attempt_fix icinde _scan_fix_diff + _apply_review_verdict ayri cagrilir.
+    Diff working-tree'den (#100239).
+    """
+    result = await _scan_fix_diff(cwd, baseline_ref, pre_untracked, source_file, test_file, project, test_name, scope)
+    return _apply_review_verdict(result, scope, project, test_name)
 
 
 # P1#5: restricted Claude Code settings (filesystem/tool scope) used instead of
@@ -559,18 +589,17 @@ async def attempt_fix(
             #     Codex #3/#9). Faz2 soft-gate ON + supheli -> held (accept-blok); OFF -> notify-only.
             held_for_review = await _review_fix_diff(cwd, baseline_ref, pre_untracked, source_file, test_file, project, test_name)
 
-            # 4. Re-run tests
-            test_result = await run_project_tests(project)
-            tests_passed = test_result.get("failed", 0) == 0
-
-            # 4.5 GAP-1 soft-gate pilot #1: accept-KAPISI kumulatif review (yalniz testler-gecti
-            # dalinda, accept'ten ONCE). Attempt-delta review (3.5) laundering'i kaciriyor:
-            # attempt-1 supheli+FAIL tree'de kalir, attempt-2 temiz+PASS -> delta temiz. RUN-basi
-            # baseline'dan kumulatif diff gaming'i gorur. Sticky-flag YETMEZ (attempt-1 fail'de
-            # held degerlendirilmedi). Fail-open: review-hatasi accept'i bloklamaz (_review_fix_diff icinde).
-            cumulative_held = False
-            if tests_passed and run_baseline_ref is not None:
-                cumulative_held = await _review_fix_diff(
+            # 3.6 GAP-1 soft-gate pilot #1: kumulatif diff'i TESTLERDEN ONCE yakala+tara
+            # (Codex #255-P2: test-kosusu tracked dosya mutate edebilir — yeni snapshot/golden/
+            # coverage-artifact — post-test capture bunlari Claude'un diff'ine karistirip sahte
+            # supheli uretir; shadow-gozlem kirlenir, gate-ON'da temiz fix false-block yer).
+            # Verdict+emit BURADA DEGIL — pass-dalinda (4.5): suspicious+FAIL'de sahte held-emit olmasin.
+            # Attempt-delta review (3.5) laundering'i kaciriyor: attempt-1 supheli+FAIL tree'de
+            # kalir, attempt-2 temiz+PASS -> delta temiz. RUN-basi baseline'dan kumulatif diff
+            # gaming'i gorur. Sticky-flag YETMEZ (attempt-1 fail'de held degerlendirilmedi).
+            cumulative_scan: dict[str, Any] | None = None
+            if run_baseline_ref is not None:
+                cumulative_scan = await _scan_fix_diff(
                     cwd,
                     run_baseline_ref,
                     run_pre_untracked,
@@ -580,6 +609,17 @@ async def attempt_fix(
                     test_name,
                     scope="cumulative",
                 )
+
+            # 4. Re-run tests
+            test_result = await run_project_tests(project)
+            tests_passed = test_result.get("failed", 0) == 0
+
+            # 4.5 GAP-1 soft-gate pilot #1: kumulatif verdict accept-KAPISINDA (yalniz testler-gecti
+            # dalinda, accept'ten ONCE; scan 3.6'da pre-test yapildi). Fail-open: scan=None
+            # (tarama-hatasi) -> False, accept bloklanmaz (pilot-tasarim 4).
+            cumulative_held = False
+            if tests_passed:
+                cumulative_held = _apply_review_verdict(cumulative_scan, "cumulative", project, test_name)
             effective_held = held_for_review or cumulative_held
 
             # Record the lesson for this attempt (before the passed/failed branches).
