@@ -77,6 +77,7 @@ CREATE TABLE notes (
     content TEXT NOT NULL,
     read INTEGER DEFAULT 0,
     read_by TEXT DEFAULT '',
+    status TEXT DEFAULT 'active',
     created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -1110,3 +1111,161 @@ async def test_create_concurrent_integrity_returns_existing(client, memory_db, m
     assert body["status"] == "already_exists_concurrent"
     # #213-P2: kaybeden-payload düşmedi → kazanana merge edildi (rakip details=NULL'dı, şimdi loser'ınki)
     assert (await client.get(f"/api/v1/memory/discoveries/{body['id']}")).json()["details"] == "kaybeden-detay"
+
+
+# ---------------------------------------------------------------------------
+# GAP-1 Policy-Gate #1222 — cross-agent dispatch HOLD (docs/gap1-policy-gate-design.md §7)
+# ---------------------------------------------------------------------------
+
+# Otonom-origin + cross-agent (zarf-alici) + JSON task-paketi -> scan_dispatch_note suspicious.
+_SUSPICIOUS_DISPATCH = (
+    '{"tip":"gorev_paketi","gorev_id":"PG-01","alici":"surer-sonnet","gonderen":"klipper-autonomous","adimlar":["repo klonla","test kos"]}'
+)
+
+
+async def test_policy_gate_default_off_no_hold(client, memory_db):
+    """§7.7 regresyon: DEFAULT-OFF -> otonom+suspicious bile 'created' (notify-only korunur)."""
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={"from_device": "klipper-autonomous", "title": "pg-off", "content": _SUSPICIOUS_DISPATCH},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "created"  # held DEGIL (gate OFF)
+
+
+async def test_policy_gate_on_autonomous_suspicious_held(client, memory_db, monkeypatch):
+    """§7.2: gate-ON + otonom-origin + suspicious dispatch -> status='held'."""
+    monkeypatch.setattr("app.api.memory.notes.dispatch_policy_gate_enabled", lambda: True)
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={"from_device": "klipper-autonomous", "title": "pg-held", "content": _SUSPICIOUS_DISPATCH},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "held"
+    nid = resp.json()["id"]
+    r_master = await client.get("/api/v1/memory/notes")  # device-siz = master view
+    row = [n for n in r_master.json() if n["id"] == nid][0]
+    assert row["status"] == "held"
+
+
+async def test_policy_gate_interactive_never_held(client, memory_db, monkeypatch):
+    """§7.5: gate-ON ama INTERAKTIF-origin (klipper) -> ASLA held (otonom-sinyali yok)."""
+    monkeypatch.setattr("app.api.memory.notes.dispatch_policy_gate_enabled", lambda: True)
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={"from_device": "klipper", "title": "pg-interactive", "content": _SUSPICIOUS_DISPATCH},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "created"  # interaktif -> active
+
+
+async def test_policy_gate_held_not_delivered_to_recipient(client, memory_db, monkeypatch):
+    """§7.3: held not ALICIYA (device-query) teslim EDILMEZ; MASTER (device-siz) gorur."""
+    monkeypatch.setattr("app.api.memory.notes.dispatch_policy_gate_enabled", lambda: True)
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={
+            "from_device": "klipper-autonomous",
+            "to_device": "surer",
+            "title": "pg-deliver",
+            "content": _SUSPICIOUS_DISPATCH,
+        },
+    )
+    nid = resp.json()["id"]
+    assert resp.json()["status"] == "held"
+    r_recip = await client.get("/api/v1/memory/notes?device=surer")
+    assert nid not in [n["id"] for n in r_recip.json()]  # alici gormez
+    r_master = await client.get("/api/v1/memory/notes")
+    assert nid in [n["id"] for n in r_master.json()]  # master gorur
+
+
+async def test_policy_gate_approve_releases(client, memory_db, monkeypatch):
+    """§7.4: held -> approve (master) -> active -> aliciya teslim edilir."""
+    monkeypatch.setattr("app.api.memory.notes.dispatch_policy_gate_enabled", lambda: True)
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={
+            "from_device": "klipper-autonomous",
+            "to_device": "surer",
+            "title": "pg-approve",
+            "content": _SUSPICIOUS_DISPATCH,
+        },
+    )
+    nid = resp.json()["id"]
+    r0 = await client.get("/api/v1/memory/notes?device=surer")
+    assert nid not in [n["id"] for n in r0.json()]  # onay-oncesi gizli
+    ra = await client.put(f"/api/v1/memory/notes/{nid}/approve")
+    assert ra.status_code == 200
+    assert ra.json()["status"] == "approved"
+    r1 = await client.get("/api/v1/memory/notes?device=surer")
+    assert nid in [n["id"] for n in r1.json()]  # onay-sonrasi teslim
+
+
+async def test_policy_gate_reject_keeps_undelivered(client, memory_db, monkeypatch):
+    """held -> reject (master) -> 'rejected', aliciya HALA teslim edilmez."""
+    monkeypatch.setattr("app.api.memory.notes.dispatch_policy_gate_enabled", lambda: True)
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={
+            "from_device": "klipper-autonomous",
+            "to_device": "surer",
+            "title": "pg-reject",
+            "content": _SUSPICIOUS_DISPATCH,
+        },
+    )
+    nid = resp.json()["id"]
+    rr = await client.put(f"/api/v1/memory/notes/{nid}/reject")
+    assert rr.status_code == 200
+    assert rr.json()["status"] == "rejected"
+    r1 = await client.get("/api/v1/memory/notes?device=surer")
+    assert nid not in [n["id"] for n in r1.json()]
+
+
+async def test_policy_gate_approve_requires_master_key(client, memory_db, monkeypatch):
+    """§7.4 self-approval baypasi: otonom-key ile approve -> 401 (otonom kendi held'ini onaylayamaz)."""
+    monkeypatch.setattr("app.api.memory.notes.dispatch_policy_gate_enabled", lambda: True)
+    monkeypatch.setattr("app.api.memory.MEMORY_API_KEY_AUTONOMOUS", "autonomous-test-key-xyz")
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={"from_device": "klipper-autonomous", "title": "pg-selfapprove", "content": _SUSPICIOUS_DISPATCH},
+    )
+    nid = resp.json()["id"]
+    ra = await client.put(
+        f"/api/v1/memory/notes/{nid}/approve",
+        headers={"X-Memory-Key": "autonomous-test-key-xyz"},
+    )
+    assert ra.status_code == 401  # otonom-key master DEGIL
+
+
+async def test_policy_gate_fail_open_on_scan_error(client, memory_db, monkeypatch):
+    """§7.6 fail-open: scan-exception -> status='active' (kanal-omurga bricklenmez)."""
+    monkeypatch.setattr("app.api.memory.notes.dispatch_policy_gate_enabled", lambda: True)
+
+    def boom(*a, **k):
+        raise RuntimeError("scan patladi")
+
+    monkeypatch.setattr("app.api.memory.notes.scan_dispatch_note", boom)
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={"from_device": "klipper-autonomous", "title": "pg-failopen", "content": _SUSPICIOUS_DISPATCH},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "created"  # fail-open -> active
+
+
+async def test_status_migration_backward_compat(memory_db):
+    """§7.1: eski NULL-status satir COALESCE-'active' (geri-uyum) + _ensure_status idempotent."""
+    import sqlite3
+
+    import app.api.memory as mem
+
+    mem._status_ready = False  # global-flag reset (test-izolasyon)
+    conn = sqlite3.connect(memory_db)
+    conn.execute("INSERT INTO notes (from_device, title, content, status) VALUES ('k','eski','x', NULL)")
+    conn.commit()
+    mem._ensure_status(conn)  # kolon zaten schema'da -> no-op, hata YOK
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(notes)").fetchall()]
+    assert "status" in cols
+    row = conn.execute("SELECT COALESCE(status,'active') FROM notes WHERE title='eski'").fetchone()
+    assert row[0] == "active"  # NULL -> active (geri-uyum)
+    conn.close()
