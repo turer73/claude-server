@@ -52,6 +52,36 @@ gelecek ci_fixer bu spec-gaming stratejisini "başarılı" örnek olarak öğren
 - Hold-timing: kümülatif review accept-KAPISINDA (test-geçti dalında, 555-558) olmalı; per-attempt erken-uyarı korunur.
 - Test: attempt-1 assertion-drop+FAIL, attempt-2 trivial-pass → accept-time kümülatif review held=True.
 
+## 3.1 Final implementasyon (MERGED: PR#255 `39ca793` + PR#256 `a1059f8`, 7 Codex-tur / 8 P2 / 0 FP)
+> Bu bölüm gerçekleşen tasarımı kaydeder — yukarıdaki §1/§3 spec BAŞLANGIÇ noktasıydı, Codex
+> iterasyonuyla önemli ölçüde değişti. **DÜZELTME:** §3'ün "run-başı tek-diff ŞART, sticky yetmez"
+> çıkarımı ESKİ koda (held yalnız pass-dalında) aitti; final tasarım bunu tersine çevirdi.
+
+- **`_review_fix_diff` → ikiye ayrıldı** (Codex r2): `_scan_fix_diff` (capture+tara, emit YOK) +
+  `_apply_review_verdict` (şüpheli-emit + gate-karar). Kümülatif tarama TESTLERDEN ÖNCE (adım 3.6);
+  verdict pass-dalında (4.5) — runner-artifact (snapshot/golden/coverage) kümülatif diff'i
+  kirletmesin (post-test capture = sahte-supheli → shadow-sinyali bozar).
+- **Run-başı-baseline KALKTI → kümülatif = pre-test attempt-delta'ların BİRLEŞİMİ (union)** (Codex r4):
+  run-başı tek-diff, retry-arası runner-değişikliğini Claude-değişikliğinden YAPISAL ayıramıyordu.
+  Her attempt-baseline önceki koşunun artifact'ını yutar → union runner-temiz, laundering korunur.
+- **Netting fix = sticky per-attempt OR + concat** (Codex r5-a): concat-scan tek-başına yetmez —
+  att-1 assertion-siler + att-2 aynı dosyaya assertion-ekler → `removed-added` NET-SIFIR, drop kaybolur.
+  Kümülatif verdict = concat-scan VEYA önceki-attempt pre-test-scan şüpheli (`attemptN:` önekli sinyal).
+  (§3'ün "sticky yetmez"i artık geçersiz: pre-test per-attempt scan sticky HEM yeterli HEM netting-bağışık.)
+- **Held-dedup** (Codex r5-b): `get_recent_occurrences` artık `outcome IN ('failed','held')` — held
+  "çözülmemiş" sayılır, yoksa gate-ON tekrarlı-held'de #6 "ÖRNEK ALMA" uyarısı hiç yüzeye çıkmazdı.
+- **SHA-pin** (Codex r3): `_snapshot_baseline` clean-tree'de literal "HEAD" (hareketli-ref) döndürüyordu;
+  ci_fixer git-checkout'a izinli → run-ortası HEAD kayarsa launder gizlenir. Somut SHA'ya pin.
+- **Error-attempt capture (571)** (Codex r6): timeout/parse-hatası veren Claude çağrısı working-tree'yi
+  zaten zayıflatmış olabilir; capture+scan+sticky artık hata-dalında da koşar (yoksa sonraki attempt
+  baseline'ına "temiz" girer = launder). Şüpheli-diff insan-gözüne (emit-on-error).
+- **Untracked-weakening (574)** (Codex r6 + **klipper prod-leak yakalama**): run-içi oluşan untracked
+  dosya sonraki attempt'te zayıflatılırsa izlenmeli. `run_untracked_content` cache + difflib-diff
+  (silme '-' görünür). **Guard kritik:** `(f in run_untracked_content or f not in pre_untracked)` —
+  ilk fix (`f not in pre_untracked`) prod'da LEAK ediyordu (att-1 dosyası att-2'nin per-attempt
+  pre_untracked'ine girip dışlanıyordu; test `set()` ile maskelemişti). Ampirik-repro + fix-yok→test-FAIL
+  ile doğrulandı.
+
 ## 4. Rollout / kill-switch / fail-safe
 - **Enable kriteri (operasyonel):** `make eval-gap2` → action_review catch≥0.90 & fb≤0.05 GÖSTERMELİ
   (PR#253 sonrası sağlanıyor). Bu doğrulanmadan flip YAPILMAZ.
