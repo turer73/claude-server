@@ -170,11 +170,26 @@ fi
   else
     UNREAD_PRED="read=0"
   fi
+  # Policy-gate #1222: held dispatch AKTIF-okunmamis listesinden CIKAR (teslim-filtresi, aksiyon-tetiklemesin)
+  # AMA insana onay-icin AYRI bolumde goster (tasarim §4). Kolon-guard: status yoksa filtre-yok (geri-uyum).
+  HAS_STATUS=$(sqlite3 "$DB" "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='status';" 2>/dev/null)
+  [ "${HAS_STATUS:-0}" -gt 0 ] && UNREAD_PRED="$UNREAD_PRED AND COALESCE(status,'active')='active'"
   NOTES=$(sqlite3 "$DB" "SELECT COUNT(*) FROM notes WHERE (to_device='$DEV' OR to_device IS NULL) AND $UNREAD_PRED;" 2>/dev/null)
   if [ "${NOTES:-0}" -gt 0 ]; then
     echo ""
     echo "Okunmamis Notlar ($NOTES):"
     sqlite3 "$DB" "SELECT '  ' || from_device || ': ' || title || ' — ' || substr(content,1,80) FROM notes WHERE (to_device='$DEV' OR to_device IS NULL) AND $UNREAD_PRED ORDER BY created_at DESC LIMIT 5;" 2>/dev/null
+  fi
+
+  # Policy-gate #1222 onay-gorunumu: held dispatch'ler INSANA onay-icin (approve/reject MASTER-key).
+  # Aktif-listede DEGIL (aksiyon-tetiklemez); yalniz "onay-bekliyor" hatirlatmasi (tasarim §4, Telegram-DEGIL).
+  if [ "${HAS_STATUS:-0}" -gt 0 ]; then
+    HELD=$(sqlite3 "$DB" "SELECT COUNT(*) FROM notes WHERE (to_device='$DEV' OR to_device IS NULL) AND status='held';" 2>/dev/null)
+    if [ "${HELD:-0}" -gt 0 ]; then
+      echo ""
+      echo "Onay Bekleyen HELD Dispatch ($HELD) — otonom-consequential, approve/reject MASTER-key:"
+      sqlite3 "$DB" "SELECT '  #' || id || ' ' || from_device || '->' || COALESCE(to_device,'*') || ': ' || title FROM notes WHERE (to_device='$DEV' OR to_device IS NULL) AND status='held' ORDER BY created_at DESC LIMIT 10;" 2>/dev/null
+    fi
   fi
 
   # Son 3 oturum

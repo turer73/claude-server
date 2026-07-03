@@ -57,6 +57,15 @@ if [ "$CURRENT_MAX" -le "$LAST" ]; then
   exit 0
 fi
 
+# Policy-gate #1222: held dispatch TESLIM EDILMEZ (HOLD cekirdegi — hook-katmani teslim-filtresi).
+# Kolon-guard: status yoksa (fresh/merge-oncesi DB) filtre-yok (geri-uyum).
+HAS_STATUS=$(sqlite3 "$DB" "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='status';" 2>/dev/null)
+if [ "${HAS_STATUS:-0}" -gt 0 ]; then
+  STATUS_FILTER="AND COALESCE(status,'active')='active'"
+else
+  STATUS_FILTER=""
+fi
+
 # Yeni notları çek: id > LAST, hedef bu cihaz veya broadcast (read durumuna BAKILMAZ — session marker yeterli)
 # Tab-separated ile parse, içerik 400 karaktere kırp
 NEW=$(sqlite3 -separator $'\t' "$DB" "
@@ -66,6 +75,7 @@ NEW=$(sqlite3 -separator $'\t' "$DB" "
   FROM notes
   WHERE id > $LAST
     AND (to_device = '$DEV' OR to_device IS NULL)
+    $STATUS_FILTER
   ORDER BY id ASC
   LIMIT 5
 " 2>/dev/null)

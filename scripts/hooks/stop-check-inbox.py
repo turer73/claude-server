@@ -70,6 +70,11 @@ def main() -> int:
         else:
             where = "(to_device=? OR to_device IS NULL) AND read=0"
             qparams = (DEVICE,)
+        # Policy-gate #1222: held dispatch OTONOM aliciya TESLIM EDILMEZ (HOLD cekirdegi — teslim-filtresi
+        # yalniz list_notes API'sinde degil, HOOK-katmaninda da olmali; aksi halde held burada sizar =
+        # HOLD etkisiz). Kolon-guard: status yoksa (fresh/merge-oncesi DB) filtre-yok (geri-uyum).
+        if "status" in cols:
+            where += " AND COALESCE(status,'active')='active'"
         cur = con.execute(
             f"SELECT id, from_device, title, substr(content, 1, 400) FROM notes WHERE {where} ORDER BY id",
             qparams,
