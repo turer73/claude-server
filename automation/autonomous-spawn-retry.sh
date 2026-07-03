@@ -245,17 +245,33 @@ Result: <bir-iki cumle>"
     _retry_env="${HOOK_ENV_FILE:-/opt/linux-ai-server/.env}"
     _retry_key=$(grep '^MEMORY_API_KEY_AUTONOMOUS=' "$_retry_env" 2>/dev/null | cut -d= -f2- | tr -d '"' | head -c 200)
     [ -z "$_retry_key" ] && _retry_key=$(grep '^MEMORY_API_KEY=' "$_retry_env" 2>/dev/null | cut -d= -f2- | tr -d '"' | head -c 200)
-    MEMORY_API_KEY="$_retry_key" \
-    timeout -k 30 "$SPAWN_TIMEOUT" \
-    claude -p "$prompt" \
-        --append-system-prompt "$(cat "$GUARDRAILS")" \
-        --settings "$SETTINGS_FILE" \
-        --output-format json \
-        --model "$MODEL" \
-        < /dev/null \
-        > "$spawn_log" 2>&1
+    # E (swarm-collision kok-fix): retry-spawn'i da IZOLE worktree'de kos (autonomous-claude.sh
+    # ile ayni; paylasilan master-koruma). FAIL-OPEN: worktree kurulamazsa ana-checkout.
+    local _repo="/opt/linux-ai-server"
+    local _spawn_cwd="$_repo"
+    local _wt="$_repo/.claude/worktrees/retry-spawn-${note_id}"
+    git -C "$_repo" worktree prune >/dev/null 2>&1
+    if git -C "$_repo" worktree add -f --detach "$_wt" HEAD >/dev/null 2>&1; then
+        _spawn_cwd="$_wt"
+    else
+        log "retry spawn worktree kurulamadi (#$note_id) -> ana-checkout fallback"
+    fi
+
+    (
+        cd "$_spawn_cwd" || exit 127
+        MEMORY_API_KEY="$_retry_key" \
+        timeout -k 30 "$SPAWN_TIMEOUT" \
+        claude -p "$prompt" \
+            --append-system-prompt "$(cat "$GUARDRAILS")" \
+            --settings "$SETTINGS_FILE" \
+            --output-format json \
+            --model "$MODEL" \
+            < /dev/null \
+            > "$spawn_log" 2>&1
+    )
     local rc=$?
     set -e
+    [ "$_spawn_cwd" != "$_repo" ] && git -C "$_repo" worktree remove --force "$_spawn_cwd" >/dev/null 2>&1
 
     [ "$rc" -eq 124 ] && log "retry spawn TIMEOUT (${SPAWN_TIMEOUT}s) — hang-korumasi, fail-path'e akiyor"
     log "retry spawn done: note=#$note_id rc=$rc log=$spawn_log"

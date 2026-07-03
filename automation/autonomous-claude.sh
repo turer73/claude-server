@@ -461,18 +461,38 @@ Result: <bir-iki cumle>"
     # zorluyoruz. SessionStart hook'tan gelen dashboard context'i Claude
     # gormekle birlikte guardrails "sadece bu noteu isle, baska hicbir
     # seye dokunma" diyor.
+    # E (swarm-collision kok-fix): spawn'i IZOLE worktree'de kos -> spawn'in git-commit'leri
+    # paylasilan /opt-ana-checkout master'ini KIRLETMEZ (paralel-spawn f51840b/aa59d85 boyle
+    # olustu, 2026-07-03). FAIL-OPEN: worktree kurulamazsa ana-checkout (eski davranis; spawn
+    # ASLA kirilmaz). Durable-is guardrails geregi branch'e push edilir; cleanup'ta yalniz
+    # izole/unpushed local-commit'ler ucar (= master-koruma, spawn-swarm'in master'a sizmasini keser).
+    local _repo="/opt/linux-ai-server"
+    local _spawn_cwd="$_repo"
+    local _wt="$_repo/.claude/worktrees/spawn-${NOTE_ID}"
+    git -C "$_repo" worktree prune >/dev/null 2>&1
+    if git -C "$_repo" worktree add -f --detach "$_wt" HEAD >/dev/null 2>&1; then
+        _spawn_cwd="$_wt"
+    else
+        log "spawn worktree kurulamadi (#$NOTE_ID) -> ana-checkout fallback"
+    fi
+
     # GAP-1 item-D: spawn'in not-yazimlari otonom-key kullansin (env-first) -> A-2 origin-tag.
-    MEMORY_API_KEY="$(get_key_autonomous)" \
-    timeout -k 30 "$SPAWN_TIMEOUT" \
-    claude -p "$prompt" \
-        --append-system-prompt "$(cat "$GUARDRAILS")" \
-        --settings "$SETTINGS_FILE" \
-        --output-format json \
-        --model "$MODEL" \
-        < /dev/null \
-        > "$spawn_log" 2>&1
+    (
+        cd "$_spawn_cwd" || exit 127
+        MEMORY_API_KEY="$(get_key_autonomous)" \
+        timeout -k 30 "$SPAWN_TIMEOUT" \
+        claude -p "$prompt" \
+            --append-system-prompt "$(cat "$GUARDRAILS")" \
+            --settings "$SETTINGS_FILE" \
+            --output-format json \
+            --model "$MODEL" \
+            < /dev/null \
+            > "$spawn_log" 2>&1
+    )
     local rc=$?
     set -e
+    # worktree cleanup (izole/unpushed commit'ler ucar = master-koruma; durable-is branch'e push edildi)
+    [ "$_spawn_cwd" != "$_repo" ] && git -C "$_repo" worktree remove --force "$_spawn_cwd" >/dev/null 2>&1
     [ "$rc" -eq 124 ] && log "spawn TIMEOUT (${SPAWN_TIMEOUT}s) — hang-korumasi devrede, fail-path'e akiyor"
 
     log "spawn complete: note #$NOTE_ID rc=$rc log=$spawn_log"
