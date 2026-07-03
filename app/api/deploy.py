@@ -199,14 +199,13 @@ async def memory_context(request: Request) -> dict[str, Any]:
     expected = read_env_var("INTERNAL_API_KEY")
     if not expected or api_key != expected:
         raise AuthenticationError("Invalid or missing API key")
-    import sqlite3
+    from app.db.data_layer import get_conn
 
     db = Path("/opt/linux-ai-server/data/claude_memory.db")
     if not db.exists():
         return {"error": "memory DB not found"}
     try:
-        conn = sqlite3.connect(str(db))
-        conn.row_factory = sqlite3.Row
+        conn = get_conn(str(db))  # P1-a: busy_timeout+WAL+Row (row_factory get_conn'da)
         c = conn.cursor()
         result = {}
         c.execute("SELECT name, description, content FROM memories WHERE type='project' AND active=1 ORDER BY updated_at DESC")

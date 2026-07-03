@@ -21,6 +21,7 @@ from typing import Any
 
 from app.core.agents.llmcore import llm_core
 from app.core.config import read_env_var
+from app.db.data_layer import get_conn
 
 logger = logging.getLogger(__name__)
 
@@ -241,8 +242,7 @@ async def _verify_findings(rel_path: str, code: str, findings: list[dict[str, An
 def _recent_lessons(limit: int = _LEARN_FEEDBACK_MAX) -> list[str]:
     """Aktif code-review 'learning' dersleri (tekrar-eden sistemik desenler). Read-only."""
     try:
-        conn = sqlite3.connect(MEMORY_DB)
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn = get_conn(MEMORY_DB)  # P1-a: busy_timeout=5000 default ayni + WAL+Row
         rows = conn.execute(
             "SELECT title FROM discoveries WHERE project=? AND type='learning' AND status='active' ORDER BY id DESC LIMIT ?",
             (PROJECT, limit),
@@ -273,8 +273,7 @@ def _recent_fp_patterns(min_count: int = _FP_FEEDBACK_MIN, limit: int = _FP_FEED
     <özet>' → '<özet>' (tip) bazında grupla, >=min_count obsolete olanları döndür. Read-only.
     İzole duplicate (1-2 kez) eşiği geçmez → yalnız tekrar-eden FP-deseni yüzeye çıkar."""
     try:
-        conn = sqlite3.connect(MEMORY_DB)
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn = get_conn(MEMORY_DB)  # P1-a: busy_timeout=5000 default ayni + WAL+Row
         rows = conn.execute(
             "SELECT title FROM discoveries WHERE project=? AND type='bug' AND status='obsolete'",
             (PROJECT,),

@@ -6,7 +6,6 @@ toplanir. require_admin auth (X-API-Key veya Bearer JWT).
 
 from __future__ import annotations
 
-import sqlite3
 import time
 from typing import Any
 
@@ -15,6 +14,7 @@ from fastapi import APIRouter, Depends
 
 from app.api import rag as rag_module
 from app.core.config import read_env_var
+from app.db.data_layer import get_conn
 from app.middleware.dependencies import require_admin
 
 OLLAMA_URL = "http://127.0.0.1:11434"
@@ -148,7 +148,7 @@ def _usage_stats(hours: int = 24) -> dict[str, Any]:
     out: dict[str, Any] = {"ok": False, "period_hours": hours, "total": 0}
     since = int(time.time()) - hours * 3600
     try:
-        conn = sqlite3.connect(rag_module.METRICS_DB, timeout=2)
+        conn = get_conn(rag_module.METRICS_DB, busy_timeout_ms=2000)  # P1-a: timeout=2 semantigi korundu
         cur = conn.cursor()
         cur.execute(
             "SELECT COUNT(*), AVG(duration_ms), AVG(hit_count), AVG(top_score) FROM rag_queries WHERE ts >= ?",

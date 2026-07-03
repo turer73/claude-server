@@ -75,3 +75,37 @@ async def test_ollama_down_does_not_crash(client, auth_headers):
     body = resp.json()
     assert body["ollama"]["ok"] is False
     assert "error" in body["ollama"]
+
+
+def test_usage_stats_reads_metrics_db(monkeypatch, tmp_path):
+    """P1-a Faz-2b: _usage_stats get_conn(busy_timeout_ms=2000) — gercek tmp-DB'den okur.
+    Row-factory ile fetchone-unpack + dict(fetchall) paritesi kilitlenir."""
+    import sqlite3
+    import time as _time
+
+    from app.api.llm import _usage_stats
+
+    db = tmp_path / "rag_metrics.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE rag_queries (ts INT, endpoint TEXT, duration_ms REAL, hit_count INT, top_score REAL)")
+    now = int(_time.time())
+    con.execute("INSERT INTO rag_queries VALUES (?, 'search', 120.0, 5, 0.9)", (now,))
+    con.execute("INSERT INTO rag_queries VALUES (?, 'ask', 80.0, 3, 0.7)", (now,))
+    con.commit()
+    con.close()
+    monkeypatch.setattr("app.api.rag.METRICS_DB", str(db))
+    out = _usage_stats(hours=1)
+    assert out["ok"] is True
+    assert out["total"] == 2
+    assert out["avg_duration_ms"] == 100.0
+    assert out["by_endpoint"] == {"search": 1, "ask": 1}  # dict(fetchall) Row-parite
+
+
+def test_usage_stats_db_error_returns_error_field(monkeypatch, tmp_path):
+    """Tablo yok -> ok=False + error alani (fail-safe yol)."""
+    from app.api.llm import _usage_stats
+
+    monkeypatch.setattr("app.api.rag.METRICS_DB", str(tmp_path / "bos.db"))
+    out = _usage_stats(hours=1)
+    assert out["ok"] is False
+    assert "error" in out

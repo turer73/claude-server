@@ -62,11 +62,11 @@ class PrometheusExporter:
     def _llm_metrics(self) -> list[str]:
         """LLM çağrı-metrikleri (rag_metrics.db/llm_calls, son 24s) — #100224-audit: LLMCore
         9 çağrı-yeri gözlemsizdi. backend/ok bazlı çağrı-sayısı + ortalama-latency. Fail-safe."""
-        import sqlite3
+        from app.db.data_layer import get_conn
 
         db = os.environ.get("RAG_METRICS_DB", "/opt/linux-ai-server/data/rag_metrics.db")
         try:
-            conn = sqlite3.connect(db, timeout=2)
+            conn = get_conn(db, busy_timeout_ms=2000)  # P1-a: timeout=2 semantigi korundu
             try:
                 rows = conn.execute(
                     "SELECT backend, ok, COUNT(*), COALESCE(AVG(latency_ms), 0) "

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import sqlite3
 
 import psutil
+
+from app.db.data_layer import get_conn
 
 MEMORY_DB = "/opt/linux-ai-server/data/claude_memory.db"
 
@@ -26,9 +27,7 @@ class RecentChangesProvider:
 
     def _query(self) -> str:
         try:
-            conn = sqlite3.connect(self._db)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA busy_timeout=3000")
+            conn = get_conn(self._db, busy_timeout_ms=3000)  # P1-a: mevcut 3000ms korundu (Row get_conn'da)
             disc = conn.execute(
                 "SELECT project, type, title, date(created_at) d FROM discoveries "
                 "WHERE type IN ('fix','architecture','workaround') AND created_at > datetime('now', ?) "
