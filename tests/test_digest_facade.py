@@ -108,9 +108,7 @@ def test_vps_health_reads_latest_sample(monkeypatch, tmp_path):
         "CREATE TABLE vps_metrics_history (timestamp TEXT, online INT, cpu_usage REAL, "
         "memory_usage REAL, disk_usage REAL, containers_total INT, containers_up INT)"
     )
-    con.execute(
-        "INSERT INTO vps_metrics_history VALUES ('2026-07-03T12:00', 1, 45.5, 60.0, 30.0, 21, 20)"
-    )
+    con.execute("INSERT INTO vps_metrics_history VALUES ('2026-07-03T12:00', 1, 45.5, 60.0, 30.0, 21, 20)")
     con.commit()
     con.close()
     monkeypatch.setattr("app.core.digest.sources._server_db_path", lambda: str(db))
