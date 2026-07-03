@@ -103,3 +103,25 @@ doğrudan G1/G10'a bağlar: taksonomi "hangi-3" der, o-3 mekanikleşir.
 
 **REVİZE-ÖNCELİK (4-yönlü sonrası):** G1'i "tersine-çalıştır" birleştirici-çerçevesiyle + PR-template-satırıyla
 birlikte Faz-0'a al = tek-hamlede bugünkü-6-vakanın-çoğu + spec-verify-sistematikleştirme. Bu **en-dürüst-ilk-iş.**
+
+## 5. surer review (#100356) — 3 push-back (planı düzeltir)
+surer plan-review'de 3 gerçek-eksik buldu (istenen adversarial-review); **G1 canlı-uygulandı (PR#267) → düzeltmeler entegre:**
+
+- **[PB-1, EN-ÖNEMLİ] G1 GEREKLİ-AMA-YETERSİZ → G1+G4 çekirdek-ÇİFT (G1-yalnız-değil).** G1 "test bir-şey-yakalıyor mu"
+  (no-op-değil) garantiler AMA "test DOĞRU-YOLU (prod-caller-akışı) modelliyor mu" DEĞİL. Kanıt: cwd-naive-fix base'de-
+  fail-eden-teste-sahipti (G1-yeşil) ama git-izolasyonu-test-etti gerçek-yazma-yolunu-değil → **G1-yeşil-ama-bug-var.**
+  574-leak: repro önce-set()-yanlış-modellendi, fail-etti-ama-yanlış-nedenden. → G1 no-op-test-SINIFINI keser; **yanlış-
+  yol-test-SINIFI G4 (entry-point-registry, repro GERÇEK-caller'dan-geçmeli) ile kapanır.** "6-vakanın-yarısı" iyimserdi:
+  cwd/574 yanlış-modellenirse kaçar. **DÜZELTME: G1+G4 atomik-çift; G1-PR#267 dürüst-sınır-notuyla-güncellendi (overselling
+  kaldırıldı). "İddiayı-tersine-çalıştır" eksiği: tersine-DOĞRU ama hangi-YOLDA? prod-yolunda-değil-mock'ta = yalan-yeşil.**
+- **[PB-2] G9(DB-lease) + G10(worktree) = tek-PAKET (ayrı-değil).** lease DATA-çakışmasını (kim-çalışıyor), worktree CODE-
+  çakışmasını (fs-izole) korur. Bugünkü-CLAIM-başarısızlığı HER-İKİSİNİN-eksikliği; ayrı-uygulanırsa (lease-var-worktree-yok)
+  yine-paylaşılan-checkout-collision. surer-domain-kanıtı: **data-serialize(API) ÇALIŞIR, code-izole(prose) ÇALIŞMAZ.**
+- **[PB-3, EKSİK-BOYUT] gate-BAKIM sahibi belirsiz = meta-bakım-borcu.** G6-ladder FP-üreten-gate'i auto-kapatır (off) ama
+  bu SUSTURMA-değil-DÜZELTME. 10-gate = 10-bakım-yüzeyi (Goodhart+FP-drift). **DÜZELTME: G2-telemetriye `gate_fp_rate` +
+  eşik-aşan-gate'e `redesign_flag` (kapatma-değil-yeniden-tasarım-tetikler). Gate'in-kendisi-de hata→öğrenme-loop'una girer.**
+
+**surer işe-yarayan/yaramayan verisi (kanıt):** ÇALIŞIR = fix-remove-test-fail (G1, 2×-kanıt) + CI-ratchet (G5-akrabası,
+mypy-bugün-yakaladı) + BEGIN-IMMEDIATE-notes-dedup (G9-lease-akrabası, DATA-collision-sıfır). ÇALIŞMAZ = prose-CLAIM
+(G9-motivasyonu) + 146-feedback-recall (çekirdek-tez-kanıtı). **REVİZE-SIRALAMA:** G1-önce-yalnız-BAŞLA (✓ PR#267) →
+G2-hemen-arkasından (telemetri G1-verisi-toplar) → **G4 (G1'i tamamlar, çekirdek-çift kapanır)** → G9+G10-paket → G6+PB3.
