@@ -2,10 +2,11 @@
 
 > **Amaç:** çok-ajan sistemde (klipper/surer/Codex/CI/memory) "hata→ders→önleme" loop'unu prose-memory'den
 > (irade-bağımlı) **mekanik-gate'e** (ortam-zorlamalı) taşımak — ama over-mekanizasyon/friction tuzağına düşmeden.
-> **Kanıt-tabanı (dürüst):** 3 bağımsız akış YAKINSADI — (a) klipper grounded-veri (bugün 6× tekrar), (b) Fable
+> **Kanıt-tabanı (dürüst):** 4 BAĞIMSIZ akış YAKINSADI — (a) klipper grounded-veri (bugün 6× tekrar), (b) Fable
 > (bağımsız-model, klipper-sentezini görmeden), (c) dış-literatür (named-source AMA deep-research VERIFY-fazı
-> session-limit'e takıldı → **DOĞRULANMADI**, 22:50-reset sonrası re-verify edilebilir). surer-akışı BEKLİYOR
-> (bu plan surer-review + surer-domain-katkısıyla güncellenecek). **Üçgenleme = güçlü-sinyal, kanıt-değil.**
+> session-limit'e takıldı → **DOĞRULANMADI**, 22:50-reset sonrası re-verify edilebilir), (d) surer (#100353,
+> bağımsız + Windows/Vercel-domain + 146-kendi-feedback'i). **Dördü de aynı çekirdek-teze vardı** (ders≠gate);
+> bağımsız-yakınsama = güçlü-sinyal (kanıt-değil, ama 4-kaynak-bağımsız nadir-tesadüf). §4 = surer-entegrasyonu.
 
 ## 0. Çekirdek tez (üçgenlenmiş)
 1. **Ders prompt'u değil ORTAMI değiştirmeli** (Fable) = "close the loop, findings propagate back to tools/CI"
@@ -73,3 +74,32 @@
 G1+G2 **bu hafta** (CI-yaml + tablo, en-yüksek-ROI, düşük-risk). G3-G5 sprint. G6-G8 kalibrasyon (over-mek-freni,
 G1-sonrası). G9-G10 mevcut-atomik-UPDATE + PR#263'ün-genellemesi. **P1-a DB-merkezi ile ÇAKIŞMAZ** (o ayrı-iş,
 bu meta-altyapı) — sıralama Turgut. Başlangıç için G1 tek-başına 6-vakanın-yarısını-kapatır = en-dürüst-ilk-adım.
+
+## 4. surer entegrasyonu (#100353) — 4-yönlü sentez tamamlandı
+surer bağımsız olarak AYNI çekirdek-teze vardı ("ders=PASİF-recall, tekrar-önleme=AKTİF-gate; 146-feedback
+tekrarı önlemedi çünkü ders≠gate") + dört ekleyici-içgörü:
+
+- **[Yeni-teori] Özgüven-körlüğü** → *layer-diversity'nin NEDENİ*: surer bugün 4× yakaladı ama 574'te ATLADI.
+  Desen: yakaladıkları BAŞKASININ-spec'i (klipper), atladığı KENDİ-kodu. **Self-review yapısal-kör** (kendi-işini
+  daha-az-şüpheli görürsün); cross-review çalışır çünkü başkasının-kodu. → "her-hatayı-farklı-verifier-yakaladı"
+  tesadüf-değil, **YAPISAL**: tekil-verifier-güçlendirme değil KATMAN-ÇEŞİTLİLİĞİ (runtime-verify + Codex-tier1 +
+  spec-verify + CI, herbiri-farklı-kör-nokta). Fable'ın Swiss-cheese'iyle aynı sonuç, mekanizması-açıklandı.
+- **[Birleştirici-mekanik, EN-YÜKSEK-KALDIRAÇ]** G1/G3/G5'i TEK-mekaniğe indirir: **"iddiayı TERSİNE-çalıştır;
+  beklenen-kırılma-OLMUYORSA test-yalan."** Somut: `fix-remove → test-MUST-fail`. Prose "gerçek-yolu-test-et"
+  BELİRSİZ (yorumlanır/atlanır); mekanik `fix-remove-test-fail` **İKİLİ-KESİN**. Ders-sınıfları mock/absence/
+  failsafe/netting/delivery = HEPSİ bu tek-mekaniğe çevrilir. surer bunu 574 VE #1234'te UYGULADI. **→ G1'i bu
+  birleştirici-çerçeveyle yeniden-tanımla; en-yüksek-tekil-ROI.**
+- **[Ucuz-enforcement] PR-template zorunlu-satır:** "Bu fix'i GERİ-ALINCA test FAIL ediyor mu? [kanıt-linki]" —
+  boş-bırakılamaz → spec-verify irade-bypass olur (ADIM haline gelir, tavsiye değil). G1'in insan/ajan-tarafı.
+- **[Shared-state netleştirme]** DATA-çakışma ZATEN-korunuyor (merkezi-SQLite+API-serialize, BEGIN-IMMEDIATE tek-
+  yazıcı) ama CODE-çakışma KORUNMUYOR (paylaşılan-/opt, prose-CLAIM, bugün surer-de-yanlış-branch'e-yazdı, şans-
+  eseri-yakaladı). → G9(data-lease zaten-var-genişlet) + G10(fs-izole worktree) İKİSİ-birden; **ek-hafif-öneri:
+  branch-guard pre-commit-hook** ("beklenen-branch-değilsen DUR") = worktree'ye ucuz-alternatif.
+
+**surer'ın özet-prensibi (planın önceliğini keskinleştirir):** *"Az-gate-çok-uygulama > çok-ders-sıfır-uygulama."*
+287-dersin-hepsini-gate-yapmak imkansız+gürültü → **en-sık-3-ders'i mekanikleştir** (fix-remove-test-fail +
+branch-guard + spec-verify-PR-satırı), gerisi prose-kalsın. Bu, G8(recurrence-taksonomisi)'nin çıktısını
+doğrudan G1/G10'a bağlar: taksonomi "hangi-3" der, o-3 mekanikleşir.
+
+**REVİZE-ÖNCELİK (4-yönlü sonrası):** G1'i "tersine-çalıştır" birleştirici-çerçevesiyle + PR-template-satırıyla
+birlikte Faz-0'a al = tek-hamlede bugünkü-6-vakanın-çoğu + spec-verify-sistematikleştirme. Bu **en-dürüst-ilk-iş.**
