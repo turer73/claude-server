@@ -28,7 +28,7 @@ from app.core.events import emit_event
 from app.core.privacy import redact
 
 
-def _gate_dispatch(from_device: str, to_device: str | None, content: str | None) -> tuple[str, dict | None]:
+def _gate_dispatch(from_device: str, to_device: str | None, content: str | None) -> tuple[str, dict[str, Any] | None]:
     """Policy-gate #1222: cross-agent dispatch'i INSERT'ten ONCE denetle -> (status, scan_result).
 
     status='held' YALNIZ: gate-ON + suspicious + otonom-origin (interaktif klipper/surer ASLA held —
@@ -56,7 +56,9 @@ def _gate_dispatch(from_device: str, to_device: str | None, content: str | None)
     return ("held" if held else "active"), result
 
 
-def _emit_dispatch_verdict(from_device: str, to_device: str | None, note_id: int | None, status: str, scan_result: dict | None) -> None:
+def _emit_dispatch_verdict(
+    from_device: str, to_device: str | None, note_id: int | None, status: str, scan_result: dict[str, Any] | None
+) -> None:
     """Post-insert emit (note_id'li). held -> CRITICAL (insan-onayi bekliyor); gate-OFF-suspicious ->
     WARN (shadow: notify-only, mevcut davranis). would_hold (payload): gate-durumundan BAGIMSIZ
     'suspicious + otonom' -> shadow-haftada FP-analizi icin (OFF'ta kac dispatch HELD-edilir-DI)."""
