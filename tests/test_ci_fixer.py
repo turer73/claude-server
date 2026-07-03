@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -1124,6 +1125,44 @@ async def test_cumulative_suspicious_but_tests_fail_no_cumulative_emit(ci_db, mo
     assert cumulative_emits == []  # FAIL'li attempt'lerde kumulatif emit yasak
     attempt_emits = [e for e in emitted if (e.get("payload") or {}).get("scope") == "attempt"]
     assert attempt_emits  # attempt-scope erken-uyari korunur
+
+
+@pytest.mark.asyncio
+async def test_snapshot_baseline_pins_clean_tree_to_sha(tmp_path):
+    """Codex #255-P2(r3): clean-tree baseline literal 'HEAD' DEGIL somut SHA olmali —
+    HEAD hareketli ref (ci-fixer-settings git-checkout'a izinli); run-ortasi checkout
+    kumulatif diff'i yeni checkout'a kiyaslatip onceki gaming'i gizlerdi."""
+    import subprocess
+
+    from app.core.ci_fixer import _snapshot_baseline
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        subprocess.run(
+            ["git", "-C", str(repo), *args],
+            check=True,
+            capture_output=True,
+            env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"},
+        )
+
+    git("init", "-q")
+    (repo / "a.txt").write_text("ilk")
+    git("add", "a.txt")
+    git("commit", "-q", "-m", "ilk")
+
+    # CLEAN tree -> stash-create bos -> SHA'ya sabitlenmeli (eski davranis: 'HEAD')
+    baseline, pre_untracked = await _snapshot_baseline(str(repo))
+    assert baseline != "HEAD"
+    assert len(baseline) == 40  # somut commit SHA
+    assert pre_untracked == set()
+
+    # DIRTY tree -> stash-create zaten commit-object SHA'si doner (davranis degismedi)
+    (repo / "a.txt").write_text("degisti")
+    baseline2, _ = await _snapshot_baseline(str(repo))
+    assert baseline2 != "HEAD"
+    assert len(baseline2) == 40
 
 
 def test_prompt_held_lesson_not_shown_as_passed_example():

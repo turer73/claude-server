@@ -54,7 +54,14 @@ async def _snapshot_baseline(cwd: str) -> tuple[str, set[str]]:
     bos -> 'HEAD'. Sonraki `git diff <baseline>` YALNIZ bu-attempt'in ekledigini gosterir
     (onceden-kirli dosyalarin attempt'e-atfedilme FP'si kalkar)."""
     _, sha, _ = await _git(cwd, "stash", "create")
-    baseline = sha.strip() or "HEAD"
+    baseline = sha.strip()
+    if not baseline:
+        # Codex #255-P2(r3): clean-tree'de literal 'HEAD' donuyordu — HEAD HAREKETLI ref
+        # (ci-fixer-settings `git checkout *`e izinli; repo-updater da oynatabilir). Run/attempt
+        # ortasinda HEAD kayarsa `git diff HEAD` YENI checkout'a kiyas alip onceki gaming'i
+        # gizler. Somut SHA'ya sabitle; rev-parse cokerse eski davranisa dus (degrade, daha-kotu-degil).
+        rc, head_sha, _ = await _git(cwd, "rev-parse", "HEAD")
+        baseline = head_sha.strip() if rc == 0 and head_sha.strip() else "HEAD"
     rc, others, _ = await _git(cwd, "ls-files", "--others", "--exclude-standard")
     pre_untracked = {f.strip() for f in others.splitlines() if f.strip()} if rc == 0 else set()
     return baseline, pre_untracked
