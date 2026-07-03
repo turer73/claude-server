@@ -87,25 +87,33 @@ async def _review_fix_diff(
     test_file: str,
     project: str,
     test_name: str,
+    scope: str = "attempt",
 ) -> bool:
-    """GAP-1 action_review: attempt-delta diff'i yakala + spec-gaming tara + emit.
+    """GAP-1 action_review: diff'i yakala + spec-gaming tara + emit.
+
+    scope="attempt": attempt-delta (PRE-EXECUTION, testler KOSMADAN once, Codex #3) — erken-uyari.
+    scope="cumulative": RUN-basi baseline'dan kumulatif diff (accept-KAPISI, soft-gate pilot #1) —
+      attempt-delta'nin goremedigi laundering'i yakalar (attempt-1 supheli+FAIL kalir tree'de,
+      attempt-2 temiz+PASS -> attempt-delta temiz gorunur; kumulatif diff gaming'i icerir).
 
     Doner: True = SOFT-GATE BLOK (supheli + gate-ON -> held-for-review, fix accept ETME),
            False = devam (notify-only veya temiz-diff).
     Faz1 notify-only (gate-OFF): supheli-diff'te emit_event(warn), ci_fixer BLOKLAMAZ (False).
     Faz2 soft-gate (gate-ON): supheli-diff'te emit_event(CRITICAL) + True (accept-blok).
-    fail-NOTIFY (design 7): capture/tarama cokerse DURDURMA -> warn-emit + False (fail-open).
-    PRE-EXECUTION (testler KOSMADAN ONCE, Codex #3). Diff working-tree'den (#100239).
+    fail-NOTIFY (design 7): capture/tarama cokerse DURDURMA -> warn-emit + False (fail-open) —
+    her iki scope icin (kumulatif-review hatasi accept'i BLOKLAMAZ, pilot-tasarim 4).
+    Diff working-tree'den (#100239).
     """
+    scope_tag = " [kumulatif]" if scope == "cumulative" else ""
     try:
         git_diff = await _capture_attempt_diff(cwd, baseline_ref, pre_untracked)
         result = scan_ci_fixer_diff(git_diff, failing_module=source_file or test_file)
     except Exception as exc:  # noqa: BLE001 — fail-NOTIFY, ci_fixer'i durdurma
-        logger.warning("action_review taranamadi %s/%s: %s", project, test_name, exc)
+        logger.warning("action_review taranamadi%s %s/%s: %s", scope_tag, project, test_name, exc)
         emit_event(
             type="action-review",
             source="ci_fixer",
-            title=f"action-review taranamadi: {project}/{test_name}",
+            title=f"action-review taranamadi: {project}/{test_name}{scope_tag}",
             severity="warn",
             detail=f"{type(exc).__name__}: {exc}",
         )
@@ -115,14 +123,14 @@ async def _review_fix_diff(
         return False
 
     gate_on = soft_gate_enabled()
-    logger.warning("action_review SUPHELI %s/%s: %s (soft_gate=%s)", project, test_name, result["signals"], gate_on)
+    logger.warning("action_review SUPHELI%s %s/%s: %s (soft_gate=%s)", scope_tag, project, test_name, result["signals"], gate_on)
     emit_event(
         type="action-review",
         source="ci_fixer",
-        title=("ci_fixer diff BLOK (held-for-review): " if gate_on else "ci_fixer diff supheli: ") + f"{project}/{test_name}",
+        title=("ci_fixer diff BLOK (held-for-review): " if gate_on else "ci_fixer diff supheli: ") + f"{project}/{test_name}{scope_tag}",
         severity="critical" if gate_on else "warn",
         detail="sinyaller: " + ", ".join(result["signals"]),
-        payload={**result, "soft_gate": gate_on},
+        payload={**result, "soft_gate": gate_on, "scope": scope},
     )
     return gate_on  # gate-ON -> True (blok); gate-OFF -> False (notify-only)
 
@@ -295,6 +303,14 @@ def build_fix_prompt(
         # get_recent_occurrences docstring) from capital "Deneme"
         # (current-session retry) above.
         for lesson in context_lessons:
+            # GAP-1 soft-gate pilot #6: held (supheli, insan-incelemede) ders "basarili ornek"
+            # DEGIL — diff'i de GOSTERME (spec-gaming stratejisi promptla ogretilmesin).
+            if lesson.get("outcome") == "held":
+                lines.append(
+                    f"  - deneme {lesson['attempt_num']} ({lesson['strategy']}) => held: "
+                    f"SUPHELI diff (insan-incelemede) — bu yaklasimi ORNEK ALMA ({lesson['created_at']})"
+                )
+                continue
             lines.append(f"  - deneme {lesson['attempt_num']} ({lesson['strategy']}) => {lesson['outcome']} ({lesson['created_at']})")
             if lesson.get("fix_diff"):
                 lines.append(f"    diff: {lesson['fix_diff'][:FIX_DIFF_PROMPT_PREVIEW]}")
@@ -451,6 +467,24 @@ async def attempt_fix(
 
     try:
         cwd = PROJECT_REGISTRY[project]["path"]
+
+        # GAP-1 soft-gate pilot #1: RUN-seviyesi baseline (attempt-1 ONCESI, loop-disi TEK snapshot).
+        # Accept-kapisindaki kumulatif review bunu kullanir. Snapshot-hatasi kumulatif-review'i
+        # devre-disi birakir (fail-open + notify) — gate-mekanigi ci_fixer'i asla kilitlemez.
+        run_baseline_ref: str | None
+        try:
+            run_baseline_ref, run_pre_untracked = await _snapshot_baseline(cwd)
+        except Exception as exc:  # noqa: BLE001 — fail-open
+            logger.warning("run-baseline alinamadi (kumulatif-review atlanacak): %s", exc)
+            emit_event(
+                type="action-review",
+                source="ci_fixer",
+                title=f"run-baseline alinamadi (kumulatif-review devre-disi): {project}/{test_name}",
+                severity="warn",
+                detail=f"{type(exc).__name__}: {exc}",
+            )
+            run_baseline_ref, run_pre_untracked = None, set()
+
         prev_errors: list[str] = []
         claude_responses: list[dict[str, Any]] = []
 
@@ -527,9 +561,31 @@ async def attempt_fix(
 
             # 4. Re-run tests
             test_result = await run_project_tests(project)
+            tests_passed = test_result.get("failed", 0) == 0
+
+            # 4.5 GAP-1 soft-gate pilot #1: accept-KAPISI kumulatif review (yalniz testler-gecti
+            # dalinda, accept'ten ONCE). Attempt-delta review (3.5) laundering'i kaciriyor:
+            # attempt-1 supheli+FAIL tree'de kalir, attempt-2 temiz+PASS -> delta temiz. RUN-basi
+            # baseline'dan kumulatif diff gaming'i gorur. Sticky-flag YETMEZ (attempt-1 fail'de
+            # held degerlendirilmedi). Fail-open: review-hatasi accept'i bloklamaz (_review_fix_diff icinde).
+            cumulative_held = False
+            if tests_passed and run_baseline_ref is not None:
+                cumulative_held = await _review_fix_diff(
+                    cwd,
+                    run_baseline_ref,
+                    run_pre_untracked,
+                    source_file,
+                    test_file,
+                    project,
+                    test_name,
+                    scope="cumulative",
+                )
+            effective_held = held_for_review or cumulative_held
 
             # Record the lesson for this attempt (before the passed/failed branches).
-            outcome = "passed" if test_result.get("failed", 0) == 0 else "failed"
+            # GAP-1 soft-gate pilot #6: held-fix 'passed' YAZILMAZ — lessons-DB'ye "basarili
+            # spec-gaming ornegi" olarak girer, gelecek fixer'lar ogrenir (self-poison).
+            outcome = "held" if (tests_passed and effective_held) else ("passed" if tests_passed else "failed")
             context_lessons_json = json.dumps([r["id"] for r in context_rows]) if context_rows else None
             if db is not None:
                 try:
@@ -552,18 +608,22 @@ async def attempt_fix(
                     logger.warning("lesson record failed: %s", exc)
 
             # 5. Check if fixed
-            if test_result.get("failed", 0) == 0:
+            if tests_passed:
                 # Faz2 SOFT-GATE (P3): supheli-diff + gate-ON -> fix'i ACCEPT ETME, held-for-review.
                 # Testler gecse bile spec-gaming'le gecmis olabilir (assertion-zayiflatma) -> insan-review.
-                if held_for_review:
+                # effective_held = attempt-delta (3.5) VEYA kumulatif accept-kapisi (4.5) blok'u.
+                if effective_held:
+                    held_scope = "attempt" if held_for_review else "cumulative"
                     logger.warning(
-                        "action_review SOFT-GATE BLOK: %s/%s testler-gecti ama supheli-diff -> held-for-review",
+                        "action_review SOFT-GATE BLOK (%s): %s/%s testler-gecti ama supheli-diff -> held-for-review",
+                        held_scope,
                         project,
                         test_name,
                     )
                     return {
                         "fixed": False,
                         "held_for_review": True,
+                        "held_scope": held_scope,
                         "attempt": attempt,
                         "project": project,
                         "test_file": test_file,
