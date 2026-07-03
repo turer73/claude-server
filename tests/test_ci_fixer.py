@@ -1168,6 +1168,59 @@ async def test_snapshot_baseline_pins_clean_tree_to_sha(tmp_path):
     assert len(baseline2) == 40
 
 
+@pytest.mark.asyncio
+async def test_assertion_netting_across_attempts_still_held(ci_db, monkeypatch):
+    """Codex #255-P2(r5): att-1 assertion SILER (+FAIL), att-2 AYNI dosyaya BASKA assertion
+    EKLER (+PASS) -> birlesim-diff'te removed-added SIFIRA netlesir, birlesim-scan temiz
+    gorunur (deneysel dogrulandi). Sticky prior-attempt-scan bunu yakalamali: att-1'in
+    pre-test scan'i supheliydi -> kumulatif verdict held, sinyal attempt1: onekli."""
+
+    async def fake_open_ci_db():
+        return _NoCloseDB(ci_db)
+
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    netting_diff = """diff --git a/tests/test_foo.py b/tests/test_foo.py
+index 3333333..4444444 100644
+--- a/tests/test_foo.py
++++ b/tests/test_foo.py
+@@ -1,2 +1,4 @@
++    assert fresh == 2
++    assert again == 3
+"""
+    snapshots = AsyncMock(side_effect=[("ATT-1", set()), ("ATT-2", set())])
+
+    async def fake_capture(cwd, baseline_ref, pre_untracked):
+        if baseline_ref == "ATT-1":
+            return _GAMING_DIFF  # 2 assertion siler (supheli) — testler FAIL
+        return netting_diff + _CLEAN_DIFF  # 2 assertion ekler -> birlesimde netlesir
+
+    emitted: list[dict] = []
+
+    with (
+        patch("app.core.ci_fixer._call_claude_code", _mock_claude()),
+        patch("app.core.ci_fixer.run_project_tests", AsyncMock(side_effect=[dict(_FAIL_RESULT), dict(_PASS_RESULT)])),
+        patch("app.core.ci_fixer._snapshot_baseline", snapshots),
+        patch("app.core.ci_fixer._capture_attempt_diff", side_effect=fake_capture),
+        patch("app.core.ci_fixer.soft_gate_enabled", return_value=True),
+        patch("app.core.ci_fixer.emit_event", side_effect=lambda **kw: emitted.append(kw)),
+    ):
+        result = await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError",
+            source_file="app/foo.py",
+        )
+
+    assert result["fixed"] is False
+    assert result["held_for_review"] is True
+    assert result["held_scope"] == "cumulative"
+    cum = [e for e in emitted if (e.get("payload") or {}).get("scope") == "cumulative"]
+    assert len(cum) == 1
+    assert any(sig.startswith("attempt1:") for sig in cum[0]["payload"]["signals"])  # sticky kanit
+
+
 def test_prompt_held_lesson_not_shown_as_passed_example():
     """#6: held-lesson prompt'a 'passed ornek' olarak SIZMAZ — diff'i gosterilmez,
     'ORNEK ALMA' uyarisiyla etiketlenir."""

@@ -492,6 +492,8 @@ async def attempt_fix(
         # Yan-etki (bilincli): attempt-1'de yapilip attempt-2'de GERI ALINAN gaming birlesimde
         # gorunur kalir — aldatici-gecmis tam da insan-gozune tasinmasi gereken sinyaldir.
         claude_deltas: list[str] = []
+        # Codex r5: her attempt'in pre-test scan-sonucu (sticky supheli-tasima icin; index=attempt-1)
+        attempt_scans: list[dict[str, Any] | None] = []
 
         prev_errors: list[str] = []
         claude_responses: list[dict[str, Any]] = []
@@ -570,13 +572,14 @@ async def attempt_fix(
             held_for_review = _apply_review_verdict(attempt_scan, "attempt", project, test_name)
             if attempt_diff is not None:
                 claude_deltas.append(attempt_diff)
+            attempt_scans.append(attempt_scan)
 
             # 3.6 GAP-1 soft-gate pilot #1: KUMULATIF tarama — pre-test attempt-delta'larin
             # birlesimi uzerinde (Codex r2: capture pre-test; Codex r4: onceki attempt'lerin
             # runner-artifact'lari da birlesime GIREMEZ, cunku her delta kendi pre-test'inde
             # yakalandi). Attempt-delta review (3.5) tek basina laundering'i kacirir: attempt-1
             # supheli+FAIL tree'de kalir, attempt-2 temiz+PASS -> delta temiz gorunur; birlesim
-            # gaming'i icerir. Sticky-flag YETMEZ (attempt-1 fail'de held degerlendirilmedi).
+            # gaming'i icerir.
             # Verdict+emit BURADA DEGIL — pass-dalinda (4.5): suspicious+FAIL'de sahte held-emit olmasin.
             # Fail-open: bir attempt'in delta'si yakalanamadiysa (None) birlesim eksik kalir —
             # tarama-hatasi accept'i bloklamaz (pilot-tasarim 4; taranamadi-warn 3.5'te atildi).
@@ -594,6 +597,19 @@ async def attempt_fix(
                         detail=f"{type(exc).__name__}: {exc}",
                     )
                     cumulative_scan = None
+
+            # Codex #255-P2(r5): birlesim-scan TEK BASINA yetmez — attempt-1 assertion SILER,
+            # attempt-2 AYNI dosyaya baska assertion EKLERSE birlesimde removed-added SIFIRA
+            # netlesir, test_assertion_drop kaybolur (deneysel dogrulandi). Onceki attempt'lerin
+            # pre-test scan'leri elimizde (FAIL'de bile kosuyor) -> supheli olanlari STICKY tasi:
+            # kumulatif verdict = birlesim-scan VEYA onceki-attempt-scan supheli. (Guncel attempt
+            # haric — onun suphesi held_for_review'da + kendi emit'i 3.5'te zaten var.)
+            prior_suspicious = [(i, sc) for i, sc in enumerate(attempt_scans[:-1], 1) if sc and sc.get("suspicious")]
+            if prior_suspicious:
+                merged_signals = list(cumulative_scan.get("signals") or []) if cumulative_scan and cumulative_scan.get("suspicious") else []
+                for i, sc in prior_suspicious:
+                    merged_signals.extend(f"attempt{i}:{sig}" for sig in sc.get("signals", []))
+                cumulative_scan = {"suspicious": True, "signals": merged_signals}
 
             # 4. Re-run tests
             test_result = await run_project_tests(project)

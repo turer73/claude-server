@@ -216,11 +216,22 @@ async def _seed(db, run_uuid, sig, outcome):
 
 
 @pytest.mark.asyncio
-async def test_get_recent_occurrences_counts_failed_only(ci_db):
+async def test_get_recent_occurrences_counts_unresolved_only(ci_db):
     sig = "p::t::abc"
     await _seed(ci_db, "u1", sig, "failed")
     await _seed(ci_db, "u2", sig, "passed")  # must not count
     await _seed(ci_db, "u3", sig, "failed")
+    assert await get_recent_occurrences(ci_db, sig, window=3) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_recent_occurrences_counts_held_as_unresolved(ci_db):
+    """Codex #255-P2(r5): held = cozulmemis sayilir — yoksa gate-ON'da tekrarlanan
+    held-denemeleri context-enrichment esigini tetiklemez, fixer ayni held-stratejiyi
+    ORNEK-ALMA uyarisini hic gormeden tekrarlar."""
+    sig = "p::t::held"
+    await _seed(ci_db, "u1", sig, "held")
+    await _seed(ci_db, "u2", sig, "held")
     assert await get_recent_occurrences(ci_db, sig, window=3) == 2
 
 
