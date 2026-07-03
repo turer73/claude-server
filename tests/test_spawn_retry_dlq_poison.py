@@ -52,4 +52,6 @@ def test_dlq_poison_block_missing_key_graceful_skip(tmp_path):
         timeout=30,
     )
     assert r.returncode == 0, f"key-yok crash etti (fix-öncesi IndexError davranışı): stderr={r.stderr[-400:]}"
-    assert "ATLANDI" in r.stdout  # fail-loud log (sessiz-değil)
+    # stderr'de OLMALI: heredoc yalnız stderr'i LOG_FILE'a yönlendirir (2>>) — stdout'a
+    # yazılan mesaj retry-log'a düşmez (Codex #261-P2, fail-loud amacı boşa çıkar).
+    assert "ATLANDI" in r.stderr
