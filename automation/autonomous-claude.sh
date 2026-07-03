@@ -81,6 +81,14 @@ FROM="$2"
 TITLE="$3"
 PREVIEW="$4"
 
+# NOTE_ID her zaman notes.id (integer PK). Numeric-guard: satir 141'deki
+# "SELECT ... WHERE id=$NOTE_ID" sqlite3 CLI'da bind-param almadigi icin
+# non-numeric arg SQL injection yuzeyi olur (#1235). Fail-closed reddet.
+if ! [[ "$NOTE_ID" =~ ^[0-9]+$ ]]; then
+    log "reject: non-numeric NOTE_ID='$NOTE_ID' (SQL-injection guard #1235)"
+    exit 2
+fi
+
 # ---------- Throttle ----------
 if [ -f "$THROTTLE_FILE" ]; then
     LAST_SPAWN=$(cat "$THROTTLE_FILE" 2>/dev/null || echo 0)
