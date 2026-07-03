@@ -103,17 +103,23 @@ async def record_lesson(
 
 
 async def get_recent_occurrences(db: Database, signature: str, window: int = 3) -> int:
-    """Count 'failed' attempts with this signature across the `window` most recent runs.
+    """Count UNRESOLVED ('failed' + 'held') attempts with this signature across
+    the `window` most recent runs.
 
     A "run" is a distinct run_uuid. We look at the last `window` run_uuids that
     touched this signature (any outcome), then count how many rows inside those
-    runs have outcome='failed'.
+    runs have an unresolved outcome.
 
-    Counts failed ROWS, not distinct failing run_uuids. This means repeated
-    failures within a single `attempt_fix` call (same run_uuid, N retry
-    attempts) count toward the enrichment threshold. Intentional: a 3rd retry
-    that just failed twice is exactly when the AI benefits most from seeing
-    its own prior attempts. Canonical test:
+    'held' de sayilir (Codex #255-P2 r5): soft-gate held-fix fixed=False doner ama
+    outcome='held' — yalniz 'failed' sayilsaydi tekrarlanan held-denemeleri
+    context-enrichment esigini hic tetiklemez, fixer ayni held-stratejiyi
+    build_fix_prompt'un ORNEK-ALMA uyarisini gormeden tekrarlardi.
+
+    Counts ROWS, not distinct run_uuids. This means repeated failures within a
+    single `attempt_fix` call (same run_uuid, N retry attempts) count toward
+    the enrichment threshold. Intentional: a 3rd retry that just failed twice
+    is exactly when the AI benefits most from seeing its own prior attempts.
+    Canonical test:
     ``tests/test_ci_signal_dedup.py::test_get_recent_occurrences_counts_per_run_uuid``.
     """
     row = await db.fetch_one(
@@ -129,7 +135,7 @@ async def get_recent_occurrences(db: Database, signature: str, window: int = 3) 
         SELECT COUNT(*) AS n
         FROM ci_lesson_learned
         WHERE signature = ?
-          AND outcome = 'failed'
+          AND outcome IN ('failed', 'held')
           AND run_uuid IN (SELECT run_uuid FROM recent_runs)
         """,
         (signature, window, signature),

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -823,3 +824,422 @@ async def test_call_claude_code_aborts_when_settings_missing(monkeypatch):
     assert "CI_FIXER_SETTINGS" in result["error"]
     assert result["answer"] == ""
     assert result["session_id"] is None
+
+
+# ---------------------------------------------------------------------------
+# GAP-1 soft-gate pilot (#1224 #1/#6) — held-outcome + accept-time kumulatif review
+# ---------------------------------------------------------------------------
+
+_PASS_RESULT = {
+    "project": "klipper",
+    "total": 10,
+    "passed": 10,
+    "failed": 0,
+    "duration_s": 1.0,
+    "failures": [],
+}
+_FAIL_RESULT = {
+    "project": "klipper",
+    "total": 10,
+    "passed": 9,
+    "failed": 1,
+    "duration_s": 1.0,
+    "failures": [{"test_name": "test_bar", "test_file": "tests/test_foo.py", "error": "AssertionError: hala kirik"}],
+}
+# Assertion-drop iceren test-dosyasi diff'i — scanner'in yakalamasi gereken spec-gaming.
+_GAMING_DIFF = """diff --git a/tests/test_foo.py b/tests/test_foo.py
+index 1111111..2222222 100644
+--- a/tests/test_foo.py
++++ b/tests/test_foo.py
+@@ -1,4 +1,2 @@
+-    assert result == 42
+-    assert other == 1
++    pass
+"""
+# Failing-module icinde kucuk, assertion'suz, temiz kaynak-fix'i.
+_CLEAN_DIFF = """diff --git a/app/foo.py b/app/foo.py
+index 1111111..2222222 100644
+--- a/app/foo.py
++++ b/app/foo.py
+@@ -1,2 +1,2 @@
+-    return 41
++    return 42
+"""
+
+
+def _mock_claude():
+    return AsyncMock(return_value={"answer": "fix", "session_id": "s-1", "error": None})
+
+
+@pytest.mark.asyncio
+async def test_held_fix_recorded_as_held_not_passed(ci_db, monkeypatch):
+    """#6: supheli+gate-ON+testler-gecti -> lessons-DB outcome='held' ('passed' POISON'du)."""
+
+    async def fake_open_ci_db():
+        return _NoCloseDB(ci_db)
+
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    async def fake_capture(cwd, baseline_ref, pre_untracked):
+        return _GAMING_DIFF  # attempt-delta supheli
+
+    with (
+        patch("app.core.ci_fixer._call_claude_code", _mock_claude()),
+        patch("app.core.ci_fixer.run_project_tests", AsyncMock(return_value=dict(_PASS_RESULT))),
+        patch("app.core.ci_fixer._snapshot_baseline", AsyncMock(return_value=("BASE", set()))),
+        patch("app.core.ci_fixer._capture_attempt_diff", side_effect=fake_capture),
+        patch("app.core.ci_fixer.soft_gate_enabled", return_value=True),
+    ):
+        result = await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError",
+        )
+
+    assert result["fixed"] is False
+    assert result["held_for_review"] is True
+    assert result["held_scope"] == "attempt"
+    rows = await ci_db.fetch_all("SELECT outcome FROM ci_lesson_learned ORDER BY id")
+    assert len(rows) == 1
+    assert rows[0]["outcome"] == "held"
+
+
+@pytest.mark.asyncio
+async def test_cumulative_review_catches_laundering(ci_db, monkeypatch):
+    """#1: attempt-1 assertion-drop+FAIL (tree'de kalir), attempt-2 temiz+PASS ->
+    attempt-delta temiz gorunur ama RUN-baseline'dan kumulatif diff gaming'i icerir ->
+    accept-kapisi kumulatif review held=True (laundering yakalanir). Gercek scanner kosar."""
+
+    async def fake_open_ci_db():
+        return _NoCloseDB(ci_db)
+
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    snapshots = AsyncMock(side_effect=[("ATT-1", set()), ("ATT-2", set())])
+
+    async def fake_capture(cwd, baseline_ref, pre_untracked):
+        if baseline_ref == "ATT-1":
+            return _GAMING_DIFF  # attempt-1 delta: supheli AMA testler FAIL -> held tetiklenmez
+        return _CLEAN_DIFF  # attempt-2 delta: temiz -> laundering penceresi; BIRLESIM gaming'i icerir
+
+    with (
+        patch("app.core.ci_fixer._call_claude_code", _mock_claude()),
+        patch("app.core.ci_fixer.run_project_tests", AsyncMock(side_effect=[dict(_FAIL_RESULT), dict(_PASS_RESULT)])),
+        patch("app.core.ci_fixer._snapshot_baseline", snapshots),
+        patch("app.core.ci_fixer._capture_attempt_diff", side_effect=fake_capture),
+        patch("app.core.ci_fixer.soft_gate_enabled", return_value=True),
+    ):
+        result = await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError",
+            source_file="app/foo.py",
+        )
+
+    assert result["fixed"] is False
+    assert result["held_for_review"] is True
+    assert result["held_scope"] == "cumulative"
+    rows = await ci_db.fetch_all("SELECT attempt_num, outcome FROM ci_lesson_learned ORDER BY id")
+    assert [r["outcome"] for r in rows] == ["failed", "held"]
+
+
+@pytest.mark.asyncio
+async def test_cumulative_review_fail_open_does_not_block_accept(ci_db, monkeypatch):
+    """Fail-safe: diff-capture cokerse (per-attempt VE kumulatif) fail-open notify ->
+    accept BLOKLANMAZ (gate-mekanigi ci_fixer'i kilitlemez, pilot-tasarim 4)."""
+
+    async def fake_open_ci_db():
+        return _NoCloseDB(ci_db)
+
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    with (
+        patch("app.core.ci_fixer._call_claude_code", _mock_claude()),
+        patch("app.core.ci_fixer.run_project_tests", AsyncMock(return_value=dict(_PASS_RESULT))),
+        patch("app.core.ci_fixer._snapshot_baseline", AsyncMock(return_value=("BASE", set()))),
+        patch("app.core.ci_fixer._capture_attempt_diff", side_effect=RuntimeError("git patladi")),
+        patch("app.core.ci_fixer.soft_gate_enabled", return_value=True),
+    ):
+        result = await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError",
+        )
+
+    assert result["fixed"] is True
+    rows = await ci_db.fetch_all("SELECT outcome FROM ci_lesson_learned")
+    assert [r["outcome"] for r in rows] == ["passed"]
+
+
+@pytest.mark.asyncio
+async def test_cumulative_suspicious_gate_off_is_notify_only(ci_db, monkeypatch):
+    """SHADOW modu (DEFAULT-OFF korunur): kumulatif diff supheli ama gate-OFF ->
+    notify-only, accept devam eder (rollout-asamasi b: OFF'ta gozlem)."""
+
+    async def fake_open_ci_db():
+        return _NoCloseDB(ci_db)
+
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    async def fake_capture(cwd, baseline_ref, pre_untracked):
+        return _GAMING_DIFF  # her diff supheli
+
+    with (
+        patch("app.core.ci_fixer._call_claude_code", _mock_claude()),
+        patch("app.core.ci_fixer.run_project_tests", AsyncMock(return_value=dict(_PASS_RESULT))),
+        patch("app.core.ci_fixer._snapshot_baseline", AsyncMock(return_value=("BASE", set()))),
+        patch("app.core.ci_fixer._capture_attempt_diff", side_effect=fake_capture),
+        patch("app.core.ci_fixer.soft_gate_enabled", return_value=False),
+    ):
+        result = await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError",
+        )
+
+    assert result["fixed"] is True  # gate-OFF: supheli bile olsa bloklamaz
+    rows = await ci_db.fetch_all("SELECT outcome FROM ci_lesson_learned")
+    assert [r["outcome"] for r in rows] == ["passed"]  # held degil: gate-OFF'ta held yok
+
+
+@pytest.mark.asyncio
+async def test_prior_retry_runner_artifacts_do_not_pollute_cumulative(ci_db, monkeypatch):
+    """Codex #255-P2(r4): onceki retry'in TEST-KOSUSU tracked dosya mutate ettiyse
+    (snapshot/golden) sonraki attempt'in kumulatif taramasi bundan KIRLENMEMELI.
+    Mekanizma: kumulatif = pre-test attempt-delta'larin birlesimi; her attempt-baseline
+    onceki kosunun artifact'larini yutar -> runner-gurultusu yapisal olarak giremez."""
+
+    async def fake_open_ci_db():
+        return _NoCloseDB(ci_db)
+
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    # att-1: temiz delta + FAIL (runner artifact birakti varsayimi); att-2: temiz delta + PASS.
+    snapshots = AsyncMock(side_effect=[("ATT-1", set()), ("ATT-2", set())])
+    capture_refs: list[str] = []
+
+    async def fake_capture(cwd, baseline_ref, pre_untracked):
+        capture_refs.append(baseline_ref)
+        return _CLEAN_DIFF  # Claude-delta'lar temiz; artifact'lar delta'ya giremiyor
+
+    with (
+        patch("app.core.ci_fixer._call_claude_code", _mock_claude()),
+        patch("app.core.ci_fixer.run_project_tests", AsyncMock(side_effect=[dict(_FAIL_RESULT), dict(_PASS_RESULT)])),
+        patch("app.core.ci_fixer._snapshot_baseline", snapshots),
+        patch("app.core.ci_fixer._capture_attempt_diff", side_effect=fake_capture),
+        patch("app.core.ci_fixer.soft_gate_enabled", return_value=True),
+    ):
+        result = await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError",
+            source_file="app/foo.py",
+        )
+
+    assert result["fixed"] is True  # temiz fix held'lenmedi (gate-ON'da bile)
+    # Capture YALNIZ per-attempt baseline'larla — run-seviyesi/moving-ref capture yok
+    assert capture_refs == ["ATT-1", "ATT-2"]
+
+
+@pytest.mark.asyncio
+async def test_cumulative_capture_is_pre_test_runner_artifacts_ignored(ci_db, monkeypatch):
+    """Codex #255-P2 regresyonu: test-runner tracked dosya mutate ederse (snapshot/golden/
+    coverage) kumulatif diff KIRLENMEMELI — capture testlerden ONCE yapilir. Post-test
+    cekilseydi diff GAMING gorunecekti; pre-test temiz -> SUSPICIOUS-DEGIL, accept surer."""
+
+    async def fake_open_ci_db():
+        return _NoCloseDB(ci_db)
+
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    tests_ran = {"flag": False}
+    capture_after_tests: list[bool] = []
+
+    async def fake_capture(cwd, baseline_ref, pre_untracked):
+        capture_after_tests.append(tests_ran["flag"])
+        # Test-kosusu SONRASI cekilseydi runner-artifact'lari diff'e karisirdi (GAMING gibi
+        # pattern-match eden icerik); oncesinde temiz.
+        return _GAMING_DIFF if tests_ran["flag"] else _CLEAN_DIFF
+
+    async def fake_tests(project):
+        tests_ran["flag"] = True  # runner tracked-dosya mutate etti (simulasyon)
+        return dict(_PASS_RESULT)
+
+    with (
+        patch("app.core.ci_fixer._call_claude_code", _mock_claude()),
+        patch("app.core.ci_fixer.run_project_tests", side_effect=fake_tests),
+        patch("app.core.ci_fixer._snapshot_baseline", AsyncMock(return_value=("BASE", set()))),
+        patch("app.core.ci_fixer._capture_attempt_diff", side_effect=fake_capture),
+        patch("app.core.ci_fixer.soft_gate_enabled", return_value=True),
+    ):
+        result = await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError",
+            source_file="app/foo.py",
+        )
+
+    assert result["fixed"] is True  # runner-artifact sahte-held uretmedi
+    assert capture_after_tests  # capture gercekten cagrildi
+    assert all(v is False for v in capture_after_tests)  # TUM capture'lar pre-test
+
+
+@pytest.mark.asyncio
+async def test_cumulative_suspicious_but_tests_fail_no_cumulative_emit(ci_db, monkeypatch):
+    """Codex #255-P2 emit-timing: kumulatif diff supheli AMA testler FAIL -> kumulatif
+    verdict/emit YOK (sahte held-emit shadow-gozlemi kirletmesin). Attempt-scope emit'leri kalir."""
+
+    async def fake_open_ci_db():
+        return _NoCloseDB(ci_db)
+
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    emitted: list[dict] = []
+
+    def fake_emit(**kw):
+        emitted.append(kw)
+
+    async def fake_capture(cwd, baseline_ref, pre_untracked):
+        return _GAMING_DIFF  # her scope'ta supheli
+
+    with (
+        patch("app.core.ci_fixer._call_claude_code", _mock_claude()),
+        patch("app.core.ci_fixer.run_project_tests", AsyncMock(return_value=dict(_FAIL_RESULT))),
+        patch("app.core.ci_fixer._snapshot_baseline", AsyncMock(return_value=("BASE", set()))),
+        patch("app.core.ci_fixer._capture_attempt_diff", side_effect=fake_capture),
+        patch("app.core.ci_fixer.soft_gate_enabled", return_value=True),
+        patch("app.core.ci_fixer.emit_event", side_effect=fake_emit),
+    ):
+        result = await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError",
+        )
+
+    assert result["fixed"] is False
+    cumulative_emits = [e for e in emitted if (e.get("payload") or {}).get("scope") == "cumulative"]
+    assert cumulative_emits == []  # FAIL'li attempt'lerde kumulatif emit yasak
+    attempt_emits = [e for e in emitted if (e.get("payload") or {}).get("scope") == "attempt"]
+    assert attempt_emits  # attempt-scope erken-uyari korunur
+
+
+@pytest.mark.asyncio
+async def test_snapshot_baseline_pins_clean_tree_to_sha(tmp_path):
+    """Codex #255-P2(r3): clean-tree baseline literal 'HEAD' DEGIL somut SHA olmali —
+    HEAD hareketli ref (ci-fixer-settings git-checkout'a izinli); run-ortasi checkout
+    kumulatif diff'i yeni checkout'a kiyaslatip onceki gaming'i gizlerdi."""
+    import subprocess
+
+    from app.core.ci_fixer import _snapshot_baseline
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        subprocess.run(
+            ["git", "-C", str(repo), *args],
+            check=True,
+            capture_output=True,
+            env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"},
+        )
+
+    git("init", "-q")
+    (repo / "a.txt").write_text("ilk")
+    git("add", "a.txt")
+    git("commit", "-q", "-m", "ilk")
+
+    # CLEAN tree -> stash-create bos -> SHA'ya sabitlenmeli (eski davranis: 'HEAD')
+    baseline, pre_untracked = await _snapshot_baseline(str(repo))
+    assert baseline != "HEAD"
+    assert len(baseline) == 40  # somut commit SHA
+    assert pre_untracked == set()
+
+    # DIRTY tree -> stash-create zaten commit-object SHA'si doner (davranis degismedi)
+    (repo / "a.txt").write_text("degisti")
+    baseline2, _ = await _snapshot_baseline(str(repo))
+    assert baseline2 != "HEAD"
+    assert len(baseline2) == 40
+
+
+@pytest.mark.asyncio
+async def test_assertion_netting_across_attempts_still_held(ci_db, monkeypatch):
+    """Codex #255-P2(r5): att-1 assertion SILER (+FAIL), att-2 AYNI dosyaya BASKA assertion
+    EKLER (+PASS) -> birlesim-diff'te removed-added SIFIRA netlesir, birlesim-scan temiz
+    gorunur (deneysel dogrulandi). Sticky prior-attempt-scan bunu yakalamali: att-1'in
+    pre-test scan'i supheliydi -> kumulatif verdict held, sinyal attempt1: onekli."""
+
+    async def fake_open_ci_db():
+        return _NoCloseDB(ci_db)
+
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    netting_diff = """diff --git a/tests/test_foo.py b/tests/test_foo.py
+index 3333333..4444444 100644
+--- a/tests/test_foo.py
++++ b/tests/test_foo.py
+@@ -1,2 +1,4 @@
++    assert fresh == 2
++    assert again == 3
+"""
+    snapshots = AsyncMock(side_effect=[("ATT-1", set()), ("ATT-2", set())])
+
+    async def fake_capture(cwd, baseline_ref, pre_untracked):
+        if baseline_ref == "ATT-1":
+            return _GAMING_DIFF  # 2 assertion siler (supheli) — testler FAIL
+        return netting_diff + _CLEAN_DIFF  # 2 assertion ekler -> birlesimde netlesir
+
+    emitted: list[dict] = []
+
+    with (
+        patch("app.core.ci_fixer._call_claude_code", _mock_claude()),
+        patch("app.core.ci_fixer.run_project_tests", AsyncMock(side_effect=[dict(_FAIL_RESULT), dict(_PASS_RESULT)])),
+        patch("app.core.ci_fixer._snapshot_baseline", snapshots),
+        patch("app.core.ci_fixer._capture_attempt_diff", side_effect=fake_capture),
+        patch("app.core.ci_fixer.soft_gate_enabled", return_value=True),
+        patch("app.core.ci_fixer.emit_event", side_effect=lambda **kw: emitted.append(kw)),
+    ):
+        result = await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError",
+            source_file="app/foo.py",
+        )
+
+    assert result["fixed"] is False
+    assert result["held_for_review"] is True
+    assert result["held_scope"] == "cumulative"
+    cum = [e for e in emitted if (e.get("payload") or {}).get("scope") == "cumulative"]
+    assert len(cum) == 1
+    assert any(sig.startswith("attempt1:") for sig in cum[0]["payload"]["signals"])  # sticky kanit
+
+
+def test_prompt_held_lesson_not_shown_as_passed_example():
+    """#6: held-lesson prompt'a 'passed ornek' olarak SIZMAZ — diff'i gosterilmez,
+    'ORNEK ALMA' uyarisiyla etiketlenir."""
+    lessons = [
+        {
+            "attempt_num": 1,
+            "strategy": "fix-direct",
+            "outcome": "held",
+            "fix_diff": "GIZLI_GAMING_DIFF_ICERIGI",
+            "created_at": "2026-07-03 01:00:00",
+        }
+    ]
+    prompt = build_fix_prompt(
+        project="klipper",
+        test_file="tests/test_foo.py",
+        test_name="test_bar",
+        error="AssertionError",
+        context_lessons=lessons,
+    )
+    assert "ORNEK ALMA" in prompt
+    assert "GIZLI_GAMING_DIFF_ICERIGI" not in prompt
+    assert "=> passed" not in prompt
