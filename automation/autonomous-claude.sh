@@ -26,6 +26,10 @@ THROTTLE_MIN_SECONDS="${AUTONOMOUS_THROTTLE_S:-60}"
 SETTINGS_FILE="${AUTONOMOUS_SETTINGS:-/opt/linux-ai-server/automation/autonomous-claude-settings.json}"
 GUARDRAILS="${AUTONOMOUS_GUARDRAILS:-/opt/linux-ai-server/automation/autonomous-claude-guardrails.md}"
 MODEL="${AUTONOMOUS_MODEL:-claude-sonnet-4-6}"
+# Spawn hang-korumasi (audit B-track / #100327): claude -p timeout'suzdu -> binary hang
+# olursa flock tutulur, sonraki cron skip = sessiz-stall. Comert-default (mesru uzun-spawn'i
+# kesmesin, FP-onleme; watchdog dersi), env-override. -k 30: TERM sonrasi 30s'de KILL (torun-proc).
+SPAWN_TIMEOUT="${AUTONOMOUS_SPAWN_TIMEOUT:-900}"
 CLASSIFIER="${AUTONOMOUS_CLASSIFIER:-/opt/linux-ai-server/automation/autonomous-classifier-v2.sh}"
 DB="${HOOK_DB:-/opt/linux-ai-server/data/claude_memory.db}"
 API_BASE="${HOOK_API:-http://127.0.0.1:8420/api/v1/memory}"
@@ -286,6 +290,7 @@ Cevabin son satiri: PLAN_END
         set +e
         # GAP-1 item-D: spawn'in not-yazimlari otonom-key kullansin (env-first) -> A-2 origin-tag.
         MEMORY_API_KEY="$(get_key_autonomous)" \
+        timeout -k 30 "$SPAWN_TIMEOUT" \
         claude -p "$planner_prompt" \
             --settings "$SETTINGS_FILE" \
             --output-format json \
@@ -294,6 +299,7 @@ Cevabin son satiri: PLAN_END
             < /dev/null \
             > "$planner_log" 2>&1
         rc=$?
+        [ "$rc" -eq 124 ] && log "planner spawn TIMEOUT (${SPAWN_TIMEOUT}s) — hang-korumasi devrede"
         set -e
 
         if [ "$rc" -ne 0 ]; then
@@ -457,6 +463,7 @@ Result: <bir-iki cumle>"
     # seye dokunma" diyor.
     # GAP-1 item-D: spawn'in not-yazimlari otonom-key kullansin (env-first) -> A-2 origin-tag.
     MEMORY_API_KEY="$(get_key_autonomous)" \
+    timeout -k 30 "$SPAWN_TIMEOUT" \
     claude -p "$prompt" \
         --append-system-prompt "$(cat "$GUARDRAILS")" \
         --settings "$SETTINGS_FILE" \
@@ -466,6 +473,7 @@ Result: <bir-iki cumle>"
         > "$spawn_log" 2>&1
     local rc=$?
     set -e
+    [ "$rc" -eq 124 ] && log "spawn TIMEOUT (${SPAWN_TIMEOUT}s) — hang-korumasi devrede, fail-path'e akiyor"
 
     log "spawn complete: note #$NOTE_ID rc=$rc log=$spawn_log"
 
