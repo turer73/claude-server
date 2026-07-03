@@ -93,3 +93,36 @@ def test_gather_orchestrates_all_sources(monkeypatch):
         "vps": "VP",
         "ci": "CI",
     }
+
+
+def test_vps_health_reads_latest_sample(monkeypatch, tmp_path):
+    """P1-a Faz-2a: vps_health get_conn(readonly=False) + Row dict-erisim paritesi.
+    (Fonksiyon onceden HIC test edilmiyordu; migrasyon codecov-flag'ledi -> test-eklendi.)"""
+    import sqlite3
+
+    from app.core.digest.sources import vps_health
+
+    db = tmp_path / "server.db"
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE vps_metrics_history (timestamp TEXT, online INT, cpu_usage REAL, "
+        "memory_usage REAL, disk_usage REAL, containers_total INT, containers_up INT)"
+    )
+    con.execute(
+        "INSERT INTO vps_metrics_history VALUES ('2026-07-03T12:00', 1, 45.5, 60.0, 30.0, 21, 20)"
+    )
+    con.commit()
+    con.close()
+    monkeypatch.setattr("app.core.digest.sources._server_db_path", lambda: str(db))
+    r = vps_health()
+    assert r["online"] is True  # Row['online'] dict-erisim (get_conn row_factory paritesi)
+    assert r["cpu"] == 45.5
+    assert r["containers_up"] == 20
+
+
+def test_vps_health_empty_returns_dict(monkeypatch, tmp_path):
+    """Veri-yok -> {} (graceful degrade). get_conn dosya-yoksa normal-connect olusturur (readonly=False)."""
+    from app.core.digest.sources import vps_health
+
+    monkeypatch.setattr("app.core.digest.sources._server_db_path", lambda: str(tmp_path / "nope.db"))
+    assert vps_health() == {}
