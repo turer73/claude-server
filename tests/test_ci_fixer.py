@@ -880,7 +880,7 @@ async def test_held_fix_recorded_as_held_not_passed(ci_db, monkeypatch):
 
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
-    async def fake_capture(cwd, baseline_ref, pre_untracked):
+    async def fake_capture(cwd, baseline_ref, pre_untracked, run_untracked_content=None):
         return _GAMING_DIFF  # attempt-delta supheli
 
     with (
@@ -918,7 +918,7 @@ async def test_cumulative_review_catches_laundering(ci_db, monkeypatch):
 
     snapshots = AsyncMock(side_effect=[("ATT-1", set()), ("ATT-2", set())])
 
-    async def fake_capture(cwd, baseline_ref, pre_untracked):
+    async def fake_capture(cwd, baseline_ref, pre_untracked, run_untracked_content=None):
         if baseline_ref == "ATT-1":
             return _GAMING_DIFF  # attempt-1 delta: supheli AMA testler FAIL -> held tetiklenmez
         return _CLEAN_DIFF  # attempt-2 delta: temiz -> laundering penceresi; BIRLESIM gaming'i icerir
@@ -984,7 +984,7 @@ async def test_cumulative_suspicious_gate_off_is_notify_only(ci_db, monkeypatch)
 
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
-    async def fake_capture(cwd, baseline_ref, pre_untracked):
+    async def fake_capture(cwd, baseline_ref, pre_untracked, run_untracked_content=None):
         return _GAMING_DIFF  # her diff supheli
 
     with (
@@ -1022,7 +1022,7 @@ async def test_prior_retry_runner_artifacts_do_not_pollute_cumulative(ci_db, mon
     snapshots = AsyncMock(side_effect=[("ATT-1", set()), ("ATT-2", set())])
     capture_refs: list[str] = []
 
-    async def fake_capture(cwd, baseline_ref, pre_untracked):
+    async def fake_capture(cwd, baseline_ref, pre_untracked, run_untracked_content=None):
         capture_refs.append(baseline_ref)
         return _CLEAN_DIFF  # Claude-delta'lar temiz; artifact'lar delta'ya giremiyor
 
@@ -1060,7 +1060,7 @@ async def test_cumulative_capture_is_pre_test_runner_artifacts_ignored(ci_db, mo
     tests_ran = {"flag": False}
     capture_after_tests: list[bool] = []
 
-    async def fake_capture(cwd, baseline_ref, pre_untracked):
+    async def fake_capture(cwd, baseline_ref, pre_untracked, run_untracked_content=None):
         capture_after_tests.append(tests_ran["flag"])
         # Test-kosusu SONRASI cekilseydi runner-artifact'lari diff'e karisirdi (GAMING gibi
         # pattern-match eden icerik); oncesinde temiz.
@@ -1105,7 +1105,7 @@ async def test_cumulative_suspicious_but_tests_fail_no_cumulative_emit(ci_db, mo
     def fake_emit(**kw):
         emitted.append(kw)
 
-    async def fake_capture(cwd, baseline_ref, pre_untracked):
+    async def fake_capture(cwd, baseline_ref, pre_untracked, run_untracked_content=None):
         return _GAMING_DIFF  # her scope'ta supheli
 
     with (
@@ -1190,7 +1190,7 @@ index 3333333..4444444 100644
 """
     snapshots = AsyncMock(side_effect=[("ATT-1", set()), ("ATT-2", set())])
 
-    async def fake_capture(cwd, baseline_ref, pre_untracked):
+    async def fake_capture(cwd, baseline_ref, pre_untracked, run_untracked_content=None):
         if baseline_ref == "ATT-1":
             return _GAMING_DIFF  # 2 assertion siler (supheli) — testler FAIL
         return netting_diff + _CLEAN_DIFF  # 2 assertion ekler -> birlesimde netlesir
@@ -1219,6 +1219,96 @@ index 3333333..4444444 100644
     cum = [e for e in emitted if (e.get("payload") or {}).get("scope") == "cumulative"]
     assert len(cum) == 1
     assert any(sig.startswith("attempt1:") for sig in cum[0]["payload"]["signals"])  # sticky kanit
+
+
+@pytest.mark.asyncio
+async def test_errored_claude_edits_captured_no_launder(ci_db, monkeypatch):
+    """Codex #255-P2(r6/571): att-1 Claude ERROR verir ama working-tree'yi zaten
+    zayiflatmis (timeout/parse-hatasi mid-edit); att-2 temiz+PASS. Error-attempt'in
+    zayiflatmasi yakalanmali (sticky) -> att-2 accept'i held'lenir, launder engellenir."""
+
+    async def fake_open_ci_db():
+        return _NoCloseDB(ci_db)
+
+    monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
+
+    claude = AsyncMock(side_effect=[{"answer": None, "error": "timeout"}, {"answer": "fix", "error": None}])
+    snapshots = AsyncMock(side_effect=[("ATT-1", set()), ("ATT-2", set())])
+
+    async def fake_capture(cwd, baseline_ref, pre_untracked, run_untracked_content=None):
+        return _GAMING_DIFF if baseline_ref == "ATT-1" else _CLEAN_DIFF
+
+    with (
+        patch("app.core.ci_fixer._call_claude_code", claude),
+        patch("app.core.ci_fixer.run_project_tests", AsyncMock(return_value=dict(_PASS_RESULT))),
+        patch("app.core.ci_fixer._snapshot_baseline", snapshots),
+        patch("app.core.ci_fixer._capture_attempt_diff", side_effect=fake_capture),
+        patch("app.core.ci_fixer.soft_gate_enabled", return_value=True),
+    ):
+        result = await attempt_fix(
+            project="klipper",
+            test_file="tests/test_foo.py",
+            test_name="test_bar",
+            error="AssertionError",
+            source_file="app/foo.py",
+        )
+
+    # att-1 error -> continue (test kosulmaz); att-2 pass ama att-1'in error-mid-edit
+    # zayiflatmasi sticky tasindi -> held.
+    assert result["fixed"] is False
+    assert result["held_for_review"] is True
+    assert result["held_scope"] == "cumulative"
+
+
+@pytest.mark.asyncio
+async def test_capture_untracked_weakening_uses_prior_content(tmp_path):
+    """Codex #255-P2(r6/574): run-ici untracked dosya SONRAKI attempt'te zayiflatilirsa
+    _capture_attempt_diff onceki-icerige karsi diffler (silme gorunur). run_untracked_content
+    cache olmadan /dev/null-diff sadece '+' verir, zayiflatma kacar. GERCEK git-repo."""
+    import subprocess
+
+    from app.core.action_review import scan_ci_fixer_diff
+    from app.core.ci_fixer import _capture_attempt_diff, _snapshot_baseline
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*a):
+        subprocess.run(
+            ["git", "-C", str(repo), *a],
+            check=True,
+            capture_output=True,
+            env={
+                **os.environ,
+                "GIT_AUTHOR_NAME": "t",
+                "GIT_AUTHOR_EMAIL": "t@t",
+                "GIT_COMMITTER_NAME": "t",
+                "GIT_COMMITTER_EMAIL": "t@t",
+            },
+        )
+
+    git("init", "-q")
+    (repo / "seed.txt").write_text("x")
+    git("add", "seed.txt")
+    git("commit", "-qm", "seed")
+    base, _ = await _snapshot_baseline(str(repo))
+
+    cache: dict[str, str] = {}
+    tf = repo / "test_new.py"
+
+    # att-1: yeni untracked dosya, assertion'li -> ilk gorus /dev/null (tum icerik '+')
+    tf.write_text("def test_a():\n    assert result == 42\n    assert other == 1\n")
+    diff1 = await _capture_attempt_diff(str(repo), base, set(), cache)
+    assert "test_new.py" in diff1
+    assert scan_ci_fixer_diff(diff1, failing_module="test_new.py")["suspicious"] is False  # ekleme, temiz
+    assert cache["test_new.py"].count("assert") == 2
+
+    # att-2: AYNI dosya zayiflatilir -> onceki-icerige karsi diff (silme gorunur)
+    tf.write_text("def test_a():\n    pass\n")
+    diff2 = await _capture_attempt_diff(str(repo), base, set(), cache)
+    scan2 = scan_ci_fixer_diff(diff2, failing_module="test_new.py")
+    assert scan2["suspicious"] is True  # assertion-drop yakalandi
+    assert "test_assertion_drop" in scan2["signals"]
 
 
 def test_prompt_held_lesson_not_shown_as_passed_example():
