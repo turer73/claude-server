@@ -101,11 +101,13 @@ class TestShellSecurity:
 
     def test_cwd_nonexistent_raises(self, exec, tmp_path):
         from app.exceptions import ShellExecutionError
+
         with pytest.raises(ShellExecutionError):
             exec.validate_cwd(str(tmp_path / "nonexistent"))
 
     def test_cwd_file_not_dir_raises(self, exec, tmp_path):
         from app.exceptions import ShellExecutionError
+
         f = tmp_path / "file.txt"
         f.write_text("x")
         with pytest.raises(ShellExecutionError):
@@ -114,6 +116,7 @@ class TestShellSecurity:
     def test_cwd_dotdot_resolves_and_validates(self, exec, tmp_path):
         """Path traversal in cwd is resolved via realpath; invalid target raises."""
         from app.exceptions import ShellExecutionError
+
         with pytest.raises(ShellExecutionError):
             exec.validate_cwd(str(tmp_path / ".." / ".." / ".." / "nonexistent_xyz"))
 
