@@ -880,11 +880,15 @@ async def test_held_fix_recorded_as_held_not_passed(ci_db, monkeypatch):
 
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
+    async def fake_capture(cwd, baseline_ref, pre_untracked):
+        return _GAMING_DIFF  # attempt-delta supheli
+
     with (
         patch("app.core.ci_fixer._call_claude_code", _mock_claude()),
         patch("app.core.ci_fixer.run_project_tests", AsyncMock(return_value=dict(_PASS_RESULT))),
         patch("app.core.ci_fixer._snapshot_baseline", AsyncMock(return_value=("BASE", set()))),
-        patch("app.core.ci_fixer._review_fix_diff", AsyncMock(return_value=True)),
+        patch("app.core.ci_fixer._capture_attempt_diff", side_effect=fake_capture),
+        patch("app.core.ci_fixer.soft_gate_enabled", return_value=True),
     ):
         result = await attempt_fix(
             project="klipper",
@@ -912,14 +916,12 @@ async def test_cumulative_review_catches_laundering(ci_db, monkeypatch):
 
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
-    snapshots = AsyncMock(side_effect=[("RUN-BASE", set()), ("ATT-1", set()), ("ATT-2", set())])
+    snapshots = AsyncMock(side_effect=[("ATT-1", set()), ("ATT-2", set())])
 
     async def fake_capture(cwd, baseline_ref, pre_untracked):
-        if baseline_ref == "RUN-BASE":
-            return _GAMING_DIFF + _CLEAN_DIFF  # kumulatif: attempt-1 gaming hala tree'de
         if baseline_ref == "ATT-1":
             return _GAMING_DIFF  # attempt-1 delta: supheli AMA testler FAIL -> held tetiklenmez
-        return _CLEAN_DIFF  # attempt-2 delta: temiz -> laundering penceresi
+        return _CLEAN_DIFF  # attempt-2 delta: temiz -> laundering penceresi; BIRLESIM gaming'i icerir
 
     with (
         patch("app.core.ci_fixer._call_claude_code", _mock_claude()),
@@ -1005,26 +1007,28 @@ async def test_cumulative_suspicious_gate_off_is_notify_only(ci_db, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_run_baseline_failure_skips_cumulative_but_not_accept(ci_db, monkeypatch):
-    """Fail-open (pilot-tasarim 4): RUN-baseline snapshot cokerse kumulatif-review
-    DEVRE-DISI kalir (capture yalniz per-attempt icin cagrilir) ama accept BLOKLANMAZ."""
+async def test_prior_retry_runner_artifacts_do_not_pollute_cumulative(ci_db, monkeypatch):
+    """Codex #255-P2(r4): onceki retry'in TEST-KOSUSU tracked dosya mutate ettiyse
+    (snapshot/golden) sonraki attempt'in kumulatif taramasi bundan KIRLENMEMELI.
+    Mekanizma: kumulatif = pre-test attempt-delta'larin birlesimi; her attempt-baseline
+    onceki kosunun artifact'larini yutar -> runner-gurultusu yapisal olarak giremez."""
 
     async def fake_open_ci_db():
         return _NoCloseDB(ci_db)
 
     monkeypatch.setattr("app.core.ci_fixer._open_ci_db", fake_open_ci_db)
 
-    # Ilk cagri = RUN-baseline (patlar) -> fail-open; ikinci = attempt-1 baseline (basarili).
-    snapshots = AsyncMock(side_effect=[RuntimeError("git stash patladi"), ("ATT-1", set())])
-    capture_calls: list[str] = []
+    # att-1: temiz delta + FAIL (runner artifact birakti varsayimi); att-2: temiz delta + PASS.
+    snapshots = AsyncMock(side_effect=[("ATT-1", set()), ("ATT-2", set())])
+    capture_refs: list[str] = []
 
     async def fake_capture(cwd, baseline_ref, pre_untracked):
-        capture_calls.append(baseline_ref)
-        return _CLEAN_DIFF
+        capture_refs.append(baseline_ref)
+        return _CLEAN_DIFF  # Claude-delta'lar temiz; artifact'lar delta'ya giremiyor
 
     with (
         patch("app.core.ci_fixer._call_claude_code", _mock_claude()),
-        patch("app.core.ci_fixer.run_project_tests", AsyncMock(return_value=dict(_PASS_RESULT))),
+        patch("app.core.ci_fixer.run_project_tests", AsyncMock(side_effect=[dict(_FAIL_RESULT), dict(_PASS_RESULT)])),
         patch("app.core.ci_fixer._snapshot_baseline", snapshots),
         patch("app.core.ci_fixer._capture_attempt_diff", side_effect=fake_capture),
         patch("app.core.ci_fixer.soft_gate_enabled", return_value=True),
@@ -1037,10 +1041,9 @@ async def test_run_baseline_failure_skips_cumulative_but_not_accept(ci_db, monke
             source_file="app/foo.py",
         )
 
-    assert result["fixed"] is True  # snapshot-hatasi accept'i bloklamadi
-    assert capture_calls == ["ATT-1"]  # kumulatif capture HIC cagrilmadi (run-baseline yok)
-    rows = await ci_db.fetch_all("SELECT outcome FROM ci_lesson_learned")
-    assert [r["outcome"] for r in rows] == ["passed"]
+    assert result["fixed"] is True  # temiz fix held'lenmedi (gate-ON'da bile)
+    # Capture YALNIZ per-attempt baseline'larla — run-seviyesi/moving-ref capture yok
+    assert capture_refs == ["ATT-1", "ATT-2"]
 
 
 @pytest.mark.asyncio
