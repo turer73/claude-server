@@ -157,7 +157,15 @@ dlq_poison_alert() {
     DATE_VAR="$(date -u +%Y%m%d-%H%M)" \
     python3 <<'PY' 2>>"$LOG_FILE" || true
 import json, os, urllib.request
-KEY = [l.split('=',1)[1].strip() for l in open(os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')).read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
+# #1234: MEMORY_API_KEY .env'de yoksa eski `[...][0]` bos-listede IndexError -> `|| true` ile
+# SESSIZCE yutuluyordu (poison memory-audit-entry kayip; Telegram-alert yukarida ayri, o gider).
+# Fail-LOUD: key yoksa acik-log + graceful-skip (crash yerine).
+_env_path = os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')
+_keys = [l.split('=', 1)[1].strip() for l in open(_env_path).read().splitlines() if l.startswith('MEMORY_API_KEY=')]
+if not _keys:
+    print(f'MEMORY_API_KEY yok ({_env_path}) — poison memory-entry ATLANDI (Telegram-alert gonderildi)')
+    raise SystemExit(0)
+KEY = _keys[0]
 body = json.dumps({
     'type': 'project',
     'name': f"autonomous-spawn-poison-{os.environ['NOTE_ID_VAR']}-{os.environ['DATE_VAR']}",
