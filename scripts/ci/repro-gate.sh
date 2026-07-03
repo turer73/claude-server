@@ -7,6 +7,12 @@
 # merge-BASE'de (fix YOK, sadece test) koş -> FAIL/ERROR bekle. Base'de PASS = test bug'ı YAKALAMIYOR
 # = sahte-doğrulayıcı. İkili-kesin: ya-base'de-fail-eder (gerçek) ya-etmez (yalan).
 #
+# DÜRÜST SINIR (surer #100356 push-back-1): G1 "test BİR-ŞEY yakalıyor mu" (no-op-değil) garantiler
+# AMA "test DOĞRU-YOLU (prod-caller-akışını) modelliyor mu" DEĞİL. Yanlış-yolu-test-eden repro de
+# base'de-fail-edebilir (cwd-naive-fix: git-izolasyonu-test-etti, gerçek-yazma-yolunu-değil ->
+# G1-yeşil-ama-bug-var). G1 no-op-test-sınıfını keser; yanlış-yol-test-sınıfı G4(entry-point-registry,
+# repro GERÇEK-caller'dan-geçmeli) ile kapanır. **G1+G4 = çekirdek-çift, G1-yalnız-YETMEZ.**
+#
 # Ortam değişkenleri: PR_BODY, BASE_SHA, HEAD_SHA. Gerekli: fetch-depth:0 (base+head erişimi).
 set -uo pipefail
 
