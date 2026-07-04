@@ -10,6 +10,10 @@ set -euo pipefail
 
 DB="${COVERAGE_DB:-/opt/linux-ai-server/data/coverage.db}"
 DAYS="${REPORT_DAYS:-30}"
+# #1249: DAYS SQL'e interpolate ediliyor — sayısal-guard (gate-fp-mark run_id-deseniyle tutarlı).
+case "$DAYS" in
+    ''|*[!0-9]*) echo "HATA: REPORT_DAYS sayısal olmalı (verilen: $DAYS)" >&2; exit 1 ;;
+esac
 
 sqlite3 -header -column "$DB" "
 SELECT gate_id,

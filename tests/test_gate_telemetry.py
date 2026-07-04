@@ -193,3 +193,17 @@ def test_report_precision(tmp_path):
     assert "g1-repro" in r.stdout
     assert "0.5" in r.stdout  # precision = 1/(1+1)
     assert "202" in r.stdout  # fail-firing aday-listesinde
+
+
+def test_report_rejects_non_numeric_days(tmp_path):
+    """#1249: REPORT_DAYS SQL-interpolasyonu sayisal-guard'li — injection-girisi fail-loud."""
+    env = _seed_marked_db(tmp_path)
+    r = _run(
+        ["bash", str(REPO_ROOT / "scripts" / "gate-telemetry-report.sh")],
+        {**env, "REPORT_DAYS": "30'); DROP TABLE gate_telemetry;--"},
+    )
+    assert r.returncode == 1
+    assert "REPORT_DAYS" in r.stderr
+    con = sqlite3.connect(tmp_path / "coverage.db")
+    assert con.execute("SELECT COUNT(*) FROM gate_telemetry").fetchone()[0] == 3  # tablo saglam
+    con.close()
