@@ -183,3 +183,120 @@ def test_wrapper_end_to_end_no_promotion(tmp_path):
     assert r.returncode == 0, f"rc={r.returncode} stderr={r.stderr[-400:]} LOG={logtail}"
     assert "hold" in r.stdout  # 2-seed-gate thin-data → hold
     assert MIN_FIRINGS  # sanity: modül-sabiti import-edildi
+
+
+# ── G6b insan-tetikli aktüasyon helper'ları (gh-api fake-shim, CI-otoriter) ──────
+
+_NEED_JQ = bool(_MISSING) or shutil.which("jq") is None
+
+
+def _fake_gh_bin(tmp_path, contexts_start=None):
+    """branch-protection contexts state-dosyası tutan fake-gh (GET/PUT idempotent)."""
+    import json as _json
+
+    state = tmp_path / "contexts.json"
+    state.write_text(_json.dumps(contexts_start or []), encoding="utf-8")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    gh = bindir / "gh"
+    gh.write_text(
+        f'''#!/bin/bash
+STATE="{state.as_posix()}"
+if [ "$2" = "-X" ] && [ "$3" = "PUT" ]; then
+    cat > "$STATE"   # PUT: stdin'i state'e yaz
+else
+    cat "$STATE"     # GET: mevcut contexts
+fi
+''',
+        encoding="utf-8",
+    )
+    gh.chmod(0o755)
+    return bindir, state
+
+
+def _ladder_only_db(tmp_path, rung="non_required"):
+    db = tmp_path / "coverage.db"
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE gate_ladder (gate_id TEXT PRIMARY KEY, rung TEXT, since_ts TEXT, last_eval TEXT, history_json TEXT DEFAULT '[]')"
+    )
+    con.execute("INSERT INTO gate_ladder (gate_id, rung, history_json) VALUES ('g1-repro', ?, '[]')", (rung,))
+    con.commit()
+    con.close()
+    return db
+
+
+def _actuate_env(tmp_path, db, bindir):
+    import os
+
+    return {**os.environ, "COVERAGE_DB": str(db), "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}"}
+
+
+@pytest.mark.skipif(_NEED_JQ, reason="CI-otoriter; bash/sqlite3/jq/python3 gerek")
+def test_promote_requires_human_flag(tmp_path):
+    """Over-reach-guard (§4): --i-am-turgut olmadan REDDEDİLİR, hiçbir-şey değişmez."""
+    db = _ladder_only_db(tmp_path)
+    bindir, _state = _fake_gh_bin(tmp_path)
+    r = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "gate-promote.sh"), "g1-repro"],
+        capture_output=True,
+        text=True,
+        env=_actuate_env(tmp_path, db, bindir),
+        timeout=30,
+    )
+    assert r.returncode == 1
+    assert "i-am-turgut" in r.stderr
+    con = sqlite3.connect(db)
+    assert con.execute("SELECT rung FROM gate_ladder WHERE gate_id='g1-repro'").fetchone()[0] == "non_required"
+    con.close()
+
+
+@pytest.mark.skipif(_NEED_JQ, reason="CI-otoriter; bash/sqlite3/jq/python3 gerek")
+def test_promote_then_demote_updates_rung_and_contexts(tmp_path):
+    """Terfi: rung→required + context-eklendi. Düşürme: rung→non_required + context-çıktı (idempotent)."""
+    import json as _json
+
+    db = _ladder_only_db(tmp_path)
+    bindir, state = _fake_gh_bin(tmp_path)
+    env = _actuate_env(tmp_path, db, bindir)
+
+    r = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "gate-promote.sh"), "g1-repro", "--i-am-turgut"],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+    )
+    assert r.returncode == 0, r.stderr[-300:]
+    con = sqlite3.connect(db)
+    assert con.execute("SELECT rung FROM gate_ladder WHERE gate_id='g1-repro'").fetchone()[0] == "required"
+    con.close()
+    assert _json.loads(state.read_text(encoding="utf-8")) == ["repro-gate"]  # context eklendi
+
+    r = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "gate-demote.sh"), "g1-repro", "--i-am-turgut"],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+    )
+    assert r.returncode == 0, r.stderr[-300:]
+    con = sqlite3.connect(db)
+    assert con.execute("SELECT rung FROM gate_ladder WHERE gate_id='g1-repro'").fetchone()[0] == "non_required"
+    con.close()
+    assert _json.loads(state.read_text(encoding="utf-8")) == []  # context çıktı
+
+
+@pytest.mark.skipif(_NEED_JQ, reason="CI-otoriter; bash/sqlite3/jq/python3 gerek")
+def test_promote_unknown_gate_rejected(tmp_path):
+    db = _ladder_only_db(tmp_path)
+    bindir, _state = _fake_gh_bin(tmp_path)
+    r = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "gate-promote.sh"), "g99-yok", "--i-am-turgut"],
+        capture_output=True,
+        text=True,
+        env=_actuate_env(tmp_path, db, bindir),
+        timeout=30,
+    )
+    assert r.returncode == 1
+    assert "bilinmeyen gate_id" in r.stderr
