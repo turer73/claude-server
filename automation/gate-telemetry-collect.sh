@@ -10,6 +10,11 @@
 # (in-progress conclusion='' → SKIP, watermark ilerlemez → sonraki tick toplar; #100388).
 #
 # Env: COVERAGE_DB, STATE_FILE, REPO, GH_LIMIT (test-edilebilirlik + prod-default).
+#
+# CRON-KURULUM (klipper-deploy, test-runner ritmi):
+#   */30 * * * * /opt/linux-ai-server/automation/gate-telemetry-collect.sh
+# BACKFILL (ilk-kurulumda bir-kez, watermark-yokken geçmişi toplar):
+#   GH_LIMIT=200 /opt/linux-ai-server/automation/gate-telemetry-collect.sh
 
 set -uo pipefail
 
@@ -31,8 +36,8 @@ WATERMARK=0
 [ -f "$STATE_FILE" ] && WATERMARK=$(tr -dc '0-9' < "$STATE_FILE")
 WATERMARK="${WATERMARK:-0}"
 
-# İzlenen gate'ler: "job_adi:gate_id" (pilot: tek satır).
-GATE_JOBS="repro-gate:g1-repro"
+# İzlenen gate'ler: "job_adi:gate_id". G2b: g4-invariant eklendi (tasarım 'G4-gelince-genişler').
+GATE_JOBS="repro-gate:g1-repro g4-invariant:g4-invariant"
 
 RUNS_JSON=$(gh run list --repo "$REPO" --workflow=CI --limit "$GH_LIMIT" \
     --json databaseId,conclusion,headBranch,headSha,createdAt 2>>"$LOG_FILE") || {
@@ -65,13 +70,15 @@ for RUN_ID in $(printf '%s' "$RUNS_JSON" | jq -r 'sort_by(.databaseId) | .[].dat
 
         case "$JC" in
             success)
-                # N/A-skip ayrımı: gate-script success-içinde 'atlandı' basar (tek job-log fetch).
-                JOB_ID=$(printf '%s' "$JOBS_JSON" | jq -r --arg n "$JOB_NAME" \
-                    '.jobs[] | select(.name == $n) | .databaseId' | head -1)
-                if gh run view --repo "$REPO" --job "$JOB_ID" --log 2>>"$LOG_FILE" | grep -q "repro-gate atland"; then
-                    VERDICT="skip_na"
-                else
-                    VERDICT="pass"
+                VERDICT="pass"
+                # N/A-skip ayrımı YALNIZ g1-repro'da (gate-script success-içinde 'atlandı' basar;
+                # g4-invariant her-PR'da koşar, skip_na kavramı yok → log-fetch masrafı da yok).
+                if [ "$GATE_ID" = "g1-repro" ]; then
+                    JOB_ID=$(printf '%s' "$JOBS_JSON" | jq -r --arg n "$JOB_NAME" \
+                        '.jobs[] | select(.name == $n) | .databaseId' | head -1)
+                    if gh run view --repo "$REPO" --job "$JOB_ID" --log 2>>"$LOG_FILE" | grep -q "repro-gate atland"; then
+                        VERDICT="skip_na"
+                    fi
                 fi ;;
             failure) VERDICT="fail" ;;
             *)       VERDICT="" ;;  # cancelled/skipped-job → kayıt-yok
