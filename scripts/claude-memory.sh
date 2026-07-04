@@ -1,7 +1,7 @@
 #!/bin/bash
 # Claude Memory DB v2 — Multi-device query helper
 # Kullanım: claude-memory.sh <komut> [parametreler]
-DB=/opt/linux-ai-server/data/claude_memory.db
+DB="${CLAUDE_MEMORY_DB:-/opt/linux-ai-server/data/claude_memory.db}"  # env-override: G4 invariant-testleri (davranis-ayni)
 
 case "$1" in
   memories|m)
