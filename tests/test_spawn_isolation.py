@@ -227,8 +227,10 @@ def test_guard_denies_traversal_and_failclosed(tmp_path):
     """'..'-traversal normalize-edilip DENY; parse-edilemeyen-input FAIL-CLOSED DENY."""
     wt = tmp_path / "wt-x"
     wt.mkdir()
-    r = _run_guard({"file_path": str(wt) + "/../kacak.txt"}, str(wt))
-    assert r.returncode == 2
+    # DİKKAT: pytest-tmp CI'da /tmp-altında → '..'-hedefi /tmp-istisnasına takılmasın diye
+    # KÖK-altı hedef (ilk-CI dersi: traversal-hedefi izinli-alana denk-gelirse test yanlış-ölçer).
+    r = _run_guard({"file_path": str(wt) + "/../../../../opt/linux-ai-server/kacak.txt"}, str(wt))
+    assert r.returncode == 2, r.stderr[-200:]
     # parse-fail (file_path yok) → deny
     r2 = _run_guard({"baska_alan": 1}, str(wt))
     assert r2.returncode == 2
@@ -260,9 +262,11 @@ def test_per_spawn_settings_generated(tmp_path):
         f'setup_spawn_worktree 42\nmake_spawn_settings "{base_settings.as_posix()}"\necho "SET=$SPAWN_SETTINGS"\ncat "$SPAWN_SETTINGS"',
         env,
     )
-    assert r.returncode == 0, r.stderr[-400:]
+    lib_log = tmp_path / "lib.log"
+    logtail = lib_log.read_text(encoding="utf-8")[-600:] if lib_log.exists() else "(log yok)"
+    assert r.returncode == 0, f"stderr={r.stderr[-300:]} LOG={logtail}"
     out_path = next(line.split("=", 1)[1] for line in r.stdout.splitlines() if line.startswith("SET="))
-    assert out_path.endswith(".spawn-settings.json")
+    assert out_path.endswith(".spawn-settings.json"), f"SPAWN_SETTINGS boş/yanlış: '{out_path}' — LOG={logtail}"
     body = r.stdout.split("\n", r.stdout.splitlines().index("SET=" + out_path) + 1)[-1]
     cfg = _json.loads(body[body.index("{") :])
     allows = cfg["permissions"]["allow"]

@@ -91,9 +91,12 @@ make_spawn_settings() {
     SPAWN_SETTINGS=""
     [ -n "$WT_PATH" ] || return 0   # shared-fallback'te base-settings kalır (eski-davranış)
     local out="$WT_PATH/.spawn-settings.json"
-    if ! jq --arg wt "$WT_PATH" --arg guard "$WRITE_GUARD" '
-        .permissions.allow = [ .permissions.allow[]
-            | sub("^(?<t>Edit|Write)\(//opt/linux-ai-server/\*\*\)$"; "\(.t)(//\($wt | ltrimstr("/"))/**)") ]
+    local wtrel="${WT_PATH#/}"
+    if ! jq --arg wt "$WT_PATH" --arg wtrel "$wtrel" --arg guard "$WRITE_GUARD" '
+        .permissions.allow |= map(
+            if . == "Edit(//opt/linux-ai-server/**)"  then "Edit(//"  + $wtrel + "/**)"
+            elif . == "Write(//opt/linux-ai-server/**)" then "Write(//" + $wtrel + "/**)"
+            else . end)
         | .hooks.PreToolUse = ((.hooks.PreToolUse // []) + [{
             matcher: "Edit|Write|MultiEdit|NotebookEdit",
             hooks: [{type: "command",
