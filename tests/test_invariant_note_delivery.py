@@ -158,6 +158,8 @@ def _h_hook_stop_check_inbox(db: Path, tmp_path: Path) -> None:
 
 
 def _h_hook_session_start(db: Path, tmp_path: Path) -> None:
+    """held AKTİF-listede yok; ONAY-GÖRÜNÜMÜ ('Onay Bekleyen HELD Dispatch') MEŞRUdur —
+    #1222 §4: insana onay-hatırlatması teslim-DEĞİL (ilk-CI-koşum FP'siydi, invariant inceltildi)."""
     out = _run_shell(
         ["bash", str(REPO_ROOT / "scripts" / "hooks" / "session-start.sh")],
         {
@@ -167,15 +169,33 @@ def _h_hook_session_start(db: Path, tmp_path: Path) -> None:
             "HOOK_LOG_DIR": str(tmp_path / "logs"),
         },
     )
-    _assert_delivery(out, "hook:session-start")
+    approval_marker = "Onay Bekleyen HELD Dispatch"
+    delivery_part, _sep, approval_part = out.partition(approval_marker)
+    _assert_delivery(delivery_part, "hook:session-start")
+    # Pozitif-kontrol: held-fixture'lı DB'de onay-hatırlatması GÖRÜNMELİ (o da bir invariant).
+    assert _sep, "hook:session-start: held varken onay-görünümü bölümü hiç gelmedi"
+    assert HELD_MARK in approval_part, "hook:session-start: onay-bölümünde held-başlığı yok"
 
 
 def _h_hook_user_prompt(db: Path, tmp_path: Path) -> None:
-    # Bu hook 'yeni not var mı' state-diff'i yapar: state-dosyası 0'dan başlar → mevcutlar yeni-sayılır.
-    out = _run_shell(
-        ["bash", str(REPO_ROOT / "scripts" / "hooks" / "user-prompt-messages.sh")],
-        {"HOOK_DB": str(db), "HOOK_DEVICE": "klipper", "HOOK_STATE_DIR": str(tmp_path / "state"), "HOOK_LOG_DIR": str(tmp_path / "logs")},
+    """State-diff'li hook: ilk-fire baseline yazar sessiz-çıkar (ilk-CI-koşum dersi) →
+    2-fire: baseline → YENİ aktif+held ekle → ikinci-fire yeni-aktifi surface-eder, held'i ETMEZ.
+    (STATE_DIR, HOOK_LOG_DIR'den türetilir → tmp-izole.)"""
+    env = {"HOOK_DB": str(db), "HOOK_DEVICE": "klipper", "HOOK_LOG_DIR": str(tmp_path / "logs")}
+    script = str(REPO_ROOT / "scripts" / "hooks" / "user-prompt-messages.sh")
+    _run_shell(["bash", script], env)  # fire-1: baseline (sessiz)
+    con = sqlite3.connect(db)
+    con.execute(
+        "INSERT INTO notes (from_device, to_device, title, content, read, status) "
+        f"VALUES ('surer', 'klipper', 'YENI-{ACTIVE_MARK}', 'yeni aktif', 0, 'active')"
     )
+    con.execute(
+        "INSERT INTO notes (from_device, to_device, title, content, read, status) "
+        f"VALUES ('surer', 'klipper', 'YENI-{HELD_MARK}', 'yeni held', 0, 'held')"
+    )
+    con.commit()
+    con.close()
+    out = _run_shell(["bash", script], env)  # fire-2: diff-surface
     _assert_delivery(out, "hook:user-prompt-messages")
 
 
@@ -226,16 +246,20 @@ def _h_cron_daily_summary(db: Path, tmp_path: Path) -> None:
         pytest.skip("port 8420 dolu (lokal canlı-server) — CI'da koşar")
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
+    logs = tmp_path / "logs"
+    logs.mkdir(exist_ok=True)
+    # set -euo: awk log-dosyası-yokken command-substitution'da öldürüyor (ilk-CI-koşum dersi) → boş-log.
+    (logs / "autonomous-claude.log").write_text("", encoding="utf-8")
     try:
-        _run_shell(
+        script_out = _run_shell(
             ["bash", str(REPO_ROOT / "automation" / "autonomous-daily-summary.sh")],
-            {"HOOK_DB": str(db), "HOOK_LOG_DIR": str(tmp_path / "logs")},
+            {"HOOK_DB": str(db), "HOOK_LOG_DIR": str(logs)},
             timeout=60,
         )
     finally:
         srv.shutdown()
     body = b"\n".join(captured).decode("utf-8", errors="replace")
-    assert body, "cron:autonomous-daily-summary: memory-POST yakalanamadı — script çalışmadı mı?"
+    assert body, f"cron:autonomous-daily-summary: memory-POST yakalanamadı — script-çıktısı: {script_out[-500:]}"
     assert "| Hala unread (deferred) | 1 |" in body, (
         f"cron:autonomous-daily-summary: DEFERRED_NOTES held-saydı (1 beklenirdi): {body[:400]}"
     )
