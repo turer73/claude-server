@@ -15,13 +15,16 @@
 # varyantidir. False positive auto-revert dogru commit'i siler — onun
 # yerine sadece raporla, kullanici karar versin.
 #
-# Kullanim: autonomous-spawn-audit.sh <NOTE_ID>
+# Kullanim: autonomous-spawn-audit.sh <NOTE_ID> [SPAWN_REF]
+#   SPAWN_REF (spawn-isolation Faz-1, P2-b): izole-worktree commit'leri /opt-HEAD'i
+#   ilerletmez; verilirse OLD_HEAD..SPAWN_REF taranir (refs/spawn-work/<id>-<nonce>).
 
 set -uo pipefail
 
 NOTE_ID="${1:-}"
+SPAWN_REF="${2:-}"
 if [ -z "$NOTE_ID" ]; then
-    echo "Usage: $0 <NOTE_ID>" >&2
+    echo "Usage: $0 <NOTE_ID> [SPAWN_REF]" >&2
     exit 2
 fi
 
@@ -42,7 +45,16 @@ if [ ! -f "$SPAWN_HEAD_FILE" ]; then
 fi
 
 OLD_HEAD=$(cat "$SPAWN_HEAD_FILE" 2>/dev/null | tr -d '[:space:]')
-NEW_HEAD=$(git -C "$REPO" rev-parse HEAD 2>/dev/null)
+# Faz-1 (P2-b): spawn-ref verildiyse tarama-ucu O'dur (izole-commit /opt-HEAD'de gorunmez);
+# ref cozulemezse eski-davranisa dus (log'lu — sessiz-degil).
+if [ -n "$SPAWN_REF" ] && git -C "$REPO" rev-parse --verify --quiet "$SPAWN_REF" >/dev/null 2>&1; then
+    NEW_HEAD=$(git -C "$REPO" rev-parse "$SPAWN_REF" 2>/dev/null)
+    SCAN_TIP="$SPAWN_REF"
+else
+    [ -n "$SPAWN_REF" ] && log "spawn-ref '$SPAWN_REF' cozulemedi — /opt-HEAD'e dusuldu (#$NOTE_ID)"
+    NEW_HEAD=$(git -C "$REPO" rev-parse HEAD 2>/dev/null)
+    SCAN_TIP="HEAD"
+fi
 
 if [ -z "$OLD_HEAD" ] || [ -z "$NEW_HEAD" ]; then
     log "missing HEAD references for #$NOTE_ID"
@@ -57,7 +69,7 @@ if [ "$OLD_HEAD" = "$NEW_HEAD" ]; then
 fi
 
 # Yeni commit hashleri (chronological - eski once)
-COMMITS=$(git -C "$REPO" log --format="%H" --reverse "${OLD_HEAD}..HEAD" 2>/dev/null)
+COMMITS=$(git -C "$REPO" log --format="%H" --reverse "${OLD_HEAD}..${SCAN_TIP}" 2>/dev/null)
 if [ -z "$COMMITS" ]; then
     log "no new commits #$NOTE_ID (range empty)"
     rm -f "$SPAWN_HEAD_FILE"

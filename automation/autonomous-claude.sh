@@ -44,6 +44,12 @@ AUTONOMOUS_BYPASS_CLASSIFY="${AUTONOMOUS_BYPASS_CLASSIFY:-0}"
 PENDING_PLANS_DIR="${PENDING_PLANS_DIR:-/opt/linux-ai-server/data/hook-state/pending-plans}"
 PLANNER_MAX_TURNS="${PLANNER_MAX_TURNS:-3}"
 
+# ── Spawn-isolation Faz-1 (docs/spawn-isolation-design.md §2.2-2.5; 6-kirlilik kök-fix'i) ──
+# Çekirdek _spawn-worktree-lib.sh'te (izole-test-edilebilir). Env: SPAWN_REPO_ROOT /
+# SPAWN_WT_BASE / SPAWN_ISOLATION (0=acil-rollback). Fallback CRITICAL-emit'li (§2.5).
+# shellcheck source=/dev/null
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_spawn-worktree-lib.sh"
+
 mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$THROTTLE_FILE")" "$PENDING_PLANS_DIR" 2>/dev/null || true
 
 # Max-plan ABONELİK kimliğini zorla: ANTHROPIC_API_KEY set'liyken claude CLI pay-as-you-go
@@ -396,9 +402,17 @@ handle_actionable() {
     log "ACTIONABLE route #$NOTE_ID — spawn Claude (Max plan, $MODEL, allowlist)"
     date +%s > "$THROTTLE_FILE"
 
-    # P0.5: spawn oncesi git HEAD'i kaydet — audit script post-spawn diff icin kullanir
+    # Spawn-isolation Faz-1: nonce-worktree kur (fail → shared-fallback + CRITICAL, §2.5).
+    setup_spawn_worktree "$NOTE_ID"
+
+    # P0.5: spawn oncesi git HEAD'i kaydet — audit script post-spawn diff icin kullanir.
+    # Worktree-modda base=WT_BASE_SHA (audit spawn-ref'le bunu kıyaslar, P2-b).
     mkdir -p /opt/linux-ai-server/data/hook-state 2>/dev/null || true
-    git -C /opt/linux-ai-server rev-parse HEAD > "/opt/linux-ai-server/data/hook-state/spawn-head-${NOTE_ID}.txt" 2>/dev/null || true
+    if [ -n "$WT_BASE_SHA" ]; then
+        printf '%s\n' "$WT_BASE_SHA" > "/opt/linux-ai-server/data/hook-state/spawn-head-${NOTE_ID}.txt" 2>/dev/null || true
+    else
+        git -C "$SPAWN_REPO_ROOT" rev-parse HEAD > "/opt/linux-ai-server/data/hook-state/spawn-head-${NOTE_ID}.txt" 2>/dev/null || true
+    fi
 
     local prompt spawn_log note_nonce from_safe title_safe
     # P1#4 (+Codex r2): TUM not verisi (from/title/content) GUVENILMEZ -> hepsini
@@ -470,20 +484,29 @@ Result: <bir-iki cumle>"
     # gormekle birlikte guardrails "sadece bu noteu isle, baska hicbir
     # seye dokunma" diyor.
     # GAP-1 item-D: spawn'in not-yazimlari otonom-key kullansin (env-first) -> A-2 origin-tag.
-    MEMORY_API_KEY="$(get_key_autonomous)" \
-    timeout -k 30 "$SPAWN_TIMEOUT" \
-    claude -p "$prompt" \
-        --append-system-prompt "$(cat "$GUARDRAILS")" \
-        --settings "$SETTINGS_FILE" \
-        --output-format json \
-        --model "$MODEL" \
-        < /dev/null \
-        > "$spawn_log" 2>&1
+    # Spawn-isolation Faz-1: worktree varsa spawn ORADA koşar (subshell-cd; commit'ler
+    # worktree'ye gider, /opt-master divergence'ı biter). WT yoksa eski shared-davranış.
+    (
+        [ -n "$WT_PATH" ] && cd "$WT_PATH"
+        MEMORY_API_KEY="$(get_key_autonomous)" \
+        timeout -k 30 "$SPAWN_TIMEOUT" \
+        claude -p "$prompt" \
+            --append-system-prompt "$(cat "$GUARDRAILS")" \
+            --settings "$SETTINGS_FILE" \
+            --output-format json \
+            --model "$MODEL" \
+            < /dev/null \
+            > "$spawn_log" 2>&1
+    )
     local rc=$?
     set -e
     [ "$rc" -eq 124 ] && log "spawn TIMEOUT (${SPAWN_TIMEOUT}s) — hang-korumasi devrede, fail-path'e akiyor"
 
-    log "spawn complete: note #$NOTE_ID rc=$rc log=$spawn_log"
+    # Spawn-isolation Faz-1: commit'leri koru (refs/spawn-work/) + worktree'yi kaldır.
+    # rc'den BAĞIMSIZ (fail'li spawn'ın yarım-commit'i de korunur — adli-inceleme değeri).
+    preserve_and_cleanup_worktree "$NOTE_ID"
+
+    log "spawn complete: note #$NOTE_ID rc=$rc log=$spawn_log wt_ref=${SPAWN_WORK_REF:-—}"
 
     if [ "$rc" -eq 0 ]; then
         # Tier 3: Ollama summarizer — spawn output'tan 3-cumle ozet, memory entry
@@ -496,8 +519,10 @@ Result: <bir-iki cumle>"
         fi
         # P0.5: Passive audit — spawn'in yarattigi commit'leri sasirtici pattern icin
         # incele, suspicious ise memory + Telegram alert. Auto-revert YOK.
+        # Faz-1 (P2-b): izole-commit /opt-HEAD'i ilerletmez -> audit'e spawn-ref gecir;
+        # audit ref-verilmisse OLD_HEAD..REF diff'ini tarar (bkz. spawn-audit.sh).
         bash /opt/linux-ai-server/automation/autonomous-spawn-audit.sh \
-            "$NOTE_ID" >> "$LOG_FILE" 2>&1 9>&- &
+            "$NOTE_ID" "${SPAWN_WORK_REF:-}" >> "$LOG_FILE" 2>&1 9>&- &
         log "audit spawned (background) for #$NOTE_ID"
         # P1.6: Threat indicator scanner — spawn_log icinde credential read,
         # exfil, persistence, lateral, anti-forensic, reverse shell pattern'leri.
