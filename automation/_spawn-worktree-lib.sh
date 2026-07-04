@@ -90,6 +90,12 @@ make_spawn_settings() {
     local base_settings="$1"
     SPAWN_SETTINGS=""
     [ -n "$WT_PATH" ] || return 0   # shared-fallback'te base-settings kalır (eski-davranış)
+    # Codex P2-b: guard-script yoksa/okunamıyorsa settings ÜRETME (hook runtime'da patlar =
+    # belirsiz-davranış/fail-open-riski) → FAIL → caller shared-fallback'e düşer (fail-closed).
+    if [ ! -f "$WRITE_GUARD" ] || [ ! -r "$WRITE_GUARD" ]; then
+        log "CRITICAL: write-guard bulunamadı/okunamıyor: $WRITE_GUARD — settings üretilmedi"
+        return 1
+    fi
     local out="$WT_PATH/.spawn-settings.json"
     local wtrel="${WT_PATH#/}"
     if ! jq --arg wt "$WT_PATH" --arg wtrel "$wtrel" --arg guard "$WRITE_GUARD" '

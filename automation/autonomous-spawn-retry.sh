@@ -94,6 +94,10 @@ mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 log() { printf '[%s] %s\n' "$(ts)" "$*" >> "$LOG_FILE"; }
 
+# Codex-P1 (PR#290): DLQ-retry-spawn'lari da IZOLE kosmali — ayni lib, ayni sarmal
+# (aksi-halde 15dk-cron retry'lari /opt'ta izolasyonsuz = kirlilik-yeniden-acilir).
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_spawn-worktree-lib.sh"
+
 # ---------- Lock ----------
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
@@ -254,17 +258,37 @@ Result: <bir-iki cumle>"
     _retry_env="${HOOK_ENV_FILE:-/opt/linux-ai-server/.env}"
     _retry_key=$(grep '^MEMORY_API_KEY_AUTONOMOUS=' "$_retry_env" 2>/dev/null | cut -d= -f2- | tr -d '"' | head -c 200)
     [ -z "$_retry_key" ] && _retry_key=$(grep '^MEMORY_API_KEY=' "$_retry_env" 2>/dev/null | cut -d= -f2- | tr -d '"' | head -c 200)
-    MEMORY_API_KEY="$_retry_key" \
-    timeout -k 30 "$SPAWN_TIMEOUT" \
-    claude -p "$prompt" \
-        --append-system-prompt "$(cat "$GUARDRAILS")" \
-        --settings "$SETTINGS_FILE" \
-        --output-format json \
-        --model "$MODEL" \
-        < /dev/null \
-        > "$spawn_log" 2>&1
+    # Codex-P1: retry-spawn'i da worktree-izole (autonomous-claude.sh ile birebir-desen).
+    setup_spawn_worktree "$note_id"
+    if [ -n "$WT_PATH" ]; then
+        if ! make_spawn_settings "$SETTINGS_FILE"; then
+            preserve_and_cleanup_worktree "$note_id"
+            _wt_fallback "$note_id" "retry: per-spawn settings FAIL"
+        fi
+    fi
+    if [ -n "$WT_PATH" ]; then
+        prompt="$prompt
+
+=== CALISMA-DIZINI (IZOLE-WORKTREE) ===
+Su-an IZOLE git-worktree'desin: $WT_PATH (cwd olarak ayarlandi). TUM degisiklikler/commit'ler
+BU dizinde (relative-path). /opt/linux-ai-server'a YAZMA — write-guard reddeder."
+    fi
+    (
+        [ -n "$WT_PATH" ] && cd "$WT_PATH"
+        MEMORY_API_KEY="$_retry_key" \
+        timeout -k 30 "$SPAWN_TIMEOUT" \
+        claude -p "$prompt" \
+            --append-system-prompt "$(cat "$GUARDRAILS")" \
+            --settings "${SPAWN_SETTINGS:-$SETTINGS_FILE}" \
+            --output-format json \
+            --model "$MODEL" \
+            < /dev/null \
+            > "$spawn_log" 2>&1
+    )
     local rc=$?
     set -e
+    # Commit-koruma + worktree-temizlik (rc-bagimsiz; fail'li retry'in yarim-isi de korunur).
+    preserve_and_cleanup_worktree "$note_id"
 
     [ "$rc" -eq 124 ] && log "retry spawn TIMEOUT (${SPAWN_TIMEOUT}s) — hang-korumasi, fail-path'e akiyor"
     log "retry spawn done: note=#$note_id rc=$rc log=$spawn_log"
