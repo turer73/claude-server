@@ -227,10 +227,11 @@ def test_guard_denies_traversal_and_failclosed(tmp_path):
     """'..'-traversal normalize-edilip DENY; parse-edilemeyen-input FAIL-CLOSED DENY."""
     wt = tmp_path / "wt-x"
     wt.mkdir()
-    # DİKKAT: pytest-tmp CI'da /tmp-altında → '..'-hedefi /tmp-istisnasına takılmasın diye
-    # KÖK-altı hedef (ilk-CI dersi: traversal-hedefi izinli-alana denk-gelirse test yanlış-ölçer).
-    r = _run_guard({"file_path": str(wt) + "/../../../../opt/linux-ai-server/kacak.txt"}, str(wt))
-    assert r.returncode == 2, r.stderr[-200:]
+    # DİKKAT (2×CI-dersi): pytest-tmp CI'da /tmp-altında — wt-göreli '..'-zinciri kaç-seviye
+    # olursa-olsun /tmp-istisnasında kalabiliyor → traversal'ı /tmp'den BAĞIMSIZ kurgula:
+    # '..'-içeren mutlak-yol, normalize → /opt/... → DENY (realpath-çözümü yine test-edilir).
+    r = _run_guard({"file_path": "/opt/linux-ai-server/../linux-ai-server/kacak.txt"}, str(wt))
+    assert r.returncode == 2, f"rc={r.returncode} stderr={r.stderr[-200:]}"
     # parse-fail (file_path yok) → deny
     r2 = _run_guard({"baska_alan": 1}, str(wt))
     assert r2.returncode == 2
