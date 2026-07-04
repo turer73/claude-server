@@ -161,6 +161,7 @@ def test_wrapper_end_to_end_no_promotion(tmp_path):
     }
     import os
 
+    log_path = tmp_path / "g6.log"
     r = subprocess.run(
         ["bash", str(REPO_ROOT / "automation" / "gate-ladder-eval.sh")],
         capture_output=True,
@@ -168,6 +169,7 @@ def test_wrapper_end_to_end_no_promotion(tmp_path):
         env={**os.environ, **env},
         timeout=60,
     )
-    assert r.returncode == 0, r.stderr[-400:]
+    logtail = log_path.read_text(encoding="utf-8")[-800:] if log_path.exists() else "(log yok)"
+    assert r.returncode == 0, f"rc={r.returncode} stderr={r.stderr[-400:]} LOG={logtail}"
     assert "hold" in r.stdout  # 2-seed-gate thin-data → hold
     assert MIN_FIRINGS  # sanity: modül-sabiti import-edildi

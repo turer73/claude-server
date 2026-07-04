@@ -28,7 +28,8 @@ COVERAGE_DB="$DB" bash "$SELF_DIR/../scripts/migrate-gate-ladder.sh" >/dev/null 
     log "gate_ladder migration FAIL"; exit 2; }
 
 # Öneri-raporunu üret (python-çekirdek gate_ladder'ı da günceller: last_eval + history).
-REPORT=$(COVERAGE_DB="$DB" REPORT_DAYS="$DAYS" python3 -c "
+# PYTHONIOENCODING: rapor emoji+Türkçe içerir; CI-locale ASCII ise print UnicodeEncodeError verir.
+REPORT=$(COVERAGE_DB="$DB" REPORT_DAYS="$DAYS" PYTHONIOENCODING=utf-8 python3 -c "
 import os, sqlite3, sys
 sys.path.insert(0, '$SELF_DIR')
 from gate_ladder_eval import run_eval, format_report, production_stats
