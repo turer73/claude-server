@@ -250,10 +250,13 @@ def _h_cron_daily_summary(db: Path, tmp_path: Path) -> None:
     logs.mkdir(exist_ok=True)
     # set -euo: awk log-dosyası-yokken command-substitution'da öldürüyor (ilk-CI-koşum dersi) → boş-log.
     (logs / "autonomous-claude.log").write_text("", encoding="utf-8")
+    # POST-bloğu MEMORY_API_KEY'i env-dosyasından okur (2. CI-koşum dersi: /opt/.env yok → FileNotFoundError).
+    env_file = tmp_path / "test.env"
+    env_file.write_text("MEMORY_API_KEY=test-key\n", encoding="utf-8")
     try:
         script_out = _run_shell(
             ["bash", str(REPO_ROOT / "automation" / "autonomous-daily-summary.sh")],
-            {"HOOK_DB": str(db), "HOOK_LOG_DIR": str(logs)},
+            {"HOOK_DB": str(db), "HOOK_LOG_DIR": str(logs), "HOOK_ENV_FILE": str(env_file)},
             timeout=60,
         )
     finally:
