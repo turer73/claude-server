@@ -181,3 +181,96 @@ echo "REF=$SPAWN_WORK_REF"
     assert ra.returncode == 0, ra.stderr[-300:]
     log = audit_log.read_text(encoding="utf-8")
     assert "SUSPICIOUS" in log, f"audit sensitive-commit'i yakalamadı: {log[-400:]}"
+
+
+# ── Faz-2 (P2-a): write-guard hook + per-spawn settings ─────────────────────────
+
+GUARD = REPO_ROOT / "automation" / "spawn-write-guard.sh"
+_NEED_JQ = bool(_MISSING) or shutil.which("jq") is None
+
+
+def _run_guard(tool_input: dict, wt: str) -> subprocess.CompletedProcess[str]:
+    import json as _json
+
+    return subprocess.run(
+        ["bash", str(GUARD)],
+        input=_json.dumps({"tool_name": "Write", "tool_input": tool_input}),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**os.environ, "SPAWN_WT_PATH": wt},
+    )
+
+
+@pytest.mark.skipif(_NEED_JQ, reason="bash/git/jq gerek")
+def test_guard_denies_outside_worktree(tmp_path):
+    """KRİTER-1 (P2-a çekirdek): worktree-DIŞI absolute-yazma DENY (exit 2 + mesaj)."""
+    wt = tmp_path / "wt-x"
+    wt.mkdir()
+    r = _run_guard({"file_path": "/opt/linux-ai-server/app/foo.py"}, str(wt))
+    assert r.returncode == 2
+    assert "DENY" in r.stderr
+    assert "worktree" in r.stderr
+
+
+@pytest.mark.skipif(_NEED_JQ, reason="bash/git/jq gerek")
+def test_guard_allows_inside_worktree_and_tmp(tmp_path):
+    wt = tmp_path / "wt-x"
+    wt.mkdir()
+    assert _run_guard({"file_path": str(wt / "app" / "foo.py")}, str(wt)).returncode == 0
+    assert _run_guard({"file_path": "gorece/dosya.py"}, str(wt)).returncode == 0  # relative → wt-içi
+    assert _run_guard({"file_path": "/tmp/calisma.txt"}, str(wt)).returncode == 0  # tmp-paritesi
+
+
+@pytest.mark.skipif(_NEED_JQ, reason="bash/git/jq gerek")
+def test_guard_denies_traversal_and_failclosed(tmp_path):
+    """'..'-traversal normalize-edilip DENY; parse-edilemeyen-input FAIL-CLOSED DENY."""
+    wt = tmp_path / "wt-x"
+    wt.mkdir()
+    r = _run_guard({"file_path": str(wt) + "/../kacak.txt"}, str(wt))
+    assert r.returncode == 2
+    # parse-fail (file_path yok) → deny
+    r2 = _run_guard({"baska_alan": 1}, str(wt))
+    assert r2.returncode == 2
+    # SPAWN_WT_PATH tanımsız → deny
+    import json as _json
+
+    r3 = subprocess.run(
+        ["bash", str(GUARD)],
+        input=_json.dumps({"tool_input": {"file_path": "/tmp/x"}}),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={k: v for k, v in os.environ.items() if k != "SPAWN_WT_PATH"},
+    )
+    assert r3.returncode == 2
+
+
+@pytest.mark.skipif(_NEED_JQ, reason="bash/git/jq gerek")
+def test_per_spawn_settings_generated(tmp_path):
+    """Faz-2 settings-üretimi: /opt-Edit/Write-allow'ları worktree'ye map'lenir + hook-enjekte;
+    base-dosya DEĞİŞMEZ."""
+    import json as _json
+
+    repo = _make_sim_repo(tmp_path)
+    base_settings = REPO_ROOT / "automation" / "autonomous-claude-settings.json"
+    base_before = base_settings.read_text(encoding="utf-8")
+    env = {**_lib_env(tmp_path, repo), "WRITE_GUARD": str(GUARD)}
+    r = _run_lib(
+        f'setup_spawn_worktree 42\nmake_spawn_settings "{base_settings.as_posix()}"\necho "SET=$SPAWN_SETTINGS"\ncat "$SPAWN_SETTINGS"',
+        env,
+    )
+    assert r.returncode == 0, r.stderr[-400:]
+    out_path = next(line.split("=", 1)[1] for line in r.stdout.splitlines() if line.startswith("SET="))
+    assert out_path.endswith(".spawn-settings.json")
+    body = r.stdout.split("\n", r.stdout.splitlines().index("SET=" + out_path) + 1)[-1]
+    cfg = _json.loads(body[body.index("{") :])
+    allows = cfg["permissions"]["allow"]
+    assert not any(a == "Edit(//opt/linux-ai-server/**)" or a == "Write(//opt/linux-ai-server/**)" for a in allows), (
+        "/opt Edit/Write-allow hâlâ duruyor — daraltma başarısız"
+    )
+    assert any(a.startswith("Edit(//") and "spawn-42-" in a for a in allows)
+    hooks = cfg["hooks"]["PreToolUse"]
+    assert any("spawn-write-guard" in h["hooks"][0]["command"] for h in hooks)
+    assert any("SPAWN_WT_PATH=" in h["hooks"][0]["command"] for h in hooks)
+    assert base_settings.read_text(encoding="utf-8") == base_before  # base-dosya dokunulmadı

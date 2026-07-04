@@ -77,3 +77,35 @@ preserve_and_cleanup_worktree() {
     git -C "$SPAWN_REPO_ROOT" worktree prune >>"$LOG_FILE" 2>&1 || true
     WT_PATH=""
 }
+
+# ── Faz-2 (P2-a): per-spawn settings — Edit/Write-allow'u worktree'ye daralt + deny-hook ──
+# Base-settings'teki "Edit(//opt/...)" / "Write(//opt/...)" izinleri worktree-eşdeğerine
+# map'lenir + PreToolUse write-guard-hook'u enjekte edilir (çift-katman: permission-daraltma
+# + deterministik-hook; hook absolute-path'i cwd'den bağımsız yakalar).
+# Üretilen dosya WORKTREE-İÇİNDE (.spawn-settings.json) → cleanup'la otomatik-gider.
+SPAWN_SETTINGS=""
+WRITE_GUARD="${WRITE_GUARD:-/opt/linux-ai-server/automation/spawn-write-guard.sh}"
+
+make_spawn_settings() {
+    local base_settings="$1"
+    SPAWN_SETTINGS=""
+    [ -n "$WT_PATH" ] || return 0   # shared-fallback'te base-settings kalır (eski-davranış)
+    local out="$WT_PATH/.spawn-settings.json"
+    if ! jq --arg wt "$WT_PATH" --arg guard "$WRITE_GUARD" '
+        .permissions.allow = [ .permissions.allow[]
+            | sub("^(?<t>Edit|Write)\(//opt/linux-ai-server/\*\*\)$"; "\(.t)(//\($wt | ltrimstr("/"))/**)") ]
+        | .hooks.PreToolUse = ((.hooks.PreToolUse // []) + [{
+            matcher: "Edit|Write|MultiEdit|NotebookEdit",
+            hooks: [{type: "command",
+                     command: ("SPAWN_WT_PATH=" + ($wt | @sh) + " bash " + ($guard | @sh))}]
+          }])
+    ' "$base_settings" > "$out" 2>>"$LOG_FILE"; then
+        # Settings-üretimi FAIL → izolasyonsuz-settings'le devam ETME riski yerine
+        # worktree'yi bırakıp shared-fallback'e düş (CRITICAL-emit'li, §2.5-tutarlı).
+        log "CRITICAL: per-spawn settings üretimi FAIL — base-settings + shared'a düşülüyor"
+        SPAWN_SETTINGS=""
+        return 1
+    fi
+    SPAWN_SETTINGS="$out"
+    log "per-spawn settings hazır: $out (Edit/Write→worktree + write-guard-hook)"
+}

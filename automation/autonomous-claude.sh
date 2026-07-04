@@ -404,6 +404,14 @@ handle_actionable() {
 
     # Spawn-isolation Faz-1: nonce-worktree kur (fail → shared-fallback + CRITICAL, §2.5).
     setup_spawn_worktree "$NOTE_ID"
+    # Faz-2 (P2-a): per-spawn settings (Edit/Write→worktree + write-guard-hook). Üretim
+    # FAIL ederse izolasyonsuz-worktree'yle devam ETMEyiz — temizle, shared'a düş (emit'li).
+    if [ -n "$WT_PATH" ]; then
+        if ! make_spawn_settings "$SETTINGS_FILE"; then
+            preserve_and_cleanup_worktree "$NOTE_ID"
+            _wt_fallback "$NOTE_ID" "per-spawn settings FAIL"
+        fi
+    fi
 
     # P0.5: spawn oncesi git HEAD'i kaydet — audit script post-spawn diff icin kullanir.
     # Worktree-modda base=WT_BASE_SHA (audit spawn-ref'le bunu kıyaslar, P2-b).
@@ -492,7 +500,7 @@ Result: <bir-iki cumle>"
         timeout -k 30 "$SPAWN_TIMEOUT" \
         claude -p "$prompt" \
             --append-system-prompt "$(cat "$GUARDRAILS")" \
-            --settings "$SETTINGS_FILE" \
+            --settings "${SPAWN_SETTINGS:-$SETTINGS_FILE}" \
             --output-format json \
             --model "$MODEL" \
             < /dev/null \
