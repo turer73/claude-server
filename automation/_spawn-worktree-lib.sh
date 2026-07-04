@@ -37,7 +37,7 @@ setup_spawn_worktree() {
     [ "$SPAWN_ISOLATION" = "1" ] || { log "spawn-isolation KAPALI (env) — shared-checkout"; return 0; }
     WT_NONCE="$(date +%s)-$$"
     local target="$SPAWN_WT_BASE/spawn-${note_id}-${WT_NONCE}"
-    mkdir -p "$SPAWN_WT_BASE" 2>>"$LOG_FILE" || { _wt_fallback "$note_id" "wt-base mkdir FAIL"; return 0; }
+    mkdir -p "$SPAWN_WT_BASE" 2>>"$LOG_FILE" || { _wt_fallback "$note_id" "wt-base mkdir FAIL (fix: install.sh pre-create / sudo mkdir+chown klipperos $SPAWN_WT_BASE — #100422)"; return 0; }
     # P2-c stale-repair: bu-note'un önceki (kesik-retry) worktree'lerini temizle.
     local st
     for st in "$SPAWN_WT_BASE/spawn-${note_id}-"*; do

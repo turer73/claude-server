@@ -45,6 +45,11 @@ mkdir -p /var/lib/linux-ai-server
 mkdir -p /var/log/linux-ai-server
 mkdir -p /var/AI-stump/agents
 mkdir -p /etc/linux-ai-server
+# Spawn-isolation worktree-base (Faz-1, #100422 prod-verify bulgusu): /opt root-owned ->
+# klipperos runtime'da mkdir EDEMEZ -> her-spawn shared-fallback olurdu (izolasyon-devre-disi,
+# fail-loud'lu ama islevsiz). Root-installer pre-create + chown = kalici-cozum.
+mkdir -p /opt/linux-ai-server-worktrees
+chown klipperos:klipperos /opt/linux-ai-server-worktrees 2>/dev/null || true
 
 # Copy files — replacement semantics (rm-rf + cp -rT): `cp -r X/ dest/` dest VARSA GNU-cp'de
 # dest/X nesteler → upgrade'de stale kod kalır (Codex :28/:63). Kaynak = $SRC_DIR (checkout).
