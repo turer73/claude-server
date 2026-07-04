@@ -193,3 +193,11 @@ def test_report_precision(tmp_path):
     assert "g1-repro" in r.stdout
     assert "0.5" in r.stdout  # precision = 1/(1+1)
     assert "202" in r.stdout  # fail-firing aday-listesinde
+
+
+def test_report_days_rejects_non_numeric(tmp_path):
+    """#1249: REPORT_DAYS sayısal-olmayan değerde rc!=0 + hata mesajı (SQL injection guard)."""
+    env = {**_seed_marked_db(tmp_path), "REPORT_DAYS": "30; DROP TABLE gate_telemetry"}
+    r = _run(["bash", str(REPO_ROOT / "scripts" / "gate-telemetry-report.sh")], env)
+    assert r.returncode != 0
+    assert "geçersiz" in r.stderr

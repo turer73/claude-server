@@ -150,8 +150,14 @@ fi
 
 # Memory'e yaz
 RESP=$(SUMMARY="$SUMMARY_CONTENT" SLUG="$SLUG" DATE="$DATE" python3 <<'PY'
-import json, os, urllib.request
-KEY = [l.split('=',1)[1].strip() for l in open(os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')).read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
+import json, os, sys, urllib.request
+# #1248: KEY=[...][0] cıplak-kopyası IndexError → #1234-fix deseni (length-check + stderr-log + SystemExit-0)
+_env_path = os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')
+_keys = [l.split('=', 1)[1].strip() for l in open(_env_path).read().splitlines() if l.startswith('MEMORY_API_KEY=')]
+if not _keys:
+    print(f'MEMORY_API_KEY yok ({_env_path}) — daily-summary ATLANDI', file=sys.stderr)
+    raise SystemExit(0)
+KEY = _keys[0]
 body = json.dumps({
     'type': 'project',
     'name': os.environ['SLUG'],

@@ -10,6 +10,8 @@ set -euo pipefail
 
 DB="${COVERAGE_DB:-/opt/linux-ai-server/data/coverage.db}"
 DAYS="${REPORT_DAYS:-30}"
+# Numeric guard: lokal-CLI; fp-mark'taki run_id-guard ile tutarlı desen (#1249)
+[[ "$DAYS" =~ ^[0-9]+$ ]] || { echo "REPORT_DAYS geçersiz: '$DAYS' (yalnız sayısal)" >&2; exit 1; }
 
 sqlite3 -header -column "$DB" "
 SELECT gate_id,
