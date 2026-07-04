@@ -458,12 +458,11 @@ def handle_workspace_note_list(arguments: dict[str, Any]) -> str:
 
 
 def handle_memory_context(arguments: dict[str, Any]) -> str:
-    import sqlite3
+    from app.db.data_layer import get_conn
 
     db = "/opt/linux-ai-server/data/claude_memory.db"
     try:
-        conn = sqlite3.connect(db)
-        conn.row_factory = sqlite3.Row
+        conn = get_conn(db)  # P1-a: busy_timeout+WAL+Row
         c = conn.cursor()
         result = {}
 
@@ -500,14 +499,13 @@ def handle_memory_context(arguments: dict[str, Any]) -> str:
 
 
 def handle_memory_query(arguments: dict[str, Any]) -> str:
-    import sqlite3
+    from app.db.data_layer import get_conn
 
     sql = arguments.get("sql", "")
     if not sql.strip().upper().startswith("SELECT"):
         return json.dumps({"error": "Only SELECT queries allowed"})
     try:
-        conn = sqlite3.connect("/opt/linux-ai-server/data/claude_memory.db")
-        conn.row_factory = sqlite3.Row
+        conn = get_conn("/opt/linux-ai-server/data/claude_memory.db")  # P1-a: busy_timeout+WAL+Row
         c = conn.cursor()
         c.execute(sql)
         rows = [dict(r) for r in c.fetchall()]

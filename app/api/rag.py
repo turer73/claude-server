@@ -13,6 +13,7 @@ import requests
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from app.api.memory import verify_key
+from app.db.data_layer import get_conn
 
 QDRANT_URL = "http://localhost:6333"
 OLLAMA_URL = "http://localhost:11434"
@@ -221,7 +222,7 @@ def health():
         q = requests.get(f"{QDRANT_URL}/collections/{COLLECTION}", timeout=5).json()
         o = requests.get(f"{OLLAMA_URL}/api/version", timeout=5).json()
         _init_metrics_db()  # Idempotent — CI/fresh-install path icin garanti
-        conn = sqlite3.connect(METRICS_DB, timeout=2)
+        conn = get_conn(METRICS_DB, busy_timeout_ms=2000)  # P1-a: timeout=2 parite
         total_queries = conn.execute("SELECT COUNT(*) FROM rag_queries").fetchone()[0]
         conn.close()
         return {
@@ -372,7 +373,7 @@ def metrics(days: int = Query(30, ge=1, le=365)):
     """RAG kullanim metric ozeti (son N gun)"""
     since = int(time.time()) - days * 86400
     _init_metrics_db()  # Idempotent — bos DB'de tabloyu garanti et
-    conn = sqlite3.connect(METRICS_DB, timeout=5)
+    conn = get_conn(METRICS_DB, busy_timeout_ms=5000)  # P1-a: timeout=5 parite
     cur = conn.cursor()
 
     # Toplam istatistik

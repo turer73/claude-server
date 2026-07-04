@@ -36,6 +36,7 @@ from app.api import claude_code as cc_module
 from app.api import rag as rag_module
 from app.api.memory import verify_key
 from app.core.research_agent import ResearchAgent
+from app.db.data_layer import get_conn
 from app.models.schemas import ResearchConfig, ResearchReport
 
 MEMORY_DB = "/opt/linux-ai-server/data/claude_memory.db"
@@ -86,8 +87,7 @@ def _fts_q(q: str) -> str:
 
 
 def _discovery_chunks(question: str, limit: int = 8) -> list[dict[str, Any]]:
-    db = sqlite3.connect(MEMORY_DB, timeout=3)
-    db.row_factory = sqlite3.Row
+    db = get_conn(MEMORY_DB, busy_timeout_ms=3000)  # P1-a: timeout=3 parite (Row get_conn'da)
     try:
         rows = db.execute(
             "SELECT d.id, d.project, d.type AS subtype, d.title, d.details, d.status "
@@ -121,8 +121,7 @@ def _memory_chunks(question: str, limit: int = 5) -> list[dict[str, Any]]:
         conds.append("(LOWER(name) LIKE ? OR LOWER(description) LIKE ?)")
         params.extend([f"%{t.lower()}%", f"%{t.lower()}%"])
     params.append(limit)
-    db = sqlite3.connect(MEMORY_DB, timeout=3)
-    db.row_factory = sqlite3.Row
+    db = get_conn(MEMORY_DB, busy_timeout_ms=3000)  # P1-a: timeout=3 parite (Row get_conn'da)
     try:
         rows = db.execute(
             f"SELECT id, type, name, description, content FROM memories "
@@ -152,8 +151,7 @@ def _notes_chunks(question: str, limit: int = 3) -> list[dict[str, Any]]:
         conds.append("(LOWER(title) LIKE ? OR LOWER(content) LIKE ?)")
         params.extend([f"%{t.lower()}%", f"%{t.lower()}%"])
     params.append(limit)
-    db = sqlite3.connect(MEMORY_DB, timeout=3)
-    db.row_factory = sqlite3.Row
+    db = get_conn(MEMORY_DB, busy_timeout_ms=3000)  # P1-a: timeout=3 parite (Row get_conn'da)
     try:
         rows = db.execute(
             f"SELECT id, from_device, title, content FROM notes WHERE ({' OR '.join(conds)}) ORDER BY created_at DESC LIMIT ?",
@@ -600,7 +598,7 @@ def research_health():
     except Exception as e:
         out["qdrant"] = {"ok": False, "error": str(e)[:100]}
     try:
-        db = sqlite3.connect(MEMORY_DB, timeout=2)
+        db = get_conn(MEMORY_DB, busy_timeout_ms=2000)  # P1-a: timeout=2 parite
         out["memory_db"] = {
             "ok": True,
             "memories": db.execute("SELECT COUNT(*) FROM memories WHERE active=1").fetchone()[0],

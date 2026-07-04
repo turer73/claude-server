@@ -600,3 +600,44 @@ async def test_run_save_default_off(client):
     assert resp.status_code == 200
     persist.assert_not_called()
     assert resp.json()["saved_discovery_id"] is None
+
+
+def _make_memory_db(tmp_path):
+    """P1-a Faz-3a chunk-testleri icin minimal claude_memory.db (FTS5 dahil)."""
+    import sqlite3
+
+    db = tmp_path / "claude_memory.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, details TEXT, status TEXT)")
+    con.execute("INSERT INTO discoveries VALUES (1, 'proj-x', 'bug', 'kilit sorunu', 'sqlite kilit detayi', 'active')")
+    con.execute("CREATE VIRTUAL TABLE discoveries_fts USING fts5(title, details, content='discoveries', content_rowid='id')")
+    con.execute("INSERT INTO discoveries_fts(rowid, title, details) SELECT id, title, details FROM discoveries")
+    con.execute(
+        "CREATE TABLE memories (id INTEGER PRIMARY KEY, type TEXT, name TEXT, description TEXT, content TEXT, active INT, updated_at TEXT)"
+    )
+    con.execute("INSERT INTO memories VALUES (1, 'project', 'kilit-projesi', 'kilit aciklamasi', 'icerik', 1, '2026-07-01')")
+    con.execute("CREATE TABLE notes (id INTEGER PRIMARY KEY, from_device TEXT, title TEXT, content TEXT, created_at TEXT)")
+    con.execute("INSERT INTO notes VALUES (1, 'klipper', 'kilit notu', 'kilit icerigi', '2026-07-01')")
+    con.commit()
+    con.close()
+    return db
+
+
+def test_chunk_readers_via_get_conn(monkeypatch, tmp_path):
+    """P1-a Faz-3a: 3 chunk-okuyucu get_conn + Row dict-erisim paritesi (gercek tmp-DB).
+    NOT repro-testi DEGIL: eski kod da row_factory=Row set ediyordu (davranis-korunur refactor);
+    amac codecov-patch + FTS-dahil gercek-yol kilidi (fonksiyonlar onceden HIC test edilmiyordu)."""
+    db = _make_memory_db(tmp_path)
+    monkeypatch.setattr(research, "MEMORY_DB", str(db))
+
+    d = research._discovery_chunks("kilit sorunu")
+    assert [c["title"] for c in d] == ["kilit sorunu"]
+    assert d[0]["type"] == "discovery"
+
+    m = research._memory_chunks("kilit projesi")
+    assert [c["title"] for c in m] == ["kilit-projesi"]
+    assert "kilit aciklamasi" in m[0]["text"]
+
+    n = research._notes_chunks("kilit notu")
+    assert [c["title"] for c in n] == ["kilit notu"]
+    assert n[0]["from_device"] == "klipper"
