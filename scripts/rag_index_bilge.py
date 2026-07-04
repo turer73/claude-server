@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Bilge Arena RAG indexer - hafiza DB -> Qdrant"""
 
-import sqlite3
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))  # repo-root (app.db.data_layer icin)
 import time
 import uuid
 
 import requests
+
+from app.db.data_layer import get_conn
 
 DB = "/opt/linux-ai-server/data/claude_memory.db"
 QDRANT = "http://localhost:6333"
@@ -40,7 +45,7 @@ def upsert_batch(points):
 
 def main():
     create_collection()
-    conn = sqlite3.connect(DB)
+    conn = get_conn(DB, row_factory=False)  # P1-a: busy_timeout+WAL; tuple-parite
     cur = conn.cursor()
 
     all_points = []

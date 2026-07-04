@@ -23,9 +23,15 @@ import math
 import os
 import shutil
 import sqlite3
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))  # repo-root (app.db.data_layer icin)
 import sys
 import urllib.request
 from typing import Any
+
+from app.db.data_layer import get_conn
 
 ROOT = os.environ.get("LIVESYS_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.environ.get("MEMORY_DB", os.path.join(ROOT, "data", "claude_memory.db"))
@@ -119,8 +125,7 @@ def _has_merged_into(con: sqlite3.Connection) -> bool:
 
 def synthesize() -> dict[str, Any]:
     """Kümele + (APPLY ise) arşivle. Özet döndürür. DRY_RUN'da DB'yi MUTATE ETMEZ (Codex P2)."""
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
+    con = get_conn(DB_PATH)  # P1-a: busy_timeout+WAL+Row (onceden timeout'suz)
     has_mi = _has_merged_into(con)
     # Şema migration YALNIZ APPLY'da (backup main()'de alındıktan sonra). DRY_RUN'da ALTER
     # ÇALIŞMAZ → prod-DB dokunulmaz, read-only DB'de patlamaz, /world-model yanlış 'synthesized' demez.

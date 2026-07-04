@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Tum projeleri tek 'klipper-memory' collection altinda index"""
 
-import sqlite3
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))  # repo-root (app.db.data_layer icin)
 import sys
 import time
 import uuid
 
 import requests
+
+from app.db.data_layer import get_conn
 
 DB = "/opt/linux-ai-server/data/claude_memory.db"
 QDRANT = "http://localhost:6333"
@@ -44,7 +49,7 @@ requests.put(
     timeout=30,
 )
 
-conn = sqlite3.connect(DB)
+conn = get_conn(DB, row_factory=False)  # P1-a: busy_timeout+WAL; tuple-parite
 cur = conn.cursor()
 points = []
 start = time.time()

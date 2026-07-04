@@ -14,7 +14,10 @@ from __future__ import annotations
 import os
 import sqlite3
 
-from app.db.database import DEFAULT_DB_PATH
+# TEK-KAYNAK sabit (database.py buradan re-export eder). Onceden ters-yondu:
+# data_layer -> database importu tek-sabit icin TUM aiosqlite-zincirini yuklerdi
+# (~180ms) — her-turn kosan hook'lar (Faz-3c) icin gereksiz yuk. data_layer saf-stdlib.
+DEFAULT_DB_PATH = "/tmp/linux-ai-server-test.db"  # noqa: S108 — kasitli fallback; prod DB_PATH override eder
 
 _DATA_DIR = "/opt/linux-ai-server/data"
 

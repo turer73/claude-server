@@ -15,9 +15,15 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))  # repo-root (app.db.data_layer icin)
 import statistics
 import subprocess
 import urllib.request
+
+from app.db.data_layer import get_conn
 
 ENV_FILE = os.environ.get("NOTIFY_ENV_FILE", "/opt/linux-ai-server/.env")
 API_BASE = os.environ.get("API_BASE", "http://localhost:8420")
@@ -93,8 +99,7 @@ def agent_freshness(db: str, expected: set[str] | None = None) -> list[dict]:
     Codex#2+#5: BEKLENEN ajan-listesi (crontab) ile çapraz-referans — retired-dışla, sessiz-beklenen=STALE."""
     if expected is None:
         expected = expected_agents()
-    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
+    conn = get_conn(db, readonly=True)  # P1-a: mode=ro birebir + busy_timeout (Row get_conn'da)
     # Codex#2: 45g-pencere uzun-sessiz ajanı düşürüyordu; 180g'e genişlet (beklenen-ajan yine de
     # hiç-satırı yoksa aşağıda STALE eklenir). Codex#5: beklenen-listede olmayan job atlanır.
     rows = conn.execute(
@@ -157,13 +162,13 @@ def agent_freshness(db: str, expected: set[str] | None = None) -> list[dict]:
 
 def gather_findings(mem_db: str, srv_db: str) -> dict:
     """Aktif bulgular: discoveries (proje bazında), çözülmemiş alerts, 7g cron-fail."""
-    m = sqlite3.connect(f"file:{mem_db}?mode=ro", uri=True)
+    m = get_conn(mem_db, readonly=True, row_factory=False)  # P1-a: mode=ro + tuple-parite
     disc = m.execute(
         "SELECT project, COUNT(*) FROM discoveries WHERE status='active' AND type='bug' GROUP BY project ORDER BY 2 DESC"
     ).fetchall()
     disc_total = m.execute("SELECT COUNT(*) FROM discoveries WHERE status='active'").fetchone()[0]
     m.close()
-    s = sqlite3.connect(f"file:{srv_db}?mode=ro", uri=True)
+    s = get_conn(srv_db, readonly=True, row_factory=False)  # P1-a: mode=ro + tuple-parite
     alerts = s.execute("SELECT severity, COUNT(*) FROM alerts WHERE resolved=0 GROUP BY severity").fetchall()
     fails = s.execute(
         "SELECT job, COUNT(*) FROM cron_outcomes WHERE result='fail' AND timestamp>datetime('now','-7 days') GROUP BY job"
