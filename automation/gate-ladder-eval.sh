@@ -24,6 +24,9 @@ case "$DAYS" in
 esac
 
 # Tablolar yoksa bootstrap (idempotent) — eval tek-başına ayağa kalkabilir.
+# gate_telemetry (G2) DE gerekli: production_stats onu okur; fresh-DB'de yoksa 'no such table'.
+COVERAGE_DB="$DB" bash "$SELF_DIR/../scripts/migrate-gate-telemetry.sh" >/dev/null 2>>"$LOG_FILE" || {
+    log "gate_telemetry migration FAIL"; exit 2; }
 COVERAGE_DB="$DB" bash "$SELF_DIR/../scripts/migrate-gate-ladder.sh" >/dev/null 2>>"$LOG_FILE" || {
     log "gate_ladder migration FAIL"; exit 2; }
 

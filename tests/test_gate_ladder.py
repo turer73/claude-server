@@ -70,6 +70,16 @@ def test_production_dedup_same_pr_counts_once(tmp_path):
     assert stats["g1-repro"].firing == 0
 
 
+def test_production_stats_missing_telemetry_table_returns_empty(tmp_path):
+    """G2-tablosu yoksa 'no such table' yerine boş-dict (CI fresh-DB + tek-başına-çağrı kontratı)."""
+    db = tmp_path / "coverage.db"
+    con = sqlite3.connect(db)  # gate_telemetry YOK
+    con.execute("CREATE TABLE gate_ladder (gate_id TEXT PRIMARY KEY, rung TEXT, since_ts TEXT, last_eval TEXT, history_json TEXT)")
+    con.commit()
+    assert production_stats(con) == {}
+    con.close()
+
+
 def test_precision_and_human_fraction(tmp_path):
     db = _db(tmp_path)
     # 4 ayrı-PR fail: 3 true_catch + 1 false_positive (hepsi human) → precision 0.75

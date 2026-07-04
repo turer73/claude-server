@@ -50,6 +50,9 @@ def production_stats(conn: sqlite3.Connection, days: int = 30) -> dict[str, Gate
     NULL pr_number: run_id-başına tekil (COALESCE ile ayrı-grup). Sadece verdict='fail'
     kayıtları FP-sınıflaması taşır (pass/skip terfi-precision'ına girmez — fail-yakalamaların
     doğruluğunu ölçüyoruz)."""
+    # gate_telemetry (G2) yoksa boş — G6 tek-başına çağrılırsa 'no such table' yerine no-op.
+    if not conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='gate_telemetry'").fetchone():
+        return {}
     rows = conn.execute(
         """
         WITH dedup AS (
