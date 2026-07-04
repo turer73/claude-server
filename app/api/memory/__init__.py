@@ -82,7 +82,7 @@ def get_db() -> Any:
 _read_by_ready = False
 
 
-def _ensure_read_by(db):
+def _ensure_read_by(db: Any) -> None:
     """notes.read_by kolonunu idempotent ekle (per-device okuma izleme — #647).
     Eski TEK 'read' kolonu GLOBAL'di: bir device okuyunca herkese okundu sayılıyordu →
     çoğulcu-okuma bozuktu. read_by = '|dev1|dev2|' formatında okuyan-device listesi.
