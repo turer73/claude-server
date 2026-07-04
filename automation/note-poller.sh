@@ -176,7 +176,8 @@ for n in spawned:
            str(nid), frm, title, preview]
     subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
                      stdout=open('/dev/null', 'w'),
-                     stderr=subprocess.STDOUT, start_new_session=True)
+                     stderr=subprocess.STDOUT, start_new_session=True,
+                     env={**os.environ, 'ENFORCE_INTERACTIVE_CHECK': '1'})
 
 # State: spawned + skipped_self (kendi threat-notlari) ILERLET — deferred HARIC (onlar retry).
 # skipped_self state'e dahil ki yeniden-fetch edilip dongu olusturmasin (Codex P2).

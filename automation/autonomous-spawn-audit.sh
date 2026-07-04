@@ -124,8 +124,16 @@ NOTE_ID_VAR="$NOTE_ID" SUSP_VAR="$SUSP_LIST" COMMITS_VAR="$COMMITS_SUMMARY" \
 DATE_VAR="$(date -u +%Y%m%d-%H%M)" \
 RANGE_VAR="${OLD_HEAD:0:8}..${NEW_HEAD:0:8}" \
 python3 <<'PY' 2>>"$LOG_FILE" || true
-import json, os, urllib.request
-KEY = [l.split('=',1)[1].strip() for l in open(os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')).read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
+import json, os, sys, urllib.request
+_env_file = os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')
+try:
+    KEY = next((l.split('=',1)[1].strip() for l in open(_env_file).read().splitlines() if l.startswith('MEMORY_API_KEY=')), '')
+except OSError as e:
+    print(f'ERROR: cannot read env file {_env_file}: {e}', file=sys.stderr)
+    sys.exit(0)
+if not KEY:
+    print(f'ERROR: MEMORY_API_KEY missing in {_env_file} — memory write skipped', file=sys.stderr)
+    sys.exit(0)
 body = json.dumps({
     'type': 'project',
     'name': f"autonomous-audit-suspicious-{os.environ['NOTE_ID_VAR']}-{os.environ['DATE_VAR']}",
