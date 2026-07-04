@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -328,8 +327,7 @@ def _record_finding(rel_path: str, f: dict[str, Any]) -> bool:
     title = f"{rel_path}:{f['line']} {f['title']}"[:120]
     details = f"[{f['severity']}] {f['detail']}"
     try:
-        conn = sqlite3.connect(MEMORY_DB)
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn = get_conn(MEMORY_DB)  # P1-a: PRAGMA-5000 -> get_conn default-5000 parite
         # unique-active (project,type,title) → çift INSERT 2067/UNIQUE ihlali = zaten-var
         cur = conn.execute(
             "INSERT OR IGNORE INTO discoveries (project, type, title, details, device_name, rationale, status) "
@@ -366,8 +364,7 @@ def synthesize_lesson() -> bool:
     'learning' kaydına çevir — 'bu codebase X anti-pattern'ini tekrarlıyor' dersi. Read-only,
     dedup'lı. Yeni-ders ise True."""
     try:
-        conn = sqlite3.connect(MEMORY_DB)
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn = get_conn(MEMORY_DB)  # P1-a: PRAGMA-5000 -> get_conn default-5000 parite
         # title formatı 'path:line <özet>' → '<özet>' (sorun-türü) bazında grupla
         rows = conn.execute("SELECT title FROM discoveries WHERE project=? AND type='bug' AND status='active'", (PROJECT,)).fetchall()
         from collections import Counter
@@ -413,8 +410,7 @@ def _record_research(topic: str, headline: str, detail: str) -> bool:
     """Yeni-yapı bulgusunu 'architecture' kaydı olarak yaz (dedup: unique-active)."""
     title = f"Yeni-yapı [{topic}]: {headline}"[:120]
     try:
-        conn = sqlite3.connect(MEMORY_DB)
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn = get_conn(MEMORY_DB)  # P1-a: PRAGMA-5000 -> get_conn default-5000 parite
         cur = conn.execute(
             "INSERT OR IGNORE INTO discoveries (project, type, title, details, device_name, rationale, status) "
             "VALUES (?, 'architecture', ?, ?, 'klipper', 'auto: code-reviewer internet-research (web+LLM) — read-only, DEĞERLENDİR', 'active')",

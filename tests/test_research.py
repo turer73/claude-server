@@ -42,10 +42,10 @@ async def test_health_all_deps(client):
     def fake_get(url, **_):
         return ol if "/api/version" in url else qd
 
-    # memory_db: gercek dosyaya yazmak istemiyoruz; sqlite3.connect'i mock'la
+    # memory_db: gercek dosyaya yazmak istemiyoruz; get_conn'u mock'la (P1-a)
     fake_conn = MagicMock()
     fake_conn.execute.return_value.fetchone.return_value = (42,)
-    with patch("app.api.research.requests.get", side_effect=fake_get), patch("app.api.research.sqlite3.connect", return_value=fake_conn):
+    with patch("app.api.research.requests.get", side_effect=fake_get), patch("app.api.research.get_conn", return_value=fake_conn):
         resp = await client.get("/api/v1/research/health")
     assert resp.status_code == 200
     body = resp.json()
@@ -430,7 +430,7 @@ async def test_health_exposes_selectable_synth_models(client):
     fake_conn.execute.return_value.fetchone.return_value = (1,)
     with (
         patch("app.api.research.requests.get", side_effect=lambda url, **_: ol if "/api/version" in url else qd),
-        patch("app.api.research.sqlite3.connect", return_value=fake_conn),
+        patch("app.api.research.get_conn", return_value=fake_conn),
     ):
         resp = await client.get("/api/v1/research/health")
     a = resp.json()["anthropic"]

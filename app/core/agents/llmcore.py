@@ -58,10 +58,10 @@ def _record_llm_call(task: str, backend: str, model: str, latency_ms: float, ok:
     latency/ok/tokens → 'hangi ajan GPU'yu yakıyor', 'ne sıklıkla Claude'a eskale ediyoruz'
     sorularını yanıtlar. FAIL-SAFE: metrik-yazımı ASLA LLM-çağrısını bozmaz."""
     try:
-        import sqlite3
+        from app.db.data_layer import get_conn
 
         db = read_env_var("RAG_METRICS_DB") or "/opt/linux-ai-server/data/rag_metrics.db"
-        conn = sqlite3.connect(db, timeout=2)
+        conn = get_conn(db, busy_timeout_ms=2000)  # P1-a: timeout=2 parite
         try:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS llm_calls ("

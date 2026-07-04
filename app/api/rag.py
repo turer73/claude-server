@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/v1/rag", tags=["rag"], dependencies=[Depends(ver
 
 
 def _init_metrics_db():
-    conn = sqlite3.connect(METRICS_DB)
+    conn = get_conn(METRICS_DB)  # P1-a: busy_timeout+WAL (onceden timeout'suz)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS rag_queries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,7 +64,7 @@ except sqlite3.OperationalError:
 
 def _log_query(endpoint, query, project, source, top_k, hits, duration_ms, tokens=None, tps=None, request=None):
     try:
-        conn = sqlite3.connect(METRICS_DB, timeout=2)
+        conn = get_conn(METRICS_DB, busy_timeout_ms=2000)  # P1-a: timeout=2 parite
         ip = ua = None
         if request:
             ip = request.client.host if request.client else None
