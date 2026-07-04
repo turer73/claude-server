@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import time
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -31,9 +33,47 @@ def _load_registry() -> dict[str, Any]:
 
 
 def _save_registry(data: dict[str, Any]) -> None:
+    # Atomic: tmp+os.replace — yarım-yazılmış/bozuk JSON penceresi kalmaz (#1238).
     os.makedirs(os.path.dirname(PROJECTS_FILE), exist_ok=True)
-    with open(PROJECTS_FILE, "w") as f:
+    tmp = PROJECTS_FILE + ".tmp"
+    with open(tmp, "w") as f:
         json.dump(data, f, indent=2)
+    os.replace(tmp, PROJECTS_FILE)
+
+
+@contextlib.contextmanager
+def _registry_lock() -> Iterator[None]:
+    """Cross-process registry kilidi (#1238). 2 uvicorn-worker + deploy_project'in load↔save
+    arasındaki await'leri (shell-exec) read-modify-write'ı yarıştırır → lost-update.
+    asyncio.Lock süreç-içi kalır, YETMEZ; fcntl-flock (prod=Linux). Windows lokal-dev'de
+    fcntl yok → kilitsiz geç (tek-süreç dev; atomic-write yine korur)."""
+    lock_path = PROJECTS_FILE + ".lock"
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    with open(lock_path, "a") as lf:
+        try:
+            import fcntl
+
+            fcntl.flock(lf, fcntl.LOCK_EX)
+        except ImportError:
+            pass
+        try:
+            yield
+        finally:
+            with contextlib.suppress(ImportError):
+                import fcntl
+
+                fcntl.flock(lf, fcntl.LOCK_UN)
+
+
+def _update_registry(mutator: Callable[[dict[str, Any]], Any]) -> Any:
+    """Kilit altında load→mutate→save. Mutasyonlar TAZE snapshot'a uygulanır — handler'ın
+    await-öncesi okuduğu bayat kopyayı yazmak yerine (#1238 lost-update kökü). Kilit içinde
+    await YOK (mutator sync) → event-loop bloğu küçük-dosya-IO kadar."""
+    with _registry_lock():
+        registry = _load_registry()
+        result = mutator(registry)
+        _save_registry(registry)
+        return result
 
 
 # ── Self-deploy (linux-ai-server) ────────────────
@@ -86,8 +126,7 @@ class ProjectRegister(BaseModel):
 @router.post("/projects/register")
 async def register_project(req: ProjectRegister, _: None = Depends(require_admin)) -> dict[str, Any]:
     """Register a project for tracking."""
-    registry = _load_registry()
-    registry["projects"][req.name] = {
+    entry = {
         "path": req.path,
         "github": req.github,
         "stack": req.stack,
@@ -96,7 +135,7 @@ async def register_project(req: ProjectRegister, _: None = Depends(require_admin
         "last_deploy": None,
         "deploy_count": 0,
     }
-    _save_registry(registry)
+    _update_registry(lambda reg: reg["projects"].__setitem__(req.name, entry))
     return {"registered": req.name}
 
 
@@ -139,10 +178,11 @@ async def get_project(name: str, _: None = Depends(require_admin)) -> dict[str, 
 @router.delete("/projects/{name}")
 async def unregister_project(name: str, _: None = Depends(require_admin)) -> dict[str, Any]:
     """Remove a project from tracking."""
-    registry = _load_registry()
-    if name in registry["projects"]:
-        del registry["projects"][name]
-        _save_registry(registry)
+
+    def _drop(reg: dict[str, Any]) -> bool:
+        return reg["projects"].pop(name, None) is not None
+
+    if _update_registry(_drop):
         return {"unregistered": name}
     return {"error": f"Project {name} not found"}
 
@@ -175,10 +215,15 @@ async def deploy_project(name: str, _: None = Depends(require_admin)) -> dict[st
     pull = await executor.execute(f"git -C {path} pull", timeout=30)
     results.append({"step": "git_pull", "exit_code": pull["exit_code"], "output": pull["stdout"][:200]})
 
-    # Update deploy metadata
-    project["last_deploy"] = datetime.now(UTC).isoformat()
-    project["deploy_count"] = project.get("deploy_count", 0) + 1
-    _save_registry(registry)
+    # Update deploy metadata — TAZE snapshot'a (#1238): await-shell sırasında başka istek
+    # registry'yi değiştirmiş olabilir; handler-başındaki bayat kopyayı yazmak onu ezerdi.
+    def _stamp(reg: dict[str, Any]) -> None:
+        proj = reg["projects"].get(name)
+        if proj is not None:  # await sırasında unregister edilmiş olabilir
+            proj["last_deploy"] = datetime.now(UTC).isoformat()
+            proj["deploy_count"] = proj.get("deploy_count", 0) + 1
+
+    _update_registry(_stamp)
 
     return {"success": pull["exit_code"] == 0, "project": name, "results": results}
 

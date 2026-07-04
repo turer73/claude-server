@@ -109,3 +109,30 @@ def test_usage_stats_db_error_returns_error_field(monkeypatch, tmp_path):
     out = _usage_stats(hours=1)
     assert out["ok"] is False
     assert "error" in out
+
+
+def test_usage_stats_closes_conn_on_query_error(monkeypatch, tmp_path):
+    """#1239 repro — sorgu exception'ında (tablo-yok) bağlantı KAPANMALI.
+    Base'de conn.close() yalnız happy-path'te → burada kapanmaz → FAIL."""
+    from app.api.llm import _usage_stats
+    from app.db.data_layer import get_conn
+
+    closed = []
+
+    class _Tracking:
+        def __init__(self, real):
+            self._real = real
+
+        def cursor(self):
+            return self._real.cursor()
+
+        def close(self):
+            closed.append(True)
+            self._real.close()
+
+    real = get_conn(str(tmp_path / "empty.db"))  # rag_queries tablosu YOK → execute raise
+    monkeypatch.setattr("app.api.llm.get_conn", lambda *a, **k: _Tracking(real))
+    out = _usage_stats(hours=1)
+    assert out["ok"] is False
+    assert "error" in out
+    assert closed  # exception-yolunda da close çağrıldı (leak yok)
