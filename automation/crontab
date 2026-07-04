@@ -119,3 +119,6 @@
 # Korelasyon (gap-5): events-spine cross-source (exception/anomaly/drift/log-novelty/watchdog) 15dk
 # penceresi → ≥2 farklı-kaynak = korele incident (keep-pattern, fingerprint-dedup). fatigue↓. (klipper #100128)
 */15 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh correlation-check /opt/linux-ai-server/venv/bin/python3 /opt/linux-ai-server/automation/correlation-check.py
+# G6 enforcement-ladder haftalık değerlendirme (Pazartesi 06:00) — RECOMMEND-ONLY: gate promote/demote
+# önerisi üretir + Turgut'a not atar; aktüasyon insan-tetikli. G1+G4+G2(precision-toplama)+G6 tam kapalı. (PR#286)
+0 6 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh gate-ladder-eval /opt/linux-ai-server/automation/gate-ladder-eval.sh
