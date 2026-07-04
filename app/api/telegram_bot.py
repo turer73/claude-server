@@ -96,6 +96,8 @@ def _mark_event_acked(event_id: str) -> bool:
     Escalation _escalate_persistent acked kaynakları atlar."""
     import os
 
+    from app.db.data_layer import get_conn
+
     if not str(event_id).isdigit():
         return False
     db_path = os.environ.get("DB_PATH") or "/opt/linux-ai-server/data/server.db"
