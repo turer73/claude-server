@@ -110,6 +110,22 @@ ENTRYPOINTS: tuple[EntryPoint, ...] = (
         locator="scripts/claude-memory.sh",
         concerns=(NOTE_DELIVERY,),
     ),
+    # Completeness-guard İLK-KOŞUM keşifleri (2026-07-04): tasarım-listesinde ve ilk
+    # 9-kayıtta YOKTU — guard değerini PR'lanmadan kanıtladı (#1222-sınıfı kaçak-yüzey).
+    EntryPoint(
+        id="api:dashboard",
+        category=Category.API,
+        locator="app/api/memory/dashboard.py",
+        concerns=(NOTE_DELIVERY,),
+        note="unread_notes SAYACI (içerik değil) — held-körü + legacy read=0 (per-device değil): doğruluk-bug'ı, ayrı-fix",
+    ),
+    EntryPoint(
+        id="cron:autonomous-daily-summary",
+        category=Category.CRON,
+        locator="automation/autonomous-daily-summary.sh",
+        concerns=(NOTE_DELIVERY,),
+        note="DEFERRED_NOTES sayacı — held-körü + legacy read=0: doğruluk-bug'ı, ayrı-fix",
+    ),
 )
 
 # Keşfedilen ama kayıt-dışı bırakılan yüzeyler: locator -> gerekçe.
