@@ -89,7 +89,7 @@ except: pass
 # DB'den son 24 saat note + memory metrikleri
 NOTES_IN=$(sqlite3 "$DB" "SELECT COUNT(*) FROM notes WHERE (to_device='klipper' OR to_device IS NULL) AND created_at > datetime('now', '-24 hours');" 2>/dev/null | head -1 | tr -d ' \n' || echo 0)
 MEMORY_NEW=$(sqlite3 "$DB" "SELECT COUNT(*) FROM memories WHERE created_at > datetime('now', '-24 hours');" 2>/dev/null | head -1 | tr -d ' \n' || echo 0)
-DEFERRED_NOTES=$(sqlite3 "$DB" "SELECT COUNT(*) FROM notes WHERE (to_device='klipper' OR to_device IS NULL) AND read=0 AND created_at > datetime('now', '-24 hours');" 2>/dev/null | head -1 | tr -d ' \n' || echo 0)
+DEFERRED_NOTES=$(sqlite3 "$DB" "SELECT COUNT(*) FROM notes WHERE (to_device='klipper' OR to_device IS NULL) AND read=0 AND (read_by IS NULL OR read_by NOT LIKE '%|klipper|%') AND COALESCE(status,'active')='active' AND created_at > datetime('now', '-24 hours');" 2>/dev/null | head -1 | tr -d ' \n' || echo 0)
 
 # Memory entry olustur
 DATE=$(date '+%Y-%m-%d')

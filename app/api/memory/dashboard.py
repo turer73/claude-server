@@ -2,13 +2,15 @@
 
 import asyncio
 
-from app.api.memory import get_db, router
+from app.api.memory import _ensure_read_by, _ensure_status, get_db, router
 
 
 def _dashboard_query():
     """Akıllı dashboard — stale detection, proje health, action items"""
     db = get_db()
     try:
+        _ensure_read_by(db)
+        _ensure_status(db)
         stats = {
             "memories": db.execute("SELECT COUNT(*) FROM memories WHERE active=1").fetchone()[0],
             "sessions": db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0],
@@ -19,7 +21,7 @@ def _dashboard_query():
             "active_plans": db.execute("SELECT COUNT(*) FROM discoveries WHERE type='plan' AND status='active'").fetchone()[0],
             "completed_plans": db.execute("SELECT COUNT(*) FROM discoveries WHERE type='plan' AND status='completed'").fetchone()[0],
             "fixes": db.execute("SELECT COUNT(*) FROM discoveries WHERE type='fix'").fetchone()[0],
-            "unread_notes": db.execute("SELECT COUNT(*) FROM notes WHERE read=0").fetchone()[0],
+            "unread_notes": db.execute("SELECT COUNT(*) FROM notes WHERE read=0 AND COALESCE(status,'active')='active'").fetchone()[0],
         }
 
         devices = [
