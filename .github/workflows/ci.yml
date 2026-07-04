@@ -109,7 +109,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
-      - run: python -m pytest tests/ -v --cov=app --cov-report=term-missing --cov-report=xml
+      # g4_invariant ayri non-required job'ta (G6-ladder FP-olcum donemi; tasarim §4 pattern'i)
+      - run: python -m pytest tests/ -v -m "not g4_invariant" --cov=app --cov-report=term-missing --cov-report=xml
       - uses: actions/upload-artifact@v7
         if: matrix.python-version == '3.11'
         with:
@@ -123,6 +124,18 @@ jobs:
           flags: backend
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  # G4 forall-invariant (non-required v1 — repro-gate/G1-merdiveni deseni; FP-olculunce terfi).
+  g4-invariant:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest tests/test_invariant_note_delivery.py -m g4_invariant -v
 
   security:
     runs-on: ubuntu-latest

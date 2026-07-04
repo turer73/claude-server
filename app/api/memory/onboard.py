@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from fastapi.responses import PlainTextResponse
 
 from app.api import memory as _pkg
-from app.api.memory import _TOKEN_BUDGET, _ensure_read_by, _unread_pred, get_db, public_router
+from app.api.memory import _TOKEN_BUDGET, _ensure_read_by, _ensure_status, _unread_pred, get_db, public_router
 
 
 @public_router.get("/onboard/{device_name}")
@@ -33,9 +33,13 @@ async def get_onboard_prompt(device_name: str):
         bugs_text = "\n".join(f"  - [{r[0]}] {r[1]} (bulan: {r[2]})" for r in bugs) if bugs else "  Yok"
 
         _ensure_read_by(db)
+        _ensure_status(db)
         _pred, _pp = _unread_pred(device_name)  # PER-DEVICE okunmamış (#647)
+        # Policy-gate #1222 teslim-filtresi: held/rejected onboard-prompt'una GİRMEZ
+        # (G4 ∀-invariant ilk-koşum yakalaması — #1222 8-yüzey-fix'inde bu yüzey kaçmıştı).
         notes = db.execute(
-            f"SELECT from_device, title, content FROM notes WHERE (to_device=? OR to_device IS NULL) AND {_pred}",
+            f"SELECT from_device, title, content FROM notes WHERE (to_device=? OR to_device IS NULL) "
+            f"AND COALESCE(status,'active')='active' AND {_pred}",
             (device_name, *_pp),
         ).fetchall()
         notes_text = "\n".join(f"  - {r[0]}: {r[1]} — {r[2]}" for r in notes) if notes else "  Yok"
@@ -239,12 +243,14 @@ def _session_context_query(device_name: str):
         ]
 
         _ensure_read_by(db)
+        _ensure_status(db)
         _pred, _pp = _unread_pred(device_name)
         unread_notes = [
             dict(r)
             for r in db.execute(
                 f"SELECT from_device, title, substr(content,1,200) as content "
-                f"FROM notes WHERE (to_device=? OR to_device IS NULL) AND {_pred} ORDER BY created_at DESC LIMIT 5",
+                f"FROM notes WHERE (to_device=? OR to_device IS NULL) "
+                f"AND COALESCE(status,'active')='active' AND {_pred} ORDER BY created_at DESC LIMIT 5",
                 (device_name, *_pp),
             ).fetchall()
         ]
