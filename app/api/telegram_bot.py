@@ -95,13 +95,12 @@ def _mark_event_acked(event_id: str) -> bool:
     """events.acked=1 (server.db). poller klipperos + db grup-yazılabilir (#517).
     Escalation _escalate_persistent acked kaynakları atlar."""
     import os
-    import sqlite3
 
     if not str(event_id).isdigit():
         return False
     db_path = os.environ.get("DB_PATH") or "/opt/linux-ai-server/data/server.db"
     try:
-        con = sqlite3.connect(db_path, timeout=10)
+        con = get_conn(db_path, busy_timeout_ms=10000)  # P1-a: timeout=10 parite
         try:
             cur = con.execute("UPDATE events SET acked=1 WHERE id=?", (int(event_id),))
             con.commit()

@@ -516,12 +516,13 @@ def handle_memory_query(arguments: dict[str, Any]) -> str:
 
 
 def handle_memory_save(arguments: dict[str, Any]) -> str:
-    import sqlite3
     from datetime import datetime
+
+    from app.db.data_layer import get_conn
 
     db = "/opt/linux-ai-server/data/claude_memory.db"
     try:
-        conn = sqlite3.connect(db)
+        conn = get_conn(db)  # P1-a: busy_timeout+WAL+Row
         c = conn.cursor()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         # Upsert by name
@@ -547,12 +548,13 @@ def handle_memory_save(arguments: dict[str, Any]) -> str:
 
 
 def handle_memory_log_session(arguments: dict[str, Any]) -> str:
-    import sqlite3
     from datetime import datetime
+
+    from app.db.data_layer import get_conn
 
     db = "/opt/linux-ai-server/data/claude_memory.db"
     try:
-        conn = sqlite3.connect(db)
+        conn = get_conn(db)  # P1-a: busy_timeout+WAL+Row
         c = conn.cursor()
         now = datetime.now().strftime("%Y-%m-%d")
         c.execute("SELECT COALESCE(MAX(session_num),0)+1 FROM sessions")
@@ -578,12 +580,13 @@ def handle_memory_log_session(arguments: dict[str, Any]) -> str:
 
 
 def handle_memory_log_task(arguments: dict[str, Any]) -> str:
-    import sqlite3
     from datetime import datetime
+
+    from app.db.data_layer import get_conn
 
     db = "/opt/linux-ai-server/data/claude_memory.db"
     try:
-        conn = sqlite3.connect(db)
+        conn = get_conn(db)  # P1-a: busy_timeout+WAL+Row
         c = conn.cursor()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         c.execute(

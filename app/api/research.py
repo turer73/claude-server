@@ -515,9 +515,8 @@ def _persist_research(report: ResearchReport, project: str | None) -> int | None
         f"(güven={report.confidence_score}, kaynak={len(report.sources)}, alt-soru={len(report.subquestions)})"
     )
     try:
-        db = sqlite3.connect(MEMORY_DB, timeout=5)
+        db = get_conn(MEMORY_DB)  # P1-a: timeout=5+PRAGMA-5000 -> get_conn default-5000 parite; lock'ta hemen READONLY atma ([[fix_db_retention]])
         try:
-            db.execute("PRAGMA busy_timeout=5000")  # lock'ta hemen READONLY atma ([[fix_db_retention]])
             # Açık insert/update — discoveries_fts external-content + trigger YOK; FTS'i
             # elle senkronlamalıyız (yoksa /ask kaydı bulamaz). Upsert'te eski FTS girdisini
             # 'delete' ile sil, yeniyi ekle (re-insert çift-indekslerdi).
