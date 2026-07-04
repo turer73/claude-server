@@ -102,9 +102,15 @@ def test_collector_end_to_end(tmp_path):
         {"databaseId": 104, "conclusion": "", "headBranch": "b4", "headSha": "sha4", "createdAt": "2026-07-04T04:00:00Z"},
     ]
     jobs = {
-        101: [{"name": "repro-gate", "conclusion": "failure", "databaseId": 9101}],
+        101: [
+            {"name": "repro-gate", "conclusion": "failure", "databaseId": 9101},
+            {"name": "g4-invariant", "conclusion": "failure", "databaseId": 9201},  # G2b: çok-gate aynı-run
+        ],
         102: [{"name": "repro-gate", "conclusion": "success", "databaseId": 9102}],  # log: atlandı → skip_na
-        103: [{"name": "repro-gate", "conclusion": "success", "databaseId": 9103}],  # log: normal → pass
+        103: [
+            {"name": "repro-gate", "conclusion": "success", "databaseId": 9103},  # log: normal → pass
+            {"name": "g4-invariant", "conclusion": "success", "databaseId": 9203},  # g4: skip_na-yok, log-fetch'siz pass
+        ],
     }
     bindir = _make_fake_gh(tmp_path, runs, jobs, na_job_ids={9102})
     env = _env(tmp_path, bindir)
@@ -113,9 +119,15 @@ def test_collector_end_to_end(tmp_path):
     assert r.returncode == 0, (r.stderr[-400:], (tmp_path / "collect.log").read_text(encoding="utf-8")[-400:])
 
     con = sqlite3.connect(tmp_path / "coverage.db")
-    rows = con.execute("SELECT run_id, verdict, pr_number, fp_class FROM gate_telemetry ORDER BY run_id").fetchall()
+    rows = con.execute("SELECT gate_id, run_id, verdict, pr_number, fp_class FROM gate_telemetry ORDER BY run_id, gate_id").fetchall()
     con.close()
-    assert rows == [(101, "fail", 77, "unknown"), (102, "skip_na", 77, "unknown"), (103, "pass", 77, "unknown")]
+    assert rows == [
+        ("g1-repro", 101, "fail", 77, "unknown"),
+        ("g4-invariant", 101, "fail", 77, "unknown"),
+        ("g1-repro", 102, "skip_na", 77, "unknown"),
+        ("g1-repro", 103, "pass", 77, "unknown"),
+        ("g4-invariant", 103, "pass", 77, "unknown"),
+    ]
     # in-progress 104 işlenmedi; watermark son-tamamlanan'da (103) — sonraki tick 104'ü toplar
     assert (tmp_path / "watermark.txt").read_text(encoding="utf-8") == "103"
 
@@ -123,7 +135,7 @@ def test_collector_end_to_end(tmp_path):
     r2 = _run(["bash", str(REPO_ROOT / "automation" / "gate-telemetry-collect.sh")], env)
     assert r2.returncode == 0
     con = sqlite3.connect(tmp_path / "coverage.db")
-    assert con.execute("SELECT COUNT(*) FROM gate_telemetry").fetchone()[0] == 3
+    assert con.execute("SELECT COUNT(*) FROM gate_telemetry").fetchone()[0] == 5
     con.close()
 
 
@@ -137,3 +149,47 @@ def test_collector_watermark_skips_processed(tmp_path):
     (tmp_path / "fixtures" / "jobs_101.json").unlink()  # watermark-altı → dokunulmamalı
     r = _run(["bash", str(REPO_ROOT / "automation" / "gate-telemetry-collect.sh")], env)
     assert r.returncode == 0, r.stderr[-300:]
+
+
+def _seed_marked_db(tmp_path):
+    env = {"COVERAGE_DB": str(tmp_path / "coverage.db")}
+    assert _run(["bash", str(REPO_ROOT / "scripts" / "migrate-gate-telemetry.sh")], env).returncode == 0
+    con = sqlite3.connect(tmp_path / "coverage.db")
+    for run_id, verdict in ((201, "fail"), (202, "fail"), (203, "pass")):
+        con.execute(
+            "INSERT INTO gate_telemetry (gate_id, run_id, pr_number, ts, verdict) VALUES ('g1-repro', ?, 42, datetime('now'), ?)",
+            (run_id, verdict),
+        )
+    con.commit()
+    con.close()
+    return env
+
+
+def test_fp_mark_human_ground_truth(tmp_path):
+    """G2b: human-işaret gerçek-yol — update + fail-loud (olmayan-kayıt) + geçersiz-class red."""
+    env = _seed_marked_db(tmp_path)
+    script = str(REPO_ROOT / "scripts" / "gate-fp-mark.sh")
+
+    r = _run(["bash", script, "g1-repro", "201", "true_catch", "gercek yakalama"], env)
+    assert r.returncode == 0, r.stderr[-300:]
+    con = sqlite3.connect(tmp_path / "coverage.db")
+    row = con.execute("SELECT fp_class, fp_source, note FROM gate_telemetry WHERE run_id=201").fetchone()
+    con.close()
+    assert row == ("true_catch", "human", "gercek yakalama")
+
+    assert _run(["bash", script, "g1-repro", "999", "false_positive", "x"], env).returncode == 1  # kayıt-yok → fail-loud
+    assert _run(["bash", script, "g1-repro", "202", "belirsiz", "x"], env).returncode == 1  # geçersiz-class
+
+
+def test_report_precision(tmp_path):
+    """G2b: precision yalnız HUMAN-sınıflılardan (1-tc + 1-fp → 0.5); unknown paydaya girmez."""
+    env = _seed_marked_db(tmp_path)
+    mark = str(REPO_ROOT / "scripts" / "gate-fp-mark.sh")
+    assert _run(["bash", mark, "g1-repro", "201", "true_catch", "tc"], env).returncode == 0
+    assert _run(["bash", mark, "g1-repro", "202", "false_positive", "fp"], env).returncode == 0
+
+    r = _run(["bash", str(REPO_ROOT / "scripts" / "gate-telemetry-report.sh")], env)
+    assert r.returncode == 0, r.stderr[-300:]
+    assert "g1-repro" in r.stdout
+    assert "0.5" in r.stdout  # precision = 1/(1+1)
+    assert "202" in r.stdout  # fail-firing aday-listesinde
