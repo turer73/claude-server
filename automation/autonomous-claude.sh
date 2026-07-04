@@ -432,6 +432,10 @@ handle_actionable() {
     title_safe=$(printf '%s' "$TITLE" | tr -d '\r\n')
     # Codex P2-c: worktree-modda spawn'a çalışma-dizinini AÇIK söyle — statik-prompt /opt
     # gösteriyordu → spawn /opt-path'e yazmaya çalışıp deny-yerdi (çalışır ama verimsiz/kafa-karışık).
+    # Codex P2b (#100429): allowlist-satiri worktree-modda dinamik — statik '/opt Edit/Write'
+    # satiri worktree-uyarisiyla CELISIRDI (ajan /opt-Edit-dener -> guard-DENY -> bocalama).
+    local allowlist_line="- Read/Edit/Write: /opt/linux-ai-server/** ve /home/klipperos/work/**"
+    [ -n "$WT_PATH" ] && allowlist_line="- Read: /opt/linux-ai-server/** (salt-oku) | Edit/Write: $WT_PATH/** (izole-worktree; relative-path kullan, /opt-yazma guard-DENY)"
     local wt_notice=""
     if [ -n "$WT_PATH" ]; then
         wt_notice="
@@ -464,7 +468,7 @@ ${note_nonce}-BITIR
 Bu note ACTIONABLE olarak siniflandirildi. Yapilmasi gereken somut bir is var.
 
 Yapabilirsin (settings allowlist):
-- Read/Edit/Write: /opt/linux-ai-server/** ve /home/klipperos/work/**
+${allowlist_line}
 - Git local: status/diff/log/add/commit (push YOK, push kullanici onayi gerek)
 - Test: npx tsc/eslint/vitest, ruff, pytest
 - DB sorgu: sqlite3 (SELECT/INSERT/UPDATE notes ve memories)

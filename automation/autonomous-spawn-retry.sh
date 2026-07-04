@@ -202,6 +202,18 @@ retry_one() {
         return 0
     fi
 
+    # Codex-P1 + P2b (#100429): worktree-izolasyonu + allowlist prompt-ONCESI kurulmali —
+    # WT_PATH prompt-string'de dogru gorunsun (aksi-halde allowlist_line bos + statik-/opt-celiskisi).
+    setup_spawn_worktree "$note_id"
+    if [ -n "$WT_PATH" ]; then
+        if ! make_spawn_settings "$SETTINGS_FILE"; then
+            preserve_and_cleanup_worktree "$note_id"
+            _wt_fallback "$note_id" "retry: per-spawn settings FAIL"
+        fi
+    fi
+    local allowlist_line="- Read/Edit/Write: /opt/linux-ai-server/** ve /home/klipperos/work/**"
+    [ -n "$WT_PATH" ] && allowlist_line="- Read: /opt/linux-ai-server/** (salt-oku) | Edit/Write: $WT_PATH/** (izole-worktree; relative-path)"
+
     # Prompt rebuild (handle_actionable line 157-201 ile ayni; DRY violation kabul — scope korunma)
     local prompt spawn_log
     prompt="Otonom modda RETRY spawn edildin (DLQ attempt #$((attempt+1))/$POISON_THRESHOLD). Onceki spawn fail olmustu (rc!=0), simdi tekrar deniyoruz:
@@ -219,7 +231,7 @@ $full_content
 Bu note ACTIONABLE olarak siniflandirildi (onceki classify). Yapilmasi gereken somut bir is var.
 
 Yapabilirsin (settings allowlist):
-- Read/Edit/Write: /opt/linux-ai-server/** ve /home/klipperos/work/**
+${allowlist_line}
 - Git local: status/diff/log/add/commit (push YOK)
 - Test: npx tsc/eslint/vitest, ruff, pytest
 - DB sorgu: sqlite3 (SELECT/INSERT/UPDATE notes ve memories)
@@ -258,14 +270,6 @@ Result: <bir-iki cumle>"
     _retry_env="${HOOK_ENV_FILE:-/opt/linux-ai-server/.env}"
     _retry_key=$(grep '^MEMORY_API_KEY_AUTONOMOUS=' "$_retry_env" 2>/dev/null | cut -d= -f2- | tr -d '"' | head -c 200)
     [ -z "$_retry_key" ] && _retry_key=$(grep '^MEMORY_API_KEY=' "$_retry_env" 2>/dev/null | cut -d= -f2- | tr -d '"' | head -c 200)
-    # Codex-P1: retry-spawn'i da worktree-izole (autonomous-claude.sh ile birebir-desen).
-    setup_spawn_worktree "$note_id"
-    if [ -n "$WT_PATH" ]; then
-        if ! make_spawn_settings "$SETTINGS_FILE"; then
-            preserve_and_cleanup_worktree "$note_id"
-            _wt_fallback "$note_id" "retry: per-spawn settings FAIL"
-        fi
-    fi
     if [ -n "$WT_PATH" ]; then
         prompt="$prompt
 
@@ -299,7 +303,12 @@ BU dizinde (relative-path). /opt/linux-ai-server'a YAZMA — write-guard reddede
             bash /opt/linux-ai-server/automation/autonomous-spawn-summarize.sh \
                 "$note_id" "$spawn_log" >> "$LOG_FILE" 2>&1 &
         fi
-        log "retry SUCCESS: note=#$note_id archived dlq_id=$dlq_id"
+        # Codex P2a (#100429): retry-spawn'in commit'leri de audit-scan edilsin (izole-ref
+        # OLD_HEAD..REF diff'i; claude.sh-paritesi). Worktree-modda SPAWN_WORK_REF dolu; shared'da boş
+        # (audit-script ref-yoksa /opt-HEAD deltasına düşer). Auto-revert YOK, pasif-rapor.
+        bash /opt/linux-ai-server/automation/autonomous-spawn-audit.sh \
+            "$note_id" "${SPAWN_WORK_REF:-}" >> "$LOG_FILE" 2>&1 &
+        log "retry SUCCESS: note=#$note_id archived dlq_id=$dlq_id (audit spawned)"
         return 0
     fi
 

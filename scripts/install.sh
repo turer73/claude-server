@@ -50,6 +50,10 @@ mkdir -p /etc/linux-ai-server
 # fail-loud'lu ama islevsiz). Root-installer pre-create + chown = kalici-cozum.
 mkdir -p /opt/linux-ai-server-worktrees
 chown klipperos:klipperos /opt/linux-ai-server-worktrees 2>/dev/null || true
+# Codex P1a (#100429): retry-cron klipper-auto'ya re-exec eder; klipper-auto klipperos-GRUBUNDA
+# ama default-755=grup-yazamaz -> retry-spawn izolasyonsuz kalirdi. setgid+g+w (2775): hem
+# klipperos(owner) hem klipper-auto(grup) mkdir edebilir; setgid alt-worktree grup-miras.
+chmod 2775 /opt/linux-ai-server-worktrees 2>/dev/null || true
 
 # Copy files — replacement semantics (rm-rf + cp -rT): `cp -r X/ dest/` dest VARSA GNU-cp'de
 # dest/X nesteler → upgrade'de stale kod kalır (Codex :28/:63). Kaynak = $SRC_DIR (checkout).
