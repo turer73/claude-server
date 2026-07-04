@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # DB path fallback'i için TEK kaynak. Production systemd DB_PATH set eder; bu
 # yalnızca env yokken devreye girer. main.py (schema init) ve events.py (emit/read)
 # AYNI değeri kullanmalı — yoksa events farklı/tablosuz path'e yazıp sessiz drop olur.
-DEFAULT_DB_PATH = "/tmp/linux-ai-server-test.db"  # noqa: S108 — kasıtlı fallback; prod DB_PATH override eder
+from app.db.data_layer import DEFAULT_DB_PATH  # tek-kaynak data_layer (re-export; mevcut import-yollari korunur)
 
 SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS api_keys (

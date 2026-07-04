@@ -15,9 +15,15 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))  # repo-root (app.db.data_layer icin)
 import sys
 import urllib.request
 from datetime import UTC, datetime
+
+from app.db.data_layer import get_conn
 
 ENV_FILE = os.environ.get("NOTIFY_ENV_FILE", "/opt/linux-ai-server/.env")
 API_BASE = os.environ.get("API_BASE", "http://localhost:8420")
@@ -51,7 +57,7 @@ def _post_json(url: str, body: dict, headers: dict, timeout: int) -> dict:
 
 def _q(db: str, sql: str, params: tuple = ()) -> list:
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+        con = get_conn(db, readonly=True, busy_timeout_ms=5000, row_factory=False)  # P1-a: mode=ro+5s + tuple-parite (JSON-serialize)
         try:
             return con.execute(sql, params).fetchall()
         finally:

@@ -28,9 +28,15 @@ import json
 import os
 import re
 import sqlite3
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))  # repo-root (app.db.data_layer icin)
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
+
+from app.db.data_layer import get_conn
 
 DB_PATH = os.environ.get("HOOK_DB", "/opt/linux-ai-server/data/claude_memory.db")
 LOG_DIR = os.environ.get("HOOK_LOG_DIR", "/opt/linux-ai-server/data/hook-logs")
@@ -175,8 +181,7 @@ def _git_branch(cwd: str) -> str:
 
 # ───────────────────────────── db / schema ──────────────────────────────────
 def _db() -> sqlite3.Connection:
-    con = sqlite3.connect(DB_PATH, timeout=8)
-    con.execute("PRAGMA busy_timeout=8000")
+    con = get_conn(DB_PATH, busy_timeout_ms=8000, row_factory=False)  # P1-a: 8000ms + tuple-parite
     con.executescript(
         """
         CREATE TABLE IF NOT EXISTS session_registry (

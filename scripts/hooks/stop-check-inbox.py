@@ -24,9 +24,14 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))  # repo-root (app.db.data_layer icin)
 import sys
 from pathlib import Path
+
+from app.db.data_layer import get_conn
 
 DB_PATH = os.environ.get("HOOK_DB", "/opt/linux-ai-server/data/claude_memory.db")
 DEVICE = os.environ.get("HOOK_DEVICE", "klipper")
@@ -60,7 +65,7 @@ def main() -> int:
     # Unread notes query — klipper-targeted VEYA broadcast (to_device IS NULL)
     # Broadcast'lar herkese acik notlardir; klipper'in da gormesi gerekir.
     try:
-        con = sqlite3.connect(DB_PATH)
+        con = get_conn(DB_PATH, row_factory=False)  # P1-a: busy_timeout+WAL; tuple-parite (Row kullanmiyordu)
         # PER-DEVICE okunmamış (#647): read_by varsa bu device'a göre filtrele; yoksa legacy.
         # Kolon-guard: read_by henüz yoksa eski global sorgu (sessiz-fail önlenir).
         cols = [r[1] for r in con.execute("PRAGMA table_info(notes)").fetchall()]

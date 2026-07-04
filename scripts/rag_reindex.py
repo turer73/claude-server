@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """Bilge Arena re-index with bge-m3 multilingual + full content"""
 
-import sqlite3
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))  # repo-root (app.db.data_layer icin)
 import uuid
 
 import requests
+
+from app.db.data_layer import get_conn
 
 DB = "/opt/linux-ai-server/data/claude_memory.db"
 QDRANT = "http://localhost:6333"
@@ -27,7 +32,7 @@ def embed(text):
 requests.delete(f"{QDRANT}/collections/{COLLECTION}")
 requests.put(f"{QDRANT}/collections/{COLLECTION}", json={"vectors": {"size": VECTOR_SIZE, "distance": "Cosine"}})
 
-conn = sqlite3.connect(DB)
+conn = get_conn(DB, row_factory=False)  # P1-a: busy_timeout+WAL; tuple-parite
 cur = conn.cursor()
 points = []
 

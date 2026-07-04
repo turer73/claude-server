@@ -17,12 +17,17 @@ from __future__ import annotations
 import json as _json
 import os
 import shutil
-import sqlite3
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))  # repo-root (app.db.data_layer icin)
 import subprocess
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
+
+from app.db.data_layer import get_conn
 
 DB = "/opt/linux-ai-server/data/claude_memory.db"
 LOG = "/opt/linux-ai-server/data/hook-logs/triage-llm.log"
@@ -120,8 +125,7 @@ def main():
         log("FATAL: claude CLI bulunamadı (Max-abonelik gerekli; API kullanılmaz)")
         sys.exit(0)
 
-    conn = sqlite3.connect(DB)
-    conn.row_factory = sqlite3.Row
+    conn = get_conn(DB)  # P1-a: busy_timeout+WAL+Row (onceden timeout'suz)
     cur = conn.cursor()
 
     # Two streams:
