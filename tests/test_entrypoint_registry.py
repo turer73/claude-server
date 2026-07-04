@@ -32,8 +32,8 @@ def test_exempt_locators_exist_and_justified():
     assert not empty, f"gerekçesiz exempt: {empty}"
 
 
-def test_note_delivery_concern_has_all_nine_surfaces():
-    """Pilot-kapsam kilidi (#100383 koddan-doğrulanmış liste): 9 yüzey, spawn-yüzeyi dahil.
+def test_note_delivery_concern_surfaces_locked():
+    """Pilot-kapsam kilidi: 9 koddan-doğrulanmış (#100383) + 2 guard-ilk-koşum-keşfi = 11.
     Yüzey silinirse/etiketi düşerse bu test konuşur — sessiz-daralma olmaz."""
     ids = {ep.id for ep in by_concern(NOTE_DELIVERY)}
     assert ids == {
@@ -46,6 +46,8 @@ def test_note_delivery_concern_has_all_nine_surfaces():
         "cron:note-poller",
         "cli:agent-feed",
         "cli:claude-memory",
+        "api:dashboard",
+        "cron:autonomous-daily-summary",
     }
     assert "cron:note-poller" in ids  # #1222'de kaçan SPAWN-yüzeyi — asla düşmemeli
 
