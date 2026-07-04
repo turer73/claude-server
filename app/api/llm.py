@@ -149,27 +149,29 @@ def _usage_stats(hours: int = 24) -> dict[str, Any]:
     since = int(time.time()) - hours * 3600
     try:
         conn = get_conn(rag_module.METRICS_DB, busy_timeout_ms=2000)  # P1-a: timeout=2 semantigi korundu
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT COUNT(*), AVG(duration_ms), AVG(hit_count), AVG(top_score) FROM rag_queries WHERE ts >= ?",
-            (since,),
-        )
-        total, avg_dur, avg_hits, avg_score = cur.fetchone()
-        out.update(
-            {
-                "ok": True,
-                "total": total or 0,
-                "avg_duration_ms": round(avg_dur or 0, 1),
-                "avg_hit_count": round(avg_hits or 0, 2),
-                "avg_top_score": round(avg_score or 0, 3),
-            }
-        )
-        cur.execute(
-            "SELECT endpoint, COUNT(*) FROM rag_queries WHERE ts >= ? GROUP BY endpoint",
-            (since,),
-        )
-        out["by_endpoint"] = dict(cur.fetchall())
-        conn.close()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT COUNT(*), AVG(duration_ms), AVG(hit_count), AVG(top_score) FROM rag_queries WHERE ts >= ?",
+                (since,),
+            )
+            total, avg_dur, avg_hits, avg_score = cur.fetchone()
+            out.update(
+                {
+                    "ok": True,
+                    "total": total or 0,
+                    "avg_duration_ms": round(avg_dur or 0, 1),
+                    "avg_hit_count": round(avg_hits or 0, 2),
+                    "avg_top_score": round(avg_score or 0, 3),
+                }
+            )
+            cur.execute(
+                "SELECT endpoint, COUNT(*) FROM rag_queries WHERE ts >= ? GROUP BY endpoint",
+                (since,),
+            )
+            out["by_endpoint"] = dict(cur.fetchall())
+        finally:
+            conn.close()  # #1239: exception'da da kapat (tablo-yok/sorgu-hatasi -> leak'ti)
     except Exception as e:
         out["error"] = str(e)[:100]
     return out

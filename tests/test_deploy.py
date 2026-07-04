@@ -133,3 +133,26 @@ async def test_memory_context_db_missing(client, tmp_path):
         resp = await client.get("/api/v1/deploy/memory/context", headers={"x-api-key": "k"})
     assert resp.status_code == 200
     assert "error" in resp.json()
+
+
+@pytest.mark.anyio
+async def test_deploy_metadata_update_does_not_clobber_concurrent_register(monkeypatch, tmp_path):
+    """#1238 repro — deploy_project load↔save arasındaki await'te başka istek registry'ye
+    yazarsa kaybolmamalı. Base'de handler bayat snapshot'ı kaydeder → 'b' SİLİNİR → FAIL."""
+    from app.api import deploy as dep
+
+    monkeypatch.setattr(dep, "PROJECTS_FILE", str(tmp_path / "registry.json"))
+    await dep.register_project(dep.ProjectRegister(name="a", path=str(tmp_path)), None)
+
+    async def _pull_and_interleave(self, cmd, timeout=30):
+        # await-penceresi: deploy 'a' shell'deyken eşzamanlı istek 'b'yi register ediyor
+        await dep.register_project(dep.ProjectRegister(name="b", path=str(tmp_path)), None)
+        return {"exit_code": 0, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr(dep.ShellExecutor, "execute", _pull_and_interleave)
+    resp = await dep.deploy_project("a", None)
+    assert resp.get("success") is True
+
+    reg = dep._load_registry()["projects"]
+    assert reg["a"]["deploy_count"] == 1  # deploy-metadata yazıldı
+    assert "b" in reg  # eşzamanlı register KAYBOLMADI (lost-update yok)
