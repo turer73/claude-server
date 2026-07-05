@@ -19,6 +19,13 @@ set -euo pipefail
 
 HOOK_DB="${HOOK_DB:-/opt/linux-ai-server/data/claude_memory.db}"
 HOOK_DEVICE="${HOOK_DEVICE:-klipper}"
+# Guard (disc#1256): HOOK_DEVICE SQL'e interpolasyonlu (WHERE to_device='$HOOK_DEVICE').
+# Precedent: NOTE_ID (autonomous-claude.sh:93) + DAYS (gate-telemetry-report.sh:14) regex-validate.
+# Somuru dusuk (env-var, servis-kullanicisi) ama daemon calisir-halde tutulur -> exit degil default.
+if ! [[ "$HOOK_DEVICE" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    echo "note-poller: gecersiz HOOK_DEVICE='$HOOK_DEVICE' (yalniz [A-Za-z0-9_-]) -> 'klipper'e dusuluyor" >&2
+    HOOK_DEVICE="klipper"
+fi
 PENDING_FILE="${PENDING_FILE:-/opt/linux-ai-server/data/hook-state/pending-notes.json}"
 STATE_FILE="${STATE_FILE:-/opt/linux-ai-server/data/hook-state/poller-state.json}"
 LOG_FILE="${LOG_FILE:-/opt/linux-ai-server/data/hook-logs/note-poller.log}"
@@ -50,6 +57,9 @@ bootstrap_state() {
 poll_once() {
     local last_seen
     last_seen=$(python3 -c "import json; print(json.load(open('$STATE_FILE')).get('last_seen_id', 0))" 2>/dev/null || echo 0)
+    # Guard (disc#1256): last_seen state-file'dan; 'AND id > $last_seen' + printf %s'e girer.
+    # Bozuk/tamperli JSON'da sayisal-olmayan deger SQL'e sizmasin -> 0'a dus (tum-unread yakalanir).
+    [[ "$last_seen" =~ ^[0-9]+$ ]] || last_seen=0
 
     # Per-poll heartbeat (LIVESYS Faz2): liveness = processor-canli, yeni-not'tan
     # BAGIMSIZ. Idle poll'da bile last_poll_at tazelenir; yoksa liveness-monitor
@@ -175,7 +185,7 @@ for n in spawned:
     cmd = ['/opt/linux-ai-server/automation/autonomous-claude.sh',
            str(nid), frm, title, preview]
     subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
-                     stdout=open('/dev/null', 'w'),
+                     stdout=subprocess.DEVNULL,
                      stderr=subprocess.STDOUT, start_new_session=True,
                      env={**os.environ, 'ENFORCE_INTERACTIVE_CHECK': '1'})
 
