@@ -10,6 +10,7 @@ spawn-commit'i sonrası ANA-MASTER HEAD DEĞİŞMEZ (bugünkü 6-kirliliğin tam
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -285,3 +286,52 @@ def test_per_spawn_settings_generated(tmp_path):
     assert any("spawn-write-guard" in h["hooks"][0]["command"] for h in hooks)
     assert any("SPAWN_WT_PATH=" in h["hooks"][0]["command"] for h in hooks)
     assert base_settings.read_text(encoding="utf-8") == base_before  # base-dosya dokunulmadı
+
+
+# ── Ortak spawn-yolu (DRY, #100436 follow-up-4) ──────────────────────────────
+
+
+def test_build_spawn_prompt_nonce_fence_and_allowlist():
+    """Ortak prompt-şablonu: nonce-fence enjeksiyon-koruması + dinamik-allowlist +
+    extra_meta (retry-attempt) — retry-yolu eski-kopyasında fence YOKTU (birleşme-kazancı)."""
+    script = """
+SPAWN_ALLOWLIST_LINE="- TEST-ALLOWLIST-SATIRI"
+SPAWN_WT_NOTICE="
+=== TEST-WT-NOTICE ==="
+build_spawn_prompt 77 "ajan$(printf '\r\n')x" "baslik" "icerik-govde" "RETRY basligi." "Retry attempt: 2 of 3"
+printf '%s' "$SPAWN_PROMPT"
+"""
+    env = {**os.environ, "LOG_FILE": "/dev/null", "SPAWN_REPO_ROOT": "/nonexistent", "SPAWN_WT_BASE": "/nonexistent"}
+    r = subprocess.run(["bash", "-c", f'. "{LIB.as_posix()}"\n{script}'], capture_output=True, text=True, env=env, timeout=60)
+    assert r.returncode == 0, r.stderr[-300:]
+    out = r.stdout
+    assert out.startswith("RETRY basligi."), out[:80]
+    assert "GUVENILMEZ VERI" in out, "nonce-fence bloğu yok"
+    assert "ENJEKSIYON" in out, "nonce-fence enjeksiyon-uyarısı yok"
+    # nonce BASLA/BITIR çifti aynı değerle var
+    m = re.search(r"(NB-[0-9a-f]+)-BASLA", out)
+    assert m, "nonce-BASLA yok"
+    assert f"{m.group(1)}-BITIR" in out, "nonce-BITIR eşleşmiyor"
+    assert "- TEST-ALLOWLIST-SATIRI" in out, "allowlist enjekte edilmedi"
+    assert "=== TEST-WT-NOTICE ===" in out, "wt-notice enjekte edilmedi"
+    assert "Retry attempt: 2 of 3" in out, "extra_meta metadata-bloğunda yok"
+    assert "ajanx" in out, "from CR/LF-strip edilmedi"
+    assert "\r" not in out, "prompt'ta CR kaldı"
+
+
+def test_both_callers_use_shared_spawn_path():
+    """Regresyon-kilidi: main + retry ortak-yolu KULLANMALI; retry kendi inline
+    prompt/exec kopyasına geri dönerse (kaskad-bulgu-üreteci) bu test kırılır."""
+    main = (REPO_ROOT / "automation" / "autonomous-claude.sh").read_text(encoding="utf-8")
+    retry = (REPO_ROOT / "automation" / "autonomous-spawn-retry.sh").read_text(encoding="utf-8")
+    for src, name in ((main, "autonomous-claude.sh"), (retry, "autonomous-spawn-retry.sh")):
+        for fn in ("spawn_isolated_begin", "build_spawn_prompt", "spawn_isolated_exec"):
+            assert fn in src, f"{name} ortak-fonksiyon {fn} kullanmıyor"
+    # retry'da inline-kopya kalıntısı olmasın (ACTIONABLE-prompt gövdesi tek-kaynak=lib).
+    # Gerçek-çağrı deseni: `claude -p "$...` (yorum-satırlarındaki 'claude -p' sayılmaz).
+    exec_pat = re.compile(r'claude -p "\$')
+    assert "GUVENILMEZ VERI" not in retry, "retry.sh kendi prompt-kopyasını taşıyor"
+    assert not exec_pat.search(retry), "retry.sh inline claude-exec taşıyor"
+    # main'de ACTIONABLE-yolu inline-exec taşımasın (planner'ın read-only exec'i AYRI, 1 adet)
+    n_main = len(exec_pat.findall(main))
+    assert n_main == 1, f"main inline claude-exec sayısı beklenmedik: {n_main} (planner=1 olmalı)"
