@@ -91,6 +91,14 @@ class ShellExecutor:
         return True
 
     def validate_cwd(self, cwd: str) -> str:
+        # KAZA-ONLEME, confinement DEGIL (#1233 by-design): cwd yalniz /exec'ten
+        # (require_admin) gelir; full-shell komut `cd`/mutlak-path ile HER cwd'yi asar
+        # + process servis-kullanicisi (sudo NOPASSWD) olarak kosar. Bu kontrol sadece
+        # gecersiz-dizin typo'sunu net-hataya cevirir (subprocess-crash yerine).
+        # Guvenlik siniri = auth (modul docstring'i). cwd-allowlist eklemek sahte-sinir
+        # olurdu (komut zaten asar) -> modulun durust-etiketleme desenine uyarak
+        # BILINCLI EKLENMEDI; gercek-confinement gerekirse yol = sandbox (unpriv-user
+        # + bwrap/nsjail/systemd-run), cwd-string DEGIL.
         resolved = os.path.realpath(cwd)
         if not os.path.isdir(resolved):
             raise ShellExecutionError(f"cwd does not exist or is not a directory: {cwd!r}")
