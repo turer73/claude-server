@@ -202,108 +202,28 @@ retry_one() {
         return 0
     fi
 
-    # Codex-P1 + P2b (#100429): worktree-izolasyonu + allowlist prompt-ONCESI kurulmali —
-    # WT_PATH prompt-string'de dogru gorunsun (aksi-halde allowlist_line bos + statik-/opt-celiskisi).
-    # Codex-re3 P2: tek-tick coklu-row -> onceki-row state'ini TEMIZLE (stale SPAWN_SETTINGS/
-    # SPAWN_WORK_REF 2. row'a sizmasin; setup zaten WT_* sifirlar, bunlar ayri global).
-    SPAWN_SETTINGS=""; SPAWN_WORK_REF=""
-    setup_spawn_worktree "$note_id"
-    if [ -n "$WT_PATH" ]; then
-        if ! make_spawn_settings "$SETTINGS_FILE"; then
-            preserve_and_cleanup_worktree "$note_id"
-            _wt_fallback "$note_id" "retry: per-spawn settings FAIL"
-        fi
-    fi
-    # Codex-re3 P2: audit-oncesi base-HEAD persist (claude.sh-paritesi; audit OLD_HEAD..REF
-    # kıyası için spawn-head-<note>.txt gerekir — worktree-modda base=WT_BASE_SHA).
-    mkdir -p /opt/linux-ai-server/data/hook-state 2>/dev/null || true
-    if [ -n "$WT_BASE_SHA" ]; then
-        printf '%s\n' "$WT_BASE_SHA" > "/opt/linux-ai-server/data/hook-state/spawn-head-${note_id}.txt" 2>/dev/null || true
-    fi
-    local allowlist_line="- Read/Edit/Write: /opt/linux-ai-server/** ve /home/klipperos/work/**"
-    [ -n "$WT_PATH" ] && allowlist_line="- Read: /opt/linux-ai-server/** (salt-oku) | Edit/Write: $WT_PATH/** (izole-worktree; relative-path)"
+    # Ortak spawn-yolu (DRY, #100436 follow-up-4): worktree + settings + base-head +
+    # allowlist/wt-notice + prompt-şablonu + exec/cleanup TEK kaynaktan (lib) — 4-tur
+    # Codex-kaskadının bulgu-üreteci olan "retry-yolu ayrı-kopya" sınıfı kapandı.
+    # BONUS-parite: retry-promptu artık nonce-fence enjeksiyon-korumalı (P1#4) — eski
+    # kopyada YOKTU (yalnız main'deydi; birleştirmenin somut kazancı).
+    spawn_isolated_begin "$note_id" "$SETTINGS_FILE"
 
-    # Prompt rebuild (handle_actionable line 157-201 ile ayni; DRY violation kabul — scope korunma)
-    local prompt spawn_log
-    prompt="Otonom modda RETRY spawn edildin (DLQ attempt #$((attempt+1))/$POISON_THRESHOLD). Onceki spawn fail olmustu (rc!=0), simdi tekrar deniyoruz:
-
-=== NOTE METADATA ===
-ID: #$note_id
-From: $from
-Title: $title
-Retry attempt: $((attempt+1)) of $POISON_THRESHOLD
-
-=== NOTE CONTENT ===
-$full_content
-
-=== TALIMAT ===
-Bu note ACTIONABLE olarak siniflandirildi (onceki classify). Yapilmasi gereken somut bir is var.
-
-Yapabilirsin (settings allowlist):
-${allowlist_line}
-- Git local: status/diff/log/add/commit (push YOK)
-- Test: npx tsc/eslint/vitest, ruff, pytest
-- DB sorgu: sqlite3 (SELECT/INSERT/UPDATE notes ve memories)
-- Internal API: curl 127.0.0.1:8420
-- Note mark read sonunda
-
-Yapamazsin (settings deny):
-- sudo, systemctl, docker, ssh, scp, rsync
-- rm, dd
-- git push, git rebase, git reset --hard
-- gh pr merge/close
-- VPS prod (vps-run.sh)
-- Web fetch/search
-
-Akis:
-1. Note'u oku, somut isi belirle
-2. Gerekli dosyalari Read et
-3. Edit/Write yap
-4. Test komutlarini cag (tsc/eslint/vitest/ruff)
-5. Test passlanirsa git add + git commit
-6. Note'u okundu isaretle (curl PUT /notes/$note_id/read)
-7. Kisa rapor yaz, cik
-
-Kisa rapor formati:
-Action: <yapildi/deferred-test-fail/deferred-out-of-scope>
-Note ID: #$note_id
-Commits: <hash hash hash>
-Tests: <pass/fail>
-Result: <bir-iki cumle>"
+    local spawn_log
+    build_spawn_prompt "$note_id" "$from" "$title" "$full_content" \
+        "Otonom modda RETRY spawn edildin (DLQ attempt #$((attempt+1))/$POISON_THRESHOLD). Onceki spawn fail olmustu (rc!=0), simdi tekrar deniyoruz." \
+        "Retry attempt: $((attempt+1)) of $POISON_THRESHOLD"
 
     spawn_log="${HOOK_LOG_DIR}/autonomous-claude-retry-spawn-${note_id}-$(date +%s).log"
 
-    set +e
     # GAP-1 item-D (Codex #3): DLQ-retry spawn'i da otonom-key kullansin -> not-yazimlari
     # A-2 tagged (retried-otonom-is normal-key ile untagged yazmasin). autonomous-claude.sh ile ayni.
     _retry_env="${HOOK_ENV_FILE:-/opt/linux-ai-server/.env}"
     _retry_key=$(grep '^MEMORY_API_KEY_AUTONOMOUS=' "$_retry_env" 2>/dev/null | cut -d= -f2- | tr -d '"' | head -c 200)
     [ -z "$_retry_key" ] && _retry_key=$(grep '^MEMORY_API_KEY=' "$_retry_env" 2>/dev/null | cut -d= -f2- | tr -d '"' | head -c 200)
-    if [ -n "$WT_PATH" ]; then
-        prompt="$prompt
 
-=== CALISMA-DIZINI (IZOLE-WORKTREE) ===
-Su-an IZOLE git-worktree'desin: $WT_PATH (cwd olarak ayarlandi). TUM degisiklikler/commit'ler
-BU dizinde (relative-path). /opt/linux-ai-server'a YAZMA — write-guard reddeder."
-    fi
-    (
-        [ -n "$WT_PATH" ] && cd "$WT_PATH"
-        MEMORY_API_KEY="$_retry_key" \
-        timeout -k 30 "$SPAWN_TIMEOUT" \
-        claude -p "$prompt" \
-            --append-system-prompt "$(cat "$GUARDRAILS")" \
-            --settings "${SPAWN_SETTINGS:-$SETTINGS_FILE}" \
-            --output-format json \
-            --model "$MODEL" \
-            < /dev/null \
-            > "$spawn_log" 2>&1
-    )
-    local rc=$?
-    set -e
-    # Commit-koruma + worktree-temizlik (rc-bagimsiz; fail'li retry'in yarim-isi de korunur).
-    preserve_and_cleanup_worktree "$note_id"
-
-    [ "$rc" -eq 124 ] && log "retry spawn TIMEOUT (${SPAWN_TIMEOUT}s) — hang-korumasi, fail-path'e akiyor"
+    spawn_isolated_exec "$note_id" "$SPAWN_PROMPT" "$spawn_log" "$_retry_key" "$SETTINGS_FILE"
+    local rc=$SPAWN_RC
     log "retry spawn done: note=#$note_id rc=$rc log=$spawn_log"
 
     if [ "$rc" -eq 0 ]; then
