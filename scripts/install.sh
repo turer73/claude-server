@@ -66,6 +66,10 @@ cp "$SRC_DIR/pyproject.toml" /opt/linux-ai-server/
 # çözülür; dosya yoksa ci_fixer ABORT eder → paketli-deploy'da da gelsin.
 mkdir -p /opt/linux-ai-server/automation
 cp "$SRC_DIR/automation/ci-fixer-settings.json" /opt/linux-ai-server/automation/
+# spawn-write-guard fail-CLOSED (Codex-re4, ci-fixer-settings ile AYNI sınıf): lib'in
+# WRITE_GUARD varsayılanı bu path'e çözülür; dosya yoksa make_spawn_settings FAIL →
+# her izole-spawn shared-fallback'e düşer (izolasyon sessizce devre-dışı). Installer da koysun.
+install -m 0755 "$SRC_DIR/automation/spawn-write-guard.sh" /opt/linux-ai-server/automation/
 rm -rf /etc/linux-ai-server/config
 cp -r "$SRC_DIR/config" /etc/linux-ai-server/
 cp "$SRC_DIR/config/env" /etc/linux-ai-server/env 2>/dev/null || true
