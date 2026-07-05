@@ -45,6 +45,15 @@ mkdir -p /var/lib/linux-ai-server
 mkdir -p /var/log/linux-ai-server
 mkdir -p /var/AI-stump/agents
 mkdir -p /etc/linux-ai-server
+# Spawn-isolation worktree-base (Faz-1, #100422 prod-verify bulgusu): /opt root-owned ->
+# klipperos runtime'da mkdir EDEMEZ -> her-spawn shared-fallback olurdu (izolasyon-devre-disi,
+# fail-loud'lu ama islevsiz). Root-installer pre-create + chown = kalici-cozum.
+mkdir -p /opt/linux-ai-server-worktrees
+chown klipperos:klipperos /opt/linux-ai-server-worktrees 2>/dev/null || true
+# Codex P1a (#100429): retry-cron klipper-auto'ya re-exec eder; klipper-auto klipperos-GRUBUNDA
+# ama default-755=grup-yazamaz -> retry-spawn izolasyonsuz kalirdi. setgid+g+w (2775): hem
+# klipperos(owner) hem klipper-auto(grup) mkdir edebilir; setgid alt-worktree grup-miras.
+chmod 2775 /opt/linux-ai-server-worktrees 2>/dev/null || true
 
 # Copy files — replacement semantics (rm-rf + cp -rT): `cp -r X/ dest/` dest VARSA GNU-cp'de
 # dest/X nesteler → upgrade'de stale kod kalır (Codex :28/:63). Kaynak = $SRC_DIR (checkout).
@@ -57,6 +66,10 @@ cp "$SRC_DIR/pyproject.toml" /opt/linux-ai-server/
 # çözülür; dosya yoksa ci_fixer ABORT eder → paketli-deploy'da da gelsin.
 mkdir -p /opt/linux-ai-server/automation
 cp "$SRC_DIR/automation/ci-fixer-settings.json" /opt/linux-ai-server/automation/
+# spawn-write-guard fail-CLOSED (Codex-re4, ci-fixer-settings ile AYNI sınıf): lib'in
+# WRITE_GUARD varsayılanı bu path'e çözülür; dosya yoksa make_spawn_settings FAIL →
+# her izole-spawn shared-fallback'e düşer (izolasyon sessizce devre-dışı). Installer da koysun.
+install -m 0755 "$SRC_DIR/automation/spawn-write-guard.sh" /opt/linux-ai-server/automation/
 rm -rf /etc/linux-ai-server/config
 cp -r "$SRC_DIR/config" /etc/linux-ai-server/
 cp "$SRC_DIR/config/env" /etc/linux-ai-server/env 2>/dev/null || true

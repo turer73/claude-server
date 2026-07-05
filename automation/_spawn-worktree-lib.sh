@@ -37,7 +37,7 @@ setup_spawn_worktree() {
     [ "$SPAWN_ISOLATION" = "1" ] || { log "spawn-isolation KAPALI (env) — shared-checkout"; return 0; }
     WT_NONCE="$(date +%s)-$$"
     local target="$SPAWN_WT_BASE/spawn-${note_id}-${WT_NONCE}"
-    mkdir -p "$SPAWN_WT_BASE" 2>>"$LOG_FILE" || { _wt_fallback "$note_id" "wt-base mkdir FAIL"; return 0; }
+    mkdir -p "$SPAWN_WT_BASE" 2>>"$LOG_FILE" || { _wt_fallback "$note_id" "wt-base mkdir FAIL (fix: install.sh pre-create / sudo mkdir+chown klipperos $SPAWN_WT_BASE — #100422)"; return 0; }
     # P2-c stale-repair: bu-note'un önceki (kesik-retry) worktree'lerini temizle.
     local st
     for st in "$SPAWN_WT_BASE/spawn-${note_id}-"*; do
@@ -75,5 +75,57 @@ preserve_and_cleanup_worktree() {
     fi
     git -C "$SPAWN_REPO_ROOT" worktree remove --force "$WT_PATH" >>"$LOG_FILE" 2>&1 || rm -rf "$WT_PATH" 2>>"$LOG_FILE"
     git -C "$SPAWN_REPO_ROOT" worktree prune >>"$LOG_FILE" 2>&1 || true
+    # Codex-re3 P1-CRUX: settings worktree-DIŞINDA (pool-parent) → cleanup ayrı siler
+    # (worktree-remove onu kapsamaz; nonce-adlı tekil dosya).
+    [ -n "$WT_NONCE" ] && rm -f "$SPAWN_WT_BASE/.spawn-settings-${WT_NONCE}.json" 2>>"$LOG_FILE"
     WT_PATH=""
+}
+
+# ── Faz-2 (P2-a): per-spawn settings — allow'ları worktree'ye daralt + deny-hook ──
+# Base-settings'teki Read/Edit/Write(//opt/...) izinleri worktree'ye map'lenir + PreToolUse
+# write-guard-hook enjekte (çift-katman: permission-daraltma + deterministik-hook).
+#
+# Codex-re3 P1-CRUX (GÜVENLİK): settings WORKTREE-DIŞINDA üretilir (pool-parent
+# $SPAWN_WT_BASE/.spawn-settings-<nonce>.json). Worktree-İÇİNDE olsaydı spawn kendi
+# settings'ini modify edip write-guard-hook'unu KALDIRABİLİRDİ (tampering). Pool-parent
+# spawn'ın izin-listesinde YOK (yalnız $WT_PATH/** + /tmp/**) → spawn oraya yazamaz.
+# Codex-re3 P1-Read: Read(//opt/**) DE worktree'ye map'lenir (orijinali KORUNUR + worktree
+# EKLENİR); worktree /opt-ALTINDA-DEĞİL (ayrı pool-dizini) → yoksa spawn kendi-dosyalarını okuyamazdı.
+SPAWN_SETTINGS=""
+WRITE_GUARD="${WRITE_GUARD:-/opt/linux-ai-server/automation/spawn-write-guard.sh}"
+
+make_spawn_settings() {
+    local base_settings="$1"
+    SPAWN_SETTINGS=""
+    [ -n "$WT_PATH" ] || return 0   # shared-fallback'te base-settings kalır (eski-davranış)
+    # Codex P2-b: guard-script yoksa/okunamıyorsa settings ÜRETME (hook runtime'da patlar =
+    # belirsiz-davranış/fail-open-riski) → FAIL → caller shared-fallback'e düşer (fail-closed).
+    if [ ! -f "$WRITE_GUARD" ] || [ ! -r "$WRITE_GUARD" ]; then
+        log "CRITICAL: write-guard bulunamadı/okunamıyor: $WRITE_GUARD — settings üretilmedi"
+        return 1
+    fi
+    # P1-CRUX: WORKTREE-DIŞI (pool-parent) — spawn buraya yazamaz (tampering-önleme).
+    local out="$SPAWN_WT_BASE/.spawn-settings-${WT_NONCE}.json"
+    local wtrel="${WT_PATH#/}"
+    if ! jq --arg wt "$WT_PATH" --arg wtrel "$wtrel" --arg guard "$WRITE_GUARD" '
+        .permissions.allow |= map(
+            if . == "Read(//opt/linux-ai-server/**)"  then "Read(//opt/linux-ai-server/**)", "Read(//"  + $wtrel + "/**)"
+            elif . == "Edit(//opt/linux-ai-server/**)"  then "Edit(//"  + $wtrel + "/**)"
+            elif . == "Write(//opt/linux-ai-server/**)" then "Write(//" + $wtrel + "/**)"
+            else . end)
+        | .hooks.PreToolUse = ((.hooks.PreToolUse // []) + [{
+            matcher: "Edit|Write|MultiEdit|NotebookEdit",
+            hooks: [{type: "command",
+                     command: ("SPAWN_WT_PATH=" + ($wt | @sh) + " bash " + ($guard | @sh))}]
+          }])
+    ' "$base_settings" > "$out" 2>>"$LOG_FILE"; then
+        # Settings-üretimi FAIL → izolasyonsuz-settings'le devam ETME riski yerine
+        # worktree'yi bırakıp shared-fallback'e düş (CRITICAL-emit'li, §2.5-tutarlı).
+        log "CRITICAL: per-spawn settings üretimi FAIL — base-settings + shared'a düşülüyor"
+        rm -f "$out" 2>>"$LOG_FILE"
+        SPAWN_SETTINGS=""
+        return 1
+    fi
+    SPAWN_SETTINGS="$out"
+    log "per-spawn settings hazır: $out (worktree-DIŞI; Read+Edit+Write→worktree + guard-hook)"
 }

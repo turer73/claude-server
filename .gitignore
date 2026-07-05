@@ -59,3 +59,6 @@ tmp/
 
 # GAP-2 eval-harness raporu (her calismada uretilir)
 tests/gap2/last_eval_report.json
+
+# Faz-2 per-spawn settings (worktree-ici uretilir; spawn git-add-A ile commitlemesin — Codex P2-a)
+.spawn-settings.json
