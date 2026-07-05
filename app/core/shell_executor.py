@@ -2,8 +2,9 @@
 
 GUVENLIK MODELI (durust): Bu endpoint authenticated admin'e TAM bash erisimi
 verir (`create_subprocess_shell` -> pipe/redirect/chain/$()/ hepsi calisir).
-ASIL guvenlik siniri = JWT/API-key ADMIN AUTH; admin ile sistem zaten tam-kontrol
-(sudo NOPASSWD). Dashboard terminal + run-agent.sh bunu bilincli kullanir.
+ASIL guvenlik siniri = JWT/API-key ADMIN AUTH; admin, servis-kullanicisinin tam
+yetkisiyle bash calistirir (yetki-seviyesi deployment'e bagli: dev=klipperos/sudo,
+packaged=aiserver/NoNewPrivileges). Dashboard terminal + run-agent.sh bunu bilincli kullanir.
 
 Bu modulde IKI katman var, ama ikisi de guvenlik-siniri DEGIL:
   1) _first_command_whitelisted: SADECE ilk komutu kontrol eder; `cat x; <her sey>`
