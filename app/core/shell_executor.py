@@ -93,8 +93,9 @@ class ShellExecutor:
     def validate_cwd(self, cwd: str) -> str:
         # KAZA-ONLEME, confinement DEGIL (#1233 by-design): cwd yalniz /exec'ten
         # (require_admin) gelir; full-shell komut `cd`/mutlak-path ile HER cwd'yi asar
-        # + process servis-kullanicisi (sudo NOPASSWD) olarak kosar. Bu kontrol sadece
-        # gecersiz-dizin typo'sunu net-hataya cevirir (subprocess-crash yerine).
+        # + process servis-kullanicisinin dosya-erisimiyle kosar (yetki-seviyesi
+        # deployment'e bagli; packaged install=aiserver/NoNewPrivileges). Bu kontrol
+        # sadece gecersiz-dizin typo'sunu net-hataya cevirir (subprocess-crash yerine).
         # Guvenlik siniri = auth (modul docstring'i). cwd-allowlist eklemek sahte-sinir
         # olurdu (komut zaten asar) -> modulun durust-etiketleme desenine uyarak
         # BILINCLI EKLENMEDI; gercek-confinement gerekirse yol = sandbox (unpriv-user
