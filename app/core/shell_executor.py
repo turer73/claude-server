@@ -2,8 +2,9 @@
 
 GUVENLIK MODELI (durust): Bu endpoint authenticated admin'e TAM bash erisimi
 verir (`create_subprocess_shell` -> pipe/redirect/chain/$()/ hepsi calisir).
-ASIL guvenlik siniri = JWT/API-key ADMIN AUTH; admin ile sistem zaten tam-kontrol
-(sudo NOPASSWD). Dashboard terminal + run-agent.sh bunu bilincli kullanir.
+ASIL guvenlik siniri = JWT/API-key ADMIN AUTH; admin, servis-kullanicisinin tam
+yetkisiyle bash calistirir (yetki-seviyesi deployment'e bagli: dev=klipperos/sudo,
+packaged=aiserver/NoNewPrivileges). Dashboard terminal + run-agent.sh bunu bilincli kullanir.
 
 Bu modulde IKI katman var, ama ikisi de guvenlik-siniri DEGIL:
   1) _first_command_whitelisted: SADECE ilk komutu kontrol eder; `cat x; <her sey>`
@@ -91,6 +92,15 @@ class ShellExecutor:
         return True
 
     def validate_cwd(self, cwd: str) -> str:
+        # KAZA-ONLEME, confinement DEGIL (#1233 by-design): cwd yalniz /exec'ten
+        # (require_admin) gelir; full-shell komut `cd`/mutlak-path ile HER cwd'yi asar
+        # + process servis-kullanicisinin dosya-erisimiyle kosar (yetki-seviyesi
+        # deployment'e bagli; packaged install=aiserver/NoNewPrivileges). Bu kontrol
+        # sadece gecersiz-dizin typo'sunu net-hataya cevirir (subprocess-crash yerine).
+        # Guvenlik siniri = auth (modul docstring'i). cwd-allowlist eklemek sahte-sinir
+        # olurdu (komut zaten asar) -> modulun durust-etiketleme desenine uyarak
+        # BILINCLI EKLENMEDI; gercek-confinement gerekirse yol = sandbox (unpriv-user
+        # + bwrap/nsjail/systemd-run), cwd-string DEGIL.
         resolved = os.path.realpath(cwd)
         if not os.path.isdir(resolved):
             raise ShellExecutionError(f"cwd does not exist or is not a directory: {cwd!r}")
