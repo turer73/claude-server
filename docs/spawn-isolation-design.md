@@ -70,3 +70,17 @@ warn/critical-emit (pollution-riski operatöre görünür). Gate-mekaniği spawn
 Post-spawn: ana-master `pre_spawn_sha`'dan ilerlemişse → commit'i `spawn/<note>` branch'ine taşı +
 `git reset --keep pre_spawn_sha`. Klipper'ın bugün manuel-yaptığı. Düşük-risk, kısmi (edit-pollution
 kalır ama commit-divergence temizlenir). Faz-2 riskliyse köprü-çözüm.
+
+---
+
+## Güvence-kapsamı — DÜRÜST ETİKET (Fable 3.-perspektif, 2026-07-05)
+
+**Faz-2 write-guard bir GÜVENLİK-SINIRI DEĞİL — KAZA-sertleştirmesidir.**
+
+- **Kapatır:** kafası-karışık-ama-dürüst spawn'ın Edit/Write-tool'uyla `/opt` ana-checkout'a yazma kazasını (deterministik DENY).
+- **KAPATMAZ:** adversarial / prompt-injected spawn. Sebep: spawn base-settings'i `Bash(echo *)`, `Bash(cat *)`, `Bash(find *)`, `Bash(jq *)` gibi redirect-yetenekli komutlara izin verir; Claude Code Bash-permission'ı komut-prefix'ine bakar, **redirection'ı (`> /opt/...`) GÖRMEZ** → guard (yalnız Edit|Write|MultiEdit|NotebookEdit matcher'ı) hiç çalışmaz. `echo x > /opt/linux-ai-server/app/main.py` guard'ı bypass eder.
+- **Kalan bilinen-P2'ler (kabul, kovalanmıyor — edge-case-numaralandırması):** shared-fallback-audit-base (retry:222), /tmp-backed-pool-settings (lib:108 — SPAWN_WT_BASE'i /tmp altına KOYMA), uncommitted-retry-work-preserve (retry:304).
+
+**Tehdit-modeli bugün:** spawn'lar güvenilir-input'la kaza-yapabilir (adversarial-değil) → Faz-1(worktree-izolasyon) + Faz-2(kaza-guard) YETERLİ.
+
+**"Spawn'lar adversarial" günü (gelecek) gerçek-cevap: UID-izolasyon** — spawn'ı ayrı-uid'le koş + worktree'yi ona chown (veya bwrap/namespace). Kernel HER kanalı (Edit, Bash, python, git, redirect) sıfır-per-caller-entegrasyonla enforce eder → app-layer-guard'ın tüm-bulgu-sınıfı (4-tur/17-Codex-bulgu) buharlaşır. 4-tur-kaskadın dersi: **mekanizma-yanlış-değil, KAT-pahalı** (app-layer'da entegrasyon-tamamlığı tanım-gereği hiç-bitmez). uid = doğru-kat, adversarial-gün için.
