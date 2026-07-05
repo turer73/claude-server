@@ -204,12 +204,21 @@ retry_one() {
 
     # Codex-P1 + P2b (#100429): worktree-izolasyonu + allowlist prompt-ONCESI kurulmali —
     # WT_PATH prompt-string'de dogru gorunsun (aksi-halde allowlist_line bos + statik-/opt-celiskisi).
+    # Codex-re3 P2: tek-tick coklu-row -> onceki-row state'ini TEMIZLE (stale SPAWN_SETTINGS/
+    # SPAWN_WORK_REF 2. row'a sizmasin; setup zaten WT_* sifirlar, bunlar ayri global).
+    SPAWN_SETTINGS=""; SPAWN_WORK_REF=""
     setup_spawn_worktree "$note_id"
     if [ -n "$WT_PATH" ]; then
         if ! make_spawn_settings "$SETTINGS_FILE"; then
             preserve_and_cleanup_worktree "$note_id"
             _wt_fallback "$note_id" "retry: per-spawn settings FAIL"
         fi
+    fi
+    # Codex-re3 P2: audit-oncesi base-HEAD persist (claude.sh-paritesi; audit OLD_HEAD..REF
+    # kıyası için spawn-head-<note>.txt gerekir — worktree-modda base=WT_BASE_SHA).
+    mkdir -p /opt/linux-ai-server/data/hook-state 2>/dev/null || true
+    if [ -n "$WT_BASE_SHA" ]; then
+        printf '%s\n' "$WT_BASE_SHA" > "/opt/linux-ai-server/data/hook-state/spawn-head-${note_id}.txt" 2>/dev/null || true
     fi
     local allowlist_line="- Read/Edit/Write: /opt/linux-ai-server/** ve /home/klipperos/work/**"
     [ -n "$WT_PATH" ] && allowlist_line="- Read: /opt/linux-ai-server/** (salt-oku) | Edit/Write: $WT_PATH/** (izole-worktree; relative-path)"

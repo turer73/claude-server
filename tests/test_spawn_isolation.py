@@ -263,11 +263,14 @@ def test_per_spawn_settings_generated(tmp_path):
         f'setup_spawn_worktree 42\nmake_spawn_settings "{base_settings.as_posix()}"\necho "SET=$SPAWN_SETTINGS"\ncat "$SPAWN_SETTINGS"',
         env,
     )
-    lib_log = tmp_path / "lib.log"
+    lib_log = tmp_path / "wt.log"
     logtail = lib_log.read_text(encoding="utf-8")[-600:] if lib_log.exists() else "(log yok)"
     assert r.returncode == 0, f"stderr={r.stderr[-300:]} LOG={logtail}"
     out_path = next(line.split("=", 1)[1] for line in r.stdout.splitlines() if line.startswith("SET="))
-    assert out_path.endswith(".spawn-settings.json"), f"SPAWN_SETTINGS boş/yanlış: '{out_path}' — LOG={logtail}"
+    # Codex-re3 P1-CRUX: settings WORKTREE-DIŞINDA (pool-parent) — spawn yazamaz (tampering-önleme).
+    wt_base = str(tmp_path / "wt")
+    assert out_path.startswith(wt_base + "/.spawn-settings-"), f"settings worktree-dışı-değil: '{out_path}'"
+    assert "/spawn-42-" not in out_path, f"settings worktree-İÇİNDE (tampering-riski): '{out_path}' — LOG={logtail}"
     body = r.stdout.split("\n", r.stdout.splitlines().index("SET=" + out_path) + 1)[-1]
     cfg = _json.loads(body[body.index("{") :])
     allows = cfg["permissions"]["allow"]
@@ -275,6 +278,9 @@ def test_per_spawn_settings_generated(tmp_path):
         "/opt Edit/Write-allow hâlâ duruyor — daraltma başarısız"
     )
     assert any(a.startswith("Edit(//") and "spawn-42-" in a for a in allows)
+    # Codex-re3 P1-Read: Read /opt KORUNUR (salt-oku) + worktree Read EKLENİR.
+    assert "Read(//opt/linux-ai-server/**)" in allows, "Read /opt kayboldu"
+    assert any(a.startswith("Read(//") and "spawn-42-" in a for a in allows), "worktree Read-izni eklenmedi"
     hooks = cfg["hooks"]["PreToolUse"]
     assert any("spawn-write-guard" in h["hooks"][0]["command"] for h in hooks)
     assert any("SPAWN_WT_PATH=" in h["hooks"][0]["command"] for h in hooks)

@@ -75,14 +75,22 @@ preserve_and_cleanup_worktree() {
     fi
     git -C "$SPAWN_REPO_ROOT" worktree remove --force "$WT_PATH" >>"$LOG_FILE" 2>&1 || rm -rf "$WT_PATH" 2>>"$LOG_FILE"
     git -C "$SPAWN_REPO_ROOT" worktree prune >>"$LOG_FILE" 2>&1 || true
+    # Codex-re3 P1-CRUX: settings worktree-DIŞINDA (pool-parent) → cleanup ayrı siler
+    # (worktree-remove onu kapsamaz; nonce-adlı tekil dosya).
+    [ -n "$WT_NONCE" ] && rm -f "$SPAWN_WT_BASE/.spawn-settings-${WT_NONCE}.json" 2>>"$LOG_FILE"
     WT_PATH=""
 }
 
-# ── Faz-2 (P2-a): per-spawn settings — Edit/Write-allow'u worktree'ye daralt + deny-hook ──
-# Base-settings'teki "Edit(//opt/...)" / "Write(//opt/...)" izinleri worktree-eşdeğerine
-# map'lenir + PreToolUse write-guard-hook'u enjekte edilir (çift-katman: permission-daraltma
-# + deterministik-hook; hook absolute-path'i cwd'den bağımsız yakalar).
-# Üretilen dosya WORKTREE-İÇİNDE (.spawn-settings.json) → cleanup'la otomatik-gider.
+# ── Faz-2 (P2-a): per-spawn settings — allow'ları worktree'ye daralt + deny-hook ──
+# Base-settings'teki Read/Edit/Write(//opt/...) izinleri worktree'ye map'lenir + PreToolUse
+# write-guard-hook enjekte (çift-katman: permission-daraltma + deterministik-hook).
+#
+# Codex-re3 P1-CRUX (GÜVENLİK): settings WORKTREE-DIŞINDA üretilir (pool-parent
+# $SPAWN_WT_BASE/.spawn-settings-<nonce>.json). Worktree-İÇİNDE olsaydı spawn kendi
+# settings'ini modify edip write-guard-hook'unu KALDIRABİLİRDİ (tampering). Pool-parent
+# spawn'ın izin-listesinde YOK (yalnız $WT_PATH/** + /tmp/**) → spawn oraya yazamaz.
+# Codex-re3 P1-Read: Read(//opt/**) DE worktree'ye map'lenir (orijinali KORUNUR + worktree
+# EKLENİR); worktree /opt-ALTINDA-DEĞİL (ayrı pool-dizini) → yoksa spawn kendi-dosyalarını okuyamazdı.
 SPAWN_SETTINGS=""
 WRITE_GUARD="${WRITE_GUARD:-/opt/linux-ai-server/automation/spawn-write-guard.sh}"
 
@@ -96,11 +104,13 @@ make_spawn_settings() {
         log "CRITICAL: write-guard bulunamadı/okunamıyor: $WRITE_GUARD — settings üretilmedi"
         return 1
     fi
-    local out="$WT_PATH/.spawn-settings.json"
+    # P1-CRUX: WORKTREE-DIŞI (pool-parent) — spawn buraya yazamaz (tampering-önleme).
+    local out="$SPAWN_WT_BASE/.spawn-settings-${WT_NONCE}.json"
     local wtrel="${WT_PATH#/}"
     if ! jq --arg wt "$WT_PATH" --arg wtrel "$wtrel" --arg guard "$WRITE_GUARD" '
         .permissions.allow |= map(
-            if . == "Edit(//opt/linux-ai-server/**)"  then "Edit(//"  + $wtrel + "/**)"
+            if . == "Read(//opt/linux-ai-server/**)"  then "Read(//opt/linux-ai-server/**)", "Read(//"  + $wtrel + "/**)"
+            elif . == "Edit(//opt/linux-ai-server/**)"  then "Edit(//"  + $wtrel + "/**)"
             elif . == "Write(//opt/linux-ai-server/**)" then "Write(//" + $wtrel + "/**)"
             else . end)
         | .hooks.PreToolUse = ((.hooks.PreToolUse // []) + [{
@@ -112,9 +122,10 @@ make_spawn_settings() {
         # Settings-üretimi FAIL → izolasyonsuz-settings'le devam ETME riski yerine
         # worktree'yi bırakıp shared-fallback'e düş (CRITICAL-emit'li, §2.5-tutarlı).
         log "CRITICAL: per-spawn settings üretimi FAIL — base-settings + shared'a düşülüyor"
+        rm -f "$out" 2>>"$LOG_FILE"
         SPAWN_SETTINGS=""
         return 1
     fi
     SPAWN_SETTINGS="$out"
-    log "per-spawn settings hazır: $out (Edit/Write→worktree + write-guard-hook)"
+    log "per-spawn settings hazır: $out (worktree-DIŞI; Read+Edit+Write→worktree + guard-hook)"
 }
