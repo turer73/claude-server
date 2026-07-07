@@ -212,7 +212,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Start Consciousness Stream daemon (Functionalism Faz 1)
     from app.core.consciousness import ConsciousnessStream
 
-    consciousness = ConsciousnessStream(interval=15)
+    consciousness = ConsciousnessStream(interval=15, devops_agent=devops)
     app.state.consciousness_stream = consciousness
     consciousness.start()
     logger.info("consciousness stream started (interval=15s)")

@@ -23,10 +23,17 @@ from typing import Any
 
 log = logging.getLogger("consciousness")
 
-_DATA_DIR = "/opt/linux-ai-server/data"
-MEMORY_DB = os.environ.get("MEMORY_DB", f"{_DATA_DIR}/claude_memory.db")
-SERVER_DB = os.environ.get("DB_PATH", f"{_DATA_DIR}/server.db")
-RAG_DB = os.environ.get("RAG_METRICS_DB", f"{_DATA_DIR}/rag_metrics.db")
+_SYSTEM_DATA_DIR = "/var/lib/linux-ai-server"
+_LEGACY_DATA_DIR = "/opt/linux-ai-server/data"
+_MEMORY_DB = os.environ.get("MEMORY_DB", "")
+if _MEMORY_DB:
+    MEMORY_DB = _MEMORY_DB
+elif os.path.exists(f"{_SYSTEM_DATA_DIR}/claude_memory.db"):
+    MEMORY_DB = f"{_SYSTEM_DATA_DIR}/claude_memory.db"
+else:
+    MEMORY_DB = f"{_LEGACY_DATA_DIR}/claude_memory.db"
+SERVER_DB = os.environ.get("DB_PATH", f"{_LEGACY_DATA_DIR}/server.db")
+RAG_DB = os.environ.get("RAG_METRICS_DB", f"{_LEGACY_DATA_DIR}/rag_metrics.db")
 
 FAST_INTERVAL = 15
 LLM_INTERVAL = 300
@@ -104,21 +111,24 @@ def _read_active_alerts() -> dict[str, Any]:
 
 
 def _read_recent_events(minutes: int = 5) -> dict[str, Any]:
-    """server.db.events — recent events by severity."""
+    """server.db.events — recent events by severity. Critical count computed before LIMIT."""
     con = _get_conn(SERVER_DB)
     if not con:
         return {"count": 0, "error": "db_unreachable"}
     try:
+        critical = con.execute(
+            "SELECT COUNT(*) FROM events WHERE severity='critical' AND timestamp > datetime('now', ?)",
+            (f"-{minutes} minutes",),
+        ).fetchone()[0]
         rows = con.execute(
             "SELECT type, source, severity, title, timestamp FROM events WHERE timestamp > datetime('now', ?) ORDER BY id DESC LIMIT 30",
             (f"-{minutes} minutes",),
         ).fetchall()
         con.close()
-        critical = [dict(r) for r in rows if r["severity"] == "critical"]
         return {
             "total": len(rows),
-            "critical": len(critical),
-            "critical_titles": [e["title"] for e in critical[:5]],
+            "critical": critical,
+            "critical_titles": [r["title"] for r in rows if r["severity"] == "critical"][:5],
             "events": [dict(r) for r in rows[:10]],
         }
     except sqlite3.Error as e:
@@ -357,7 +367,7 @@ Bu durum hakkinda ne dusunuyorum? (1-2 cumle, ic monolog olarak)"""
 class ConsciousnessStream:
     """Background loop: read state → think → store thought. Wired like DevOpsAgent."""
 
-    def __init__(self, interval: int = FAST_INTERVAL):
+    def __init__(self, interval: int = FAST_INTERVAL, devops_agent: Any = None):
         self._interval = interval
         self._running = False
         self._task: asyncio.Task[None] | None = None
@@ -367,6 +377,7 @@ class ConsciousnessStream:
         self._prev_emotion: str | None = None
         self._llm_timer = 0
         self._recent_thoughts: list[dict[str, Any]] = []
+        self._devops_agent = devops_agent
         _ensure_thoughts_table()
 
     @property
@@ -441,8 +452,21 @@ class ConsciousnessStream:
         }
 
     def _read_all_state(self) -> dict[str, Any]:
+        alerts = _read_active_alerts()
+        devops = getattr(self._devops_agent, "active_alerts", None)
+        if devops and callable(devops):
+            in_memory = devops()
+            mem_critical = [a for a in in_memory if a.get("severity") == "critical"]
+            db_sources = set(alerts.get("critical_sources", []))
+            for a in mem_critical:
+                src = a.get("source", "")
+                if src and src not in db_sources:
+                    db_sources.add(src)
+                    alerts.setdefault("critical_count", 0)
+                    alerts["critical_count"] += 1
+                    alerts.setdefault("critical_sources", []).append(src)
         return {
-            "alerts": _read_active_alerts(),
+            "alerts": alerts,
             "events": _read_recent_events(),
             "cron_outcomes": _read_recent_cron_outcomes(),
             "metrics": _read_latest_metrics(),
