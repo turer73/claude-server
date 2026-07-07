@@ -243,7 +243,7 @@ def _read_unread_notes() -> dict[str, Any]:
 # ── Emotion engine (rule-based) ──────────────────────────────────────
 
 
-def _determine_focus(state: dict) -> str:
+def _determine_focus(state: dict[str, Any]) -> str:
     if state["alerts"].get("critical_count", 0) > 0:
         srcs = state["alerts"].get("critical_sources", [])
         return f"alert:{srcs[0]}" if srcs else "alert:critical"
@@ -265,7 +265,7 @@ def _determine_focus(state: dict) -> str:
     return "idle"
 
 
-def _determine_emotion(state: dict, prev_emotion: str | None = None) -> str:
+def _determine_emotion(state: dict[str, Any], prev_emotion: str | None = None) -> str:
     crit_alerts = state["alerts"].get("critical_count", 0)
     fails = state["cron_outcomes"].get("fail_count", 0)
     partials = state["cron_outcomes"].get("partial_count", 0)
@@ -286,7 +286,7 @@ def _determine_emotion(state: dict, prev_emotion: str | None = None) -> str:
 # ── Thought builder ──────────────────────────────────────────────────
 
 
-def _build_content(state: dict, focus: str) -> str:
+def _build_content(state: dict[str, Any], focus: str) -> str:
     parts = []
     a = state["alerts"]
     if a.get("critical_count", 0) > 0:
@@ -342,7 +342,7 @@ def _ollama_think(prompt: str, model: str = "qwen2.5:3b", timeout: int = 30) -> 
         return None
 
 
-def _build_deep_thought_prompt(recent_thoughts: list[dict], current_state: dict) -> str:
+def _build_deep_thought_prompt(recent_thoughts: list[dict[str, Any]], current_state: dict[str, Any]) -> str:
     """Prompt for 5-min inner monologue."""
     focus = current_state.get("_focus", "idle")
     emotion = current_state.get("_emotion", "calm")
@@ -366,17 +366,17 @@ class ConsciousnessStream:
     def __init__(self, interval: int = FAST_INTERVAL):
         self._interval = interval
         self._running = False
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
         self._started_at: str | None = None
-        self._last_thought: dict | None = None
+        self._last_thought: dict[str, Any] | None = None
         self._thought_count = 0
         self._prev_emotion: str | None = None
         self._llm_timer = 0
-        self._recent_thoughts: list[dict] = []
+        self._recent_thoughts: list[dict[str, Any]] = []
         _ensure_thoughts_table()
 
     @property
-    def status(self) -> dict:
+    def status(self) -> dict[str, Any]:
         return {
             "running": self._running,
             "started_at": self._started_at,
@@ -431,7 +431,7 @@ class ConsciousnessStream:
                 log.warning("consciousness tick error: %s", e, exc_info=True)
             await asyncio.sleep(self._interval)
 
-    def _think(self) -> dict:
+    def _think(self) -> dict[str, Any]:
         state = self._read_all_state()
         focus = _determine_focus(state)
         emotion = _determine_emotion(state, self._prev_emotion)
@@ -446,7 +446,7 @@ class ConsciousnessStream:
             "is_deep": 0,
         }
 
-    def _read_all_state(self) -> dict:
+    def _read_all_state(self) -> dict[str, Any]:
         return {
             "alerts": _read_active_alerts(),
             "events": _read_recent_events(),
@@ -457,7 +457,7 @@ class ConsciousnessStream:
             "notes": _read_unread_notes(),
         }
 
-    def _think_deep(self) -> dict | None:
+    def _think_deep(self) -> dict[str, Any] | None:
         recent = self._recent_thoughts[-10:] if self._recent_thoughts else []
         state = self._read_all_state()
         state["_focus"] = _determine_focus(state)
@@ -475,7 +475,7 @@ class ConsciousnessStream:
             "is_deep": 1,
         }
 
-    def _store_thought(self, thought: dict) -> None:
+    def _store_thought(self, thought: dict[str, Any]) -> None:
         try:
             con = sqlite3.connect(MEMORY_DB, timeout=10)
             con.execute(
@@ -494,7 +494,7 @@ class ConsciousnessStream:
         except sqlite3.Error as e:
             log.warning("store thought failed: %s", e)
 
-    def get_recent_thoughts(self, limit: int = 30) -> list[dict]:
+    def get_recent_thoughts(self, limit: int = 30) -> list[dict[str, Any]]:
         """API consumption: latest thoughts from DB."""
         try:
             con = sqlite3.connect(MEMORY_DB, timeout=10)
@@ -508,7 +508,7 @@ class ConsciousnessStream:
         except sqlite3.Error:
             return []
 
-    def get_self_model(self) -> dict:
+    def get_self_model(self) -> dict[str, Any]:
         """Current self-model: aggregated state + emotional trend."""
         recent = self.get_recent_thoughts(limit=10)
         emotions = [t["emotion"] for t in recent if t.get("emotion")]

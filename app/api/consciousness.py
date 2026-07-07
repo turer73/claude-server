@@ -15,7 +15,7 @@ from app.middleware.dependencies import require_auth
 router = APIRouter(prefix="/api/v1/consciousness", tags=["consciousness"])
 
 
-def _get_stream(request: Request):
+def _get_stream(request: Request) -> Any:
     return getattr(request.app.state, "consciousness_stream", None)
 
 
