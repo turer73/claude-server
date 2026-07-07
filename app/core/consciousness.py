@@ -339,13 +339,14 @@ def _build_deep_thought_prompt(recent_thoughts: list[dict[str, Any]], current_st
     """Prompt for 5-min inner monologue."""
     focus = current_state.get("_focus", "idle")
     emotion = current_state.get("_emotion", "calm")
+    thought_lines = chr(10).join(f"- [{t['emotion']}] {t['content'][:120]}" for t in recent_thoughts[-6:])
     return f"""Su anki durumum:
 Odak: {focus}
 Duygu: {emotion}
 Son durum: {_build_content(current_state, focus)}
 
 Son 5 dakikadaki dusuncelerim:
-{chr(10).join(f"- [{t["emotion"]}] {t["content"][:120]}" for t in recent_thoughts[-6:])}
+{thought_lines}
 
 Bu durum hakkinda ne dusunuyorum? (1-2 cumle, ic monolog olarak)"""
 
