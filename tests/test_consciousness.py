@@ -16,9 +16,14 @@ from app.core.consciousness import (
     _ensure_thoughts_table,
     _get_conn,
     _read_active_alerts,
+    _read_daily_summary,
+    _read_intent_liveness,
     _read_recent_cron_outcomes,
     _read_recent_events,
+    _read_spawn_rate,
     _read_spawn_status,
+    _read_synthesis_status,
+    _read_triage_status,
     _read_unread_notes,
 )
 
@@ -36,6 +41,12 @@ def _state(**overrides: dict) -> dict:
         "notes": {"unread": 0},
         "llm": {"total": 0},
         "storage": {},
+        "devops": {},
+        "spawn_rate": {},
+        "synthesis": {},
+        "intent_liveness": {},
+        "daily_summary": {},
+        "triage": {},
     }
     base.update(overrides)
     return base
@@ -470,5 +481,225 @@ class TestDbReaders:
             assert "focus" in model
             assert "state" in model
             assert "thought_count" in model
+        finally:
+            os.unlink(db_path)
+
+
+# ── Faz 2 focus/emotion/content tests ────────────────────────────────
+
+
+class TestFaz2Focus:
+    """Focus signals from new dashboard component readers."""
+
+    def test_spawn_poison_alert(self):
+        s = _state(spawn_rate={"poison_alerts": 2})
+        assert _determine_focus(s) == "spawn:poison_alert"
+
+    def test_spawn_active(self):
+        s = _state(spawn_rate={"spawns_24h": 35})
+        assert _determine_focus(s) == "spawn:active"
+
+    def test_spawn_urgent(self):
+        s = _state(spawn_rate={"urgent": 3})
+        assert _determine_focus(s) == "spawn:urgent"
+
+    def test_intent_liveness(self):
+        s = _state(intent_liveness={"count": 2})
+        assert _determine_focus(s) == "intent:issue"
+
+    def test_triage_active(self):
+        s = _state(triage={"triaged_24h": 8})
+        assert _determine_focus(s) == "triage:active"
+
+    def test_devops_busy(self):
+        s = _state(devops={"remediation_24h": 5})
+        assert _determine_focus(s) == "devops:busy"
+
+    def test_priority_poison_over_spawn_active(self):
+        s = _state(
+            spawn_status={"poison_count": 1, "pending_count": 0},
+            spawn_rate={"spawns_24h": 50, "poison_alerts": 1},
+        )
+        assert _determine_focus(s) == "spawn:poison"
+
+    def test_priority_alert_over_all_faz2(self):
+        s = _state(
+            alerts={"critical_count": 1, "warning_count": 0, "critical_sources": ["fw"]},
+            intent_liveness={"count": 5},
+            triage={"triaged_24h": 10},
+            spawn_rate={"spawns_24h": 40},
+        )
+        assert _determine_focus(s) == "alert:fw"
+
+
+class TestFaz2Emotion:
+    """Emotion signals from new dashboard component readers."""
+
+    def test_poison_alert_concerned(self):
+        s = _state(spawn_rate={"poison_alerts": 1})
+        assert _determine_emotion(s) == "concerned"
+
+    def test_intent_count_restless(self):
+        s = _state(intent_liveness={"count": 3})
+        assert _determine_emotion(s) == "restless"
+
+    def test_high_spawn_rate_busy(self):
+        s = _state(spawn_rate={"spawns_24h": 35})
+        assert _determine_emotion(s) == "busy"
+
+
+class TestFaz2Content:
+    """Content items from new dashboard component readers."""
+
+    def test_with_spawn_rate(self):
+        s = _state(spawn_rate={"spawns_24h": 20, "ack": 15, "urgent": 2})
+        content = _build_content(s, "spawn:active")
+        assert "24h 20 spawn" in content
+
+    def test_with_poison_alerts(self):
+        s = _state(spawn_rate={"poison_alerts": 3})
+        content = _build_content(s, "spawn:poison_alert")
+        assert "3 spawn poison alerti" in content
+
+    def test_with_intent_liveness(self):
+        s = _state(intent_liveness={"count": 4})
+        content = _build_content(s, "intent:issue")
+        assert "4 intent-liveness bulgusu" in content
+
+    def test_with_synthesis(self):
+        s = _state(synthesis={"archived_count": 12})
+        content = _build_content(s, "idle")
+        assert "12 memory archive edilmis" in content
+
+    def test_with_triage(self):
+        s = _state(triage={"triaged_24h": 3})
+        content = _build_content(s, "triage:active")
+        assert "triage 3 bayat kayit" in content
+
+    def test_with_devops_remediation(self):
+        s = _state(devops={"remediation_24h": 2})
+        content = _build_content(s, "devops:busy")
+        assert "2 remediation 24h" in content
+
+    def test_with_daily_summary(self):
+        s = _state(daily_summary={"latest": "autonomous-daily-summary-2026-07-07"})
+        content = _build_content(s, "idle")
+        assert "summary: autonomous-daily-summary-" in content
+
+
+# ── Faz 2 DB reader tests ────────────────────────────────────────────
+
+
+class TestFaz2DbReaders:
+    """DB reader tests for new Faz 2 functions."""
+
+    def _create_memory_tables(self, con: sqlite3.Connection) -> None:
+        con.execute("CREATE TABLE IF NOT EXISTS memories (id INTEGER PRIMARY KEY, name TEXT, content TEXT, created_at TEXT)")
+        con.execute("CREATE TABLE IF NOT EXISTS discoveries (id INTEGER PRIMARY KEY, type TEXT, title TEXT, status TEXT, updated_at TEXT)")
+        con.commit()
+
+    def test_read_spawn_rate(self, monkeypatch):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            monkeypatch.setattr("app.core.consciousness.MEMORY_DB", db_path)
+            con = sqlite3.connect(db_path)
+            self._create_memory_tables(con)
+            con.execute("INSERT INTO memories (name, created_at) VALUES ('autonomous-spawn-x1', datetime('now', '-1 hour'))")
+            con.execute("INSERT INTO memories (name, created_at) VALUES ('autonomous-ack-y1', datetime('now'))")
+            con.execute("INSERT INTO memories (name, created_at) VALUES ('autonomous-urgent-z1', datetime('now'))")
+            con.commit()
+            con.close()
+            result = _read_spawn_rate()
+            assert result["spawns_24h"] == 1
+            assert result["ack"] == 1
+            assert result["urgent"] == 1
+        finally:
+            os.unlink(db_path)
+
+    def test_read_synthesis_status(self, monkeypatch):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            monkeypatch.setattr("app.core.consciousness.MEMORY_DB", db_path)
+            monkeypatch.setattr("app.core.consciousness.SERVER_DB", db_path)
+            con = sqlite3.connect(db_path)
+            self._create_memory_tables(con)
+            con.execute("ALTER TABLE memories ADD COLUMN merged_into INTEGER")
+            con.commit()
+            con.close()
+            result = _read_synthesis_status()
+            assert result["archived_count"] >= 0
+            assert "last_outcome" in result
+        finally:
+            os.unlink(db_path)
+
+    def test_read_intent_liveness(self, monkeypatch):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            monkeypatch.setattr("app.core.consciousness.SERVER_DB", db_path)
+            con = sqlite3.connect(db_path)
+            con.execute("CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, type TEXT, severity TEXT, title TEXT, timestamp TEXT)")
+            con.execute(
+                "INSERT INTO events (type, severity, title, timestamp)"
+                " VALUES ('intent-liveness','critical','dead infra ref',datetime('now'))"
+            )
+            con.commit()
+            con.close()
+            result = _read_intent_liveness(minutes=1440)
+            assert result["count"] == 1
+            assert "dead infra ref" in result["critical_titles"]
+        finally:
+            os.unlink(db_path)
+
+    def test_read_daily_summary(self, monkeypatch):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            monkeypatch.setattr("app.core.consciousness.MEMORY_DB", db_path)
+            con = sqlite3.connect(db_path)
+            self._create_memory_tables(con)
+            con.execute(
+                "INSERT INTO memories (name, content, created_at)"
+                " VALUES ('autonomous-daily-summary-2026-07-07','test content',datetime('now'))"
+            )
+            con.commit()
+            con.close()
+            result = _read_daily_summary()
+            assert result["latest"] is not None
+            assert "2026-07-07" in result["latest"]
+        finally:
+            os.unlink(db_path)
+
+    def test_read_triage_status(self, monkeypatch):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            monkeypatch.setattr("app.core.consciousness.MEMORY_DB", db_path)
+            con = sqlite3.connect(db_path)
+            self._create_memory_tables(con)
+            con.execute("INSERT INTO discoveries (type, title, status, updated_at) VALUES ('bug', 'old bug', 'obsolete', datetime('now'))")
+            con.execute(
+                "INSERT INTO discoveries (type, title, status, updated_at) VALUES ('workaround', 'old fix', 'superseded', datetime('now'))"
+            )
+            con.commit()
+            con.close()
+            result = _read_triage_status()
+            assert result["obsolete_count"] == 1
+            assert result["superseded_count"] == 1
+        finally:
+            os.unlink(db_path)
+
+    def test_read_daily_summary_none(self, monkeypatch):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            monkeypatch.setattr("app.core.consciousness.MEMORY_DB", db_path)
+            con = sqlite3.connect(db_path)
+            self._create_memory_tables(con)
+            con.close()
+            result = _read_daily_summary()
+            assert result["latest"] is None
         finally:
             os.unlink(db_path)

@@ -288,6 +288,133 @@ def _read_unread_notes() -> dict[str, Any]:
         return {"unread": -1, "error": str(e)}
 
 
+# ── Faz 2 readers: dashboard component signals ──────────────────────
+
+
+def _read_spawn_rate() -> dict[str, Any]:
+    """claude_memory.db — 24h spawn count + classification distribution from memories."""
+    con = _get_conn(MEMORY_DB)
+    if not con:
+        return {"error": "db_unreachable"}
+    try:
+        total = con.execute(
+            "SELECT COUNT(*) FROM memories WHERE name LIKE 'autonomous-spawn-%' AND created_at > datetime('now', '-24 hours')"
+        ).fetchone()[0]
+        ack = con.execute(
+            "SELECT COUNT(*) FROM memories WHERE name LIKE 'autonomous-ack-%' AND created_at > datetime('now', '-24 hours')"
+        ).fetchone()[0]
+        urgent = con.execute(
+            "SELECT COUNT(*) FROM memories WHERE name LIKE 'autonomous-urgent-%' AND created_at > datetime('now', '-24 hours')"
+        ).fetchone()[0]
+        deferred = con.execute(
+            "SELECT COUNT(*) FROM memories WHERE name LIKE 'autonomous-deferred-%' AND created_at > datetime('now', '-24 hours')"
+        ).fetchone()[0]
+        poison = con.execute(
+            "SELECT COUNT(*) FROM memories WHERE name LIKE 'autonomous-spawn-poison-%' AND created_at > datetime('now', '-24 hours')"
+        ).fetchone()[0]
+        con.close()
+        return {
+            "spawns_24h": total,
+            "ack": ack,
+            "urgent": urgent,
+            "deferred": deferred,
+            "poison_alerts": poison,
+        }
+    except sqlite3.Error:
+        con.close()
+        return {"error": "query_failed"}
+
+
+def _read_synthesis_status() -> dict[str, Any]:
+    """claude_memory.db + server.db — memory-synth archive count + last run."""
+    con = _get_conn(MEMORY_DB)
+    cols = ["archived_count", "last_outcome"]
+    if not con:
+        return dict.fromkeys(cols, -1, error="db_unreachable")
+    try:
+        archived = con.execute("SELECT COUNT(*) FROM memories WHERE merged_into IS NOT NULL").fetchone()[0]
+        # Check if merged_into column exists (lazy migration)
+        if archived == 0:
+            cols_present = any(c[1] == "merged_into" for c in con.execute("PRAGMA table_info(memories)").fetchall())
+            if not cols_present:
+                archived = -1
+        con.close()
+    except sqlite3.Error:
+        con.close()
+        archived = -1
+    # Last cron outcome
+    scon = _get_conn(SERVER_DB)
+    if scon:
+        try:
+            row = scon.execute("SELECT result, timestamp FROM cron_outcomes WHERE job='memory-synth' ORDER BY id DESC LIMIT 1").fetchone()
+            scon.close()
+            last_outcome = f"{row['result']} ({row['timestamp']})" if row else "never"
+        except sqlite3.Error:
+            scon.close()
+            last_outcome = "error"
+    else:
+        last_outcome = "db_unreachable"
+    return {"archived_count": archived, "last_outcome": last_outcome}
+
+
+def _read_intent_liveness(minutes: int = 1440) -> dict[str, Any]:
+    """server.db.events — intent-liveness audit findings (last 24h)."""
+    con = _get_conn(SERVER_DB)
+    if not con:
+        return {"count": -1, "error": "db_unreachable"}
+    try:
+        count = con.execute(
+            "SELECT COUNT(*) FROM events WHERE type='intent-liveness' AND timestamp > datetime('now', ?)",
+            (f"-{minutes} minutes",),
+        ).fetchone()[0]
+        critical = con.execute(
+            "SELECT title FROM events WHERE type='intent-liveness' AND severity='critical'"
+            " AND timestamp > datetime('now', ?) ORDER BY id DESC LIMIT 5",
+            (f"-{minutes} minutes",),
+        ).fetchall()
+        con.close()
+        return {"count": count, "critical_titles": [r["title"] for r in critical]}
+    except sqlite3.Error:
+        con.close()
+        return {"count": -1, "error": "query_failed"}
+
+
+def _read_daily_summary() -> dict[str, Any]:
+    """claude_memory.db — last daily-summary timestamp."""
+    con = _get_conn(MEMORY_DB)
+    if not con:
+        return {"latest": None, "error": "db_unreachable"}
+    try:
+        row = con.execute(
+            "SELECT name, created_at, content FROM memories WHERE name LIKE 'autonomous-daily-summary-%' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        con.close()
+        if row:
+            return {"latest": row["name"], "created_at": row["created_at"], "has_content": bool(row["content"])}
+        return {"latest": None}
+    except sqlite3.Error:
+        con.close()
+        return {"latest": None, "error": "query_failed"}
+
+
+def _read_triage_status() -> dict[str, Any]:
+    """claude_memory.db — triage stats (obsolete/superseded discovery counts)."""
+    con = _get_conn(MEMORY_DB)
+    if not con:
+        return {"obsolete_count": -1, "error": "db_unreachable"}
+    try:
+        obsolete = con.execute("SELECT COUNT(*) FROM discoveries WHERE status='obsolete'").fetchone()[0]
+        superseded = con.execute("SELECT COUNT(*) FROM discoveries WHERE status='superseded'").fetchone()[0]
+        recent_obsolete = con.execute(
+            "SELECT COUNT(*) FROM discoveries WHERE status='obsolete' AND updated_at > datetime('now', '-24 hours')"
+        ).fetchone()[0]
+        con.close()
+        return {"obsolete_count": obsolete, "superseded_count": superseded, "triaged_24h": recent_obsolete}
+    except sqlite3.Error:
+        con.close()
+        return {"obsolete_count": -1, "error": "query_failed"}
+
+
 # ── Emotion engine (rule-based) ──────────────────────────────────────
 
 
@@ -301,6 +428,14 @@ def _determine_focus(state: dict[str, Any]) -> str:
         return "cron:partial"
     if state["spawn_status"].get("poison_count", 0) > 0:
         return "spawn:poison"
+    if state["spawn_rate"].get("poison_alerts", 0) > 0:
+        return "spawn:poison_alert"
+    liveness = state.get("intent_liveness", {})
+    if liveness.get("count", 0) > 0:
+        return "intent:issue"
+    triage = state.get("triage", {})
+    if triage.get("triaged_24h", 0) > 5:
+        return "triage:active"
     if state["spawn_status"].get("pending_count", 0) > 0:
         return "spawn:pending"
     m = state.get("metrics", {})
@@ -310,6 +445,14 @@ def _determine_focus(state: dict[str, Any]) -> str:
         return "metric:memory"
     if state["events"].get("critical", 0) > 0:
         return "event:recent"
+    devops = state.get("devops", {})
+    if devops.get("remediation_24h", 0) > 3:
+        return "devops:busy"
+    sr = state.get("spawn_rate", {})
+    if sr.get("spawns_24h", 0) > 30:
+        return "spawn:active"
+    if sr.get("urgent", 0) > 2:
+        return "spawn:urgent"
     return "idle"
 
 
@@ -318,15 +461,20 @@ def _determine_emotion(state: dict[str, Any], prev_emotion: str | None = None) -
     fails = state["cron_outcomes"].get("fail_count", 0)
     partials = state["cron_outcomes"].get("partial_count", 0)
     poison = state["spawn_status"].get("poison_count", 0)
+    poison_events = state.get("spawn_rate", {}).get("poison_alerts", 0)
+    intent_count = state.get("intent_liveness", {}).get("count", 0)
 
-    if crit_alerts > 0 or fails > 0:
+    if crit_alerts > 0 or fails > 0 or poison_events > 0:
         return "concerned"
-    if partials >= 3 or poison > 0:
+    if partials >= 3 or poison > 0 or intent_count > 0:
         return "restless"
     cpu = state.get("metrics", {}).get("cpu", 0)
     if cpu and cpu > 80:
         return "busy"
     if state["events"].get("total", 0) > 10:
+        return "busy"
+    sr = state.get("spawn_rate", {})
+    if sr.get("spawns_24h", 0) > 30:
         return "busy"
     return "calm"
 
@@ -352,6 +500,11 @@ def _build_content(state: dict[str, Any], focus: str) -> str:
         parts.append(f"{sf['poison_count']} spawn poison DLQ'da")
     if sf.get("pending_count", 0) > 0:
         parts.append(f"{sf['pending_count']} spawn retry bekliyor")
+    sr = state.get("spawn_rate", {})
+    if sr.get("spawns_24h", 0) > 0:
+        parts.append(f"24h {sr['spawns_24h']} spawn (ack:{sr.get('ack', 0)} urg:{sr.get('urgent', 0)})")
+    if sr.get("poison_alerts", 0) > 0:
+        parts.append(f"{sr['poison_alerts']} spawn poison alerti")
     m = state.get("metrics", {})
     if m.get("cpu"):
         parts.append(f"CPU %{m['cpu']:.0f}")
@@ -360,6 +513,21 @@ def _build_content(state: dict[str, Any], focus: str) -> str:
     e = state["events"]
     if e.get("critical", 0) > 0:
         parts.append(f"son 5dk {e['critical']} kritik event")
+    ile = state.get("intent_liveness", {})
+    if ile.get("count", 0) > 0:
+        parts.append(f"{ile['count']} intent-liveness bulgusu")
+    sy = state.get("synthesis", {})
+    if sy.get("archived_count", 0) > 0:
+        parts.append(f"{sy['archived_count']} memory archive edilmis")
+    tr = state.get("triage", {})
+    if tr.get("triaged_24h", 0) > 0:
+        parts.append(f"triage {tr['triaged_24h']} bayat kayit")
+    dv = state.get("devops", {})
+    if dv.get("remediation_24h", 0) > 0:
+        parts.append(f"{dv['remediation_24h']} remediation 24h")
+    ds = state.get("daily_summary", {})
+    if ds.get("latest"):
+        parts.append(f"summary: {ds['latest']}")
     n = state.get("notes", {})
     if n.get("unread", 0) > 0:
         parts.append(f"{n['unread']} okunmamis not")
@@ -530,7 +698,36 @@ class ConsciousnessStream:
             "llm": _read_recent_llm_calls(),
             "notes": _read_unread_notes(),
             "storage": self._read_thoughts_storage(),
+            # Faz 2: 6 dashboard component signals
+            "devops": self._read_devops_state(),
+            "spawn_rate": _read_spawn_rate(),
+            "synthesis": _read_synthesis_status(),
+            "intent_liveness": _read_intent_liveness(),
+            "daily_summary": _read_daily_summary(),
+            "triage": _read_triage_status(),
         }
+
+    def _read_devops_state(self) -> dict[str, Any]:
+        """Read in-memory DevOpsAgent state: metrics buffer, remediation, VPS."""
+        result: dict[str, Any] = {}
+        da = self._devops_agent
+        if da is None:
+            return result
+        try:
+            buf = list(getattr(da, "metrics_buffer", []) or [])
+            if buf:
+                result["latest_metric"] = buf[-1] if isinstance(buf[-1], dict) else {}
+            rem_log = list(getattr(da, "_remediation_log", []) or [])
+            result["remediation_24h"] = len(rem_log)
+            result["remediation_recent"] = [
+                {"source": r.alert_source, "success": r.success} for r in rem_log[-5:] if hasattr(r, "alert_source")
+            ]
+            vps = getattr(da, "_latest_vps", None) or {}
+            if isinstance(vps, dict) and vps:
+                result["vps"] = {k: vps[k] for k in ("online", "cpu_usage", "memory_usage", "disk_usage") if k in vps}
+        except Exception:
+            pass
+        return result
 
     def _think_deep(self) -> dict[str, Any] | None:
         recent = self._recent_thoughts[-10:] if self._recent_thoughts else []
