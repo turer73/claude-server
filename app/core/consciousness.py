@@ -21,7 +21,17 @@ import urllib.request
 from datetime import UTC, datetime
 from typing import Any
 
+try:
+    import fcntl
+
+    _HAS_FCNTL = True
+except ImportError:
+    _HAS_FCNTL = False
+
 log = logging.getLogger("consciousness")
+
+_WORKER_LOCK_PATH = "/tmp/consciousness-worker.lock"
+_worker_lock_fd: int | None = None
 
 _SYSTEM_DATA_DIR = "/var/lib/linux-ai-server"
 _LEGACY_DATA_DIR = "/opt/linux-ai-server/data"
@@ -38,6 +48,22 @@ RAG_DB = os.environ.get("RAG_METRICS_DB", f"{_LEGACY_DATA_DIR}/rag_metrics.db")
 FAST_INTERVAL = 15
 LLM_INTERVAL = 300
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+
+
+def _try_worker_lock() -> bool:
+    """Cross-process lock: only one uvicorn worker starts the stream loop."""
+    global _worker_lock_fd
+    if not _HAS_FCNTL:
+        return True
+    try:
+        _worker_lock_fd = os.open(_WORKER_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o644)
+        fcntl.flock(_worker_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except (BlockingIOError, OSError):
+        if _worker_lock_fd is not None:
+            os.close(_worker_lock_fd)
+            _worker_lock_fd = None
+        return False
 
 
 # ── thoughts table schema ─────────────────────────────────────────────
@@ -90,14 +116,14 @@ def _read_active_alerts() -> dict[str, Any]:
     if not con:
         return {"critical_count": -1, "warning_count": -1, "critical_sources": [], "error": "db_unreachable"}
     try:
+        critical_count = con.execute("SELECT COUNT(*) FROM alerts WHERE resolved=0 AND severity='critical'").fetchone()[0]
+        warning_count = con.execute("SELECT COUNT(*) FROM alerts WHERE resolved=0 AND severity='warning'").fetchone()[0]
         rows = con.execute("SELECT severity, source, message, timestamp FROM alerts WHERE resolved=0 ORDER BY id DESC LIMIT 20").fetchall()
         con.close()
-        critical = [dict(r) for r in rows if r["severity"] == "critical"]
-        warnings = [dict(r) for r in rows if r["severity"] == "warning"]
         return {
-            "critical_count": len(critical),
-            "warning_count": len(warnings),
-            "critical_sources": [a["source"] for a in critical[:5]],
+            "critical_count": critical_count,
+            "warning_count": warning_count,
+            "critical_sources": list({r["source"] for r in rows if r["severity"] == "critical"})[:5],
             "alerts": [dict(r) for r in rows[:10]],
         }
     except sqlite3.Error as e:
@@ -142,19 +168,31 @@ def _read_recent_cron_outcomes(minutes: int = 1440) -> dict[str, Any]:
     if not con:
         return {"partial_count": 0, "fail_count": 0, "error": "db_unreachable"}
     try:
+        partial_count = con.execute(
+            "SELECT COUNT(*) FROM cron_outcomes WHERE result='partial' AND timestamp > datetime('now', ?)",
+            (f"-{minutes} minutes",),
+        ).fetchone()[0]
+        fail_count = con.execute(
+            "SELECT COUNT(*) FROM cron_outcomes WHERE result='fail' AND timestamp > datetime('now', ?)",
+            (f"-{minutes} minutes",),
+        ).fetchone()[0]
+        total = con.execute(
+            "SELECT COUNT(*) FROM cron_outcomes WHERE timestamp > datetime('now', ?)",
+            (f"-{minutes} minutes",),
+        ).fetchone()[0]
         rows = con.execute(
             "SELECT job, result, rc, timestamp FROM cron_outcomes WHERE timestamp > datetime('now', ?) ORDER BY timestamp DESC LIMIT 50",
             (f"-{minutes} minutes",),
         ).fetchall()
         con.close()
-        partial = [dict(r) for r in rows if r["result"] == "partial"]
-        fails = [dict(r) for r in rows if r["result"] == "fail"]
+        partial_jobs = list({r["job"] for r in rows if r["result"] == "partial"})
+        fail_jobs = list({r["job"] for r in rows if r["result"] == "fail"})
         return {
-            "total": len(rows),
-            "partial_count": len(partial),
-            "fail_count": len(fails),
-            "partial_jobs": list({p["job"] for p in partial}),
-            "fail_jobs": list({f["job"] for f in fails}),
+            "total": total,
+            "partial_count": partial_count,
+            "fail_count": fail_count,
+            "partial_jobs": partial_jobs,
+            "fail_jobs": fail_jobs,
             "recent": [dict(r) for r in rows[:10]],
         }
     except sqlite3.Error as e:
@@ -235,7 +273,11 @@ def _read_unread_notes() -> dict[str, Any]:
     if not con:
         return {"unread": -1, "error": "db_unreachable"}
     try:
-        unread = con.execute("SELECT COUNT(*) FROM notes WHERE read=0 AND COALESCE(status,'active')='active'").fetchone()[0]
+        cols = [r["name"] for r in con.execute("PRAGMA table_info(notes)").fetchall()]
+        if "status" in cols:
+            unread = con.execute("SELECT COUNT(*) FROM notes WHERE read=0 AND COALESCE(status,'active')='active'").fetchone()[0]
+        else:
+            unread = con.execute("SELECT COUNT(*) FROM notes WHERE read=0").fetchone()[0]
         con.close()
         return {"unread": unread}
     except sqlite3.Error as e:
@@ -393,6 +435,9 @@ class ConsciousnessStream:
 
     def start(self) -> None:
         if self._running:
+            return
+        if not _try_worker_lock():
+            log.info("another worker holds the lock — consciousness stream not started on this worker")
             return
         self._running = True
         self._started_at = datetime.now(UTC).isoformat()
