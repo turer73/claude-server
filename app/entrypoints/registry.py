@@ -136,6 +136,7 @@ EXEMPT: dict[str, str] = {
     "automation/notify-cron.sh": "notes-erişimi yok — alerts-tabanlı bildirim",
     "app/mcp/tools/handlers.py": "handle_memory_context notes teslim ETMİYOR (memories/discoveries) — MCP pilot-dışı",
     "app/core/action_review.py": "held ÜRETEN taraf (create_note status='held') — teslim-yüzeyi değil",
+    "app/core/consciousness.py": "self-model için unread SAYACI okur (note teslim etmez) — bilinç katmanı",
     "automation/agent-watchdog.sh": "'held'=flock-lock bağlamı — notes ile ilgisiz",
 }
 

@@ -28,6 +28,7 @@ from app.api.backup import router as backup_router
 from app.api.ci import router as ci_router
 from app.api.classifier import router as classifier_router
 from app.api.claude_code import router as claude_code_router
+from app.api.consciousness import router as consciousness_router
 from app.api.csp import router as csp_router
 from app.api.deploy import router as deploy_router
 from app.api.dev import router as dev_router
@@ -208,6 +209,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.devops_agent = devops
     devops.start()
 
+    # Start Consciousness Stream daemon (Functionalism Faz 1)
+    from app.core.consciousness import ConsciousnessStream
+
+    consciousness = ConsciousnessStream(interval=15, devops_agent=devops)
+    app.state.consciousness_stream = consciousness
+    consciousness.start()
+    logger.info("consciousness stream started (interval=15s)")
+
     # Read-only kod-mühendisi ajanı (qwen2.5-coder): commit-diff + idle-sweep ile
     # sürekli inceleme → discoveries (dedup'lı) + P1 Telegram. KOD DEĞİŞTİRMEZ.
     # CODE_REVIEW_ENABLED=0 ile kapatılır. start() yalnız enabled ise task açar.
@@ -280,6 +289,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Graceful shutdown
     await devops.stop()
+    await consciousness.stop()
     await code_reviewer.stop()
     await db.close()
 
@@ -437,6 +447,7 @@ def create_app() -> FastAPI:
     app.include_router(research_router)
     app.include_router(llm_router)
     app.include_router(telegram_bot_router)
+    app.include_router(consciousness_router)
     app.include_router(devops_router)
     app.include_router(deploy_router)
     app.include_router(vps_router)
