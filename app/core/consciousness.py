@@ -330,7 +330,9 @@ def _read_synthesis_status() -> dict[str, Any]:
     con = _get_conn(MEMORY_DB)
     cols = ["archived_count", "last_outcome"]
     if not con:
-        return dict.fromkeys(cols, -1, error="db_unreachable")
+        result = dict.fromkeys(cols, -1)
+        result["error"] = "db_unreachable"
+        return result
     try:
         archived = con.execute("SELECT COUNT(*) FROM memories WHERE merged_into IS NOT NULL").fetchone()[0]
         # Check if merged_into column exists (lazy migration)
