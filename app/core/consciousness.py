@@ -39,6 +39,8 @@ _LEGACY_DATA_DIR = "/opt/linux-ai-server/data"
 _MEMORY_DB = os.environ.get("MEMORY_DB", "")
 if _MEMORY_DB:
     MEMORY_DB = _MEMORY_DB
+elif os.path.isfile(f"{_LEGACY_DATA_DIR}/claude_memory.db"):
+    MEMORY_DB = f"{_LEGACY_DATA_DIR}/claude_memory.db"
 elif os.path.isdir(_SYSTEM_DATA_DIR) and os.access(_SYSTEM_DATA_DIR, os.W_OK):
     MEMORY_DB = f"{_SYSTEM_DATA_DIR}/claude_memory.db"
 else:
