@@ -35,6 +35,7 @@ def _state(**overrides: dict) -> dict:
         "spawn_status": {"poison_count": 0, "pending_count": 0},
         "notes": {"unread": 0},
         "llm": {"total": 0},
+        "storage": {},
     }
     base.update(overrides)
     return base

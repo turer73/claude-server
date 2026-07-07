@@ -363,6 +363,11 @@ def _build_content(state: dict[str, Any], focus: str) -> str:
     n = state.get("notes", {})
     if n.get("unread", 0) > 0:
         parts.append(f"{n['unread']} okunmamis not")
+    st = state.get("storage", {})
+    if st.get("db_size_mb", 0) > 100:
+        parts.append(f"DB {st['db_size_mb']:.0f}MB")
+    if st.get("total_thoughts", 0) > 50000:
+        parts.append(f"{st['total_thoughts']} dusunce")
     llm = state.get("llm", {})
     if llm.get("total", 0) > 0:
         parts.append(f"son 5dk {llm['total']} LLM cagrisi")
@@ -524,6 +529,7 @@ class ConsciousnessStream:
             "spawn_status": _read_spawn_status(),
             "llm": _read_recent_llm_calls(),
             "notes": _read_unread_notes(),
+            "storage": self._read_thoughts_storage(),
         }
 
     def _think_deep(self) -> dict[str, Any] | None:
@@ -577,12 +583,30 @@ class ConsciousnessStream:
         except sqlite3.Error:
             return []
 
+    def _read_thoughts_storage(self) -> dict[str, Any]:
+        """Monitor: DB file size, thought count, oldest entry age."""
+        stats: dict[str, Any] = {"db_size_mb": 0, "total_thoughts": 0, "oldest_hours": 0}
+        try:
+            if os.path.isfile(MEMORY_DB):
+                stats["db_size_mb"] = round(os.path.getsize(MEMORY_DB) / (1024 * 1024), 2)
+            con = sqlite3.connect(MEMORY_DB, timeout=5)
+            stats["total_thoughts"] = con.execute("SELECT COUNT(*) FROM thoughts").fetchone()[0]
+            row = con.execute("SELECT MIN(timestamp) FROM thoughts").fetchone()[0]
+            con.close()
+            if row:
+                age = datetime.now(UTC) - datetime.fromisoformat(row)
+                stats["oldest_hours"] = round(age.total_seconds() / 3600, 1)
+        except (sqlite3.Error, OSError, ValueError):
+            pass
+        return stats
+
     def get_self_model(self) -> dict[str, Any]:
         """Current self-model: aggregated state + emotional trend."""
         recent = self.get_recent_thoughts(limit=10)
         emotions = [t["emotion"] for t in recent if t.get("emotion")]
         dominant = max(set(emotions), key=emotions.count) if emotions else "unknown"
         state = self._read_all_state()
+        storage = self._read_thoughts_storage()
         return {
             "timestamp": datetime.now(UTC).isoformat(),
             "emotion": dominant,
@@ -601,5 +625,8 @@ class ConsciousnessStream:
                 "memory": state["metrics"].get("memory"),
                 "unread_notes": state["notes"].get("unread", 0),
                 "llm_calls_5min": state["llm"].get("total", 0),
+                "db_size_mb": storage["db_size_mb"],
+                "total_thoughts": storage["total_thoughts"],
+                "oldest_thought_hours": storage["oldest_hours"],
             },
         }
