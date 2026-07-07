@@ -33,6 +33,7 @@ async def recent_thoughts(
     limit: int = 30,
     _: None = Depends(require_auth),
 ) -> dict[str, Any]:
+    limit = min(max(limit, 1), 200)
     stream = _get_stream(request)
     if not stream:
         return {"thoughts": [], "error": "not_initialized"}

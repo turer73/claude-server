@@ -28,7 +28,7 @@ _LEGACY_DATA_DIR = "/opt/linux-ai-server/data"
 _MEMORY_DB = os.environ.get("MEMORY_DB", "")
 if _MEMORY_DB:
     MEMORY_DB = _MEMORY_DB
-elif os.path.exists(f"{_SYSTEM_DATA_DIR}/claude_memory.db"):
+elif os.path.isdir(_SYSTEM_DATA_DIR) and os.access(_SYSTEM_DATA_DIR, os.W_OK):
     MEMORY_DB = f"{_SYSTEM_DATA_DIR}/claude_memory.db"
 else:
     MEMORY_DB = f"{_LEGACY_DATA_DIR}/claude_memory.db"
@@ -403,6 +403,10 @@ class ConsciousnessStream:
         self._running = False
         if self._task:
             self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
             self._task = None
             log.info("consciousness stream stopped")
 
@@ -453,9 +457,8 @@ class ConsciousnessStream:
 
     def _read_all_state(self) -> dict[str, Any]:
         alerts = _read_active_alerts()
-        devops = getattr(self._devops_agent, "active_alerts", None)
-        if devops and callable(devops):
-            in_memory = devops()
+        if hasattr(self._devops_agent, "active_alerts"):
+            in_memory = self._devops_agent.active_alerts
             mem_critical = [a for a in in_memory if a.get("severity") == "critical"]
             db_sources = set(alerts.get("critical_sources", []))
             for a in mem_critical:
