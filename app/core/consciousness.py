@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import sqlite3
+import tempfile
 import urllib.request
 from datetime import UTC, datetime
 from typing import Any
@@ -30,7 +31,7 @@ except ImportError:
 
 log = logging.getLogger("consciousness")
 
-_WORKER_LOCK_PATH = "/tmp/consciousness-worker.lock"
+_WORKER_LOCK_PATH = os.path.join(tempfile.gettempdir(), "consciousness-worker.lock")
 _worker_lock_fd: int | None = None
 
 _SYSTEM_DATA_DIR = "/var/lib/linux-ai-server"
