@@ -24,7 +24,7 @@ async def stream_status(request: Request, _: None = Depends(require_auth)) -> di
     stream = _get_stream(request)
     if not stream:
         return {"running": False, "thought_count": 0, "error": "not_initialized"}
-    return stream.status
+    return stream.status  # type: ignore[no-any-return]
 
 
 @router.get("/stream")
@@ -46,4 +46,4 @@ async def self_model(request: Request, _: None = Depends(require_auth)) -> dict[
     stream = _get_stream(request)
     if not stream:
         return {"error": "not_initialized"}
-    return stream.get_self_model()
+    return stream.get_self_model()  # type: ignore[no-any-return]

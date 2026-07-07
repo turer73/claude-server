@@ -83,9 +83,7 @@ def _read_active_alerts() -> dict[str, Any]:
     if not con:
         return {"critical_count": -1, "warning_count": -1, "critical_sources": [], "error": "db_unreachable"}
     try:
-        rows = con.execute(
-            "SELECT severity, source, message, timestamp FROM alerts WHERE resolved=0 ORDER BY id DESC LIMIT 20"
-        ).fetchall()
+        rows = con.execute("SELECT severity, source, message, timestamp FROM alerts WHERE resolved=0 ORDER BY id DESC LIMIT 20").fetchall()
         con.close()
         critical = [dict(r) for r in rows if r["severity"] == "critical"]
         warnings = [dict(r) for r in rows if r["severity"] == "warning"]
@@ -112,8 +110,7 @@ def _read_recent_events(minutes: int = 5) -> dict[str, Any]:
         return {"count": 0, "error": "db_unreachable"}
     try:
         rows = con.execute(
-            "SELECT type, source, severity, title, timestamp FROM events "
-            "WHERE timestamp > datetime('now', ?) ORDER BY id DESC LIMIT 30",
+            "SELECT type, source, severity, title, timestamp FROM events WHERE timestamp > datetime('now', ?) ORDER BY id DESC LIMIT 30",
             (f"-{minutes} minutes",),
         ).fetchall()
         con.close()
@@ -136,8 +133,7 @@ def _read_recent_cron_outcomes(minutes: int = 1440) -> dict[str, Any]:
         return {"partial_count": 0, "fail_count": 0, "error": "db_unreachable"}
     try:
         rows = con.execute(
-            "SELECT job, result, rc, timestamp FROM cron_outcomes "
-            "WHERE timestamp > datetime('now', ?) ORDER BY timestamp DESC LIMIT 50",
+            "SELECT job, result, rc, timestamp FROM cron_outcomes WHERE timestamp > datetime('now', ?) ORDER BY timestamp DESC LIMIT 50",
             (f"-{minutes} minutes",),
         ).fetchall()
         con.close()
@@ -187,9 +183,7 @@ def _read_spawn_status() -> dict[str, Any]:
             return {"poison_count": 0, "pending_count": 0, "table_missing": True}
         poison = con.execute("SELECT COUNT(*) FROM spawn_failures WHERE status='poison'").fetchone()[0]
         pending = con.execute("SELECT COUNT(*) FROM spawn_failures WHERE status='pending_retry'").fetchone()[0]
-        recent = con.execute(
-            "SELECT note_id, title, attempt_num, status FROM spawn_failures ORDER BY id DESC LIMIT 5"
-        ).fetchall()
+        recent = con.execute("SELECT note_id, title, attempt_num, status FROM spawn_failures ORDER BY id DESC LIMIT 5").fetchall()
         con.close()
         return {
             "poison_count": poison,
@@ -209,8 +203,7 @@ def _read_recent_llm_calls(minutes: int = 5) -> dict[str, Any]:
         return {"total": 0, "error": "db_unreachable"}
     try:
         rows = con.execute(
-            "SELECT task, backend, model, ok, latency_ms FROM llm_calls "
-            "WHERE ts > datetime('now', ?) ORDER BY id DESC LIMIT 30",
+            "SELECT task, backend, model, ok, latency_ms FROM llm_calls WHERE ts > datetime('now', ?) ORDER BY id DESC LIMIT 30",
             (f"-{minutes} minutes",),
         ).fetchall()
         con.close()
@@ -352,7 +345,7 @@ Duygu: {emotion}
 Son durum: {_build_content(current_state, focus)}
 
 Son 5 dakikadaki dusuncelerim:
-{chr(10).join(f'- [{t["emotion"]}] {t["content"][:120]}' for t in recent_thoughts[-6:])}
+{chr(10).join(f"- [{t["emotion"]}] {t["content"][:120]}" for t in recent_thoughts[-6:])}
 
 Bu durum hakkinda ne dusunuyorum? (1-2 cumle, ic monolog olarak)"""
 
