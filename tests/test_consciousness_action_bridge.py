@@ -44,7 +44,7 @@ async def test_concerned_emotion_emits_event(mock_consciousness) -> None:
         "is_deep": 0,
     }
 
-    with patch("app.core.events.emit_event") as mock_emit:
+    with patch("app.core.consciousness._emit_event") as mock_emit:
         await ConsciousnessStream._maybe_emit_concern_event(mock_consciousness, thought)
         mock_emit.assert_called_once()
         call_args = mock_emit.call_args
@@ -86,7 +86,7 @@ async def test_busy_emotion_no_event(mock_consciousness) -> None:
         "is_deep": 0,
     }
 
-    with patch("app.core.events.emit_event") as mock_emit:
+    with patch("app.core.consciousness._emit_event") as mock_emit:
         await ConsciousnessStream._maybe_emit_concern_event(mock_consciousness, thought)
         mock_emit.assert_not_called()
 
@@ -105,7 +105,7 @@ async def test_alert_critical_focus_skipped(mock_consciousness) -> None:
         "is_deep": 0,
     }
 
-    with patch("app.core.events.emit_event") as mock_emit:
+    with patch("app.core.consciousness._emit_event") as mock_emit:
         await ConsciousnessStream._maybe_emit_concern_event(mock_consciousness, thought)
         mock_emit.assert_not_called()
 
@@ -124,7 +124,7 @@ async def test_spawn_poison_focus_emits_spawn_event(mock_consciousness) -> None:
         "is_deep": 0,
     }
 
-    with patch("app.core.events.emit_event") as mock_emit:
+    with patch("app.core.consciousness._emit_event") as mock_emit:
         await ConsciousnessStream._maybe_emit_concern_event(mock_consciousness, thought)
         mock_emit.assert_called_once()
         call_args = mock_emit.call_args
@@ -145,7 +145,7 @@ async def test_unknown_focus_emits_general_event(mock_consciousness) -> None:
         "is_deep": 0,
     }
 
-    with patch("app.core.events.emit_event") as mock_emit:
+    with patch("app.core.consciousness._emit_event") as mock_emit:
         await ConsciousnessStream._maybe_emit_concern_event(mock_consciousness, thought)
         mock_emit.assert_called_once()
         call_args = mock_emit.call_args
@@ -166,7 +166,7 @@ async def test_emit_failure_does_not_crash(mock_consciousness) -> None:
         "is_deep": 0,
     }
 
-    with patch("app.core.events.emit_event", side_effect=Exception("DB error")):
+    with patch("app.core.consciousness._emit_event", side_effect=Exception("DB error")):
         with patch("app.core.consciousness.log") as mock_log:
             await ConsciousnessStream._maybe_emit_concern_event(mock_consciousness, thought)
             mock_log.warning.assert_called_once()

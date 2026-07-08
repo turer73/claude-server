@@ -23,6 +23,8 @@ import urllib.request
 from datetime import UTC, datetime
 from typing import Any
 
+from app.core.events import emit_event as _emit_event
+
 try:
     import fcntl
 
@@ -710,10 +712,8 @@ class ConsciousnessStream:
             title = f"🧠 Bilinç endişesi: {focus}"
 
         try:
-            from app.core.events import emit_event
-
             await asyncio.to_thread(
-                emit_event,
+                _emit_event,
                 type=event_type,
                 source="consciousness",
                 title=title,
