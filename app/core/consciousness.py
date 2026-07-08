@@ -648,6 +648,8 @@ class ConsciousnessStream:
                 if len(self._recent_thoughts) > 30:
                     self._recent_thoughts.pop(0)
 
+                await self._maybe_emit_concern_event(thought)
+
                 self._llm_timer += self._interval
                 if self._llm_timer >= LLM_INTERVAL:
                     deep = await asyncio.to_thread(self._think_deep)
@@ -662,6 +664,53 @@ class ConsciousnessStream:
             except Exception as e:
                 log.warning("consciousness tick error: %s", e, exc_info=True)
             await asyncio.sleep(self._interval)
+
+    async def _maybe_emit_concern_event(self, thought: dict[str, Any]) -> None:
+        """Faz 3: Consciousness→Action Bridge.
+
+        'concerned' emotion tespit edildiğinde event emit et → notify-cron Telegram'a çevirir.
+        Focus'a göre farklı event tipleri:
+        - cron:fail → consciousness:concerned:cron
+        - alert:critical → consciousness:concerned:alert (zaten alert var, skip)
+        - spawn:poison → consciousness:concerned:spawn
+        - Diğer → consciousness:concerned:general
+
+        Fail-safe: event emit hatası thought akışını bozmaz.
+        """
+        emotion = thought.get("emotion", "")
+        if emotion != "concerned":
+            return
+
+        focus = thought.get("focus", "")
+        content = thought.get("content", "")[:200]
+        timestamp = thought.get("timestamp", "")
+
+        if focus.startswith("cron:"):
+            event_type = "consciousness:concerned:cron"
+            title = f"🧠 Bilinç endişesi: {focus}"
+        elif focus.startswith("alert:"):
+            return
+        elif focus.startswith("spawn:"):
+            event_type = "consciousness:concerned:spawn"
+            title = f"🧠 Bilinç endişesi: {focus}"
+        else:
+            event_type = "consciousness:concerned:general"
+            title = f"🧠 Bilinç endişesi: {focus}"
+
+        try:
+            from app.core.events import emit_event
+
+            await asyncio.to_thread(
+                emit_event,
+                type=event_type,
+                source="consciousness",
+                title=title,
+                severity="warn",
+                detail=f"Consciousness 'concerned' emotion tespit etti.\n\nFocus: {focus}\nİçerik: {content}\nZaman: {timestamp}",
+            )
+            log.info("consciousness concern event emitted: %s (%s)", event_type, focus)
+        except Exception as e:
+            log.warning("consciousness concern event emit failed: %s", e)
 
     def _think(self) -> dict[str, Any]:
         state = self._read_all_state()
