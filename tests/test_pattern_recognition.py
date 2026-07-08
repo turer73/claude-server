@@ -40,7 +40,7 @@ def memory_db(tmp_path: Path) -> str:
 def _insert_thought(db_path: str, focus: str, emotion: str, content: str, hours_ago: int = 0) -> None:
     """Test thought ekle."""
     con = sqlite3.connect(db_path)
-    ts = (datetime.now() - timedelta(hours=hours_ago)).isoformat()
+    ts = (datetime.now() - timedelta(hours=hours_ago)).strftime("%Y-%m-%d %H:%M:%S")
     con.execute(
         "INSERT INTO thoughts (timestamp, focus, emotion, content) VALUES (?, ?, ?, ?)",
         (ts, focus, emotion, content),
@@ -52,9 +52,10 @@ def _insert_thought(db_path: str, focus: str, emotion: str, content: str, hours_
 def test_no_patterns_below_threshold(memory_db: str) -> None:
     """Eşik altı tekrar → pattern yok."""
     for i in range(4):
-        _insert_thought(memory_db, "idle", "calm", f"Test {i}")
+        _insert_thought(memory_db, "cron:fail", "concerned", f"Test {i}")
 
     patterns = pattern_recognition.analyze_patterns(hours=24, threshold=5, db_path=memory_db)
+    assert patterns is not None
     assert len(patterns) == 0
 
 
@@ -64,6 +65,7 @@ def test_pattern_detected_at_threshold(memory_db: str) -> None:
         _insert_thought(memory_db, "cron:fail", "concerned", f"Cron failed {i}")
 
     patterns = pattern_recognition.analyze_patterns(hours=24, threshold=5, db_path=memory_db)
+    assert patterns is not None
     assert len(patterns) == 1
     assert patterns[0]["focus"] == "cron:fail"
     assert patterns[0]["count"] == 5
@@ -71,15 +73,33 @@ def test_pattern_detected_at_threshold(memory_db: str) -> None:
 
 
 def test_multiple_patterns(memory_db: str) -> None:
-    """Birden fazla farklı focus → birden fazla pattern."""
+    """Birden fazla farklı focus → birden fazla pattern (idle/calm hariç)."""
     for i in range(3):
         _insert_thought(memory_db, "cron:fail", "concerned", f"Fail {i}")
         _insert_thought(memory_db, "alert:critical", "concerned", f"Alert {i}")
         _insert_thought(memory_db, "idle", "calm", f"Idle {i}")
 
     patterns = pattern_recognition.analyze_patterns(hours=24, threshold=3, db_path=memory_db)
-    assert len(patterns) == 3
-    assert {p["focus"] for p in patterns} == {"cron:fail", "alert:critical", "idle"}
+    assert patterns is not None
+    assert len(patterns) == 2
+    assert {p["focus"] for p in patterns} == {"cron:fail", "alert:critical"}
+
+
+def test_idle_calm_filtered(memory_db: str) -> None:
+    """idle/calm thoughts pattern detection'tan hariç tutulur."""
+    for i in range(10):
+        _insert_thought(memory_db, "idle", "calm", f"Idle {i}")
+
+    patterns = pattern_recognition.analyze_patterns(hours=24, threshold=3, db_path=memory_db)
+    assert patterns is not None
+    assert len(patterns) == 0
+
+
+def test_db_failure_returns_none(tmp_path: Path) -> None:
+    """DB okuma hatası → None döner (caller fail outcome yazmalı)."""
+    nonexistent = tmp_path / "nonexistent.db"
+    patterns = pattern_recognition.analyze_patterns(hours=24, threshold=3, db_path=str(nonexistent))
+    assert patterns is None
 
 
 def test_old_thoughts_excluded(memory_db: str) -> None:

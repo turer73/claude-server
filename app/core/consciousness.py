@@ -18,6 +18,7 @@ import logging
 import os
 import sqlite3
 import tempfile
+import time
 import urllib.request
 from datetime import UTC, datetime
 from typing import Any
@@ -598,6 +599,8 @@ class ConsciousnessStream:
         self._llm_timer = 0
         self._recent_thoughts: list[dict[str, Any]] = []
         self._devops_agent = devops_agent
+        self._last_concern_emit: dict[str, float] = {}
+        self._concern_cooldown = 1800
         _ensure_thoughts_table()
 
     @property
@@ -668,28 +671,37 @@ class ConsciousnessStream:
     async def _maybe_emit_concern_event(self, thought: dict[str, Any]) -> None:
         """Faz 3: Consciousness→Action Bridge.
 
-        'concerned' emotion tespit edildiğinde event emit et → notify-cron Telegram'a çevirir.
+        'concerned' veya 'restless' emotion tespit edildiğinde event emit et.
         Focus'a göre farklı event tipleri:
         - cron:fail → consciousness:concerned:cron
         - alert:critical → consciousness:concerned:alert (zaten alert var, skip)
         - spawn:poison → consciousness:concerned:spawn
         - Diğer → consciousness:concerned:general
 
+        Throttle: aynı focus için 30dk cooldown (event flood önleme).
         Fail-safe: event emit hatası thought akışını bozmaz.
         """
         emotion = thought.get("emotion", "")
-        if emotion != "concerned":
+        focus = thought.get("focus", "")
+
+        if emotion not in ("concerned", "restless"):
             return
 
-        focus = thought.get("focus", "")
+        if focus.startswith("alert:"):
+            return
+
+        now = time.monotonic()
+        last_emit = self._last_concern_emit.get(focus, 0)
+        if (now - last_emit) < self._concern_cooldown:
+            return
+        self._last_concern_emit[focus] = now
+
         content = thought.get("content", "")[:200]
         timestamp = thought.get("timestamp", "")
 
         if focus.startswith("cron:"):
             event_type = "consciousness:concerned:cron"
             title = f"🧠 Bilinç endişesi: {focus}"
-        elif focus.startswith("alert:"):
-            return
         elif focus.startswith("spawn:"):
             event_type = "consciousness:concerned:spawn"
             title = f"🧠 Bilinç endişesi: {focus}"
@@ -706,7 +718,7 @@ class ConsciousnessStream:
                 source="consciousness",
                 title=title,
                 severity="warn",
-                detail=f"Consciousness 'concerned' emotion tespit etti.\n\nFocus: {focus}\nİçerik: {content}\nZaman: {timestamp}",
+                detail=f"Consciousness '{emotion}' emotion tespit etti.\n\nFocus: {focus}\nİçerik: {content}\nZaman: {timestamp}",
             )
             log.info("consciousness concern event emitted: %s (%s)", event_type, focus)
         except Exception as e:

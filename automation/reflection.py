@@ -63,26 +63,28 @@ def _post_json(url: str, body: dict, headers: dict, timeout: int) -> dict:
         return json.loads(resp.read().decode() or "{}")
 
 
-def analyze_playbooks(days: int = DAYS, min_attempts: int = MIN_ATTEMPTS, db_path: str | None = None) -> list[dict]:
+def analyze_playbooks(days: int = DAYS, min_attempts: int = MIN_ATTEMPTS, db_path: str | None = None) -> list[dict] | None:
     """remediation_log tablosundan playbook başarı oranlarını hesapla.
 
     Returns: [{alert_source, total, success_count, success_rate, recent_actions}]
+    None: DB okuma hatası (caller fail/partial outcome yazmalı)
     """
     db = db_path or SERVER_DB
     con = get_conn(db, readonly=True, busy_timeout_ms=5000)
     if not con:
-        return []
+        return None
 
     try:
         window = f"-{days} days"
+        now_utc = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
         rows = con.execute(
             """
             SELECT alert_source, action, success, timestamp
             FROM remediation_log
-            WHERE timestamp > datetime('now', ?)
+            WHERE executed = 1 AND timestamp > datetime(?, ?)
             ORDER BY timestamp DESC
             """,
-            (window,),
+            (now_utc, window),
         ).fetchall()
 
         if not rows:
@@ -122,7 +124,7 @@ def analyze_playbooks(days: int = DAYS, min_attempts: int = MIN_ATTEMPTS, db_pat
         return results
 
     except sqlite3.Error:
-        return []
+        return None
     finally:
         try:
             con.close()
@@ -228,8 +230,13 @@ def write_discovery(recommendations: list[dict], mkey: str) -> str:
 
 def main() -> int:
     playbooks = analyze_playbooks()
-    recommendations = identify_recommendations(playbooks)
     mkey = _envget("MEMORY_API_KEY")
+
+    if playbooks is None:
+        print(f"OUTCOME: fail | remediation_log DB okuma hatası (DB: {SERVER_DB})")
+        return 1
+
+    recommendations = identify_recommendations(playbooks)
 
     if not recommendations:
         print(f"OUTCOME: pass | {len(playbooks)} playbook analiz edildi, öneri yok")

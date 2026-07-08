@@ -60,26 +60,28 @@ def _post_json(url: str, body: dict, headers: dict, timeout: int) -> dict:
         return json.loads(resp.read().decode() or "{}")
 
 
-def analyze_patterns(hours: int = HOURS, threshold: int = THRESHOLD, db_path: str | None = None) -> list[dict]:
+def analyze_patterns(hours: int = HOURS, threshold: int = THRESHOLD, db_path: str | None = None) -> list[dict] | None:
     """thoughts tablosundan son N saatteki tekrar eden focus'ları bul.
 
     Returns: [{focus, count, emotion_distribution, sample_contents}]
+    None: DB okuma hatası (caller fail/partial outcome yazmalı)
     """
     db = db_path or MEMORY_DB
     con = get_conn(db, readonly=True, busy_timeout_ms=5000)
     if not con:
-        return []
+        return None
 
     try:
         window = f"-{hours} hours"
+        now_utc = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
         rows = con.execute(
             """
             SELECT focus, emotion, content, timestamp
             FROM thoughts
-            WHERE timestamp > datetime('now', ?)
+            WHERE timestamp > datetime(?, ?)
             ORDER BY timestamp DESC
             """,
-            (window,),
+            (now_utc, window),
         ).fetchall()
 
         if not rows:
@@ -90,6 +92,9 @@ def analyze_patterns(hours: int = HOURS, threshold: int = THRESHOLD, db_path: st
             focus = r["focus"]
             emotion = r["emotion"]
             content = r["content"]
+
+            if focus == "idle" and emotion == "calm":
+                continue
 
             if focus not in focus_groups:
                 focus_groups[focus] = {
@@ -110,7 +115,7 @@ def analyze_patterns(hours: int = HOURS, threshold: int = THRESHOLD, db_path: st
         return patterns
 
     except sqlite3.Error:
-        return []
+        return None
     finally:
         try:
             con.close()
@@ -176,6 +181,10 @@ def write_discovery(patterns: list[dict], mkey: str) -> str:
 def main() -> int:
     patterns = analyze_patterns()
     mkey = _envget("MEMORY_API_KEY")
+
+    if patterns is None:
+        print(f"OUTCOME: fail | thoughts DB okuma hatası (DB: {MEMORY_DB})")
+        return 1
 
     if not patterns:
         print(f"OUTCOME: pass | Tekrar eden pattern yok (son {HOURS}h, eşik ≥{THRESHOLD})")
