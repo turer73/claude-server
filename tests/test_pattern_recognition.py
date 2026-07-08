@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import sys
-from datetime import datetime, timedelta, timezone  # noqa: F401
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -40,7 +40,7 @@ def memory_db(tmp_path: Path) -> str:
 def _insert_thought(db_path: str, focus: str, emotion: str, content: str, hours_ago: int = 0) -> None:
     """Test thought ekle."""
     con = sqlite3.connect(db_path)
-    ts = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
+    ts = (datetime.now() - timedelta(hours=hours_ago)).isoformat()
     con.execute(
         "INSERT INTO thoughts (timestamp, focus, emotion, content) VALUES (?, ?, ?, ?)",
         (ts, focus, emotion, content),

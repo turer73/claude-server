@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import sys
-from datetime import datetime, timedelta, timezone  # noqa: F401
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -44,7 +44,7 @@ def server_db(tmp_path: Path) -> str:
 def _insert_remediation(db_path: str, source: str, action: str, success: bool, days_ago: int = 0) -> None:
     """Test remediation kaydı ekle."""
     con = sqlite3.connect(db_path)
-    ts = (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
+    ts = (datetime.now() - timedelta(days=days_ago)).isoformat()
     con.execute(
         "INSERT INTO remediation_log (timestamp, alert_source, severity, mode, action, command, executed, success) "
         "VALUES (?, ?, 'critical', 'auto', ?, 'test-cmd', 1, ?)",
