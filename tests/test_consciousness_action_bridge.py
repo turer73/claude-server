@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -28,6 +29,13 @@ def mock_consciousness():
     stream._last_concern_emit = {}
     stream._concern_cooldown = 1800
     return stream
+
+
+@pytest.fixture(autouse=True)
+def mock_time_monotonic():
+    """time.monotonic() her test için sabit değer döndürsün."""
+    with patch("time.monotonic", return_value=1000000.0):
+        yield
 
 
 @pytest.mark.asyncio
