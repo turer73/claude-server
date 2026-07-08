@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone  # noqa: F401
 from pathlib import Path
 
 import pytest
