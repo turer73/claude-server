@@ -143,23 +143,27 @@ def identify_recommendations(playbooks: list[dict]) -> list[dict]:
         total = p["total"]
 
         if rate < LOW_SUCCESS_THRESHOLD:
-            recommendations.append({
-                "alert_source": source,
-                "issue": "low_success_rate",
-                "success_rate": rate,
-                "total": total,
-                "recommendation": f"Playbook '{source}' düşük başarı oranı (%{rate*100:.0f}). "
-                f"Kök neden analiz edilmeli, playbook güncellenmeli veya devre dışı bırakılmalı.",
-            })
+            recommendations.append(
+                {
+                    "alert_source": source,
+                    "issue": "low_success_rate",
+                    "success_rate": rate,
+                    "total": total,
+                    "recommendation": f"Playbook '{source}' düşük başarı oranı (%{rate * 100:.0f}). "
+                    f"Kök neden analiz edilmeli, playbook güncellenmeli veya devre dışı bırakılmalı.",
+                }
+            )
         elif rate > HIGH_SUCCESS_THRESHOLD and total >= 5:
-            recommendations.append({
-                "alert_source": source,
-                "issue": "high_success_rate",
-                "success_rate": rate,
-                "total": total,
-                "recommendation": f"Playbook '{source}' yüksek başarı oranı (%{rate*100:.0f}). "
-                f"Bu playbook güvenilir, otomasyon güvenle kullanılabilir.",
-            })
+            recommendations.append(
+                {
+                    "alert_source": source,
+                    "issue": "high_success_rate",
+                    "success_rate": rate,
+                    "total": total,
+                    "recommendation": f"Playbook '{source}' yüksek başarı oranı (%{rate * 100:.0f}). "
+                    f"Bu playbook güvenilir, otomasyon güvenle kullanılabilir.",
+                }
+            )
 
     return recommendations
 
@@ -178,7 +182,7 @@ def format_recommendation_summary(recommendations: list[dict]) -> str:
         rec = r["recommendation"]
 
         icon = "⚠️" if issue == "low_success_rate" else "✓"
-        lines.append(f"{icon} {source}: %{rate*100:.0f} başarı ({total} deneme)")
+        lines.append(f"{icon} {source}: %{rate * 100:.0f} başarı ({total} deneme)")
         lines.append(f"  {rec}")
 
     return "\n".join(lines)

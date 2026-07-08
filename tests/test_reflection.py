@@ -80,7 +80,7 @@ def test_low_success_rate_detected(server_db: str) -> None:
     for i in range(4):
         _insert_remediation(server_db, "memory_critical", f"Action {i}", False)
     for i in range(1):
-        _insert_remediation(server_db, "memory_critical", f"Action {i+4}", True)
+        _insert_remediation(server_db, "memory_critical", f"Action {i + 4}", True)
 
     playbooks = reflection.analyze_playbooks(days=30, min_attempts=3, db_path=server_db)
     recommendations = reflection.identify_recommendations(playbooks)
