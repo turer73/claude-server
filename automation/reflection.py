@@ -70,7 +70,10 @@ def analyze_playbooks(days: int = DAYS, min_attempts: int = MIN_ATTEMPTS, db_pat
     None: DB okuma hatası (caller fail/partial outcome yazmalı)
     """
     db = db_path or SERVER_DB
-    con = get_conn(db, readonly=True, busy_timeout_ms=5000)
+    try:
+        con = get_conn(db, readonly=True, busy_timeout_ms=5000)
+    except sqlite3.Error:
+        return None
     if not con:
         return None
 

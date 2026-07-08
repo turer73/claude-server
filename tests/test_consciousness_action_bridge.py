@@ -25,6 +25,8 @@ def mock_consciousness():
     stream._prev_emotion = None
     stream._last_thought = None
     stream._devops_agent = None
+    stream._last_concern_emit = {}
+    stream._concern_cooldown = 1800
     return stream
 
 

@@ -67,7 +67,10 @@ def analyze_patterns(hours: int = HOURS, threshold: int = THRESHOLD, db_path: st
     None: DB okuma hatası (caller fail/partial outcome yazmalı)
     """
     db = db_path or MEMORY_DB
-    con = get_conn(db, readonly=True, busy_timeout_ms=5000)
+    try:
+        con = get_conn(db, readonly=True, busy_timeout_ms=5000)
+    except sqlite3.Error:
+        return None
     if not con:
         return None
 
