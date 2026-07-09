@@ -65,6 +65,9 @@
 # FAZ-2: Reflection Agent — remediation playbook başarı oranlarını analiz et (haftalık Pazartesi 08:30)
 # remediation_log tablosunu analiz eder, düşük/yüksek başarı oranlı playbook'ları tespit eder
 30 8 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh reflection /opt/linux-ai-server/automation/reflection.sh
+# FAZ-2: Predictive Agent — Gelecek sorunları tahmin et, proactive alert üret (günlük 06:00)
+# metrics_history trend analizi, disk/CPU/Memory kritik eşik tahmini
+0 6 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh predictive-agent /opt/linux-ai-server/automation/predictive_agent.sh
 # Haftalik SEO denetimi (Pazartesi) — multi-uzman vizyon 3/4. Deterministik salt-okunur;
 # bulgular ortak-hafizaya (type=bug -> SessionStart), Telegram yok.
 # seo-gsc haftalik calismasi AYNI ZAMANDA OAuth refresh_token'i sicak tutar (6-ay-revoke onler)
