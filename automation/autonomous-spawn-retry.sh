@@ -128,7 +128,10 @@ try: print(len(json.load(sys.stdin)))
 except: print(0)" 2>/dev/null || echo 0)
 
 log "retry tick: $COUNT pending rows"
-[ "$COUNT" = "0" ] && exit 0
+if [ "$COUNT" = "0" ]; then
+    echo "OUTCOME: pass | idle (0 pending)"
+    exit 0
+fi
 
 # ---------- Poison alert (Telegram + memory) ----------
 dlq_poison_alert() {
@@ -246,6 +249,14 @@ retry_one() {
     err_slug=$(tail -c 1500 "$spawn_log" 2>/dev/null | tr -d '\000' | sed "s/'/''/g" || echo "")
     new_attempt=$((attempt + 1))
 
+    # disc#1289: 429 abonelik-limiti deneme SAYILMAZ (autonomous-claude.sh dlq_record_failure
+    # ile ayni mantik). attempt korunur, last_retry_at gelecek-tarihli -> +4h sessiz defer.
+    if grep -qE '"api_error_status":429|hit your (weekly|session|usage) limit' "$spawn_log" 2>/dev/null; then
+        sqlite3 -cmd ".timeout 5000" "$DB" "UPDATE spawn_failures SET exit_code=$rc, error_log='$err_slug', spawn_log_path='$spawn_log', last_retry_at=datetime('now','+240 minutes') WHERE id=$dlq_id"
+        log "retry RATE-LIMIT defer: note=#$note_id attempt korundu ($attempt/$POISON_THRESHOLD), +4h"
+        return 0
+    fi
+
     # OAuth race detection: 401 marker spawn JSON output icinde
     if grep -q '"api_error_status":401' "$spawn_log" 2>/dev/null; then
         log "OAUTH 401 detected retry note=#$note_id attempt=$new_attempt — possible refresh race"
@@ -281,4 +292,8 @@ for row in json.load(sys.stdin):
 done
 
 log "retry tick done"
+# OUTCOME: cron-wrap icin islemci-sagligi ozeti (tekil not sonuclari DLQ'da izlenir).
+P_LEFT=$(sqlite3 -cmd ".timeout 5000" "$DB" "SELECT COUNT(*) FROM spawn_failures WHERE status='pending_retry'" 2>/dev/null || echo "?")
+POISON_C=$(sqlite3 -cmd ".timeout 5000" "$DB" "SELECT COUNT(*) FROM spawn_failures WHERE status='poison'" 2>/dev/null || echo "?")
+echo "OUTCOME: pass | processed=$COUNT pending_kalan=$P_LEFT poison_toplam=$POISON_C"
 exit 0

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Pull VPS Backup — Dokploy konfig + Docker volume snapshot
 # Cron: 0 4 * * * (her gece 04:00)
-# Hedef: /data/backups/vps/<YYYY-MM-DD>/  (7 gün retention)
+# Hedef: /datasets/backups/vps/<YYYY-MM-DD>/  (7 gün retention)
 #
 # VPS = root@100.126.113.23 (Tailscale-only). Klipper'dan SSH key ile bağlanır.
 # Eski makinede script kayboldu; bu yeni minimal versiyon.
@@ -12,7 +12,9 @@ source /opt/linux-ai-server/.env 2>/dev/null
 VPS="${VPS_HOST:?Set VPS_HOST in .env}"
 SSH="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 $VPS"
 LOG=/var/log/linux-ai-server/vps-backup.log
-TARGET_ROOT=/data/backups/vps
+# disc#1290: root-LV (/data, ~42G bos) yerine datasets-LV (393G) — disk planina uygun.
+# Eski konum /data/backups/vps ops-migration ile symlink olarak yeni konuma isaret eder.
+TARGET_ROOT=/datasets/backups/vps
 RETENTION_DAYS=7
 TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 DATE=$(date +%Y-%m-%d)

@@ -159,6 +159,7 @@ sorted_notes = sorted(notes, key=score)
 source_count = {}
 spawned = []
 skipped_self = []   # klipper'in KENDI threat-detect notlari: spawn YOK ama not GORUNUR kalir
+skipped_protocol = []  # CLAIM:/RELEASE: koordinasyon-isaretleri: spawn YOK, not GORUNUR kalir
 deferred_rate_limit = []
 for n in sorted_notes:
     # DONGU KIR (Codex P2): klipper'in kendi 'URGENT: Threat #' notuna spawn ETME — aksi
@@ -167,6 +168,12 @@ for n in sorted_notes:
     # state ILERLER (asagida skipped_self max'a dahil -> yeniden-islenmez).
     if n['from_device'] == 'klipper' and (n['title'] or '').startswith('URGENT: Threat #'):
         skipped_self.append(n['id'])
+        continue
+    # disc#1289: CLAIM/RELEASE protokol-notu = is-talebi DEGIL, paralel-calisma isareti.
+    # Spawn kota yakmasin (07-03 CLAIM-notu 3-deneme yakip poison olmustu).
+    # skipped_self ile ayni semantik: state ilerler, not gorunur kalir.
+    if (n['title'] or '').upper().startswith(('CLAIM:', 'RELEASE:')):
+        skipped_protocol.append(n['id'])
         continue
     src = n['from_device']
     cnt = source_count.get(src, 0)
@@ -189,15 +196,16 @@ for n in spawned:
                      stderr=subprocess.STDOUT, start_new_session=True,
                      env={**os.environ, 'ENFORCE_INTERACTIVE_CHECK': '1'})
 
-# State: spawned + skipped_self (kendi threat-notlari) ILERLET — deferred HARIC (onlar retry).
-# skipped_self state'e dahil ki yeniden-fetch edilip dongu olusturmasin (Codex P2).
+# State: spawned + skipped_self (kendi threat-notlari) + skipped_protocol (CLAIM/RELEASE)
+# ILERLET — deferred HARIC (onlar retry).
+# skipped_* state'e dahil ki yeniden-fetch edilip dongu olusturmasin (Codex P2).
 import sys
-handled_ids = [n['id'] for n in spawned] + skipped_self
+handled_ids = [n['id'] for n in spawned] + skipped_self + skipped_protocol
 if handled_ids:
     spawned_max = max(handled_ids)
 else:
     spawned_max = $last_seen
-sys.stderr.write(f'spawned (priority order): {[n[\"id\"] for n in spawned]} skipped_self: {skipped_self} deferred: {deferred_rate_limit}\n')
+sys.stderr.write(f'spawned (priority order): {[n[\"id\"] for n in spawned]} skipped_self: {skipped_self} skipped_protocol: {skipped_protocol} deferred: {deferred_rate_limit}\n')
 print(spawned_max)
 " 2>>"$LOG_FILE" || echo $last_seen)
     else

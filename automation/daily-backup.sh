@@ -20,6 +20,7 @@ if [ -z "$TOKEN" ]; then
     MSG="🔴 *Backup FAILED*\nAPI auth başarısız — servis çalışmıyor olabilir"
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] AUTH FAILED" >> "$LOG"
     send_telegram "$MSG"
+    echo "OUTCOME: fail | API auth basarisiz (servis down olabilir)"
     exit 1
 fi
 
@@ -44,10 +45,12 @@ if [ "$SUCCESS" = "True" ]; then
 📦 \`$FILENAME\`
 💾 Boyut: $SIZE | Toplam: ${KEPT} yedek
 🖥 Kalan disk: $DISK"
+    echo "OUTCOME: pass | $FILENAME $SIZE kept=$KEPT"
 else
     echo "[$TIMESTAMP] FAILED: $RESULT" >> "$LOG"
     send_telegram "🔴 *Backup FAILED*
 Label: $LABEL
 Hata: \`$(echo $RESULT | head -c 200)\`"
+    echo "OUTCOME: fail | $(echo "$RESULT" | tr -d '\n' | head -c 120)"
     exit 1
 fi
