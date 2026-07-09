@@ -71,6 +71,9 @@
 # FAZ-2: Meta-Cognition Agent — Düşünce kalitesini değerlendir, confidence score hesapla (günlük 04:00)
 # thoughts tablosu analiz, tutarlılık/çeşitlilik kontrolü, düşük confidence → event
 0 4 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh meta-cognition /opt/linux-ai-server/automation/meta_cognition.sh
+# FAZ-2: Cross-Source Consolidation — Farklı kaynaklardan öğrenmeleri birleştir (haftalık Pazar 05:00)
+# discoveries + ci_lesson_learned + thoughts → embedding cluster → unified memory
+0 5 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh cross-source-consolidation /opt/linux-ai-server/automation/cross_source_consolidation.sh
 # Haftalik SEO denetimi (Pazartesi) — multi-uzman vizyon 3/4. Deterministik salt-okunur;
 # bulgular ortak-hafizaya (type=bug -> SessionStart), Telegram yok.
 # seo-gsc haftalik calismasi AYNI ZAMANDA OAuth refresh_token'i sicak tutar (6-ay-revoke onler)
