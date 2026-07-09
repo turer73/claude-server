@@ -73,6 +73,18 @@ def _try_worker_lock() -> bool:
         return False
 
 
+def _release_worker_lock() -> None:
+    """Release the cross-process lock so another worker/stream can acquire it."""
+    global _worker_lock_fd
+    if _worker_lock_fd is not None:
+        try:
+            fcntl.flock(_worker_lock_fd, fcntl.LOCK_UN)
+            os.close(_worker_lock_fd)
+        except (OSError, ValueError):
+            pass
+        _worker_lock_fd = None
+
+
 # ── thoughts table schema ─────────────────────────────────────────────
 
 _THOUGHTS_SCHEMA = """
@@ -637,7 +649,8 @@ class ConsciousnessStream:
             except asyncio.CancelledError:
                 pass
             self._task = None
-            log.info("consciousness stream stopped")
+        _release_worker_lock()
+        log.info("consciousness stream stopped")
 
     @property
     def thought_count(self) -> int:

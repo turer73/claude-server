@@ -12,17 +12,24 @@ verify_key reads MEMORY_API_KEY from .env at module load; tests blank it
 via monkeypatch so request-level auth is bypassed in isolation.
 """
 
+from __future__ import annotations
+
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from tests.conftest import TEST_MEMORY_KEY
+
+
+@pytest.fixture(autouse=True)
+def _memory_client(client):
+    client.headers["X-Memory-Key"] = TEST_MEMORY_KEY
 
 
 @pytest.fixture(autouse=True)
 def _set_memory_auth(monkeypatch):
     """MEMORY_API_KEY'i test-key'e set et (fail-closed güvenlik fix; client
-    X-Memory-Key gönderir). Eski 'blank=short-circuit' fail-open'ı test ediyordu."""
-    from tests.conftest import TEST_MEMORY_KEY
-
+    X-Memory-Key g\u00f6nderir). Eski 'blank=short-circuit' fail-open'\u0131 test ediyordu."""
     monkeypatch.setattr("app.api.memory.MEMORY_API_KEY", TEST_MEMORY_KEY)
 
 
