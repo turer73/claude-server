@@ -74,6 +74,9 @@
 # FAZ-2: Cross-Source Consolidation — Farklı kaynaklardan öğrenmeleri birleştir (haftalık Pazar 05:00)
 # discoveries + ci_lesson_learned + thoughts → embedding cluster → unified memory
 0 5 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh cross-source-consolidation /opt/linux-ai-server/automation/cross_source_consolidation.sh
+# FAZ-3: Self-Improvement Agent — Kendi kodunu iyileştirme önerileri üret (haftalık Pazartesi 10:00)
+# Pattern + reflection + thought sinyalleri → LLM (Sonnet) → kod değişikliği önerisi → event
+0 10 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh self-improvement /opt/linux-ai-server/automation/self_improvement.sh
 # Haftalik SEO denetimi (Pazartesi) — multi-uzman vizyon 3/4. Deterministik salt-okunur;
 # bulgular ortak-hafizaya (type=bug -> SessionStart), Telegram yok.
 # seo-gsc haftalik calismasi AYNI ZAMANDA OAuth refresh_token'i sicak tutar (6-ay-revoke onler)
