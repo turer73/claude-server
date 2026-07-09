@@ -23,6 +23,7 @@ import urllib.request
 from datetime import UTC, datetime
 from typing import Any
 
+from app.core.agent_bus import Event, get_bus
 from app.core.events import emit_event as _emit_event
 
 try:
@@ -828,6 +829,25 @@ class ConsciousnessStream:
             con.close()
         except sqlite3.Error as e:
             log.warning("store thought failed: %s", e)
+        try:
+            bus = get_bus()
+            event_type = "thought:deep" if thought.get("is_deep") else "thought:new"
+            bus.publish(Event(
+                type=event_type,
+                source="consciousness",
+                payload={
+                    "thought_id": thought.get("id", 0),
+                    "thought": {
+                        "timestamp": thought["timestamp"],
+                        "focus": thought["focus"],
+                        "emotion": thought["emotion"],
+                        "content": thought["content"],
+                        "is_deep": thought.get("is_deep", 0),
+                    },
+                },
+            ))
+        except Exception as e:
+            log.warning("agent bus publish failed: %s", e)
 
     def get_recent_thoughts(self, limit: int = 30) -> list[dict[str, Any]]:
         """API consumption: latest thoughts from DB."""

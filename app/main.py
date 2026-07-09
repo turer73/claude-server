@@ -218,6 +218,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     consciousness.start()
     logger.info("consciousness stream started (interval=15s)")
 
+    # Start multi-agent bus system (critic, consolidator, learning loop)
+    from app.core.agent_bus import get_bus
+
+    bus = get_bus()
+    app.state.agent_bus = bus
+
+    from app.core.critic_agent import CriticAgent
+
+    critic = CriticAgent(interval=60)
+    app.state.critic_agent = critic
+    critic.start()
+
+    from app.core.memory_consolidator import MemoryConsolidator
+
+    consolidator = MemoryConsolidator(interval=600)
+    app.state.memory_consolidator = consolidator
+    consolidator.start()
+
+    from app.core.learning_loop import LearningLoop
+
+    learning = LearningLoop(interval=3600)
+    app.state.learning_loop = learning
+    learning.start()
+    logger.info("multi-agent bus system started (critic=60s, consolidator=600s, learning=3600s)")
+
     # Read-only kod-mühendisi ajanı (qwen2.5-coder): commit-diff + idle-sweep ile
     # sürekli inceleme → discoveries (dedup'lı) + P1 Telegram. KOD DEĞİŞTİRMEZ.
     # CODE_REVIEW_ENABLED=0 ile kapatılır. start() yalnız enabled ise task açar.
@@ -287,6 +312,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
     except Exception:
         pass
+
+    # Stop multi-agent bus agents
+    critic = getattr(app.state, "critic_agent", None)
+    if critic:
+        await critic.stop()
+    consolidator = getattr(app.state, "memory_consolidator", None)
+    if consolidator:
+        await consolidator.stop()
+    learning = getattr(app.state, "learning_loop", None)
+    if learning:
+        await learning.stop()
+
 
     # Graceful shutdown
     await devops.stop()
