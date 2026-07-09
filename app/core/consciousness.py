@@ -334,7 +334,7 @@ def _read_synthesis_status() -> dict[str, Any]:
     con = _get_conn(MEMORY_DB)
     cols = ["archived_count", "last_outcome"]
     if not con:
-        result = dict.fromkeys(cols, -1)
+        result: dict[str, Any] = dict.fromkeys(cols, -1)
         result["error"] = "db_unreachable"
         return result
     try:
@@ -832,7 +832,7 @@ class ConsciousnessStream:
         try:
             bus = get_bus()
             event_type = "thought:deep" if thought.get("is_deep") else "thought:new"
-            bus.publish(Event(
+            ev = Event(
                 type=event_type,
                 source="consciousness",
                 payload={
@@ -845,7 +845,10 @@ class ConsciousnessStream:
                         "is_deep": thought.get("is_deep", 0),
                     },
                 },
-            ))
+            )
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.run_coroutine_threadsafe(bus.publish(ev), loop)
         except Exception as e:
             log.warning("agent bus publish failed: %s", e)
 

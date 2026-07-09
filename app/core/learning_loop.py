@@ -10,14 +10,14 @@ Connects critic scores back to behavior:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import sqlite3
 import time
-from collections import defaultdict, deque
+from collections import deque
 from typing import Any
 
 from app.core.agent_bus import Event, get_bus
+from app.core.critic_agent import _CONTENT_REPEAT_THRESHOLD, _FOCUS_BOREDOM_THRESHOLD
 
 log = logging.getLogger("learning_loop")
 
@@ -97,7 +97,7 @@ class LearningLoop:
         self._task: asyncio.Task[None] | None = None
         self._scores: deque[dict[str, Any]] = deque(maxlen=1000)
         self._last_learn_time: float = 0
-        self._current_thresholds: dict[str, float] = {}
+        self._current_thresholds: dict[str, Any] = {}
         self._learn_count = 0
 
     @property
@@ -275,8 +275,4 @@ class LearningLoop:
             return []
 
 
-try:
-    from app.core.critic_agent import _FOCUS_BOREDOM_THRESHOLD, _CONTENT_REPEAT_THRESHOLD
-except ImportError:
-    _FOCUS_BOREDOM_THRESHOLD = 5
-    _CONTENT_REPEAT_THRESHOLD = 0.65
+

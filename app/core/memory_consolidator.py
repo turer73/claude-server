@@ -14,9 +14,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
-import time
-from collections import defaultdict
-from datetime import UTC, datetime
 from typing import Any
 
 from app.core.agent_bus import Event, get_bus
@@ -226,7 +223,8 @@ class MemoryConsolidator:
 
         await asyncio.to_thread(_upsert_node, "focus", f"focus:{focus}", focus, importance=1.0)
         await asyncio.to_thread(_upsert_node, "emotion", f"emotion:{emotion}", emotion, importance=0.8)
-        await asyncio.to_thread(_upsert_node, "content_preview", f"thought:{event.payload.get('thought_id', 0)}", content[:200], importance=0.3)
+        thought_key = f"thought:{event.payload.get('thought_id', 0)}"
+        await asyncio.to_thread(_upsert_node, "content_preview", thought_key, content[:200], importance=0.3)
 
         prev_focus = self._last_state.get("focus")
         prev_emotion = self._last_state.get("emotion")

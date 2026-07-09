@@ -14,8 +14,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
-import time
-from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -50,10 +48,10 @@ def _count_recent(attr: str, value: str, thoughts: list[dict[str, Any]]) -> int:
 
 
 def _check_boredom(thoughts: list[dict[str, Any]]) -> list[str]:
-    issues = []
+    issues: list[str] = []
     if not thoughts:
         return issues
-    top_focuses = {}
+    top_focuses: dict[str, int] = {}
     for t in thoughts:
         f = t.get("focus", "unknown")
         top_focuses[f] = top_focuses.get(f, 0) + 1
@@ -148,8 +146,12 @@ class CriticAgent:
             "interval_s": self._interval,
             "models": ["kural-tabanlı (self-consistency, novelty, completeness, actionability)"],
             "last_run": self._last_thought_ts,
-            "current_task": f"Puanlama: {self._score_count} düşünce, ortalama {round(self._avg_score, 1)}" if self._score_count else "Düşünce bekliyor",
-            "stats": {"Puanlanan": self._score_count, "Ortalama puan": round(self._avg_score, 1)},
+            "current_task": (
+                f"Puanlama: {len(self._score_history)} düşünce, " f"ortalama {round(self._avg_score, 1)}"
+                if self._score_history
+                else "Düşünce bekliyor"
+            ),
+            "stats": {"Puanlanan": len(self._score_history), "Ortalama puan": round(self._avg_score, 1)},
             "success_rate": None,
             "findings": [],
         }
