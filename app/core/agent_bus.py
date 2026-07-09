@@ -55,6 +55,14 @@ class AgentBus:
     def subscribe(self, event_type: str, handler: EventHandler) -> None:
         self._subscribers.setdefault(event_type, []).append(handler)
 
+    def unsubscribe(self, event_type: str, handler: EventHandler) -> None:
+        handlers = self._subscribers.get(event_type)
+        if handlers:
+            try:
+                handlers.remove(handler)
+            except ValueError:
+                pass
+
     def subscribe_to_all(self, handler: EventHandler) -> None:
         self._subscribers.setdefault("*", []).append(handler)
 

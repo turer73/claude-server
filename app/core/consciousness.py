@@ -812,9 +812,10 @@ class ConsciousnessStream:
         }
 
     def _store_thought(self, thought: dict[str, Any]) -> None:
+        thought_id = 0
         try:
             con = sqlite3.connect(MEMORY_DB, timeout=10)
-            con.execute(
+            cur = con.execute(
                 "INSERT INTO thoughts (timestamp, focus, emotion, content, source_data, is_deep) VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     thought["timestamp"],
@@ -826,9 +827,11 @@ class ConsciousnessStream:
                 ),
             )
             con.commit()
+            thought_id = cur.lastrowid or 0
             con.close()
         except sqlite3.Error as e:
             log.warning("store thought failed: %s", e)
+            return
         try:
             bus = get_bus()
             event_type = "thought:deep" if thought.get("is_deep") else "thought:new"
@@ -836,7 +839,7 @@ class ConsciousnessStream:
                 type=event_type,
                 source="consciousness",
                 payload={
-                    "thought_id": thought.get("id", 0),
+                    "thought_id": thought_id,
                     "thought": {
                         "timestamp": thought["timestamp"],
                         "focus": thought["focus"],

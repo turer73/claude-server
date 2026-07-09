@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sqlite3
 import time
 from collections import deque
@@ -21,7 +22,7 @@ from app.core.critic_agent import _CONTENT_REPEAT_THRESHOLD, _FOCUS_BOREDOM_THRE
 
 log = logging.getLogger("learning_loop")
 
-_MEMORY_DB = "/opt/linux-ai-server/data/claude_memory.db"
+_MEMORY_DB = os.environ.get("MEMORY_DB", "/opt/linux-ai-server/data/claude_memory.db")
 
 _LEARNING_SCHEMA = """
 CREATE TABLE IF NOT EXISTS learning_events (
@@ -144,7 +145,9 @@ class LearningLoop:
             except asyncio.CancelledError:
                 pass
             self._task = None
-            log.info("learning loop stopped")
+        bus = get_bus()
+        bus.unsubscribe("critic:score", self._on_score)
+        log.info("learning loop stopped")
 
     def _get_windows(self) -> dict[str, float | None]:
         now = time.time()

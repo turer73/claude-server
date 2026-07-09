@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sqlite3
 from datetime import UTC, datetime
 from typing import Any
@@ -21,20 +22,20 @@ from app.core.agent_bus import Event, get_bus
 
 log = logging.getLogger("critic_agent")
 
-_CRITIC_DB_PATH = "/opt/linux-ai-server/data/claude_memory.db"
+_CRITIC_DB_PATH = os.environ.get("MEMORY_DB", "/opt/linux-ai-server/data/claude_memory.db")
 
 _FOCUS_BOREDOM_THRESHOLD = 5
 _EMOTION_STUCK_THRESHOLD = 4
 _CONTENT_REPEAT_THRESHOLD = 0.65
 
 
-def _get_recent_thoughts(limit: int = 10) -> list[dict[str, Any]]:
+def _get_recent_thoughts(limit: int = 10, skip_id: int = 0) -> list[dict[str, Any]]:
     try:
         con = sqlite3.connect(_CRITIC_DB_PATH, timeout=5)
         con.row_factory = sqlite3.Row
         rows = con.execute(
-            "SELECT id, timestamp, focus, emotion, content FROM thoughts ORDER BY id DESC LIMIT ?",
-            (limit,),
+            "SELECT id, timestamp, focus, emotion, content FROM thoughts WHERE id != ? ORDER BY id DESC LIMIT ?",
+            (skip_id, limit),
         ).fetchall()
         con.close()
         return [dict(r) for r in rows]
@@ -67,7 +68,7 @@ def _check_content_repetition(content: str, recent: list[dict[str, Any]]) -> boo
     words = set(content.lower().split())
     if not words:
         return False
-    for t in recent[:3]:
+    for t in recent:
         other = set((t.get("content") or "").lower().split())
         if not other:
             continue
@@ -77,8 +78,8 @@ def _check_content_repetition(content: str, recent: list[dict[str, Any]]) -> boo
     return False
 
 
-def _score_thought(thought: dict[str, Any]) -> dict[str, Any]:
-    recent = _get_recent_thoughts(limit=10)
+def _score_thought(thought: dict[str, Any], skip_id: int = 0) -> dict[str, Any]:
+    recent = _get_recent_thoughts(limit=10, skip_id=skip_id)
     content = thought.get("content", "")
     focus = thought.get("focus", "idle")
     emotion = thought.get("emotion", "calm")
@@ -131,6 +132,7 @@ class CriticAgent:
         self._score_history: list[dict[str, Any]] = []
         self._avg_score = 7.0
         self._last_thought_ts: str | None = None
+        self._last_scored_id: int = 0
 
     @property
     def status(self) -> dict[str, Any]:
@@ -164,6 +166,8 @@ class CriticAgent:
         bus = get_bus()
         bus.register_agent("critic", "Thought quality evaluator")
         bus.subscribe("thought:new", self._on_thought)
+        bus.subscribe("thought:deep", self._on_thought)
+        bus.subscribe("learning:threshold_adjusted", self._on_threshold_adjusted)
         log.info("critic agent started (interval=%ss)", self._interval)
 
     async def stop(self) -> None:
@@ -175,15 +179,31 @@ class CriticAgent:
             except asyncio.CancelledError:
                 pass
             self._task = None
-            log.info("critic agent stopped")
+        bus = get_bus()
+        bus.unsubscribe("thought:new", self._on_thought)
+        bus.unsubscribe("thought:deep", self._on_thought)
+        bus.unsubscribe("learning:threshold_adjusted", self._on_threshold_adjusted)
+        log.info("critic agent stopped")
+
+    async def _on_threshold_adjusted(self, event: Event) -> None:
+        global _FOCUS_BOREDOM_THRESHOLD, _CONTENT_REPEAT_THRESHOLD
+        thresholds = event.payload.get("thresholds", {})
+        if "boredom_threshold" in thresholds:
+            _FOCUS_BOREDOM_THRESHOLD = thresholds["boredom_threshold"]
+        if "content_repeat_threshold" in thresholds:
+            _CONTENT_REPEAT_THRESHOLD = thresholds["content_repeat_threshold"]
 
     async def _on_thought(self, event: Event) -> None:
         thought = event.payload.get("thought", {})
         if not thought:
             return
-        result = await asyncio.to_thread(_score_thought, thought)
+        thought_id = event.payload.get("thought_id", 0)
+        if thought_id and thought_id <= self._last_scored_id:
+            return
+        result = await asyncio.to_thread(_score_thought, thought, skip_id=thought_id)
         self._last_score = result
         self._last_thought_ts = thought.get("timestamp") or datetime.now(UTC).isoformat()
+        self._last_scored_id = thought_id
         self._score_history.append(result)
         if len(self._score_history) > 100:
             self._score_history.pop(0)
@@ -197,7 +217,7 @@ class CriticAgent:
                 type="critic:score",
                 source="critic",
                 payload={
-                    "thought_id": event.payload.get("thought_id", 0),
+                    "thought_id": thought_id,
                     "score": result["score"],
                     "is_repetitive": result["is_repetitive"],
                     "boredom_issues": result["boredom_issues"],
@@ -213,12 +233,15 @@ class CriticAgent:
     async def _run_loop(self) -> None:
         while self._running:
             try:
-                recent = await asyncio.to_thread(_get_recent_thoughts, limit=5)
+                recent = await asyncio.to_thread(_get_recent_thoughts, limit=5, skip_id=self._last_scored_id)
                 if not recent:
                     await asyncio.sleep(self._interval)
                     continue
-                for t in recent[:3]:
-                    await self._on_thought(Event(type="thought:new", source="critic:loop", payload={"thought": t}))
+                for t in recent:
+                    tid = t.get("id", 0)
+                    if tid and tid <= self._last_scored_id:
+                        continue
+                    await self._on_thought(Event(type="thought:new", source="critic:loop", payload={"thought_id": tid, "thought": t}))
             except asyncio.CancelledError:
                 break
             except Exception as e:

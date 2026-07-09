@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sqlite3
 from typing import Any
 
@@ -20,7 +21,7 @@ from app.core.agent_bus import Event, get_bus
 
 log = logging.getLogger("memory_consolidator")
 
-_MEMORY_DB = "/opt/linux-ai-server/data/claude_memory.db"
+_MEMORY_DB = os.environ.get("MEMORY_DB", "/opt/linux-ai-server/data/claude_memory.db")
 
 _HIGH_SCORE_THRESHOLD = 8
 _LOW_SCORE_CLEANUP_AFTER = 72
@@ -195,6 +196,7 @@ class MemoryConsolidator:
         bus = get_bus()
         bus.register_agent("memory_consolidator", "Temporal memory graph builder")
         bus.subscribe("thought:new", self._on_thought)
+        bus.subscribe("thought:deep", self._on_thought)
         bus.subscribe("critic:score", self._on_critic_score)
         _ensure_tables()
         log.info("memory consolidator started (interval=%ss)", self._interval)
@@ -208,7 +210,11 @@ class MemoryConsolidator:
             except asyncio.CancelledError:
                 pass
             self._task = None
-            log.info("memory consolidator stopped")
+        bus = get_bus()
+        bus.unsubscribe("thought:new", self._on_thought)
+        bus.unsubscribe("thought:deep", self._on_thought)
+        bus.unsubscribe("critic:score", self._on_critic_score)
+        log.info("memory consolidator stopped")
 
     async def _on_thought(self, event: Event) -> None:
         thought = event.payload.get("thought", {})
