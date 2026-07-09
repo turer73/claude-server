@@ -243,6 +243,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     learning.start()
     logger.info("multi-agent bus system started (critic=60s, consolidator=600s, learning=3600s)")
 
+    # AgentBus ↔ events spine bridge (çift yönlü)
+    from app.core.event_spine_bridge import bridge_handler
+
+    bus.subscribe_to_all(bridge_handler)
+    logger.info("event spine bridge registered (bus → events)")
+
     # Read-only kod-mühendisi ajanı (qwen2.5-coder): commit-diff + idle-sweep ile
     # sürekli inceleme → discoveries (dedup'lı) + P1 Telegram. KOD DEĞİŞTİRMEZ.
     # CODE_REVIEW_ENABLED=0 ile kapatılır. start() yalnız enabled ise task açar.

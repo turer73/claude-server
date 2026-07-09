@@ -46,6 +46,29 @@ def _serialize_payload(payload: dict[str, Any] | None) -> str | None:
         return json.dumps({"_unserializable": repr(payload)[:500]})
 
 
+def _bus_publish(type: str, source: str, title: str, severity: str, payload: dict[str, Any] | None) -> None:
+    """AgentBus'a event publish et (opsiyonel — bus başlatılmamışsa sessizce skip).
+
+    Loop guard: source'u "bridge:" ile başlayan event'ler bus'a RE-publish edilmez.
+    Bu, event_spine_bridge → emit_event → _bus_publish → bus → bridge_handler → ...
+    sonsuz döngüsünü önler.
+    """
+    if source.startswith("bridge:"):
+        return  # loop guard
+    try:
+        import asyncio
+
+        from app.core.agent_bus import Event, get_bus
+
+        bus = get_bus()
+        ev = Event(type=f"spine:{type}", source="bridge:spine", payload={"source": source, "severity": severity, "title": title, **(payload or {})})
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.run_coroutine_threadsafe(bus.publish(ev), loop)
+    except Exception:
+        pass
+
+
 def emit_event(
     type: str,
     source: str,
@@ -54,23 +77,26 @@ def emit_event(
     detail: str | None = None,
     payload: dict[str, Any] | None = None,
 ) -> int | None:
-    """Merkezi events tablosuna bir olay yaz. id döner (hata/geçersiz → None)."""
+    """Merkezi events tablosuna bir olay yaz + AgentBus'a publish et. id döner (hata → None)."""
     severity = _normalize_severity(severity)
     if not type or not source or not title:
         return None
     try:
-        con = get_conn(_db_path())  # busy_timeout'lu (lock-flap önler) — eskiden çıplak writer'dı
+        con = get_conn(_db_path())
         try:
             cur = con.execute(
                 "INSERT INTO events (type, source, severity, title, detail, payload) VALUES (?,?,?,?,?,?)",
                 (type, source, severity, title, detail, _serialize_payload(payload)),
             )
             con.commit()
-            return cur.lastrowid
+            eid = cur.lastrowid
         finally:
             con.close()
     except sqlite3.Error:
-        return None
+        eid = None
+    # DB yaz (başarılı/başarısız) + bus publish — ikisi bağımsız
+    _bus_publish(type, source, title, severity, payload)
+    return eid
 
 
 def _sev_at_least(min_severity: str) -> list[str]:
