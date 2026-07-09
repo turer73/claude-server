@@ -68,6 +68,9 @@
 # FAZ-2: Predictive Agent — Gelecek sorunları tahmin et, proactive alert üret (günlük 06:00)
 # metrics_history trend analizi, disk/CPU/Memory kritik eşik tahmini
 0 6 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh predictive-agent /opt/linux-ai-server/automation/predictive_agent.sh
+# FAZ-2: Meta-Cognition Agent — Düşünce kalitesini değerlendir, confidence score hesapla (günlük 04:00)
+# thoughts tablosu analiz, tutarlılık/çeşitlilik kontrolü, düşük confidence → event
+0 4 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh meta-cognition /opt/linux-ai-server/automation/meta_cognition.sh
 # Haftalik SEO denetimi (Pazartesi) — multi-uzman vizyon 3/4. Deterministik salt-okunur;
 # bulgular ortak-hafizaya (type=bug -> SessionStart), Telegram yok.
 # seo-gsc haftalik calismasi AYNI ZAMANDA OAuth refresh_token'i sicak tutar (6-ay-revoke onler)
