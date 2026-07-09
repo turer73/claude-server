@@ -179,14 +179,18 @@ class TestBuildContent:
 
 
 @pytest.fixture
-async def consciousness_client(client, app):
-    """Client with ConsciousnessStream initialized (not running)."""
+async def consciousness_client(app):
+    """Client with ConsciousnessStream initialized (not running). No default headers."""
+    from httpx import ASGITransport, AsyncClient
+
     from app.core.consciousness import ConsciousnessStream
 
     stream = ConsciousnessStream(interval=300)
     app.state.consciousness_stream = stream
     stream.start()
-    yield client
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
     await stream.stop()
 
 
@@ -227,6 +231,22 @@ class TestApiStatus:
     async def test_self_no_auth(self, consciousness_client):
         resp = await consciousness_client.get("/api/v1/consciousness/self")
         assert resp.status_code in (401, 403)
+
+    async def test_status_memory_key(self, consciousness_client, memory_headers):
+        resp = await consciousness_client.get("/api/v1/consciousness/status", headers=memory_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["running"] is True
+
+    async def test_stream_memory_key(self, consciousness_client, memory_headers):
+        resp = await consciousness_client.get("/api/v1/consciousness/stream", headers=memory_headers)
+        assert resp.status_code == 200
+        assert "thoughts" in resp.json()
+
+    async def test_self_memory_key(self, consciousness_client, memory_headers):
+        resp = await consciousness_client.get("/api/v1/consciousness/self", headers=memory_headers)
+        assert resp.status_code == 200
+        assert "emotion" in resp.json()
 
 
 class TestApiNoStream:

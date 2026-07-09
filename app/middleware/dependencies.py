@@ -26,7 +26,9 @@ async def require_auth(
     Accepts either:
     1) X-API-Key header matching settings.internal_api_key (admin scope)
        — for internal automation: n8n, cron, monitoring webhooks.
-    2) Bearer JWT (for human / scoped clients).
+    2) X-Memory-Key header matching settings.memory_api_key (admin scope)
+       — for memory system clients (surer, klipper-autonomous).
+    3) Bearer JWT (for human / scoped clients).
 
     Every protected route MUST depend on this.
     Returns: {"sub": "key-name", "permissions": "admin|read|..."}
@@ -37,8 +39,14 @@ async def require_auth(
         request.state.permissions = "admin"
         return {"sub": "internal", "permissions": "admin"}
 
+    memory_key = request.headers.get("X-Memory-Key")
+    if memory_key and settings.memory_api_key and memory_key == settings.memory_api_key:
+        request.state.user = "memory-client"
+        request.state.permissions = "admin"
+        return {"sub": "memory-client", "permissions": "admin"}
+
     if credentials is None:
-        raise AuthenticationError("Bearer token or X-API-Key required")
+        raise AuthenticationError("Bearer token, X-API-Key, or X-Memory-Key required")
     payload = decode_token(credentials.credentials, settings.jwt_secret)
     request.state.user = payload.get("sub", "unknown")
     request.state.permissions = payload.get("permissions", "")

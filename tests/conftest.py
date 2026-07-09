@@ -93,11 +93,12 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setenv("DB_PATH", str(tmp_path / "test.db"))
     monkeypatch.setenv("DEFAULT_API_KEY", TEST_API_KEY)
     monkeypatch.setenv("JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("MEMORY_API_KEY", TEST_MEMORY_KEY)
     # rag.py METRICS_DB path: prod /opt/linux-ai-server/data/rag_metrics.db
     # CI runner'da yok; tmp_path uzerinde test-only metrics dosyasi kullan.
     rag_metrics = tmp_path / "rag_metrics.db"
     monkeypatch.setenv("RAG_METRICS_DB", str(rag_metrics))
-    # rag modulu zaten yuklenmis olabilir; module-level constant da yamala.
+    # rag modulu zaten yuklenmis olabilir; module-level constant da yamla.
     monkeypatch.setattr("app.api.rag.METRICS_DB", str(rag_metrics))
     # Prevent YAML config from being loaded (nested keys break flat Settings)
     monkeypatch.setattr("app.core.config.load_yaml_config", lambda path: {})
@@ -133,6 +134,12 @@ def auth_headers(admin_token) -> dict:
 def read_headers(read_token) -> dict:
     """HTTP headers with read-only Bearer token."""
     return {"Authorization": f"Bearer {read_token}"}
+
+
+@pytest.fixture
+def memory_headers() -> dict:
+    """HTTP headers with X-Memory-Key (memory system client)."""
+    return {"X-Memory-Key": TEST_MEMORY_KEY}
 
 
 @pytest.fixture
