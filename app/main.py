@@ -18,6 +18,7 @@ from fastapi.security import HTTPBearer
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 from app import __version__
 from app.api.admin import router as admin_router
