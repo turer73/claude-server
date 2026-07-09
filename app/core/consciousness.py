@@ -18,9 +18,12 @@ import logging
 import os
 import sqlite3
 import tempfile
+import time
 import urllib.request
 from datetime import UTC, datetime
 from typing import Any
+
+from app.core.events import emit_event as _emit_event
 
 try:
     import fcntl
@@ -598,6 +601,8 @@ class ConsciousnessStream:
         self._llm_timer = 0
         self._recent_thoughts: list[dict[str, Any]] = []
         self._devops_agent = devops_agent
+        self._last_concern_emit: dict[str, float] = {}
+        self._concern_cooldown = 1800
         _ensure_thoughts_table()
 
     @property
@@ -648,6 +653,8 @@ class ConsciousnessStream:
                 if len(self._recent_thoughts) > 30:
                     self._recent_thoughts.pop(0)
 
+                await self._maybe_emit_concern_event(thought)
+
                 self._llm_timer += self._interval
                 if self._llm_timer >= LLM_INTERVAL:
                     deep = await asyncio.to_thread(self._think_deep)
@@ -662,6 +669,60 @@ class ConsciousnessStream:
             except Exception as e:
                 log.warning("consciousness tick error: %s", e, exc_info=True)
             await asyncio.sleep(self._interval)
+
+    async def _maybe_emit_concern_event(self, thought: dict[str, Any]) -> None:
+        """Faz 3: Consciousness→Action Bridge.
+
+        'concerned' veya 'restless' emotion tespit edildiğinde event emit et.
+        Focus'a göre farklı event tipleri:
+        - cron:fail → consciousness:concerned:cron
+        - alert:critical → consciousness:concerned:alert (zaten alert var, skip)
+        - spawn:poison → consciousness:concerned:spawn
+        - Diğer → consciousness:concerned:general
+
+        Throttle: aynı focus için 30dk cooldown (event flood önleme).
+        Fail-safe: event emit hatası thought akışını bozmaz.
+        """
+        emotion = thought.get("emotion", "")
+        focus = thought.get("focus", "")
+
+        if emotion not in ("concerned", "restless"):
+            return
+
+        if focus.startswith("alert:"):
+            return
+
+        now = time.monotonic()
+        last_emit = self._last_concern_emit.get(focus, 0)
+        if (now - last_emit) < self._concern_cooldown:
+            return
+        self._last_concern_emit[focus] = now
+
+        content = thought.get("content", "")[:200]
+        timestamp = thought.get("timestamp", "")
+
+        if focus.startswith("cron:"):
+            event_type = "consciousness:concerned:cron"
+            title = f"🧠 Bilinç endişesi: {focus}"
+        elif focus.startswith("spawn:"):
+            event_type = "consciousness:concerned:spawn"
+            title = f"🧠 Bilinç endişesi: {focus}"
+        else:
+            event_type = "consciousness:concerned:general"
+            title = f"🧠 Bilinç endişesi: {focus}"
+
+        try:
+            await asyncio.to_thread(
+                _emit_event,
+                type=event_type,
+                source="consciousness",
+                title=title,
+                severity="warn",
+                detail=f"Consciousness '{emotion}' emotion tespit etti.\n\nFocus: {focus}\nİçerik: {content}\nZaman: {timestamp}",
+            )
+            log.info("consciousness concern event emitted: %s (%s)", event_type, focus)
+        except Exception as e:
+            log.warning("consciousness concern event emit failed: %s", e)
 
     def _think(self) -> dict[str, Any]:
         state = self._read_all_state()

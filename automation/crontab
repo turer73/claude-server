@@ -31,6 +31,9 @@
 15 3 * * * bash /opt/linux-ai-server/scripts/memory-triage.sh
 # LLM-tabanli hafiza triage: Anthropic Haiku 4.5 (gunluk 03:30, max 20 batch)
 30 3 * * * /opt/linux-ai-server/venv/bin/python3 /opt/linux-ai-server/scripts/memory-triage-llm.py
+# FAZ-1: Pattern Recognition — bilinç düşüncelerinde tekrar eden pattern'leri tespit et (günlük 03:45)
+# thoughts tablosunu analiz eder, aynı focus ≥5 kez tekrar ediyorsa → discovery (type=learning)
+45 3 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh pattern-recognition /opt/linux-ai-server/automation/pattern_recognition.sh
 # Haftalık self-pentest — sahip olduğumuz tüm domain'leri tara (Pazar 03:30)
 30 3 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh self-pentest /opt/linux-ai-server/automation/self-pentest.sh
 # 04:40 (stagger): agir Docker guvenlik taramasi — demo-reset 04:00 + pull-vps 04:20 sonrasi
@@ -54,11 +57,14 @@
 */10 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh liveness-check /opt/linux-ai-server/automation/liveness-check.sh
 # Renderhane bakiye uyarisi (panola-social VPS /api/health proxy, saatlik) — v2-06 PSOC-20260528
 0 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh renderhane-balance /opt/linux-ai-server/automation/social-renderhane-balance-alert.sh
-# Haftalik VERI-ANALISTI (Pazartesi 08:00) — server.db + coverage.db trend, salt-okunur
+# Haftalık VERI-ANALISTI (Pazartesi 08:00) — server.db + coverage.db trend, salt-okunur
 # /claude (Max-plan) + db-query.sh -> discovery + Telegram ozet. Multi-uzman vizyon: 1/4.
 # ENABLED 2026-06-06 (spot-check x3 PASS: rapor+discovery id537+Telegram). Opt-in kapi
 # .env DATA_ANALYST_ENABLED=true; kapatmak icin flag=false (satir kalabilir, script no-op).
 0 8 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh data-analyst /opt/linux-ai-server/automation/data-analyst.sh
+# FAZ-2: Reflection Agent — remediation playbook başarı oranlarını analiz et (haftalık Pazartesi 08:30)
+# remediation_log tablosunu analiz eder, düşük/yüksek başarı oranlı playbook'ları tespit eder
+30 8 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh reflection /opt/linux-ai-server/automation/reflection.sh
 # Haftalik SEO denetimi (Pazartesi) — multi-uzman vizyon 3/4. Deterministik salt-okunur;
 # bulgular ortak-hafizaya (type=bug -> SessionStart), Telegram yok.
 # seo-gsc haftalik calismasi AYNI ZAMANDA OAuth refresh_token'i sicak tutar (6-ay-revoke onler)
