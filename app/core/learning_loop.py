@@ -155,14 +155,16 @@ class LearningLoop:
         return result
 
     async def _on_score(self, event: Event) -> None:
-        self._scores.append({
-            "score": event.payload.get("score", 5),
-            "ts": time.time(),
-            "thought_focus": event.payload.get("thought_focus", ""),
-            "thought_emotion": event.payload.get("thought_emotion", ""),
-            "is_repetitive": event.payload.get("is_repetitive", False),
-            "boredom_issues": event.payload.get("boredom_issues", []),
-        })
+        self._scores.append(
+            {
+                "score": event.payload.get("score", 5),
+                "ts": time.time(),
+                "thought_focus": event.payload.get("thought_focus", ""),
+                "thought_emotion": event.payload.get("thought_emotion", ""),
+                "is_repetitive": event.payload.get("is_repetitive", False),
+                "boredom_issues": event.payload.get("boredom_issues", []),
+            }
+        )
 
     async def _run_loop(self) -> None:
         while self._running:
@@ -210,7 +212,7 @@ class LearningLoop:
             self._learn_count += 1
             detail = f"learn #{self._learn_count}: {learn_reason}. Prev thresholds: {self._current_thresholds}"
 
-            threshold_adjustments = {}
+            threshold_adjustments: dict[str, Any] = {}
             if avg_15min < 5:
                 threshold_adjustments["boredom_threshold"] = max(3, _FOCUS_BOREDOM_THRESHOLD - 1)
             if new_boredom_count >= 3:
@@ -219,14 +221,17 @@ class LearningLoop:
             self._current_thresholds.update(threshold_adjustments)
 
             bus = get_bus()
-            bus.agent_status("learning_loop",
+            bus.agent_status(
+                "learning_loop",
                 learn_count=self._learn_count,
                 last_reason=learn_reason,
                 thresholds=self._current_thresholds,
             )
 
             await asyncio.to_thread(
-                _record_learning_event, "threshold_adjustment", detail,
+                _record_learning_event,
+                "threshold_adjustment",
+                detail,
                 score_before=avg_15min,
             )
 
@@ -248,9 +253,7 @@ class LearningLoop:
         try:
             con = sqlite3.connect(_MEMORY_DB, timeout=5)
             con.row_factory = sqlite3.Row
-            rows = con.execute(
-                "SELECT * FROM learning_events ORDER BY id DESC LIMIT ?", (limit,)
-            ).fetchall()
+            rows = con.execute("SELECT * FROM learning_events ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
             con.close()
             return [dict(r) for r in rows]
         except sqlite3.Error:
@@ -266,13 +269,8 @@ class LearningLoop:
                     (component, limit),
                 ).fetchall()
             else:
-                rows = con.execute(
-                    "SELECT * FROM prompt_versions ORDER BY id DESC LIMIT ?", (limit,)
-                ).fetchall()
+                rows = con.execute("SELECT * FROM prompt_versions ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
             con.close()
             return [dict(r) for r in rows]
         except sqlite3.Error:
             return []
-
-
-

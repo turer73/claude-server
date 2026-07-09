@@ -463,6 +463,7 @@ async def bus_status(request: Request) -> dict:
     bus = getattr(request.app.state, "agent_bus", None)
     if bus is None:
         from app.core.agent_bus import get_bus
+
         bus = get_bus()
     return {
         "bus": bus.get_status(),

@@ -147,7 +147,7 @@ class CriticAgent:
             "models": ["kural-tabanlı (self-consistency, novelty, completeness, actionability)"],
             "last_run": self._last_thought_ts,
             "current_task": (
-                f"Puanlama: {len(self._score_history)} düşünce, " f"ortalama {round(self._avg_score, 1)}"
+                f"Puanlama: {len(self._score_history)} düşünce, ortalama {round(self._avg_score, 1)}"
                 if self._score_history
                 else "Düşünce bekliyor"
             ),

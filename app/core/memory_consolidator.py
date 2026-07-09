@@ -73,9 +73,7 @@ def _ensure_tables() -> None:
 def _upsert_node(node_type: str, key: str, value: str, importance: float = 1.0, meta: str = "{}") -> None:
     try:
         con = sqlite3.connect(_MEMORY_DB, timeout=5)
-        existing = con.execute(
-            "SELECT id, count, importance FROM memory_nodes WHERE node_type=? AND key=?", (node_type, key)
-        ).fetchone()
+        existing = con.execute("SELECT id, count, importance FROM memory_nodes WHERE node_type=? AND key=?", (node_type, key)).fetchone()
         if existing:
             new_count = existing[1] + 1
             new_imp = min(10.0, existing[2] + importance * 0.1)
@@ -108,9 +106,7 @@ def _upsert_edge(source: str, target: str, relation: str) -> None:
             (source, target, relation),
         ).fetchone()
         if existing:
-            con.execute(
-                "UPDATE memory_edges SET last_seen=datetime('now'), count=count+1 WHERE id=?", (existing[0],)
-            )
+            con.execute("UPDATE memory_edges SET last_seen=datetime('now'), count=count+1 WHERE id=?", (existing[0],))
         else:
             con.execute(
                 "INSERT INTO memory_edges (source_key, target_key, relation) VALUES (?, ?, ?)",
@@ -137,12 +133,14 @@ def _find_patterns() -> list[dict[str, Any]]:
         con.close()
         for r in rows:
             if r[2] >= 3:
-                patterns.append({
-                    "emotion": r[0],
-                    "focus": r[1],
-                    "count": r[2],
-                    "pattern": f"{r[0]} -> {r[1]} ({r[2]}x)",
-                })
+                patterns.append(
+                    {
+                        "emotion": r[0],
+                        "focus": r[1],
+                        "count": r[2],
+                        "pattern": f"{r[0]} -> {r[1]} ({r[2]}x)",
+                    }
+                )
     except sqlite3.Error as e:
         log.warning("pattern query error: %s", e)
     return patterns
@@ -250,8 +248,12 @@ class MemoryConsolidator:
 
         meta = f'{{"score":{score},"source":"critic"}}'
         await asyncio.to_thread(
-            _upsert_node, "score", f"score:{event.payload.get('thought_id', 0)}", str(score),
-            importance=imp, meta=meta,
+            _upsert_node,
+            "score",
+            f"score:{event.payload.get('thought_id', 0)}",
+            str(score),
+            importance=imp,
+            meta=meta,
         )
 
         if thought_focus and thought_emotion:

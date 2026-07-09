@@ -324,7 +324,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if learning:
         await learning.stop()
 
-
     # Graceful shutdown
     await devops.stop()
     await consciousness.stop()
