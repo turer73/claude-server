@@ -2,7 +2,15 @@
 hepsi ServerError ile aynı {error, message, detail} şeklini döner.
 """
 
+import pytest
+
+from tests.conftest import TEST_MEMORY_KEY
 from tests.test_memory_api import memory_db  # noqa: F401 — paylaşılan fixture
+
+
+@pytest.fixture(autouse=True)
+def _memory_client(client):
+    client.headers["X-Memory-Key"] = TEST_MEMORY_KEY
 
 
 async def test_http_exception_envelope(client, memory_db):

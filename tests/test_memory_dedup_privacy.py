@@ -12,6 +12,16 @@ import sqlite3
 
 import pytest
 
+from tests.conftest import TEST_MEMORY_KEY
+
+
+@pytest.fixture(autouse=True)
+def _memory_client(client):
+    client.headers["X-Memory-Key"] = TEST_MEMORY_KEY
+
+
+import pytest
+
 # memory_db fixture'i ayni dosyadan al
 from tests.test_memory_api import memory_db  # noqa: F401
 

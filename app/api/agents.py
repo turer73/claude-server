@@ -403,6 +403,29 @@ def _research_card(spec: dict, rdb: dict) -> dict:
     }
 
 
+# ── Multi-agent bus cards ────────────────────────────────────────
+
+
+def _agent_bus_card(kind: str, agent) -> dict:
+    """Critic / MemoryConsolidator / LearningLoop için ortak kart yapısı."""
+    st = agent.status
+    return {
+        "key": st.get("key", kind),
+        "name": st.get("name", kind),
+        "role": st.get("role", ""),
+        "type": "continuous",
+        "schedule": f"{st.get('interval_s', '?')}s döngü",
+        "running": bool(st.get("running")),
+        "models": st.get("models", ["—"]),
+        "last_run": st.get("last_run"),
+        "interval_s": st.get("interval_s"),
+        "current_task": st.get("current_task", ""),
+        "stats": st.get("stats", {}),
+        "success_rate": st.get("success_rate"),
+        "findings": st.get("findings", []),
+    }
+
+
 @router.get("/runtime", dependencies=[Depends(require_auth)])
 async def runtime_agents(request: Request) -> dict:
     """TÜM karar-ajanlarını tek yerde topla: sürekli(inmem) + on-demand(research) + cron.
@@ -415,6 +438,16 @@ async def runtime_agents(request: Request) -> dict:
     if cra is not None:
         crdb = await asyncio.to_thread(_codereview_db)
         agents.append(_codereview_card(cra, crdb))
+    # Multi-agent bus agents
+    ca = getattr(request.app.state, "critic_agent", None)
+    if ca is not None:
+        agents.append(_agent_bus_card("critic", ca))
+    ma = getattr(request.app.state, "memory_consolidator", None)
+    if ma is not None:
+        agents.append(_agent_bus_card("consolidator", ma))
+    la = getattr(request.app.state, "learning_loop", None)
+    if la is not None:
+        agents.append(_agent_bus_card("learning", la))
     for spec in _AGENT_MANIFEST:
         if spec["type"] == "ondemand" and spec.get("src") == "research":
             rdb = await asyncio.to_thread(_research_db)
@@ -422,6 +455,20 @@ async def runtime_agents(request: Request) -> dict:
         elif spec["type"] == "cron":
             agents.append(await asyncio.to_thread(_cron_card, spec))
     return {"agents": agents}
+
+
+@router.get("/bus", dependencies=[Depends(require_auth)])
+async def bus_status(request: Request) -> dict:
+    """Agent bus internal state: subscribers, event log, registered agents."""
+    bus = getattr(request.app.state, "agent_bus", None)
+    if bus is None:
+        from app.core.agent_bus import get_bus
+
+        bus = get_bus()
+    return {
+        "bus": bus.get_status(),
+        "recent_events": bus.recent_events(limit=20),
+    }
 
 
 @router.post("/runtime/{key}/trigger", dependencies=[Depends(require_write)])

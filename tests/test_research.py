@@ -8,9 +8,19 @@ Auth: verify_key (X-Memory-Key). Tests blank MEMORY_API_KEY via monkeypatch
 so the dependency short-circuits.
 """
 
-from unittest.mock import MagicMock, patch
+from __future__ import annotations
 
 import pytest
+
+from tests.conftest import TEST_MEMORY_KEY
+
+
+@pytest.fixture(autouse=True)
+def _memory_client(client):
+    client.headers["X-Memory-Key"] = TEST_MEMORY_KEY
+
+
+from unittest.mock import MagicMock, patch
 
 import app.api.research as research
 

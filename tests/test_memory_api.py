@@ -7,6 +7,16 @@ every endpoint via the shared FastAPI test client.
 
 from __future__ import annotations
 
+import pytest
+
+from tests.conftest import TEST_MEMORY_KEY
+
+
+@pytest.fixture(autouse=True)
+def _memory_client(client):
+    client.headers["X-Memory-Key"] = TEST_MEMORY_KEY
+
+
 import sqlite3
 
 import pytest

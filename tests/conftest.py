@@ -161,8 +161,32 @@ async def client(app, tmp_path, monkeypatch):
 
     transport = ASGITransport(app=app)
     try:
-        # X-Memory-Key default header: memory fail-closed sonrası memory/RAG/research/
-        # classifier çağrıları geçer (non-memory endpoint'ler header'ı yok sayar).
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
+    finally:
+        await db.close()
+
+
+@pytest.fixture
+async def memory_client(app, tmp_path, monkeypatch):
+    """Client with X-Memory-Key default header (memory/RAG/research endpoints)."""
+    from app.database import Database
+    from app.utils import hash_api_key
+
+    db_path = str(tmp_path / "test.db")
+    db = Database(db_path)
+    await db.initialize()
+
+    existing = await db.fetch_all("SELECT id FROM api_keys LIMIT 1")
+    if not existing:
+        await db.execute(
+            "INSERT INTO api_keys (key_hash, name, permissions) VALUES (?, ?, ?)",
+            (hash_api_key(TEST_API_KEY), "admin", "admin"),
+        )
+
+    app.state.db = db
+    transport = ASGITransport(app=app)
+    try:
         async with AsyncClient(transport=transport, base_url="http://test", headers={"X-Memory-Key": TEST_MEMORY_KEY}) as c:
             yield c
     finally:

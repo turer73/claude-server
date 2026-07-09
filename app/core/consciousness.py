@@ -23,6 +23,7 @@ import urllib.request
 from datetime import UTC, datetime
 from typing import Any
 
+from app.core.agent_bus import Event, get_bus
 from app.core.events import emit_event as _emit_event
 
 try:
@@ -70,6 +71,18 @@ def _try_worker_lock() -> bool:
             os.close(_worker_lock_fd)
             _worker_lock_fd = None
         return False
+
+
+def _release_worker_lock() -> None:
+    """Release the cross-process lock so another worker/stream can acquire it."""
+    global _worker_lock_fd
+    if _worker_lock_fd is not None:
+        try:
+            fcntl.flock(_worker_lock_fd, fcntl.LOCK_UN)
+            os.close(_worker_lock_fd)
+        except (OSError, ValueError):
+            pass
+        _worker_lock_fd = None
 
 
 # ── thoughts table schema ─────────────────────────────────────────────
@@ -333,7 +346,7 @@ def _read_synthesis_status() -> dict[str, Any]:
     con = _get_conn(MEMORY_DB)
     cols = ["archived_count", "last_outcome"]
     if not con:
-        result = dict.fromkeys(cols, -1)
+        result: dict[str, Any] = dict.fromkeys(cols, -1)
         result["error"] = "db_unreachable"
         return result
     try:
@@ -636,7 +649,8 @@ class ConsciousnessStream:
             except asyncio.CancelledError:
                 pass
             self._task = None
-            log.info("consciousness stream stopped")
+        _release_worker_lock()
+        log.info("consciousness stream stopped")
 
     @property
     def thought_count(self) -> int:
@@ -811,9 +825,10 @@ class ConsciousnessStream:
         }
 
     def _store_thought(self, thought: dict[str, Any]) -> None:
+        thought_id = 0
         try:
             con = sqlite3.connect(MEMORY_DB, timeout=10)
-            con.execute(
+            cur = con.execute(
                 "INSERT INTO thoughts (timestamp, focus, emotion, content, source_data, is_deep) VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     thought["timestamp"],
@@ -825,9 +840,33 @@ class ConsciousnessStream:
                 ),
             )
             con.commit()
+            thought_id = cur.lastrowid or 0
             con.close()
         except sqlite3.Error as e:
             log.warning("store thought failed: %s", e)
+            return
+        try:
+            bus = get_bus()
+            event_type = "thought:deep" if thought.get("is_deep") else "thought:new"
+            ev = Event(
+                type=event_type,
+                source="consciousness",
+                payload={
+                    "thought_id": thought_id,
+                    "thought": {
+                        "timestamp": thought["timestamp"],
+                        "focus": thought["focus"],
+                        "emotion": thought["emotion"],
+                        "content": thought["content"],
+                        "is_deep": thought.get("is_deep", 0),
+                    },
+                },
+            )
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.run_coroutine_threadsafe(bus.publish(ev), loop)
+        except Exception as e:
+            log.warning("agent bus publish failed: %s", e)
 
     def get_recent_thoughts(self, limit: int = 30) -> list[dict[str, Any]]:
         """API consumption: latest thoughts from DB."""
