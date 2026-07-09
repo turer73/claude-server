@@ -15,6 +15,9 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from app.api.memory import verify_key
 from app.db.data_layer import get_conn
 
+import logging
+logger = logging.getLogger(__name__)
+
 QDRANT_URL = "http://localhost:6333"
 OLLAMA_URL = "http://localhost:11434"
 COLLECTION = "klipper-memory"
@@ -59,7 +62,7 @@ def _init_metrics_db():
 try:
     _init_metrics_db()
 except sqlite3.OperationalError:
-    pass
+    logger.warning("rag_metrics db init failed (path erisilebilir degil)")
 
 
 def _log_query(endpoint, query, project, source, top_k, hits, duration_ms, tokens=None, tps=None, request=None):
@@ -213,7 +216,7 @@ def _hybrid_search(query, vec, top_k=5, project=None, source=None):
 try:
     _ensure_text_index()
 except Exception:
-    pass
+        logger.exception("rag_metrics log failed")
 
 
 @router.get("/health")
