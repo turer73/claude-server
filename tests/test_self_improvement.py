@@ -171,3 +171,65 @@ def test_generate_suggestions_no_signals() -> None:
     suggestions = self_improvement.generate_improvement_suggestions(signals, ikey="test-key")
     assert suggestions is not None
     assert len(suggestions) == 0
+
+
+def test_ensure_pending_table_creates_schema(tmp_path: Path) -> None:
+    """self_improvement_pending tablosu yoksa oluşturulur."""
+    db_path = tmp_path / "test_srv.db"
+    # Tablo yokken
+    con = sqlite3.connect(str(db_path))
+    con.execute("CREATE TABLE dummy (id INT)")
+    con.close()
+
+    self_improvement._ensure_pending_table(server_db=str(db_path))
+
+    con = sqlite3.connect(str(db_path))
+    tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    con.close()
+    assert "self_improvement_pending" in tables
+
+
+def test_save_suggestion_stores_row(tmp_path: Path) -> None:
+    """Öneri pending tablosuna kaydedilir."""
+    db_path = tmp_path / "test_srv.db"
+    self_improvement._ensure_pending_table(server_db=str(db_path))
+
+    sid = self_improvement._save_suggestion(
+        {"title": "Test Öneri", "description": "Açıklama", "priority": "high", "affected_files": "a.py"},
+        server_db=str(db_path),
+    )
+    assert sid is not None
+
+    con = sqlite3.connect(str(db_path))
+    row = con.execute("SELECT title, priority FROM self_improvement_pending WHERE id=?", (sid,)).fetchone()
+    con.close()
+    assert row is not None
+    assert row[0] == "Test Öneri"
+    assert row[1] == "high"
+
+
+def test_save_suggestion_truncates_long_fields(tmp_path: Path) -> None:
+    """Uzun alanlar kesilir."""
+    db_path = tmp_path / "test_srv.db"
+    self_improvement._ensure_pending_table(server_db=str(db_path))
+
+    suggestion = self_improvement._save_suggestion(
+        {"title": "X" * 200, "description": "Y" * 500, "priority": "medium", "affected_files": "z.py"},
+        server_db=str(db_path),
+    )
+    assert suggestion is not None
+
+    con = sqlite3.connect(str(db_path))
+    row = con.execute("SELECT title, description FROM self_improvement_pending WHERE id=?", (suggestion,)).fetchone()
+    con.close()
+    assert len(row[0]) <= 50
+    assert len(row[1]) <= 200
+
+
+def test_save_suggestion_db_fail(tmp_path: Path) -> None:
+    """DB yoksa None döner."""
+    sid = self_improvement._save_suggestion(
+        {"title": "x", "priority": "low", "affected_files": ""},
+        server_db=str(tmp_path / "nonexistent" / "db.db"),
+    )
+    assert sid is None

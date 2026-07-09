@@ -6,6 +6,7 @@ import asyncio
 import os
 import subprocess
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -512,6 +513,66 @@ async def trigger_agent(key: str, request: Request) -> dict:
         asyncio.create_task(_run_cron())
         return {"triggered": key, "task": f"cron script: {_CRON_SCRIPTS[key]}"}
     raise HTTPException(404, f"bilinmeyen ajan: {key}")
+
+
+@router.get("/self-improvement/pending", dependencies=[Depends(require_auth)])
+async def list_pending_suggestions(request: Request) -> dict:
+    """Self-improvement onay bekleyen önerileri listele."""
+    from app.db.data_layer import MEMORY_DB, get_conn, server_db_path
+
+    try:
+        con = get_conn(server_db_path(), readonly=True)
+        if not con:
+            return {"suggestions": []}
+        rows = con.execute(
+            "SELECT id, title, description, priority, affected_files, created_at FROM self_improvement_pending WHERE status='pending' ORDER BY created_at DESC LIMIT 20"
+        ).fetchall()
+        con.close()
+        return {"suggestions": [dict(r) for r in rows]}
+    except Exception:
+        return {"suggestions": []}
+
+
+@router.post("/self-improvement/approve", dependencies=[Depends(require_write)])
+async def approve_suggestion(request: Request) -> dict:
+    """Bir self-improvement önerisini onayla → PR oluşturma task'i spawn et."""
+    import asyncio
+
+    body = await request.json()
+    sid = body.get("id")
+    if not sid:
+        raise HTTPException(400, "id gerekli")
+
+    from app.db.data_layer import get_conn, server_db_path
+
+    try:
+        con = get_conn(server_db_path(), busy_timeout_ms=10000)
+        if not con:
+            raise HTTPException(500, "DB bağlantı hatası")
+        row = con.execute(
+            "SELECT id, title, affected_files, suggestion_json FROM self_improvement_pending WHERE id=? AND status='pending'",
+            (sid,),
+        ).fetchone()
+        if not row:
+            con.close()
+            raise HTTPException(404, "Öneri bulunamadı veya zaten işlenmiş")
+
+        con.execute("UPDATE self_improvement_pending SET status='approved', approved_at=datetime('now') WHERE id=?", (sid,))
+        con.commit()
+        con.close()
+
+        script = str(Path(__file__).resolve().parents[2] / "automation" / "self-improvement-pr.sh")
+        import subprocess
+
+        asyncio.create_task(asyncio.to_thread(
+            subprocess.run,
+            ["bash", script, str(sid), row["title"], row["affected_files"] or ""],
+            capture_output=True, text=True, timeout=120,
+        ))
+
+        return {"approved": True, "id": sid, "title": row["title"]}
+    except Exception as e:
+        raise HTTPException(500, f"Onay hatası: {e}")
 
 
 @router.post("/create", dependencies=[Depends(require_write)])

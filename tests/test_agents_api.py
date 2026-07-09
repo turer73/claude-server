@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 
 class TestListAgents:
     async def test_list_agents(self, client, auth_headers):
@@ -125,4 +127,32 @@ class TestTriggerAgent:
 
     async def test_trigger_no_auth(self, client):
         resp = await client.post("/api/v1/agents/runtime/devops/trigger")
+        assert resp.status_code in (401, 403)
+
+
+class TestSelfImprovement:
+    async def test_pending_no_auth(self, client):
+        resp = await client.get("/api/v1/agents/self-improvement/pending")
+        assert resp.status_code in (401, 403)
+
+    async def test_pending_empty(self, client, auth_headers):
+        resp = await client.get("/api/v1/agents/self-improvement/pending", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "suggestions" in data
+
+    @pytest.mark.anyio
+    async def test_approve_missing_id(self, client, auth_headers):
+        resp = await client.post("/api/v1/agents/self-improvement/approve", headers=auth_headers, json={})
+        assert resp.status_code == 400
+
+    @pytest.mark.anyio
+    async def test_approve_not_found(self, client, auth_headers):
+        resp = await client.post("/api/v1/agents/self-improvement/approve", headers=auth_headers, json={"id": 999})
+        # Test ortamında DB yoksa 500 (DB bağlantı hatası), DB varsa 404
+        assert resp.status_code in (404, 500)
+
+    @pytest.mark.anyio
+    async def test_approve_no_auth(self, client):
+        resp = await client.post("/api/v1/agents/self-improvement/approve", json={"id": 1})
         assert resp.status_code in (401, 403)

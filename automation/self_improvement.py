@@ -11,9 +11,14 @@ Tasarım:
 - Fail-safe: DB/LLM hatası → OUTCOME:fail, crash yok
 - Cron: haftalık (Pazartesi 10:00, reflection'tan sonra)
 
+Onay akışı:
+1. self_improvement.py öneri üretir → server.db self_improvement_pending tablosuna kaydeder
+2. Kullanıcı Dashboard'da onaylar → POST /api/v1/self-improvement/approve
+3. automation/self-improvement-pr.sh branch + commit + gh pr create
+
 Çıktı formatı (OUTCOME marker cron-wrap için):
-- OUTCOME: pass | N öneri üretildi, M event emit edildi
-- OUTCOME: partial | N öneri, event yazılamadı: <err>
+- OUTCOME: pass | N öneri üretildi, M kaydedildi
+- OUTCOME: partial | N öneri, DB yazma hatası: <err>
 - OUTCOME: fail | <hata>
 """
 
@@ -36,6 +41,58 @@ MEMORY_DB = os.environ.get("MEMORY_DB", "/opt/linux-ai-server/data/claude_memory
 SERVER_DB = os.environ.get("DB_PATH", "/opt/linux-ai-server/data/server.db")
 
 SONNET_MODEL = os.environ.get("SELF_IMPROVEMENT_MODEL", "claude-sonnet-4-6")
+
+_PENDING_SCHEMA = """
+CREATE TABLE IF NOT EXISTS self_improvement_pending (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT,
+    priority TEXT DEFAULT 'medium',
+    affected_files TEXT,
+    status TEXT DEFAULT 'pending',
+    suggestion_json TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    approved_at TEXT,
+    pr_url TEXT
+);
+"""
+
+
+def _ensure_pending_table(server_db: str | None = None) -> None:
+    srv_db = server_db or SERVER_DB
+    try:
+        con = get_conn(srv_db, busy_timeout_ms=10000)
+        if con:
+            con.executescript(_PENDING_SCHEMA)
+            con.commit()
+            con.close()
+    except sqlite3.Error:
+        pass
+
+
+def _save_suggestion(suggestion: dict, server_db: str | None = None) -> str | None:
+    """Öneriyi self_improvement_pending tablosuna kaydet. Döner: id (str) veya None."""
+    srv_db = server_db or SERVER_DB
+    try:
+        con = get_conn(srv_db, busy_timeout_ms=5000)
+        if not con:
+            return None
+        con.execute(
+            "INSERT INTO self_improvement_pending (title, description, priority, affected_files, suggestion_json) VALUES (?, ?, ?, ?, ?)",
+            (
+                suggestion.get("title", "")[:50],
+                (suggestion.get("description", "") or "")[:200],
+                suggestion.get("priority", "medium"),
+                (suggestion.get("affected_files", "") or "")[:500],
+                json.dumps(suggestion, ensure_ascii=False),
+            ),
+        )
+        con.commit()
+        row_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+        con.close()
+        return str(row_id)
+    except sqlite3.Error:
+        return None
 
 
 def _envget(key: str) -> str:
@@ -231,14 +288,14 @@ def generate_improvement_suggestions(signals: dict, ikey: str) -> list[dict] | N
 
 
 def emit_suggestion_event(suggestion: dict, ikey: str) -> str:
-    """Öneri için event emit et (Dashboard'da gösterilir)."""
+    """Öneri için event emit et (Dashboard'da gösterilir). Eskiden ana akıştı;
+    şimdi pending tablosuna kaydetme öncelikli; event fallback olarak kalır."""
     if not ikey:
         return "no INTERNAL_API_KEY"
 
     title = suggestion.get("title", "Kod değişikliği önerisi")
     description = suggestion.get("description", "")
     priority = suggestion.get("priority", "medium")
-    affected_files = suggestion.get("affected_files", "")
 
     severity = "critical" if priority == "high" else "warning" if priority == "medium" else "info"
 
@@ -247,12 +304,9 @@ def emit_suggestion_event(suggestion: dict, ikey: str) -> str:
         f"Başlık: {title}\n"
         f"Açıklama: {description}\n"
         f"Öncelik: {priority}\n"
-        f"Etkilenen dosyalar: {affected_files}\n\n"
-        f"--- Öneri ---\n"
-        f"Bu değişikliği uygulamak için: "
-        f"1) Dashboard'da 'Önerilen Değişiklikler' kartını aç, "
-        f"2) 'Uygula' butonuna bas, "
-        f"3) Git branch + PR otomatik oluşturulur."
+        f"Etkilenen dosyalar: {suggestion.get('affected_files', '')}\n\n"
+        f"--- Onay ---\n"
+        f"POST /api/v1/self-improvement/approve ile onayla → otomatik PR oluşur."
     )[:3800]
 
     try:
@@ -295,19 +349,24 @@ def main() -> int:
         print(f"OUTCOME: pass | {len(signals['patterns']) + len(signals['low_success_playbooks']) + len(signals['low_confidence'])} sinyal analiz edildi, öneri yok")
         return 0
 
-    emitted = 0
+    _ensure_pending_table()
+    saved = 0
     errors = []
     for suggestion in suggestions[:5]:
-        err = emit_suggestion_event(suggestion, ikey)
-        if err:
-            errors.append(err)
+        sid = _save_suggestion(suggestion)
+        if sid:
+            saved += 1
         else:
-            emitted += 1
+            errors.append("DB save failed")
+            # Fallback: event emit
+            err = emit_suggestion_event(suggestion, ikey)
+            if err:
+                errors.append(err)
 
     if errors:
-        print(f"OUTCOME: partial | {len(suggestions)} öneri, {emitted} emit edildi, {len(errors)} hata: {errors[0][:100]}")
+        print(f"OUTCOME: partial | {len(suggestions)} öneri, {saved} kaydedildi, {len(errors)} hata: {errors[0][:100]}")
     else:
-        print(f"OUTCOME: pass | {len(suggestions)} öneri üretildi, {emitted} event emit edildi")
+        print(f"OUTCOME: pass | {len(suggestions)} öneri üretildi, {saved} kaydedildi")
     return 0
 
 
