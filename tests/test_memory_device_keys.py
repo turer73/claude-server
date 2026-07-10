@@ -65,9 +65,11 @@ async def test_rotate_invalidates_old_key(client, memory_db):  # noqa: F811
     old_key = (await _mint(client, "surer")).json()["key"]
     new_key = (await _mint(client, "surer")).json()["key"]
     assert old_key != new_key
-    ok = await client.get("/api/v1/memory/devices", headers={"X-Memory-Key": new_key})
+    # /devices allowlist-disi (Codex#302-4tur: unscoped-global) -> probe icin allowlist'te
+    # kalan /notes kullan (rotate/revoke semantigi test edilen, route'un kendisi degil)
+    ok = await client.get("/api/v1/memory/notes", headers={"X-Memory-Key": new_key})
     assert ok.status_code == 200
-    stale = await client.get("/api/v1/memory/devices", headers={"X-Memory-Key": old_key})
+    stale = await client.get("/api/v1/memory/notes", headers={"X-Memory-Key": old_key})
     assert stale.status_code == 401  # rotate = eski key aninda gecersiz
 
 
@@ -122,8 +124,9 @@ async def test_device_key_scoped_out_of_memory_router(client, memory_db):  # noq
     # prometheus/ws_status) device-key'i REDDEDER — notes-koordinasyon key'i gercek-aksiyon
     # tetikleyememeli.
     dev_key = (await _mint(client, "surer")).json()["key"]
-    # memory router: GECER (scoped dependency)
-    assert (await client.get("/api/v1/memory/devices", headers={"X-Memory-Key": dev_key})).status_code == 200
+    # memory router: GECER (scoped dependency) -- /devices allowlist-disi (unscoped-global,
+    # Codex#302-4tur), /notes allowlist-ICI kaldigi icin burada onu kullaniyoruz
+    assert (await client.get("/api/v1/memory/notes", headers={"X-Memory-Key": dev_key})).status_code == 200
     # verify_key'li dis endpoint: 401
     assert (await client.get("/api/v1/ws/status", headers={"X-Memory-Key": dev_key})).status_code == 401
     # ayni endpoint master ile GECER (davranis-korunumu)
@@ -171,8 +174,16 @@ async def test_device_key_default_deny_allowlist(client, memory_db):  # noqa: F8
     assert (await client.post("/api/v1/memory/devices", json={"name": "sahte"}, headers={"X-Memory-Key": dev_key})).status_code == 403
     # master ayni route'larda calismaya devam eder (davranis-korunumu)
     assert (await client.get("/api/v1/memory/webhooks/telegram-status", headers={"X-Memory-Key": TEST_MEMORY_KEY})).status_code == 200
+    # Codex#302-4tur (CANLI-BULGU): search/dashboard/devices/device-projects/projects/discoveries
+    # GET'i unscoped-global sorgu -- TUM cihazlarin verisini donduruyordu, allowlist'ten CIKARILDI
+    assert (await client.get("/api/v1/memory/search?q=test", headers={"X-Memory-Key": dev_key})).status_code == 403
+    assert (await client.get("/api/v1/memory/dashboard", headers={"X-Memory-Key": dev_key})).status_code == 403
+    assert (await client.get("/api/v1/memory/devices", headers={"X-Memory-Key": dev_key})).status_code == 403
+    assert (await client.get("/api/v1/memory/device-projects", headers={"X-Memory-Key": dev_key})).status_code == 403
+    assert (await client.get("/api/v1/memory/projects", headers={"X-Memory-Key": dev_key})).status_code == 403
+    assert (await client.get("/api/v1/memory/discoveries", headers={"X-Memory-Key": dev_key})).status_code == 403
     # allowlist-ICI route device-key ile calisir
-    assert (await client.get("/api/v1/memory/search?q=test", headers={"X-Memory-Key": dev_key})).status_code == 200
+    assert (await client.get("/api/v1/memory/notes", headers={"X-Memory-Key": dev_key})).status_code == 200
 
 
 async def test_mark_read_identity_forced_from_key(client, memory_db):  # noqa: F811

@@ -150,22 +150,17 @@ DEVICE_KEY_ROUTE_ALLOWLIST: frozenset = frozenset(
         ("GET", "/api/v1/memory/tasks"),
         ("POST", "/api/v1/memory/tasks"),
         ("PATCH", "/api/v1/memory/tasks/{task_id}"),
-        ("GET", "/api/v1/memory/discoveries"),
-        ("GET", "/api/v1/memory/discoveries/{discovery_id}"),
-        ("GET", "/api/v1/memory/discoveries/by-type/{dtype}"),
+        # Codex#302-4tur: discoveries/search/dashboard/devices/device-projects/projects GET'i
+        # BURADAN CIKARILDI — hepsi unscoped-global sorgu (caller-kimligine gore filtrelemiyor),
+        # bir device-key TUM cihazlarin discovery/task-gecmisi/local-path/hostname/IP'sini
+        # gorebiliyordu. Bu route'lar P0'in amaci (yazi-provenance) icin GEREKMIYOR — master/
+        # admin-only'e donduruldu (default-deny: ihtiyac-kanitlanmadan acilmaz).
         ("POST", "/api/v1/memory/discoveries"),
         ("PUT", "/api/v1/memory/discoveries/{discovery_id}"),
         ("PUT", "/api/v1/memory/discoveries/{discovery_id}/resolve"),
         ("GET", "/api/v1/memory/memories"),
         ("GET", "/api/v1/memory/memories/{memory_id}"),
         ("POST", "/api/v1/memory/memories"),
-        # salt-okuma yardimcilari
-        ("GET", "/api/v1/memory/search"),
-        ("GET", "/api/v1/memory/dashboard"),
-        ("GET", "/api/v1/memory/devices"),
-        ("GET", "/api/v1/memory/device-projects"),
-        ("GET", "/api/v1/memory/projects"),
-        ("GET", "/api/v1/memory/projects/{project_name}"),
         ("GET", "/api/v1/memory/surface"),
         ("GET", "/api/v1/memory/world-model"),
         ("GET", "/api/v1/memory/health"),
