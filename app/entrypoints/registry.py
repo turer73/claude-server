@@ -138,6 +138,12 @@ EXEMPT: dict[str, str] = {
     "app/core/action_review.py": "held ÜRETEN taraf (create_note status='held') — teslim-yüzeyi değil",
     "app/core/consciousness.py": "self-model için unread SAYACI okur (note teslim etmez) — bilinç katmanı",
     "automation/agent-watchdog.sh": "'held'=flock-lock bağlamı — notes ile ilgisiz",
+    "app/api/memory/__init__.py": (
+        "imza-FP (PR#302 default-deny): DEVICE_KEY_ROUTE_ALLOWLIST'teki "
+        "'/api/v1/memory/notes' path-string-literal'i NOTES_ACCESS'i tetikliyor, "
+        "_unread_pred TANIMI (çağrısı değil, notes.py çağırır) DELIVERY'yi — dosya "
+        "kendisi teslim etmiyor, gerçek yüzey zaten notes.py (kayıtlı)"
+    ),
 }
 
 
