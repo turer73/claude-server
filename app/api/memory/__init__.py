@@ -4,6 +4,7 @@ Duplicate koruması, FTS arama, read tracking, lifecycle yönetimi.
 """
 
 import asyncio
+import hashlib
 import re
 from typing import Any, Literal
 
@@ -35,14 +36,67 @@ def _is_autonomous_key(x_memory_key: str | None) -> bool:
     return bool(MEMORY_API_KEY_AUTONOMOUS) and MEMORY_API_KEY_AUTONOMOUS != MEMORY_API_KEY and x_memory_key == MEMORY_API_KEY_AUTONOMOUS
 
 
+# ── P0 kimlik (konu-1 karari, Turgut onayi): per-device API-key ──
+# Otonom-key deseninin (GAP-1 A-2 unforgeable) TUM cihazlara genellenmesi: her cihazin
+# AYRI key'i, from_device sunucu-tarafinda KEY'DEN turetilir (client-iddiasi degil).
+# Key'ler duz saklanmaz — sha256 hash (credential-plan-docs dersi). Master-key legacy
+# calismaya devam eder (kilitleme yok, kademeli gecis) ama yazdiklari verified=0 kalir.
+
+_device_keys_ready = False
+
+
+def _ensure_device_keys(db: Any) -> None:
+    """device_keys tablosunu idempotent kur (_ensure_read_by deseni)."""
+    global _device_keys_ready
+    if _device_keys_ready:
+        return
+    try:
+        db.execute("""CREATE TABLE IF NOT EXISTS device_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device TEXT NOT NULL UNIQUE,
+            key_hash TEXT NOT NULL UNIQUE,
+            active INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now')),
+            last_used_at TEXT
+        )""")
+        db.commit()
+    except Exception:
+        pass
+    _device_keys_ready = True
+
+
+def _resolve_device_key(x_memory_key: str | None) -> str:
+    """Key aktif bir device-key ise cihaz adini dondur, degilse ''.
+    Master/otonom-key burada COZULMEZ (oncelik verify_key/dispatch_origin'de) — master
+    string'i yanlislikla device-key yapilirsa master-yolu kazanir (fail-safe, collision-guard
+    deseniyle tutarli). Her cagride SELECT: lokal SQLite, cache-invalidation karmasasina degmez."""
+    if not x_memory_key or x_memory_key == MEMORY_API_KEY or _is_autonomous_key(x_memory_key):
+        return ""
+    key_hash = hashlib.sha256(x_memory_key.encode()).hexdigest()
+    try:
+        db = get_db()
+        try:
+            _ensure_device_keys(db)
+            row = db.execute("SELECT device FROM device_keys WHERE key_hash=? AND active=1", (key_hash,)).fetchone()
+            if row:
+                db.execute("UPDATE device_keys SET last_used_at=datetime('now') WHERE key_hash=?", (key_hash,))
+                db.commit()
+                return str(row[0])
+        finally:
+            db.close()
+    except Exception:
+        return ""
+    return ""
+
+
 def verify_key(x_memory_key: str = Header(None)):
     # FAIL-CLOSED (güvenlik fix): MEMORY_API_KEY yüklenmemişse erişimi AÇMA.
     # Eski 'if KEY and ...' boş-key'de 401 atmıyordu -> env-yükleme hatasında
     # memory/RAG/research/classifier tamamen korumasız kalıyordu.
     if not MEMORY_API_KEY:
         raise HTTPException(503, "Memory API key not configured (fail-closed)")
-    # Normal-key VEYA distinct-otonom-key kabul (ikisi de gecerli-auth).
-    if x_memory_key == MEMORY_API_KEY or _is_autonomous_key(x_memory_key):
+    # Master VEYA distinct-otonom-key VEYA aktif per-device-key kabul.
+    if x_memory_key == MEMORY_API_KEY or _is_autonomous_key(x_memory_key) or _resolve_device_key(x_memory_key):
         return
     raise HTTPException(401, "Invalid memory API key")
 
@@ -58,10 +112,13 @@ def verify_master_key(x_memory_key: str = Header(None)) -> None:
 
 
 def dispatch_origin(x_memory_key: str = Header(None)) -> str:
-    """create_note icin FastAPI bagimliligi: istek otonom-key ile auth olduysa ZORLANACAK
-    from_device'i ('klipper-autonomous') dondur; aksi halde '' (body-from_device korunur).
-    Unforgeable: spawn yalniz otonom-key'e sahip -> body-claim override edilir (GAP-1 A-2)."""
-    return AUTONOMOUS_FROM_DEVICE if _is_autonomous_key(x_memory_key) else ""
+    """create_note icin FastAPI bagimliligi: istek otonom-key veya per-device-key ile auth
+    olduysa ZORLANACAK from_device'i dondur; master-key -> '' (body-from_device korunur,
+    legacy/unverified). Unforgeable-genellemesi (P0): hangi key authenticate ettiyse kimlik
+    ODUR — #100526 kimlik-karismasi sinifinin yapisal cozumu."""
+    if _is_autonomous_key(x_memory_key):
+        return AUTONOMOUS_FROM_DEVICE
+    return _resolve_device_key(x_memory_key)
 
 
 router = APIRouter(prefix="/api/v1/memory", tags=["memory"], dependencies=[Depends(verify_key)])
@@ -106,6 +163,26 @@ def _unread_pred(device):
     if device:
         return "read=0 AND (read_by IS NULL OR read_by NOT LIKE ?)", [f"%|{device}|%"]
     return "read=0", []
+
+
+_verified_ready = False
+
+
+def _ensure_verified(db: Any) -> None:
+    """notes.verified kolonunu idempotent ekle (P0 kimlik): 1 = from_device sunucu-tarafinda
+    key'den turetildi (unforgeable), 0 = legacy master-key yazimi (body-iddiasi, dogrulanmamis).
+    Gecmis kayitlar NULL/0 kalir — durustce 'unverified' (gecmisi yeniden-etiketleme YOK)."""
+    global _verified_ready
+    if _verified_ready:
+        return
+    try:
+        cols = [r[1] for r in db.execute("PRAGMA table_info(notes)").fetchall()]
+        if "verified" not in cols:
+            db.execute("ALTER TABLE notes ADD COLUMN verified INTEGER DEFAULT 0")
+            db.commit()
+    except Exception:
+        pass
+    _verified_ready = True
 
 
 _status_ready = False

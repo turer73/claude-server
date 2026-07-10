@@ -12,6 +12,7 @@ from app.api.memory import (
     NoteCreate,
     _ensure_read_by,
     _ensure_status,
+    _ensure_verified,
     _fire_event,
     _unread_pred,
     dispatch_origin,
@@ -118,10 +119,14 @@ async def create_note(data: NoteCreate, forced_origin: str = Depends(dispatch_or
     # GAP-1 item-D (#1222 A-2): otonom-key ile auth olduysa from_device ZORLA-override
     # ('klipper-autonomous') — body-claim gozardi (unforgeable). Normal-key -> body korunur.
     from_device = forced_origin or data.from_device
+    # P0 kimlik: forced_origin dolu = kimlik KEY'den turetildi (device-key/otonom) -> verified.
+    # Bos = legacy master-key, body-iddiasina dusuluyor -> unverified (durust etiket).
+    verified = 1 if forced_origin else 0
     content_clean, redacted_labels = redact(data.content)
     db = get_db()
     try:
         _ensure_status(db)  # policy-gate #1222 migration (idempotent; BEGIN'den ONCE — ALTER+commit)
+        _ensure_verified(db)  # P0 kimlik migration (idempotent)
         db.execute("BEGIN IMMEDIATE")
         # 1. Tam dup (content identical) — 5dk pencere
         recent_dup = db.execute(
@@ -163,8 +168,8 @@ async def create_note(data: NoteCreate, forced_origin: str = Depends(dispatch_or
         note_status, scan_result = _gate_dispatch(from_device, data.to_device, content_clean)
 
         cur = db.execute(
-            "INSERT INTO notes (from_device, to_device, title, content, status) VALUES (?, ?, ?, ?, ?)",
-            (from_device, data.to_device, data.title, content_clean, note_status),
+            "INSERT INTO notes (from_device, to_device, title, content, status, verified) VALUES (?, ?, ?, ?, ?, ?)",
+            (from_device, data.to_device, data.title, content_clean, note_status, verified),
         )
         db.commit()
 
