@@ -22,11 +22,23 @@ MEMORY_API_KEY = read_env_var("MEMORY_API_KEY")
 # create_note from_device'i 'klipper-autonomous'a ZORLA-override eder (unforgeable —
 # spawn body'de ne derse desin). Set edilmemisse ozellik dormant (geriye-uyumlu).
 MEMORY_API_KEY_AUTONOMOUS = read_env_var("MEMORY_API_KEY_AUTONOMOUS")
+# P0-P1fix (#100564 Codex-P1): mint/revoke icin master'dan AYRI admin-key. Master su an
+# HERKESIN gunluk-credential'i (onboard-prompt gomuyor) -> master-only koruma iluzyon:
+# herhangi bir ajan digerinin key'ini rotate edebilirdi. Admin-key YALNIZ Turgut/operator'de
+# kalir, hicbir ajanin gunluk-credential'i olmaz. Set edilmemisse dormant (geriye-uyum,
+# autonomous-key gecis-deseni); master==admin config-hatasi = dormant (collision-guard).
+MEMORY_API_KEY_ADMIN = read_env_var("MEMORY_API_KEY_ADMIN")
 AUTONOMOUS_FROM_DEVICE = "klipper-autonomous"
 
 VALID_DISCOVERY_TYPES = ("bug", "fix", "learning", "config", "workaround", "architecture", "plan")
 VALID_STATUSES = ("active", "completed", "obsolete", "superseded")
 TRASH_TITLES = re.compile(r"^(test|test bug|test fix|test workaround|deneme|asdf|xxx)$", re.IGNORECASE)
+
+
+def _is_admin_key(x_memory_key: str | None) -> bool:
+    """DISTINCT admin-key ile mi auth oldu (mint/revoke idaresi). Bos-key asla admin; admin==master
+    config-hatasi = dormant (collision-guard, autonomous-key deseni)."""
+    return bool(MEMORY_API_KEY_ADMIN) and MEMORY_API_KEY_ADMIN != MEMORY_API_KEY and x_memory_key == MEMORY_API_KEY_ADMIN
 
 
 def _is_autonomous_key(x_memory_key: str | None) -> bool:
@@ -60,9 +72,11 @@ def _ensure_device_keys(db: Any) -> None:
             last_used_at TEXT
         )""")
         db.commit()
+        # Codex#302-P2: flag YALNIZ basarida — transient-lock'ta eski hali 'hazir' deyip
+        # process-yasam-boyu (restart'a dek) mint-500/auth-401 kilitliyordu; simdi retry eder
+        _device_keys_ready = True
     except Exception:
         pass
-    _device_keys_ready = True
 
 
 def _resolve_device_key(x_memory_key: str | None) -> str:
@@ -70,7 +84,7 @@ def _resolve_device_key(x_memory_key: str | None) -> str:
     Master/otonom-key burada COZULMEZ (oncelik verify_key/dispatch_origin'de) — master
     string'i yanlislikla device-key yapilirsa master-yolu kazanir (fail-safe, collision-guard
     deseniyle tutarli). Her cagride SELECT: lokal SQLite, cache-invalidation karmasasina degmez."""
-    if not x_memory_key or x_memory_key == MEMORY_API_KEY or _is_autonomous_key(x_memory_key):
+    if not x_memory_key or x_memory_key == MEMORY_API_KEY or _is_admin_key(x_memory_key) or _is_autonomous_key(x_memory_key):
         return ""
     key_hash = hashlib.sha256(x_memory_key.encode()).hexdigest()
     try:
@@ -79,13 +93,18 @@ def _resolve_device_key(x_memory_key: str | None) -> str:
             _ensure_device_keys(db)
             row = db.execute("SELECT device FROM device_keys WHERE key_hash=? AND active=1", (key_hash,)).fetchone()
             if row:
-                db.execute("UPDATE device_keys SET last_used_at=datetime('now') WHERE key_hash=?", (key_hash,))
-                db.commit()
+                # Codex#302-P2: telemetri-UPDATE'i best-effort — lock/race'te kimlik DUSMESIN
+                # (eski hali '' donup create_note'u master-legacy/spoof'a dusurebiliyordu)
+                try:
+                    db.execute("UPDATE device_keys SET last_used_at=datetime('now') WHERE key_hash=?", (key_hash,))
+                    db.commit()
+                except Exception:
+                    pass
                 return str(row[0])
         finally:
             db.close()
-    except Exception:
-        return ""
+    except Exception as e:
+        raise HTTPException(503, "device_keys erisilemedi (transient) — yeniden dene") from e
     return ""
 
 
@@ -95,8 +114,13 @@ def verify_key(x_memory_key: str = Header(None)):
     # memory/RAG/research/classifier tamamen korumasız kalıyordu.
     if not MEMORY_API_KEY:
         raise HTTPException(503, "Memory API key not configured (fail-closed)")
-    # Master VEYA distinct-otonom-key VEYA aktif per-device-key kabul.
-    if x_memory_key == MEMORY_API_KEY or _is_autonomous_key(x_memory_key) or _resolve_device_key(x_memory_key):
+    # Master VEYA distinct-admin VEYA distinct-otonom VEYA aktif per-device-key kabul.
+    if (
+        x_memory_key == MEMORY_API_KEY
+        or _is_admin_key(x_memory_key)
+        or _is_autonomous_key(x_memory_key)
+        or _resolve_device_key(x_memory_key)
+    ):
         return
     raise HTTPException(401, "Invalid memory API key")
 
@@ -111,6 +135,20 @@ def verify_master_key(x_memory_key: str = Header(None)) -> None:
         raise HTTPException(401, "Invalid memory API key (master required)")
 
 
+def verify_admin_key(x_memory_key: str = Header(None)) -> None:
+    """Key-IDARESI (mint/revoke) icin: admin-key set+distinct ise YALNIZ o kabul; dormant'ta
+    master (gecis). Ajan device-key'leri ve otonom-key HER DURUMDA reddedilir."""
+    if not MEMORY_API_KEY:
+        raise HTTPException(503, "Memory API key not configured (fail-closed)")
+    admin_active = bool(MEMORY_API_KEY_ADMIN) and MEMORY_API_KEY_ADMIN != MEMORY_API_KEY
+    if _is_admin_key(x_memory_key):
+        return
+    # admin-key set+distinct DEGILSE master gecise izin (dormant); set ISE master REDDEDILIR
+    if not admin_active and x_memory_key == MEMORY_API_KEY:
+        return
+    raise HTTPException(401, "Key-idaresi icin ADMIN key gerekli (master su an herkesin credential'i)")
+
+
 def dispatch_origin(x_memory_key: str = Header(None)) -> str:
     """create_note icin FastAPI bagimliligi: istek otonom-key veya per-device-key ile auth
     olduysa ZORLANACAK from_device'i dondur; master-key -> '' (body-from_device korunur,
@@ -118,7 +156,14 @@ def dispatch_origin(x_memory_key: str = Header(None)) -> str:
     ODUR — #100526 kimlik-karismasi sinifinin yapisal cozumu."""
     if _is_autonomous_key(x_memory_key):
         return AUTONOMOUS_FROM_DEVICE
-    return _resolve_device_key(x_memory_key)
+    if not x_memory_key or x_memory_key == MEMORY_API_KEY or _is_admin_key(x_memory_key):
+        return ""  # master/admin-legacy: body korunur (verified=0)
+    device = _resolve_device_key(x_memory_key)
+    if not device:
+        # verify_key'den GECMIS ama cozulemiyor (revoke-race/transient) — Codex#302-P2:
+        # master-legacy'ye DUSME (spoof-yuzeyi), fail-closed
+        raise HTTPException(401, "Device-key cozulemedi (revoked/transient) — yeniden dene")
+    return device
 
 
 router = APIRouter(prefix="/api/v1/memory", tags=["memory"], dependencies=[Depends(verify_key)])

@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import Depends
 
-from app.api.memory import DeviceRegister, _ensure_device_keys, get_db, router, verify_master_key
+from app.api.memory import DeviceRegister, _ensure_device_keys, get_db, router, verify_admin_key
 
 
 @router.get("/devices")
@@ -44,7 +44,7 @@ async def register_device(data: DeviceRegister) -> dict[str, str]:
         db.close()
 
 
-@router.post("/devices/{name}/key", dependencies=[Depends(verify_master_key)])
+@router.post("/devices/{name}/key", dependencies=[Depends(verify_admin_key)])
 async def mint_device_key(name: str) -> dict[str, str]:
     """P0 kimlik: per-device API-key uret/rotate — MASTER-key ZORUNLU (otonom/device-key
     REDDEDILIR; onboarding-leak dersi: yanit yalniz YENI device'in key'ini icerir, master
@@ -67,7 +67,7 @@ async def mint_device_key(name: str) -> dict[str, str]:
         db.close()
 
 
-@router.delete("/devices/{name}/key", dependencies=[Depends(verify_master_key)])
+@router.delete("/devices/{name}/key", dependencies=[Depends(verify_admin_key)])
 async def revoke_device_key(name: str) -> dict[str, Any]:
     """Device-key iptal (active=0) — MASTER-key zorunlu. Cihaz master'a dusmez, 401 alir."""
     db = get_db()

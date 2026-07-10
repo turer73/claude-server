@@ -79,7 +79,36 @@ async def test_revoke_key(client, memory_db):  # noqa: F811
 
 
 async def test_mint_requires_master_key(client, memory_db):  # noqa: F811
-    # Device-key mint EDEMEZ (onboarding-leak dersi: key-uretimi yalniz master)
+    # Device-key mint EDEMEZ (onboarding-leak dersi: key-uretimi yalniz master/admin)
     dev_key = (await _mint(client, "surer")).json()["key"]
     resp = await _mint(client, "hacker-device", key=dev_key)
     assert resp.status_code == 401
+
+
+async def test_admin_key_active_master_cannot_mint(client, memory_db, monkeypatch):  # noqa: F811
+    # Codex#302-P1: admin-key set+distinct -> mint/revoke YALNIZ admin. Master (herkesin
+    # gunluk-credential'i) key-idaresi yapamaz -> bir ajan digerinin key'ini rotate edemez.
+    from app.api import memory as mem_module
+
+    monkeypatch.setattr(mem_module, "MEMORY_API_KEY_ADMIN", "admin-secret-distinct")
+    # master ile mint REDDEDILIR
+    assert (await _mint(client, "surer", key=TEST_MEMORY_KEY)).status_code == 401
+    # admin ile mint GECER
+    r = await _mint(client, "surer", key="admin-secret-distinct")
+    assert r.status_code == 200
+    # admin==master (config-hatasi) -> dormant, master calisir (collision-guard)
+    monkeypatch.setattr(mem_module, "MEMORY_API_KEY_ADMIN", TEST_MEMORY_KEY)
+    assert (await _mint(client, "klipper", key=TEST_MEMORY_KEY)).status_code == 200
+
+
+async def test_revoked_device_key_fails_closed_not_master_legacy(client, memory_db):  # noqa: F811
+    # Codex#302-P2: revoke edilmis device-key ile not — master-legacy'ye DUSUP body-spoof
+    # KABUL ETMEMELI; 401 (fail-closed). verify_key zaten 401 verir; regresyon-kilidi.
+    key = (await _mint(client, "opencode")).json()["key"]
+    await client.delete("/api/v1/memory/devices/opencode/key", headers={"X-Memory-Key": TEST_MEMORY_KEY})
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={"from_device": "klipper", "title": "revoke sonrasi spoof", "content": "x"},
+        headers={"X-Memory-Key": key},
+    )
+    assert resp.status_code == 401  # master-legacy'ye dusmedi
