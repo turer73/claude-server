@@ -8,9 +8,9 @@ domain'de kullanılır → birlikte taşındı.
 
 import asyncio
 
-from fastapi import HTTPException, Query
+from fastapi import Depends, HTTPException, Query
 
-from app.api.memory import MemoryCreate, MemoryUpdate, _track_read, get_db, router
+from app.api.memory import MemoryCreate, MemoryUpdate, _origin_str, _track_read, dispatch_origin, get_db, router
 from app.core.privacy import redact
 
 
@@ -107,7 +107,10 @@ async def get_memory(memory_id: int):
 
 
 @router.post("/memories")
-async def create_memory(data: MemoryCreate):
+async def create_memory(data: MemoryCreate, forced_origin: str = Depends(dispatch_origin)):
+    # Codex#302-3tur #4: source_device caller-iddiasiydi — device-key/otonom auth'ta
+    # KEY'den zorlanir (forced-origin genellemesi); master-legacy body korunur.
+    data.source_device = _origin_str(forced_origin) or data.source_device
     # Privacy: secret/token strip
     desc_clean, desc_labels = redact(data.description)
     content_clean, content_labels = redact(data.content)

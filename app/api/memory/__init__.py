@@ -9,7 +9,7 @@ import re
 from typing import Any, Literal
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, field_validator
 
 from app.core.config import read_env_var
@@ -130,19 +130,72 @@ def verify_key(x_memory_key: str = Header(None)) -> None:
     raise HTTPException(401, "Invalid memory API key")
 
 
-def verify_key_memory_scoped(x_memory_key: str = Header(None)) -> None:
-    """Memory router'a OZEL auth: verify_key + aktif per-device-key kabulu.
-    Device-key'in tek yetki-alani /api/v1/memory/* — baska router bunu KULLANMAMALI."""
+# Codex#302-3tur (klipper #100579 mimari-oneri): DEFAULT-DENY + route-allowlist.
+# Router-seviyesi genel-kabul her review-turunda yeni alt-kapsam aciyordu (notes ->
+# read-tracking -> maintenance -> memories/devices). Device-key yalniz asagida ACIKCA
+# izin verilen (method, path) ciftlerini acar; YENI route'lar otomatik master/admin-only
+# dogar (whack-a-mole yapisal biter). Kural: yazma-route'u ancak kimligi forced-origin
+# ile KEY'den turetiyorsa listeye girer. NOT: 303 (claims) ve 305 (discussions) rebase'te
+# kendi route'larini eklemeli.
+DEVICE_KEY_ROUTE_ALLOWLIST: frozenset = frozenset(
+    {
+        # koordinasyon (forced-origin'li yazim + inbox okuma)
+        ("GET", "/api/v1/memory/notes"),
+        ("POST", "/api/v1/memory/notes"),
+        ("PUT", "/api/v1/memory/notes/{note_id}/read"),
+        # zorunlu-kayit akislari (forced-origin'li)
+        ("GET", "/api/v1/memory/sessions"),
+        ("GET", "/api/v1/memory/sessions/{session_id}"),
+        ("POST", "/api/v1/memory/sessions"),
+        ("GET", "/api/v1/memory/tasks"),
+        ("POST", "/api/v1/memory/tasks"),
+        ("PATCH", "/api/v1/memory/tasks/{task_id}"),
+        ("GET", "/api/v1/memory/discoveries"),
+        ("GET", "/api/v1/memory/discoveries/{discovery_id}"),
+        ("GET", "/api/v1/memory/discoveries/by-type/{dtype}"),
+        ("POST", "/api/v1/memory/discoveries"),
+        ("PUT", "/api/v1/memory/discoveries/{discovery_id}"),
+        ("PUT", "/api/v1/memory/discoveries/{discovery_id}/resolve"),
+        ("GET", "/api/v1/memory/memories"),
+        ("GET", "/api/v1/memory/memories/{memory_id}"),
+        ("POST", "/api/v1/memory/memories"),
+        # salt-okuma yardimcilari
+        ("GET", "/api/v1/memory/search"),
+        ("GET", "/api/v1/memory/dashboard"),
+        ("GET", "/api/v1/memory/devices"),
+        ("GET", "/api/v1/memory/device-projects"),
+        ("GET", "/api/v1/memory/projects"),
+        ("GET", "/api/v1/memory/projects/{project_name}"),
+        ("GET", "/api/v1/memory/surface"),
+        ("GET", "/api/v1/memory/world-model"),
+        ("GET", "/api/v1/memory/health"),
+    }
+)
+
+
+def verify_key_memory_scoped(request: Request, x_memory_key: str = Header(None)) -> None:
+    """Memory router'a OZEL auth: master/admin/otonom her route; device-key YALNIZ
+    DEVICE_KEY_ROUTE_ALLOWLIST'teki (method, path) — geri kalan her sey 403 (default-deny).
+    Baska router bu dependency'yi KULLANMAMALI (device-key'in tek yetki-alani burasi)."""
     if not MEMORY_API_KEY:
         raise HTTPException(503, "Memory API key not configured (fail-closed)")
-    if (
-        x_memory_key == MEMORY_API_KEY
-        or _is_admin_key(x_memory_key)
-        or _is_autonomous_key(x_memory_key)
-        or _resolve_device_key(x_memory_key)
-    ):
+    if x_memory_key == MEMORY_API_KEY or _is_admin_key(x_memory_key) or _is_autonomous_key(x_memory_key):
         return
+    if _resolve_device_key(x_memory_key):
+        route = request.scope.get("route")
+        path_fmt = getattr(route, "path_format", None) or getattr(route, "path", "")
+        if (request.method, path_fmt) in DEVICE_KEY_ROUTE_ALLOWLIST:
+            return
+        raise HTTPException(403, "Device-key bu route'ta yetkili degil (default-deny; master/admin gerekli)")
     raise HTTPException(401, "Invalid memory API key")
+
+
+def _origin_str(forced_origin: Any) -> str:
+    """dispatch_origin sonucunu normalize et. FastAPI DI DISI dogrudan cagrilarda (orn.
+    main.py boot dead-gate emit -> create_discovery) parametre Depends-SENTINEL objesi
+    olarak gelir — TRUTHY ama string degil; 'forced_origin or ...' onu kimlik sanip SQL
+    bind'i patlatiyordu (Codex#302-3tur #1). String olmayan her sey '' (master-legacy)."""
+    return forced_origin if isinstance(forced_origin, str) else ""
 
 
 def verify_master_key(x_memory_key: str = Header(None)) -> None:

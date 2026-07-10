@@ -8,7 +8,17 @@ import sqlite3
 
 from fastapi import Depends, HTTPException
 
-from app.api.memory import DiscoveryCreate, DiscoveryUpdate, _fire_event, _sync_fts, _track_read, dispatch_origin, get_db, router
+from app.api.memory import (
+    DiscoveryCreate,
+    DiscoveryUpdate,
+    _fire_event,
+    _origin_str,
+    _sync_fts,
+    _track_read,
+    dispatch_origin,
+    get_db,
+    router,
+)
 from app.api.memory import signal_quality as sq
 from app.core.privacy import redact
 
@@ -85,8 +95,10 @@ async def create_discovery(data: DiscoveryCreate, forced_origin: str = Depends(d
     - Exact-title fallback: ayni project+type+title aktif kayıt → güncelle.
     - importance (1-10, fail→5) + valid_at (bi-temporal) + Qdrant upsert (fail-safe).
     """
-    # Codex#302-2tur #1: forced-origin genellemesi (create_note/create_session deseni)
-    data.device_name = forced_origin or data.device_name
+    # Codex#302-2tur #1: forced-origin genellemesi (create_note/create_session deseni).
+    # _origin_str ŞART: main.py dead-gate-emit bu fonksiyonu DI-disi DOGRUDAN cagirir —
+    # sentinel kimlik sanilirsa SQL bind patlar, except yutar, boot-discovery sessiz kaybolur.
+    data.device_name = _origin_str(forced_origin) or data.device_name
     details_clean, redacted_labels = redact(data.details)
 
     db = get_db()

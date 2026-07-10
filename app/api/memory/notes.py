@@ -14,6 +14,7 @@ from app.api.memory import (
     _ensure_status,
     _ensure_verified,
     _fire_event,
+    _origin_str,
     _unread_pred,
     dispatch_origin,
     get_db,
@@ -202,10 +203,16 @@ async def create_note(data: NoteCreate, forced_origin: str = Depends(dispatch_or
 
 
 @router.put("/notes/{note_id}/read")
-async def mark_note_read(note_id: int, device: str | None = None):
+async def mark_note_read(note_id: int, device: str | None = None, forced_origin: str = Depends(dispatch_origin)):
     """Notu okundu işaretle. device verilirse PER-DEVICE (read_by'a eklenir, diğer
     device'lar için okunmamış kalır — #647). device yoksa LEGACY global read=1
-    (geri-uyum: eski çağıranlar bozulmaz, ama çoğulcu-okuma kaybolur → device gönderin)."""
+    (geri-uyum: eski çağıranlar bozulmaz, ama çoğulcu-okuma kaybolur → device gönderin).
+    Codex#302-3tur #2: device-key auth'ta okuyan-kimlik KEY'den zorlanır — ?device=
+    iddiasıyla BAŞKASININ notları 'okundu'ya çekilemez, global-read=1 de atılamaz
+    (per-device read-tracking #647 garantisi korunur)."""
+    forced = _origin_str(forced_origin)
+    if forced:
+        device = forced
     db = get_db()
     try:
         _ensure_read_by(db)

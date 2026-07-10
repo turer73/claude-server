@@ -5,7 +5,7 @@ import json
 
 from fastapi import Depends, HTTPException
 
-from app.api.memory import TaskLogCreate, TaskLogUpdate, _fire_event, dispatch_origin, get_db, router
+from app.api.memory import TaskLogCreate, TaskLogUpdate, _fire_event, _origin_str, dispatch_origin, get_db, router
 
 
 @router.get("/tasks")
@@ -30,7 +30,7 @@ async def list_tasks(project: str | None = None, device: str | None = None, limi
 @router.post("/tasks")
 async def create_task_log(data: TaskLogCreate, forced_origin: str = Depends(dispatch_origin)):
     # Codex#302-2tur #1: forced-origin genellemesi (create_note/create_session deseni)
-    data.device_name = forced_origin or data.device_name
+    data.device_name = _origin_str(forced_origin) or data.device_name
     db = get_db()
     try:
         # Duplicate kontrolü — aynı proje + aynı task adı

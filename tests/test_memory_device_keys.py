@@ -79,10 +79,12 @@ async def test_revoke_key(client, memory_db):  # noqa: F811
 
 
 async def test_mint_requires_master_key(client, memory_db):  # noqa: F811
-    # Device-key mint EDEMEZ (onboarding-leak dersi: key-uretimi yalniz master/admin)
+    # Device-key mint EDEMEZ (onboarding-leak dersi: key-uretimi yalniz master/admin).
+    # 3.tur default-deny sonrasi red allowlist-katmanindan gelir (403); verify_admin_key
+    # ikinci savunma-hatti olarak durur.
     dev_key = (await _mint(client, "surer")).json()["key"]
     resp = await _mint(client, "hacker-device", key=dev_key)
-    assert resp.status_code == 401
+    assert resp.status_code == 403
 
 
 async def test_admin_key_active_master_cannot_mint(client, memory_db, monkeypatch):  # noqa: F811
@@ -156,6 +158,76 @@ async def test_dedup_unverified_does_not_bury_verified_write(client, memory_db):
     # unverified duplicate: verified satir varken BLOKLANIR (verified>=0 esles)
     r3 = await client.post("/api/v1/memory/notes", json=body, headers={"X-Memory-Key": TEST_MEMORY_KEY})
     assert r3.json()["status"] in ("duplicate_skipped_5min", "duplicate_title_30s")
+
+
+async def test_device_key_default_deny_allowlist(client, memory_db):  # noqa: F811
+    # Codex#302-3tur #3 (klipper default-deny mimari-onerisi): device-key allowlist-DISI
+    # route'larda 403 — maintenance/webhooks gibi admin-islevleri device-key'le ACILAMAZ.
+    dev_key = (await _mint(client, "surer")).json()["key"]
+    assert (await client.post("/api/v1/memory/maintenance/archive-stale", headers={"X-Memory-Key": dev_key})).status_code == 403
+    assert (await client.post("/api/v1/memory/webhooks", json={"url": "http://x/evil"}, headers={"X-Memory-Key": dev_key})).status_code == 403
+    assert (await client.get("/api/v1/memory/webhooks/telegram-status", headers={"X-Memory-Key": dev_key})).status_code == 403
+    assert (await client.post("/api/v1/memory/devices", json={"name": "sahte"}, headers={"X-Memory-Key": dev_key})).status_code == 403
+    # master ayni route'larda calismaya devam eder (davranis-korunumu)
+    assert (await client.get("/api/v1/memory/webhooks/telegram-status", headers={"X-Memory-Key": TEST_MEMORY_KEY})).status_code == 200
+    # allowlist-ICI route device-key ile calisir
+    assert (await client.get("/api/v1/memory/search?q=test", headers={"X-Memory-Key": dev_key})).status_code == 200
+
+
+async def test_mark_read_identity_forced_from_key(client, memory_db):  # noqa: F811
+    # Codex#302-3tur #2: device-key auth'ta ?device= iddiasi EZILIR — surer, klipper'in
+    # notunu 'klipper okudu' yapamaz; global-read=1 de atamaz (#647 per-device garantisi).
+    dev_key = (await _mint(client, "surer")).json()["key"]
+    note_id = (
+        await client.post(
+            "/api/v1/memory/notes",
+            json={"from_device": "klipper", "title": "okuma testi", "content": "x"},
+            headers={"X-Memory-Key": TEST_MEMORY_KEY},
+        )
+    ).json()["id"]
+    r = await client.put(f"/api/v1/memory/notes/{note_id}/read?device=klipper", headers={"X-Memory-Key": dev_key})
+    assert r.json()["device"] == "surer"  # iddia degil, key-kimligi
+    assert r.json()["read_by"] == ["surer"]
+    # device-parametresiz device-key cagrisi da global-read'e DUSEMEZ (forced per-device)
+    r = await client.put(f"/api/v1/memory/notes/{note_id}/read", headers={"X-Memory-Key": dev_key})
+    assert r.json()["device"] == "surer"
+    con = sqlite3.connect(memory_db)
+    row = con.execute("SELECT read, read_by FROM notes WHERE id=?", (note_id,)).fetchone()
+    con.close()
+    assert row[0] == 0  # global read set edilmedi
+    assert "klipper" not in (row[1] or "")
+
+
+async def test_memories_source_device_forced_from_key(client, memory_db):  # noqa: F811
+    # Codex#302-3tur #4: POST /memories source_device caller-iddiasiydi — key'den zorlanir
+    dev_key = (await _mint(client, "surer")).json()["key"]
+    r = await client.post(
+        "/api/v1/memory/memories",
+        json={"type": "project", "name": "kimlik-testi", "description": "d", "content": "c", "source_device": "klipper"},
+        headers={"X-Memory-Key": dev_key},
+    )
+    assert r.status_code == 200
+    con = sqlite3.connect(memory_db)
+    sd = con.execute("SELECT source_device FROM memories WHERE id=?", (r.json()["id"],)).fetchone()[0]
+    con.close()
+    assert sd == "surer"
+
+
+async def test_create_discovery_direct_call_without_di(client, memory_db):  # noqa: F811
+    # Codex#302-3tur #1: main.py boot dead-gate-emit create_discovery'yi DI-DISI dogrudan
+    # cagirir — forced_origin Depends-sentinel'i (truthy obje) kimlik sanilirsa SQL bind
+    # patlar ve boot-discovery sessiz kaybolurdu. Dogrudan cagri calismali.
+    from app.api.memory import DiscoveryCreate
+    from app.api.memory.discoveries import create_discovery
+
+    r = await create_discovery(
+        DiscoveryCreate(project="claude-server", type="bug", title="dead-gate direct-call regresyon testi", details="di-disi cagri")
+    )
+    assert isinstance(r, dict) and r.get("id")
+    con = sqlite3.connect(memory_db)
+    dn = con.execute("SELECT device_name FROM discoveries WHERE id=?", (r["id"],)).fetchone()[0]
+    con.close()
+    assert dn == "klipper"  # DiscoveryCreate default'u — sentinel DEGIL
 
 
 async def test_sessions_tasks_discoveries_forced_origin(client, memory_db):  # noqa: F811
