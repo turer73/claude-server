@@ -118,7 +118,9 @@ def _require_owner(row: Any, device: str, x_memory_key: str | None) -> None:
         return
     if device and device == row["device"]:
         return
-    raise HTTPException(403, f"Claim sahibi '{row['device']}' — sen '{device or 'bilinmiyor'}'. Release/renew sahibinde (ya da master/admin).")
+    raise HTTPException(
+        403, f"Claim sahibi '{row['device']}' — sen '{device or 'bilinmiyor'}'. Release/renew sahibinde (ya da master/admin)."
+    )
 
 
 @router.put("/claims/{claim_id}/release")

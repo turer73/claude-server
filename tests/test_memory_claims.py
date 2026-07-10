@@ -53,7 +53,8 @@ async def _acquire(client, task_key, device="surer", key=TEST_MEMORY_KEY, **kw):
     return await client.post("/api/v1/memory/claims", json=body, headers=_hdr(key))
 
 
-async def test_acquire_then_conflict_409(client, _claims_db):
+@pytest.mark.usefixtures("_claims_db")
+async def test_acquire_then_conflict_409(client):
     r1 = await _acquire(client, "claude-server:memory-api", device="surer")
     assert r1.status_code == 200
     assert r1.json()["status"] == "acquired"
@@ -64,14 +65,16 @@ async def test_acquire_then_conflict_409(client, _claims_db):
     assert detail["holder"]["device"] == "surer"  # ikinci gelen KIMIN tuttugunu gorur
 
 
-async def test_release_then_reacquire(client, _claims_db):
+@pytest.mark.usefixtures("_claims_db")
+async def test_release_then_reacquire(client):
     cid = (await _acquire(client, "bilge-arena:quiz", device="surer")).json()["id"]
     r = await client.put(f"/api/v1/memory/claims/{cid}/release", headers=_hdr())
     assert r.json()["status"] == "released"
     assert (await _acquire(client, "bilge-arena:quiz", device="klipper")).status_code == 200
 
 
-async def test_release_requires_owner_or_master(client, _claims_db):
+@pytest.mark.usefixtures("_claims_db")
+async def test_release_requires_owner_or_master(client):
     # surer'in claim'ini opencode'un DEVICE-KEY'i release EDEMEZ (403); master EDEBILIR
     surer_key = (await client.post("/api/v1/memory/devices/surer/key", headers=_hdr())).json()["key"]
     opencode_key = (await client.post("/api/v1/memory/devices/opencode/key", headers=_hdr())).json()["key"]
@@ -87,7 +90,7 @@ async def test_release_requires_owner_or_master(client, _claims_db):
     assert r.status_code == 200
 
 
-async def test_ttl_lazy_expiry_frees_key(client, _claims_db):
+async def test_ttl_lazy_expiry_frees_key(client, _claims_db):  # noqa: PT019 (deger sqlite3.connect icin kullanilir)
     cid = (await _acquire(client, "renderhane:seo", device="klipper")).json()["id"]
     con = sqlite3.connect(_claims_db)
     con.execute("UPDATE active_claims SET expires_at=datetime('now','-1 hours') WHERE id=?", (cid,))
@@ -98,7 +101,7 @@ async def test_ttl_lazy_expiry_frees_key(client, _claims_db):
     assert r.status_code == 200
 
 
-async def test_renew_extends(client, _claims_db):
+async def test_renew_extends(client, _claims_db):  # noqa: PT019 (deger sqlite3.connect icin kullanilir)
     cid = (await _acquire(client, "koken:magaza", device="surer", ttl_hours=0.5)).json()["id"]
     r = await client.put(f"/api/v1/memory/claims/{cid}/renew?ttl_hours=8", headers=_hdr())
     assert r.json()["status"] == "renewed"
@@ -108,15 +111,17 @@ async def test_renew_extends(client, _claims_db):
     assert exp == 1
 
 
-async def test_list_filters_repo_branch(client, _claims_db):
+@pytest.mark.usefixtures("_claims_db")
+async def test_list_filters_repo_branch(client):
     await _acquire(client, "a:x", device="surer", repo="claude-server", branch="feat/x")
     await _acquire(client, "b:y", device="klipper", repo="bilge-arena", branch="fix/y")
     r = await client.get("/api/v1/memory/claims?repo=claude-server", headers=_hdr())
     claims = r.json()["claims"]
-    assert len(claims) == 1 and claims[0]["branch"] == "feat/x"  # CI-gate botunun sorgusu
+    assert len(claims) == 1  # CI-gate botunun sorgusu
+    assert claims[0]["branch"] == "feat/x"
 
 
-async def test_renew_expired_claim_404_no_false_renewed(client, _claims_db):
+async def test_renew_expired_claim_404_no_false_renewed(client, _claims_db):  # noqa: PT019 (deger sqlite3.connect icin kullanilir)
     # Codex#303-P2: renew artik expiry+read+owner+UPDATE'i tek BEGIN IMMEDIATE'de yapar.
     # TTL'i dolmus claim renew'da 'renewed' DONMEMELI — ayni transaction'daki lazy-expiry
     # onu dusurur -> 404 (eski kod expiry'yi ayri commit'liyordu; read-update arasi race).
@@ -134,7 +139,8 @@ async def test_renew_expired_claim_404_no_false_renewed(client, _claims_db):
     assert active == 0
 
 
-async def test_admin_key_can_release_claim(client, _claims_db, monkeypatch):
+@pytest.mark.usefixtures("_claims_db")
+async def test_admin_key_can_release_claim(client, monkeypatch):
     # Codex#303-3tur: admin-key sahiplik kacis-kapisina dahil — admin kendi actigi
     # (dispatch_origin admin'de '' -> body-device) claim'i release/renew EDEBILMELI
     from app.api import memory as mem_module
@@ -147,7 +153,7 @@ async def test_admin_key_can_release_claim(client, _claims_db, monkeypatch):
     assert r.status_code == 200
 
 
-async def test_release_expired_claim_404(client, _claims_db):
+async def test_release_expired_claim_404(client, _claims_db):  # noqa: PT019 (deger sqlite3.connect icin kullanilir)
     # release da ayni atomik desene alindi (renew ile ayni sinif, proaktif)
     cid = (await _acquire(client, "claude-server:release-race", device="surer")).json()["id"]
     con = sqlite3.connect(_claims_db)
