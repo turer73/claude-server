@@ -56,7 +56,7 @@ def _bus_event_to_spine(event: Event) -> None:
     detail = " | ".join(detail_parts)
     emit_event(
         type=spine_type,
-        source=f"bridge:agentbus",
+        source="bridge:agentbus",
         title=title[:200],
         severity=severity,
         detail=detail[:500],

@@ -1,12 +1,12 @@
 """Tests for AgentBus ↔ events spine bridge."""
+
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import patch
 
 import pytest
 
-from app.core.agent_bus import AgentBus, Event, get_bus
+from app.core.agent_bus import AgentBus, Event
 from app.core.event_spine_bridge import _bus_event_to_spine, bridge_handler
 
 
