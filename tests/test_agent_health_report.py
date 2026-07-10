@@ -33,6 +33,12 @@ def srv_db(tmp_path):
     for i in (16, 9, 2):
         r = "fail" if i == 2 else "pass"
         conn.execute("INSERT INTO cron_outcomes (job,result,timestamp) VALUES ('weekly-fail',?,datetime('now',?))", (r, f"-{i} days"))
+    # kronik: haftalık cadence, periyodunda koşuyor ama 4 ardışık partial (W24-W28 memory-synth deseni)
+    for i in (23, 16, 9, 2):
+        conn.execute(
+            "INSERT INTO cron_outcomes (job,result,timestamp) VALUES ('weekly-chronic','partial',datetime('now',?))",
+            (f"-{i} days",),
+        )
     # dormant: tek çalışma 30 gün önce (az-veri + sessiz → stale)
     conn.execute("INSERT INTO cron_outcomes (job,result,timestamp) VALUES ('dormant','pass',datetime('now','-30 days'))")
     # garbage job (sayı) elenmeli
@@ -47,7 +53,7 @@ def _status(agents, job):
 
 
 # expected= ile çağır (yoksa gerçek crontab okunur, test-jobları dışlanır)
-_EXP = {"daily-ok", "daily-stale", "weekly-fail", "dormant"}
+_EXP = {"daily-ok", "daily-stale", "weekly-fail", "weekly-chronic", "dormant"}
 
 
 def test_freshness_classification(srv_db):
@@ -97,3 +103,31 @@ def test_build_summary_separates_stale_and_sonfail(srv_db):
     assert "STALE" in rep
     assert "SON-FAIL" in rep
     assert "daily-stale" in rep  # stale bölümünde
+
+
+def test_chronic_fail_classification(srv_db):
+    # W24-W28 dersi: ardışık >=3 pass-değil "geçici" hedge'i almaz → chronic-fail; tek-seferlik
+    # fail hâlâ son-fail (bayat-fail dersi korunur)
+    agents = ahr.agent_freshness(srv_db, expected=_EXP)
+    a = next(x for x in agents if x["job"] == "weekly-chronic")
+    assert a["status"] == "chronic-fail"
+    assert a["fail_streak"] >= ahr.CHRONIC_STREAK
+    assert _status(agents, "weekly-fail") == "son-fail"  # streak=1 → hedge korunur
+
+
+def test_chronic_requires_expected(srv_db):
+    # Codex#300-P2: retired/relay (expected-dışı) job'ın eski ardışık pass-olmayan kuyruğu
+    # chronic-fail'e TERFİ ETMEMELİ (Telegram haftalık-spam); son-fail'de kalır (raporda görünür).
+    agents = ahr.agent_freshness(srv_db, expected=_EXP - {"weekly-chronic"})
+    assert _status(agents, "weekly-chronic") == "son-fail"
+
+
+def test_build_summary_chronic_section(srv_db):
+    agents = ahr.agent_freshness(srv_db, expected=_EXP)
+    findings = {"discoveries_active_total": 0, "discoveries_bug_by_project": {}, "alerts_unresolved": {}, "cron_fails_7d": {}}
+    rep = ahr.build_summary(agents, findings)
+    assert "KRONİK-FAIL" in rep
+    chronic_sec = rep.split("🔴 KRONİK-FAIL")[1].split("⚠️ SON-FAIL")[0]
+    assert "weekly-chronic" in chronic_sec  # kronik kendi bölümünde, son-fail'de değil
+    sonfail_sec = rep.split("⚠️ SON-FAIL")[1]
+    assert "weekly-chronic" not in sonfail_sec

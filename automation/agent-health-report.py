@@ -33,6 +33,10 @@ TG_HELPER = os.environ.get("GSC_TG_HELPER", "/opt/linux-ai-server/automation/tel
 HAIKU = os.environ.get("AGENT_REPORT_MODEL", "claude-haiku-4-5-20251001")
 # Yaş > cadence × bu kat → STALE (ajan beklenen periyodunda koşmamış). Tolerans cron-jitter için.
 STALE_TOLERANCE = 2.2
+# Ardışık ≥ bu kadar pass-olmayan sonuç → KRONİK (tek-seferlik "son-fail" hedge'i uygulanmaz;
+# W24-W28 dersi: memory-synth/intent-liveness 5 hafta üst üste partial'ken rapor her hafta
+# "geçici olabilir" dedi ve hiç eskale etmedi). 3 = haftalık cadence'ta 3 hafta; FP'ye cömert.
+CHRONIC_STREAK = 3
 # job-adı olmayan çöp satırları (CPU%/access-log mis-write) ele
 GARBAGE = ("no-id",)
 
@@ -135,11 +139,21 @@ def agent_freshness(db: str, expected: set[str] | None = None) -> list[dict]:
         stale_eligible = (not expected) or (job in expected)
         overdue = bool(reliable and age_s > reliable * STALE_TOLERANCE)
         dormant = len(recs) < 3 and age_s > 14 * 86400
+        # ardışık pass-olmayan kuyruk uzunluğu (sondan geriye) — kronik/geçici ayrımı için
+        streak = 0
+        for r in reversed(recs):
+            if str(r["result"]).lower() == "pass":
+                break
+            streak += 1
         if (overdue or dormant) and stale_eligible:
             status = "stale"
         elif not last_ok:
-            # periyodunda koştu ama son-sonuç pass değil → geçici/fixli olabilir (bayat-fail dersi)
-            status = "son-fail"
+            # periyodunda koştu ama son-sonuç pass değil: tek-seferlik → geçici/fixli olabilir
+            # (bayat-fail dersi); ardışık >= CHRONIC_STREAK → kronik, "sonraki turda düzelir" deme.
+            # Kronik-terfi de stale_eligible ister (Codex#300-P2, #2/#5 pattern'i): retired/relay
+            # job'ın 180g penceredeki eski pass-olmayan kuyruğu Telegram'a haftalık spam atmasın —
+            # expected-dışı ardışık-fail son-fail'de kalır (raporda görünür, eskalasyon yok).
+            status = "chronic-fail" if (streak >= CHRONIC_STREAK and stale_eligible) else "son-fail"
         else:
             status = "healthy"
         out.append(
@@ -150,13 +164,14 @@ def agent_freshness(db: str, expected: set[str] | None = None) -> list[dict]:
                 "age_h": round(age_h, 1),
                 "cadence_h": round(cadence_s / 3600, 1) if cadence_s else None,
                 "runs": len(recs),
+                "fail_streak": streak,
             }
         )
     # Codex#2: BEKLENEN ama 180g'de HİÇ-satırı-yok ajan = bozuk/kapalı → STALE (raporun asıl amacı
     # bu — haftalarca sessiz/kırık ajanı yakalamak; eski pencere onu görünmez yapıyordu).
     seen = {a["job"] for a in out}
     for name in sorted(expected - seen):
-        out.append({"job": name, "status": "stale", "last_result": None, "age_h": None, "cadence_h": None, "runs": 0})
+        out.append({"job": name, "status": "stale", "last_result": None, "age_h": None, "cadence_h": None, "runs": 0, "fail_streak": 0})
     return sorted(out, key=lambda a: (a["status"] == "healthy", a["job"]))
 
 
@@ -184,11 +199,13 @@ def gather_findings(mem_db: str, srv_db: str) -> dict:
 
 def build_summary(agents: list[dict], findings: dict) -> str:
     stale = [a for a in agents if a["status"] == "stale"]
+    chronic = [a for a in agents if a["status"] == "chronic-fail"]
     sonfail = [a for a in agents if a["status"] == "son-fail"]
     healthy = [a for a in agents if a["status"] == "healthy"]
     lines = [
         f"AJAN SAĞLIK: {len(healthy)} healthy, {len(stale)} STALE (periyodunda koşmadı = gerçek sorun), "
-        f"{len(sonfail)} son-fail (koştu ama son-sonuç pass değil = geçici/fixli olabilir).",
+        f"{len(chronic)} KRONİK-FAIL (ardışık {CHRONIC_STREAK}+ pass-değil = kalıcı sorun), "
+        f"{len(sonfail)} son-fail (tek-seferlik, geçici/fixli olabilir).",
         "",
         "⏰ STALE (KOŞMUYOR — incele):",
     ]
@@ -199,6 +216,12 @@ def build_summary(agents: list[dict], findings: dict) -> str:
             else f"  - {a['job']}: son {a['age_h']}h önce, cadence ~{a['cadence_h']}h ({a['runs']} çalışma)"
         )
         for a in stale
+    ] or ["  (yok)"]
+    lines += ["", f"🔴 KRONİK-FAIL (ardışık {CHRONIC_STREAK}+ çalışma pass-değil — 'geçici' DEĞİL, kök-neden aksiyonu gerekli):"]
+    lines += [
+        f"  - {a['job']}: son-sonuç={a['last_result']}, ardışık {a['fail_streak']} pass-değil, "
+        f"{a['age_h']}h önce (cadence ~{a['cadence_h']}h)"
+        for a in chronic
     ] or ["  (yok)"]
     lines += ["", "⚠️ SON-FAIL (son çalışma başarısız — sonraki turda doğrulanır):"]
     lines += [f"  - {a['job']}: son-sonuç={a['last_result']}, {a['age_h']}h önce (cadence ~{a['cadence_h']}h)" for a in sonfail] or [
@@ -221,8 +244,10 @@ def synthesize(summary: str, ikey: str) -> str:
     prompt = (
         "Aşağıda bir AI-server'ın haftalık ajan-sağlık + bulgu verisi var. Türkçe, 3-5 cümlelik "
         "YÖNETİCİ ÖZETİ yaz: genel sağlık durumu + EN KRİTİK 1-2 aksiyon (varsa). STALE = gerçek "
-        "sorun (ajan koşmuyor). SON-FAIL = son çalışma başarısız ama sonraki turda düzelmiş olabilir "
-        "(haftalık-fail'i acil sanma). Abartma, sadece veriye dayan. Sadece özeti döndür.\n\n" + summary
+        "sorun (ajan koşmuyor). KRONİK-FAIL = aynı ajan ardışık 3+ çalışmada pass-değil → geçici "
+        "DEĞİLDİR, 'sonraki turda düzelir' deme, kök-neden aksiyonu iste. SON-FAIL = tek-seferlik, "
+        "sonraki turda düzelmiş olabilir (haftalık-fail'i acil sanma). Abartma, sadece veriye dayan. "
+        "Sadece özeti döndür.\n\n" + summary
     )
     try:
         out = _post_json(
@@ -285,16 +310,22 @@ def main() -> int:
     summary = build_summary(agents, findings)
     narrative = synthesize(summary, _envget("INTERNAL_API_KEY"))
     stale = [a for a in agents if a["status"] == "stale"]
+    chronic = [a for a in agents if a["status"] == "chronic-fail"]
     sonfail = [a for a in agents if a["status"] == "son-fail"]
-    err = write_report(summary, narrative, len(stale) + len(sonfail), _envget("MEMORY_API_KEY"))
-    tg = send_telegram(stale, narrative)  # yalnız STALE (gerçek-koşmuyor) Telegram; son-fail spam-değil
+    err = write_report(summary, narrative, len(stale) + len(chronic) + len(sonfail), _envget("MEMORY_API_KEY"))
+    # STALE + KRONİK Telegram'a (tek-seferlik son-fail spam-değil; kronik 3+ hafta üst üste
+    # pass-değil = tam da kimsenin okumadığı sinyal → push şart, flap etmez)
+    tg = send_telegram(stale + chronic, narrative)
     print(narrative or summary)
     n_h = sum(1 for a in agents if a["status"] == "healthy")
-    # Codex#225: STALE-ajan var ama Telegram TESLİM-EDİLEMEDİ → partial (kritik alert sessizce
-    # cron-loga gömülmesin; tam o stale-senaryo direkt-Telegram'a bağımlı).
-    tg_fail = bool(stale) and not tg
-    bad = err or (tg_fail and "telegram-teslim-fail (stale-ajan var)")
-    tail = f"{len(agents)} ajan ({n_h} healthy, {len(stale)} stale, {len(sonfail)} son-fail), telegram={tg}"
+    # Codex#225: STALE/KRONİK-ajan var ama Telegram TESLİM-EDİLEMEDİ → partial (kritik alert
+    # sessizce cron-loga gömülmesin; tam o senaryo direkt-Telegram'a bağımlı).
+    tg_fail = bool(stale or chronic) and not tg
+    bad = err or (tg_fail and "telegram-teslim-fail (stale/kronik-ajan var)")
+    tail = (
+        f"{len(agents)} ajan ({n_h} healthy, {len(stale)} stale, {len(chronic)} kronik, "
+        f"{len(sonfail)} son-fail), telegram={tg}"
+    )
     print(f"\nOUTCOME: {'partial' if bad else 'pass'} | {tail}" + (f", FAIL: {bad}" if bad else ""))
     return 0
 
