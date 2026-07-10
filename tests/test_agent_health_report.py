@@ -115,6 +115,13 @@ def test_chronic_fail_classification(srv_db):
     assert _status(agents, "weekly-fail") == "son-fail"  # streak=1 → hedge korunur
 
 
+def test_chronic_requires_expected(srv_db):
+    # Codex#300-P2: retired/relay (expected-dışı) job'ın eski ardışık pass-olmayan kuyruğu
+    # chronic-fail'e TERFİ ETMEMELİ (Telegram haftalık-spam); son-fail'de kalır (raporda görünür).
+    agents = ahr.agent_freshness(srv_db, expected=_EXP - {"weekly-chronic"})
+    assert _status(agents, "weekly-chronic") == "son-fail"
+
+
 def test_build_summary_chronic_section(srv_db):
     agents = ahr.agent_freshness(srv_db, expected=_EXP)
     findings = {"discoveries_active_total": 0, "discoveries_bug_by_project": {}, "alerts_unresolved": {}, "cron_fails_7d": {}}

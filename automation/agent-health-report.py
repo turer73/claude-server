@@ -149,8 +149,11 @@ def agent_freshness(db: str, expected: set[str] | None = None) -> list[dict]:
             status = "stale"
         elif not last_ok:
             # periyodunda koştu ama son-sonuç pass değil: tek-seferlik → geçici/fixli olabilir
-            # (bayat-fail dersi); ardışık >= CHRONIC_STREAK → kronik, "sonraki turda düzelir" deme
-            status = "chronic-fail" if streak >= CHRONIC_STREAK else "son-fail"
+            # (bayat-fail dersi); ardışık >= CHRONIC_STREAK → kronik, "sonraki turda düzelir" deme.
+            # Kronik-terfi de stale_eligible ister (Codex#300-P2, #2/#5 pattern'i): retired/relay
+            # job'ın 180g penceredeki eski pass-olmayan kuyruğu Telegram'a haftalık spam atmasın —
+            # expected-dışı ardışık-fail son-fail'de kalır (raporda görünür, eskalasyon yok).
+            status = "chronic-fail" if (streak >= CHRONIC_STREAK and stale_eligible) else "son-fail"
         else:
             status = "healthy"
         out.append(
