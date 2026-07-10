@@ -39,11 +39,7 @@ def _admin_key_active() -> bool:
     """Admin-key devrede mi: set + master'dan VE otonom'dan distinct. admin==master VEYA
     admin==otonom config-hatasi = dormant (collision-guard) — yoksa otonom-spawn surecleri
     (insan degil) verify_admin_key'i gecip mint/rotate/revoke yapabilirdi (Codex#302-2tur #4)."""
-    return (
-        bool(MEMORY_API_KEY_ADMIN)
-        and MEMORY_API_KEY_ADMIN != MEMORY_API_KEY
-        and MEMORY_API_KEY_ADMIN != MEMORY_API_KEY_AUTONOMOUS
-    )
+    return bool(MEMORY_API_KEY_ADMIN) and MEMORY_API_KEY_ADMIN != MEMORY_API_KEY and MEMORY_API_KEY_ADMIN != MEMORY_API_KEY_AUTONOMOUS
 
 
 def _is_admin_key(x_memory_key: str | None) -> bool:
@@ -118,7 +114,7 @@ def _resolve_device_key(x_memory_key: str | None) -> str:
     return ""
 
 
-def verify_key(x_memory_key: str = Header(None)):
+def verify_key(x_memory_key: str = Header(None)) -> None:
     # FAIL-CLOSED (güvenlik fix): MEMORY_API_KEY yüklenmemişse erişimi AÇMA.
     # Eski 'if KEY and ...' boş-key'de 401 atmıyordu -> env-yükleme hatasında
     # memory/RAG/research/classifier tamamen korumasız kalıyordu.
@@ -134,7 +130,7 @@ def verify_key(x_memory_key: str = Header(None)):
     raise HTTPException(401, "Invalid memory API key")
 
 
-def verify_key_memory_scoped(x_memory_key: str = Header(None)):
+def verify_key_memory_scoped(x_memory_key: str = Header(None)) -> None:
     """Memory router'a OZEL auth: verify_key + aktif per-device-key kabulu.
     Device-key'in tek yetki-alani /api/v1/memory/* — baska router bunu KULLANMAMALI."""
     if not MEMORY_API_KEY:
