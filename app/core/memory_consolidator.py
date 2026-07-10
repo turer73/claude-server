@@ -15,6 +15,7 @@ import asyncio
 import logging
 import os
 import sqlite3
+from datetime import UTC, datetime
 from typing import Any
 
 from app.core.agent_bus import Event, get_bus
@@ -168,6 +169,7 @@ class MemoryConsolidator:
         self._task: asyncio.Task[None] | None = None
         self._pattern_cache: list[dict[str, Any]] = []
         self._last_state: dict[str, str] = {}
+        self._last_run: str | None = None
 
     @property
     def status(self) -> dict[str, Any]:
@@ -181,7 +183,9 @@ class MemoryConsolidator:
             "last_state": self._last_state,
             "interval_s": self._interval,
             "models": ["kural-tabanlı (önem skorlaması, pattern detection)"],
-            "last_run": self._last_state.get("ts"),
+            # _last_state yalnız focus/emotion tutar — "ts" hiç yazılmadığından last_run ebedi None
+            # kalıyordu (dashboard "—" gösteriyordu). Döngü-tick'i ayrı alanda izle.
+            "last_run": self._last_run,
             "current_task": f"{len(self._pattern_cache)} pattern izleniyor" if self._pattern_cache else "Hafıza konsolidasyonu bekliyor",
             "stats": {"Pattern": len(self._pattern_cache)},
             "success_rate": None,
@@ -268,6 +272,7 @@ class MemoryConsolidator:
     async def _run_loop(self) -> None:
         while self._running:
             try:
+                self._last_run = datetime.now(UTC).isoformat()
                 patterns = await asyncio.to_thread(_find_patterns)
                 if patterns != self._pattern_cache and patterns:
                     self._pattern_cache = patterns

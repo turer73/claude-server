@@ -134,18 +134,16 @@ class TestEvaluateAndLearn:
         assert loop._learn_count == 0
 
     def test_downtrend_triggers_learn(self, learning_db, monkeypatch):
+        # Not: eski hali 6 gözlemle _MIN_OBSERVATIONS(10) guard'ına takılıp erken dönüyordu ve
+        # hiçbir şey assert etmiyordu — öğrenme yolu fiilen test edilmiyordu. >=10 gözlem + assert.
         monkeypatch.setattr("app.core.learning_loop._MEMORY_DB", learning_db)
         from app.core.learning_loop import LearningLoop
 
         loop = LearningLoop()
         now = time.time()
-        loop._MIN_OBSERVATIONS = 3
-        loop._DOWNTREND_TRIGGER = 0.5
 
-        scores = [
-            {"score": 7, "ts": now - 4000, "boredom_issues": []},
-            {"score": 7, "ts": now - 3800, "boredom_issues": []},
-            {"score": 7, "ts": now - 3600, "boredom_issues": []},
+        scores = [{"score": 7, "ts": now - 3000 + i * 50, "boredom_issues": []} for i in range(7)]
+        scores += [
             {"score": 4, "ts": now - 100, "boredom_issues": []},
             {"score": 4, "ts": now - 80, "boredom_issues": []},
             {"score": 4, "ts": now - 60, "boredom_issues": []},
@@ -155,6 +153,23 @@ class TestEvaluateAndLearn:
         import asyncio
 
         asyncio.run(loop._evaluate_and_learn())
+        assert loop._learn_count == 1  # 15min(4.0) < 1h - 0.5 → downtrend öğrenmesi
+
+    def test_collapsed_score_triggers_learn(self, learning_db, monkeypatch):
+        # Regresyon: eski _MIN_SCORE_BEFORE_LEARN(4) guard'ı avg<4'te öğrenmeyi TAMAMEN bloklardı —
+        # modülün amacının tam tersi (kalite çökünce tepkisiz). Guard kalktı, çöküş artık tetikler.
+        monkeypatch.setattr("app.core.learning_loop._MEMORY_DB", learning_db)
+        from app.core.learning_loop import LearningLoop
+
+        loop = LearningLoop()
+        now = time.time()
+        loop._scores.extend({"score": 3, "ts": now - 200 + i * 10, "boredom_issues": []} for i in range(12))
+
+        import asyncio
+
+        asyncio.run(loop._evaluate_and_learn())
+        assert loop._learn_count == 1
+        assert "boredom_threshold" in loop._current_thresholds
 
     def test_boredom_trigger(self, learning_db, monkeypatch):
         monkeypatch.setattr("app.core.learning_loop._MEMORY_DB", learning_db)
@@ -250,6 +265,25 @@ class TestLearningLoopClass:
         s = learning_loop.status
         assert s["obs_count"] == 1
         assert s["avg_score_15min"] is not None
+
+    @pytest.mark.anyio
+    async def test_last_run_iso_contract(self, learning_loop):
+        # Regresyon (dashboard "20623g önce"): last_run epoch-float döndürüyordu, sözleşme ISO-str.
+        # Skor varken bile float sızmamalı; loop-tick sonrası ISO string olmalı.
+        import asyncio
+        import time
+        from datetime import datetime
+
+        learning_loop._scores.append({"score": 7, "ts": time.time()})
+        assert learning_loop.status["last_run"] is None  # tick öncesi: float skor-ts'i DEĞİL
+        learning_loop.start()
+        await asyncio.sleep(0.05)
+        try:
+            lr = learning_loop.status["last_run"]
+            assert isinstance(lr, str)
+            datetime.fromisoformat(lr)  # geçerli ISO-8601
+        finally:
+            await learning_loop.stop()
 
     def test_get_learning_history_with_data(self, learning_loop, learning_db):
         from app.core.learning_loop import _record_learning_event

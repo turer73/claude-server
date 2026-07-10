@@ -15,6 +15,7 @@ import os
 import sqlite3
 import time
 from collections import deque
+from datetime import UTC, datetime
 from typing import Any
 
 from app.core.agent_bus import Event, get_bus
@@ -37,7 +38,6 @@ CREATE TABLE IF NOT EXISTS learning_events (
 """
 
 _DOWNTREND_TRIGGER = 0.5
-_MIN_SCORE_BEFORE_LEARN = 4
 _MIN_OBSERVATIONS = 10
 _LEARN_COOLDOWN = 3600
 
@@ -100,6 +100,7 @@ class LearningLoop:
         self._last_learn_time: float = 0
         self._current_thresholds: dict[str, Any] = {}
         self._learn_count = 0
+        self._last_run: str | None = None
 
     @property
     def status(self) -> dict[str, Any]:
@@ -118,7 +119,9 @@ class LearningLoop:
             "thresholds": self._current_thresholds,
             "interval_s": self._interval,
             "models": ["kural-tabanlı (sliding window, trend detection)"],
-            "last_run": self._scores[-1]["ts"] if self._scores else None,
+            # last_run sözleşmesi ISO-string (agent_system/schemas); epoch-float dashboard'da
+            # new Date(ms) ile 1970'e çözülüyor (disc: "20623g önce"). Skor-ts'i değil döngü-tick'i yansıt.
+            "last_run": self._last_run,
             "current_task": f"{self._learn_count} öğrenme olayı, {len(self._scores)} gözlem" if self._scores else "Veri bekliyor",
             "stats": {"Gözlem": len(self._scores), "Öğrenme": self._learn_count},
             "success_rate": None,
@@ -172,6 +175,7 @@ class LearningLoop:
     async def _run_loop(self) -> None:
         while self._running:
             try:
+                self._last_run = datetime.now(UTC).isoformat()
                 await self._evaluate_and_learn()
             except asyncio.CancelledError:
                 break
@@ -191,9 +195,6 @@ class LearningLoop:
         avg_1h = windows.get("1h")
 
         if avg_15min is None or avg_1h is None:
-            return
-
-        if avg_15min < _MIN_SCORE_BEFORE_LEARN:
             return
 
         needs_learn = False

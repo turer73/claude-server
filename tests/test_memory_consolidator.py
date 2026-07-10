@@ -160,6 +160,23 @@ class TestMemoryConsolidatorClass:
         consolidator.start()
         await consolidator.stop()
 
+    @pytest.mark.anyio
+    async def test_last_run_set_by_loop(self, consolidator):
+        # Regresyon (dashboard ebedi "—"): last_run _last_state["ts"]'ten okunuyordu ama "ts" hiç
+        # yazılmıyordu → aktif ajan hiç çalışmamış görünüyordu. Loop-tick ISO-str damgalamalı.
+        import asyncio
+        from datetime import datetime
+
+        assert consolidator.status["last_run"] is None
+        consolidator.start()
+        await asyncio.sleep(0.05)
+        try:
+            lr = consolidator.status["last_run"]
+            assert isinstance(lr, str)
+            datetime.fromisoformat(lr)  # geçerli ISO-8601
+        finally:
+            await consolidator.stop()
+
     def test_get_top_memories_via_class(self, consolidator):
         from app.core.memory_consolidator import _upsert_node
 
