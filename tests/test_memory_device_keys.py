@@ -165,7 +165,8 @@ async def test_device_key_default_deny_allowlist(client, memory_db):  # noqa: F8
     # route'larda 403 — maintenance/webhooks gibi admin-islevleri device-key'le ACILAMAZ.
     dev_key = (await _mint(client, "surer")).json()["key"]
     assert (await client.post("/api/v1/memory/maintenance/archive-stale", headers={"X-Memory-Key": dev_key})).status_code == 403
-    assert (await client.post("/api/v1/memory/webhooks", json={"url": "http://x/evil"}, headers={"X-Memory-Key": dev_key})).status_code == 403
+    r_wh = await client.post("/api/v1/memory/webhooks", json={"url": "http://x/evil"}, headers={"X-Memory-Key": dev_key})
+    assert r_wh.status_code == 403
     assert (await client.get("/api/v1/memory/webhooks/telegram-status", headers={"X-Memory-Key": dev_key})).status_code == 403
     assert (await client.post("/api/v1/memory/devices", json={"name": "sahte"}, headers={"X-Memory-Key": dev_key})).status_code == 403
     # master ayni route'larda calismaya devam eder (davranis-korunumu)
@@ -223,7 +224,8 @@ async def test_create_discovery_direct_call_without_di(client, memory_db):  # no
     r = await create_discovery(
         DiscoveryCreate(project="claude-server", type="bug", title="dead-gate direct-call regresyon testi", details="di-disi cagri")
     )
-    assert isinstance(r, dict) and r.get("id")
+    assert isinstance(r, dict)
+    assert r.get("id")
     con = sqlite3.connect(memory_db)
     dn = con.execute("SELECT device_name FROM discoveries WHERE id=?", (r["id"],)).fetchone()[0]
     con.close()
