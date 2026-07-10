@@ -171,14 +171,19 @@ def test_codereview_db_30d_window(tmp_path, monkeypatch):
     db = tmp_path / "mem.db"
     con = sqlite3.connect(db)
     con.execute(
-        "CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, status TEXT, "
-        "title TEXT, details TEXT, created_at TEXT)"
+        "CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, status TEXT, title TEXT, details TEXT, created_at TEXT)"
     )
     rows = [
         # eski dönem (>30g): 1 completed + 3 obsolete
-        ("completed", "-40 days"), ("obsolete", "-40 days"), ("obsolete", "-35 days"), ("obsolete", "-31 days"),
+        ("completed", "-40 days"),
+        ("obsolete", "-40 days"),
+        ("obsolete", "-35 days"),
+        ("obsolete", "-31 days"),
         # yeni dönem (<30g): 4 completed + 1 obsolete
-        ("completed", "-5 days"), ("completed", "-4 days"), ("completed", "-2 days"), ("completed", "-1 days"),
+        ("completed", "-5 days"),
+        ("completed", "-4 days"),
+        ("completed", "-2 days"),
+        ("completed", "-1 days"),
         ("obsolete", "-3 days"),
     ]
     for status, delta in rows:
