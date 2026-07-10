@@ -187,15 +187,23 @@ def _sev_from_details(det: str) -> str:
 
 
 def _codereview_db() -> dict:
-    """code-review discoveries: son bulgular + active/obsolete sayımı (sinyal-oranı). Read-only."""
+    """code-review discoveries: son bulgular + active/obsolete sayımı (sinyal-oranı). Read-only.
+
+    counts_30d: sinyal-oranı SON-30-GÜN penceresiyle hesaplansın diye ayrı sayım. Yaşam-boyu
+    kümülatif oran 14-22 Haziran qwen/fail-open FP-seli havuzunu (306 kayıt, %4) sonsuza dek
+    paydada taşıyordu → pipeline %88'e çıkmışken dashboard %16 gösteriyordu (Turgut 07-10)."""
     try:
         con = get_conn(MEMORY_DB, readonly=True)
         try:
             counts: dict[str, int] = {}
-            for status, n in con.execute(
-                "SELECT status, COUNT(*) FROM discoveries WHERE project='code-review' AND type='bug' GROUP BY status"
+            counts_30d: dict[str, int] = {}
+            for status, n, n30 in con.execute(
+                "SELECT status, COUNT(*), "
+                "SUM(CASE WHEN created_at >= datetime('now','-30 days') THEN 1 ELSE 0 END) "
+                "FROM discoveries WHERE project='code-review' AND type='bug' GROUP BY status"
             ).fetchall():
                 counts[status] = n
+                counts_30d[status] = n30 or 0
             rows = con.execute(
                 "SELECT created_at, title, COALESCE(details,'') AS details, status, type "
                 "FROM discoveries WHERE project='code-review' ORDER BY id DESC LIMIT 8"
@@ -210,11 +218,11 @@ def _codereview_db() -> dict:
                 }
                 for r in rows
             ]
-            return {"counts": counts, "findings": findings}
+            return {"counts": counts, "counts_30d": counts_30d, "findings": findings}
         finally:
             con.close()
     except Exception:
-        return {"counts": {}, "findings": []}
+        return {"counts": {}, "counts_30d": {}, "findings": []}
 
 
 def _devops_card(dv) -> dict:
@@ -255,13 +263,27 @@ def _codereview_card(cra, crdb: dict) -> dict:
     counts = crdb["counts"]
     active = counts.get("active", 0)
     # Sinyal-oranı = TRİYAJ-EDİLEN bulguların kaçı GERÇEKTİ: completed (fix'lendi) ÷ (completed+obsolete).
-    # active (triaj-bekleyen) sayılmaz — henüz gerçek/FP bilinmez. ESKİ HATA: active/(active+obsolete)
+    # active (triaj-bekleyen) sayılmaz — henüz gerçek/FP bilinmez. ESKİ HATA-1: active/(active+obsolete)
     # = açık/toplam (backlog), FP-oranı DEĞİL → her şey triaj-edilip kapatılınca yanıltıcı %0 ("ajan
-    # %100 FP" sanılır oysa "backlog temiz" demek).
+    # %100 FP" sanılır oysa "backlog temiz" demek). ESKİ HATA-2: yaşam-boyu kümülatif oran — eski
+    # FP-seli havuzu paydada kaldıkça bugünkü pipeline'ı yansıtmaz → SON-30-GÜN penceresi ana metrik,
+    # tüm-zaman stats'ta ayrı satır. 30g'de hiç triyaj yoksa tüm-zamana düşülür (dürüst etiketle).
     completed = counts.get("completed", 0)
     triaged = completed + counts.get("obsolete", 0)
+    c30d = crdb.get("counts_30d", counts)
+    completed_30 = c30d.get("completed", 0)
+    triaged_30 = completed_30 + c30d.get("obsolete", 0)
+    if triaged_30:
+        rate = {"label": "Sinyal (gerçek÷triaj, 30g)", "value": round(completed_30 / triaged_30, 3), "n": triaged_30}
+    elif triaged:
+        rate = {"label": "Sinyal (gerçek÷triaj, tüm-zaman)", "value": round(completed / triaged, 3), "n": triaged}
+    else:
+        rate = None
     findings = crdb["findings"]
     last_file = findings[0]["title"].split(" ", 1)[0] if findings else None
+    stats = {"Tick": st.get("ticks", 0), "Toplam bulgu": st.get("total_findings", 0), "Aktif": active}
+    if triaged_30 and triaged:
+        stats["Sinyal tüm-zaman"] = f"{round(100 * completed / triaged)}% ({triaged})"
     return {
         "key": "code-review",
         "name": "Kod-Mühendisi Ajanı",
@@ -273,8 +295,8 @@ def _codereview_card(cra, crdb: dict) -> dict:
         "last_run": st.get("last_run"),
         "interval_s": st.get("interval_s"),
         "current_task": (f"Son inceleme: {last_file}" if last_file else "Kuyruk/sweep bekliyor"),
-        "stats": {"Tick": st.get("ticks", 0), "Toplam bulgu": st.get("total_findings", 0), "Aktif": active},
-        "success_rate": ({"label": "Sinyal (gerçek÷triaj)", "value": round(completed / triaged, 3), "n": triaged} if triaged else None),
+        "stats": stats,
+        "success_rate": rate,
         "findings": findings,
     }
 
