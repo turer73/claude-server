@@ -143,9 +143,11 @@ async def test_decide_master_only_and_finalizes(client, discussions_db):
         json={"synthesis": "Yakinsama: A. Ihtilaf: yok denecek kadar az.", "device": "klipper"},
         headers=_hdr(),
     )
-    # Device-key karar VEREMEZ (esitlik soz-hakkinda, yetkide degil)
+    # Device-key karar VEREMEZ (esitlik soz-hakkinda, yetkide degil). decide route-allowlist'te
+    # DEGIL (PR#302-3tur default-deny) -> router-seviyesinde 403 ile daha erken reddedilir
+    # (route'un kendi verify_master_key'ine hic ulasmaz — 401 degil 403, ama sonuc ayni: red).
     r = await client.post(f"/api/v1/memory/discussions/{tid}/decide", json={"decision": "Onaylandi"}, headers=_hdr(surer_key))
-    assert r.status_code == 401
+    assert r.status_code == 403
     r = await client.post(f"/api/v1/memory/discussions/{tid}/decide", json={"decision": "Onaylandi, uygulansin"}, headers=_hdr())
     assert r.json()["status"] == "decided"
     r = await _pos(client, tid, "klipper")

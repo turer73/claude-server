@@ -169,6 +169,13 @@ DEVICE_KEY_ROUTE_ALLOWLIST: frozenset = frozenset(
         ("PUT", "/api/v1/memory/claims/{claim_id}/release"),
         ("PUT", "/api/v1/memory/claims/{claim_id}/renew"),
         ("GET", "/api/v1/memory/claims"),
+        # tartisma-platformu (PR#305, kimlik-key'den — decide KASITLI DISI birakildi,
+        # zaten kendi verify_master_key'i var, default-deny onu ayrica korur)
+        ("POST", "/api/v1/memory/discussions"),
+        ("GET", "/api/v1/memory/discussions"),
+        ("POST", "/api/v1/memory/discussions/{topic_id}/positions"),
+        ("GET", "/api/v1/memory/discussions/{topic_id}/positions"),
+        ("POST", "/api/v1/memory/discussions/{topic_id}/synthesize"),
     }
 )
 
@@ -579,7 +586,7 @@ class DiscussionCreate(BaseModel):
 
     @field_validator("title", "question")
     @classmethod
-    def non_trivial(cls, v):
+    def non_trivial(cls, v: str) -> str:
         if len(v.strip()) < 5:
             raise ValueError("en az 5 karakter")
         return v.strip()
@@ -599,14 +606,14 @@ class PositionCreate(BaseModel):
 
     @field_validator("position", "evidence", "persuadable_by", "objection")
     @classmethod
-    def non_empty(cls, v):
+    def non_empty(cls, v: str) -> str:
         if len(v.strip()) < 10:
             raise ValueError("sablon alani en az 10 karakter — bos-formalite doldurma (sycophancy-panzehiri)")
         return v.strip()
 
     @field_validator("confidence")
     @classmethod
-    def conf_range(cls, v):
+    def conf_range(cls, v: int) -> int:
         if not (1 <= v <= 10):
             raise ValueError("confidence 1-10")
         return v
