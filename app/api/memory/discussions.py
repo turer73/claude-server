@@ -29,7 +29,7 @@ from app.api.memory import (
 # Dashboard-köprüsü (sentez: minimalist kart MVP'de — opencode #100555). Dashboard JWT
 # konuşur, memory-API X-Memory-Key ister; master-key'i dashboard'a gömmek sızıntı-yüzeyi
 # olurdu → JWT-korumalı ince proxy: JWT-auth = Turgut'un dashboard'ı = device 'turgut'.
-from app.middleware.dependencies import require_auth  # noqa: E402
+from app.middleware.dependencies import require_auth, require_write  # noqa: E402
 
 ui_router = APIRouter(prefix="/api/v1/discussions-ui", tags=["discussions-ui"], dependencies=[Depends(require_auth)])
 
@@ -76,9 +76,11 @@ def _ensure_discussions(db: Any) -> None:
             ON discussion_positions(topic_id, device, round);
         """)
         db.commit()
+        # Codex#305 #8: flag YALNIZ basarida (_ensure_device_keys deseni) — transient hatada
+        # tablo kurulmadan 'hazir' denirse process-restart'a dek her istek patlar
+        _discussions_ready = True
     except Exception:
         pass
-    _discussions_ready = True
 
 
 def _actor(body_device: str, forced_origin: str) -> tuple[str, int]:
@@ -93,8 +95,15 @@ def _maybe_open_blind(db: Any, topic: Any) -> str:
     if topic["status"] != _OPEN:
         return str(topic["status"])
     expected = {d.strip() for d in topic["expected_devices"].split(",") if d.strip()}
+    # Codex#305 #7 (CANLI-EXPLOIT): written-set YALNIZ verified=1 satirlar — master-key
+    # (bugun herkeste var) sahte device-adlariyla 3 unverified pozisyon yazip kor-turu
+    # ERKEN acabiliyordu (gercek cihazlar hic yazmadan). Kimlik key'den kanitlanmali.
     written = {
-        r[0] for r in db.execute("SELECT DISTINCT device FROM discussion_positions WHERE topic_id=? AND round=1", (topic["id"],)).fetchall()
+        r[0]
+        for r in db.execute(
+            "SELECT DISTINCT device FROM discussion_positions WHERE topic_id=? AND round=1 AND COALESCE(verified,0)=1",
+            (topic["id"],),
+        ).fetchall()
     }
     deadline_passed = bool(
         db.execute("SELECT 1 FROM discussion_topics WHERE id=? AND blind_deadline < datetime('now')", (topic["id"],)).fetchone()
@@ -134,11 +143,22 @@ async def create_discussion(data: DiscussionCreate, forced_origin: str = Depends
         db.close()
 
 
+def _sweep_expired_blind(db: Any) -> None:
+    """Codex#305 #9: deadline'i gecmis 'open' konulari lazy-toplu gecir — yoksa ?status=open
+    filtresinde sonsuza dek gorunurler (biri o topic'e dokunana kadar). _expire_stale deseni."""
+    db.execute(
+        "UPDATE discussion_topics SET status=? WHERE status=? AND blind_deadline < datetime('now')",
+        (_DISCUSSION, _OPEN),
+    )
+    db.commit()
+
+
 @router.get("/discussions")
 async def list_discussions(status: str | None = None) -> dict[str, Any]:
     db = get_db()
     try:
         _ensure_discussions(db)
+        _sweep_expired_blind(db)
         q = "SELECT id, title, question, creator_device, status, created_at, blind_deadline FROM discussion_topics"
         params: list[Any] = []
         if status:
@@ -160,6 +180,12 @@ async def add_position(topic_id: int, data: PositionCreate, forced_origin: str =
         status = _maybe_open_blind(db, topic)
         if status in _FINAL:
             raise HTTPException(409, f"Konu kapalı ({status}) — append-only arşiv, yeni pozisyon alınmaz")
+        # Codex#305 #7 tamamlayıcısı (squat-önlemi): kör-turda yazım YALNIZ kanıtlı kimlikle
+        # (device-key). Unverified (master-legacy) round-1 yazımı hem written-set'i kirletiyor
+        # hem UNIQUE(topic,device,round) slotunu işgal edip GERÇEK cihazın yazmasını engelliyordu.
+        # Kör-tur sonrası (round-2+) master-legacy append'e izin sürer (kademeli geçiş).
+        if status == _OPEN and not verified:
+            raise HTTPException(401, "Kör-turda pozisyon yalnız device-key kimliğiyle yazılır (spoof/squat önlemi)")
         rnd = 1 if status == _OPEN else 2
         # Kör-turda cihaz başına TEK pozisyon (unique-index); round-2+ append-only serbest —
         # ama aynı (topic,device,round) çakışırsa round'u son-kayit+1'e ilerlet (fikir-evrimi izli)
@@ -202,20 +228,23 @@ async def add_position(topic_id: int, data: PositionCreate, forced_origin: str =
 @router.get("/discussions/{topic_id}/positions")
 async def list_positions(topic_id: int, as_device: str = "", forced_origin: str = Depends(dispatch_origin)) -> dict[str, Any]:
     """KÖR-TUR GATE: topic 'open' iken yalnız KENDİ pozisyonların döner (API-zorlama, 4/4
-    yakınsama). Viewer kimliği device-key'den; master-legacy ?as_device= ile bildirir."""
-    viewer = forced_origin or as_device
+    yakınsama). Viewer kimliği YALNIZ device-key'den (Codex#305 #6, CANLI-EXPLOIT):
+    master-key + ?as_device=surer ile başkasının kör-tur pozisyonu tam-metin okunabiliyordu —
+    kör fazda as_device'a GÜVENİLMEZ; key-kimliği olmayan (master/legacy) kör fazda hiçbir
+    pozisyon göremez. Kör-tur bitince as_device önemsiz (herkes her şeyi görür)."""
     db = get_db()
     try:
         _ensure_discussions(db)
         topic = _load_topic(db, topic_id)
         status = _maybe_open_blind(db, topic)
         if status == _OPEN:
+            viewer = forced_origin  # as_device kör fazda YOK SAYILIR (iddia, kanıt değil)
             rows = db.execute("SELECT * FROM discussion_positions WHERE topic_id=? AND device=? ORDER BY id", (topic_id, viewer)).fetchall()
             return {
                 "status": status,
                 "blind": True,
                 "positions": [dict(r) for r in rows],
-                "note": "Kör-tur: yalnız kendi pozisyonun görünür",
+                "note": "Kör-tur: yalnız kendi pozisyonun görünür (kimlik device-key'den; as_device kabul edilmez)",
             }
         rows = db.execute("SELECT * FROM discussion_positions WHERE topic_id=? ORDER BY round, id", (topic_id,)).fetchall()
         return {
@@ -245,6 +274,12 @@ async def synthesize_discussion(topic_id: int, body: dict[str, str], forced_orig
         topic = _load_topic(db, topic_id)
         if topic["status"] in _FINAL:
             raise HTTPException(409, "Konu zaten karara bağlandı")
+        # Codex#305 #1 (CANLI-EXPLOIT, platformun var-olma-sebebi): kör-tur bitmeden sentez
+        # OLAMAZ. Eski kod _maybe_open_blind çağırmıyor + _OPEN'ı reddetmiyordu → herkes,
+        # istediği an, BOŞ bir konuyu 'sentezlenmiş' gösterebiliyordu.
+        status = _maybe_open_blind(db, topic)
+        if status == _OPEN:
+            raise HTTPException(409, "Kör-tur sürüyor — herkes yazmadan/24h dolmadan sentez olamaz")
         if device == topic["creator_device"]:
             raise HTTPException(403, "Sentezci konu-açan olamaz (4/4 yakınsama — bağımsız-göz ilkesi)")
         db.execute(
@@ -270,7 +305,11 @@ async def decide_discussion(topic_id: int, body: dict[str, str]) -> dict[str, An
     db = get_db()
     try:
         _ensure_discussions(db)
-        _load_topic(db, topic_id)
+        topic = _load_topic(db, topic_id)
+        # Codex#305 #2: sentez-asamasi ATLANAMAZ — karar yalniz needs_turgut'ta (sentez var).
+        # Master guvenilir operator ama tasarim-niyeti (tartis->sentezle->karar) yapisal olmali.
+        if topic["status"] != _NEEDS_TURGUT:
+            raise HTTPException(409, f"Karar icin once sentez gerekli (durum: {topic['status']}, beklenen: {_NEEDS_TURGUT})")
         db.execute("UPDATE discussion_topics SET decision=?, status=? WHERE id=?", (decision, outcome, topic_id))
         db.commit()
         return {"id": topic_id, "status": outcome}
@@ -294,10 +333,12 @@ async def ui_summary() -> dict[str, Any]:
         db.close()
 
 
-@ui_router.post("/topics/{topic_id}/position")
+@ui_router.post("/topics/{topic_id}/position", dependencies=[Depends(require_write)])
 async def ui_add_position(topic_id: int, data: PositionCreate) -> dict[str, Any]:
     """Turgut'un dashboard-formu: JWT-kimliği device='turgut' + verified=1 sayılır
-    (dashboard'a yalnız Turgut erişir; body.device gözardı — P0 ilkesiyle tutarlı)."""
+    (dashboard'a yalnız Turgut erişir; body.device gözardı — P0 ilkesiyle tutarlı).
+    Codex#305 #3: require_write — read-only JWT bu endpoint'e POST atip device=turgut+
+    verified=1 pozisyon YARATAMAMALI (router-level require_auth read'i de kabul ediyordu)."""
     forced = "turgut"
     db = get_db()
     try:
@@ -334,6 +375,9 @@ async def ui_add_position(topic_id: int, data: PositionCreate) -> dict[str, Any]
             if "UNIQUE" in str(e):
                 raise HTTPException(409, "Kör-turda tek pozisyon") from None
             raise
-        return {"id": cur.lastrowid, "round": rnd, "device": forced}
+        # Codex#305 #4: INSERT sonrasi acilim-kontrolu (add_position deseni) — Turgut kor-turun
+        # SON yazani ise durum 'open'da takili kalmasin
+        new_status = _maybe_open_blind(db, _load_topic(db, topic_id))
+        return {"id": cur.lastrowid, "round": rnd, "device": forced, "topic_status": new_status}
     finally:
         db.close()
