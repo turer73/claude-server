@@ -537,6 +537,33 @@ class NoteCreate(BaseModel):
     content: str
 
 
+class ClaimCreate(BaseModel):
+    """P1 CLAIM-lock (konu-1 karari): not-konvansiyonu yerine DB-kisiti.
+    task_key = 'repo:kapsam' (ör 'claude-server:memory-api'); repo+branch CI-gate botu icindir."""
+
+    task_key: str
+    device: str  # master-key legacy'de body'den; device-key ile auth'ta KEY kazanir (override)
+    repo: str | None = None
+    branch: str | None = None
+    note: str = ""
+    ttl_hours: float = 4.0  # CLAIM-protokolu TTL'i
+
+    @field_validator("task_key")
+    @classmethod
+    def clean_task_key(cls, v):
+        v = v.strip()
+        if len(v) < 3:
+            raise ValueError("task_key en az 3 karakter")
+        return v
+
+    @field_validator("ttl_hours")
+    @classmethod
+    def sane_ttl(cls, v):
+        if not (0.1 <= v <= 72):
+            raise ValueError("ttl_hours 0.1-72 araliginda olmali")
+        return v
+
+
 class DeviceProjectCreate(BaseModel):
     device_name: str
     project: str
@@ -556,6 +583,7 @@ class SpawnFailureRetryResponse(BaseModel):
 # ── Domain router submodule'leri (Faz 3) ──
 # Import = handler'ların router'a kaydı + app.api.memory.* re-export'u.
 # Kernel (DB_PATH/keys/verify_key/get_db/router'lar/helpers/models) yukarıda kalır.
+from app.api.memory import claims as claims  # noqa: E402, F401
 from app.api.memory import dashboard as dashboard  # noqa: E402, F401
 from app.api.memory import devices as devices  # noqa: E402, F401
 from app.api.memory import discoveries as discoveries  # noqa: E402, F401
