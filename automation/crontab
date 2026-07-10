@@ -103,9 +103,11 @@
 # (olu-refleks/orphan-cron/dead-infra/stale-flag). SALT-OKUNUR; bulgu→event/discovery.
 15 9 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh intent-liveness /opt/linux-ai-server/automation/intent-liveness-audit.sh
 # LIVESYS-MEMSYN hafiza sentezi (haftalik Pazartesi 09:45) — benzer memory'leri embedding-cosine
-# kumeleyip canonical disi olanlari arsivler (NO-DELETE). VARSAYILAN DRY_RUN (yazma YOK); gercek
-# arsivleme icin MEMSYN_APPLY=1 gerekir (+otomatik DB-backup). Ilk-hafta DRY_RUN gozlem.
-45 9 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh memory-synth /opt/linux-ai-server/automation/memory-synthesize.sh
+# kumeleyip canonical disi olanlari arsivler (NO-DELETE). Ilk-hafta DRY_RUN gozlem sonrasi
+# Turgut karari (2026-07-10, opencode #100537 gorusu): MEMSYN_APPLY=1 + MEMSYN_MIN_CLUSTER=3
+# ile canliya al -- yalniz >=3 benzer-girdili kumeler soft-archive edilir (otomatik DB-backup
+# scriptte). Sonuc-incelemesi sonrasi MIN_CLUSTER=2'ye dusme ayrica Turgut karari.
+45 9 * * 1 MEMSYN_APPLY=1 MEMSYN_MIN_CLUSTER=3 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh memory-synth /opt/linux-ai-server/automation/memory-synthesize.sh
 # RAG haftalik reindex (P0-b, surer) — klipper-memory'yi guncel DB'den yeniden kur (Pazar 02:00).
 # Index manuel-bagimliydi -> 13-May'dan donmustu (878 oturum+239 memory eksik); bu cron tazeler.
 0 2 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh rag-reindex /opt/linux-ai-server/automation/rag-reindex.sh
