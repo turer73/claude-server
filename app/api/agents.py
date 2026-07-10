@@ -518,14 +518,16 @@ async def trigger_agent(key: str, request: Request) -> dict:
 @router.get("/self-improvement/pending", dependencies=[Depends(require_auth)])
 async def list_pending_suggestions(request: Request) -> dict:
     """Self-improvement onay bekleyen önerileri listele."""
-    from app.db.data_layer import MEMORY_DB, get_conn, server_db_path
+    from app.db.data_layer import get_conn, server_db_path
 
     try:
         con = get_conn(server_db_path(), readonly=True)
         if not con:
             return {"suggestions": []}
         rows = con.execute(
-            "SELECT id, title, description, priority, affected_files, created_at FROM self_improvement_pending WHERE status='pending' ORDER BY created_at DESC LIMIT 20"
+            "SELECT id, title, description, priority, affected_files, created_at "
+            "FROM self_improvement_pending WHERE status='pending' "
+            "ORDER BY created_at DESC LIMIT 20"
         ).fetchall()
         con.close()
         return {"suggestions": [dict(r) for r in rows]}
@@ -564,11 +566,15 @@ async def approve_suggestion(request: Request) -> dict:
         script = str(Path(__file__).resolve().parents[2] / "automation" / "self-improvement-pr.sh")
         import subprocess
 
-        asyncio.create_task(asyncio.to_thread(
-            subprocess.run,
-            ["bash", script, str(sid), row["title"], row["affected_files"] or ""],
-            capture_output=True, text=True, timeout=120,
-        ))
+        asyncio.create_task(
+            asyncio.to_thread(
+                subprocess.run,
+                ["bash", script, str(sid), row["title"], row["affected_files"] or ""],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        )
 
         return {"approved": True, "id": sid, "title": row["title"]}
     except Exception as e:

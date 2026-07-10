@@ -4,6 +4,7 @@ from typing import Any
 RAG API + metric logging (Qdrant + Ollama bge-m3 + qwen2.5)
 """
 
+import logging
 import os
 import re
 import sqlite3
@@ -15,7 +16,6 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from app.api.memory import verify_key
 from app.db.data_layer import get_conn
 
-import logging
 logger = logging.getLogger(__name__)
 
 QDRANT_URL = "http://localhost:6333"
@@ -216,7 +216,7 @@ def _hybrid_search(query, vec, top_k=5, project=None, source=None):
 try:
     _ensure_text_index()
 except Exception:
-        logger.exception("rag_metrics log failed")
+    logger.exception("rag_metrics log failed")
 
 
 @router.get("/health")

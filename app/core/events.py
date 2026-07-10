@@ -61,7 +61,11 @@ def _bus_publish(type: str, source: str, title: str, severity: str, payload: dic
         from app.core.agent_bus import Event, get_bus
 
         bus = get_bus()
-        ev = Event(type=f"spine:{type}", source="bridge:spine", payload={"source": source, "severity": severity, "title": title, **(payload or {})})
+        ev = Event(
+            type=f"spine:{type}",
+            source="bridge:spine",
+            payload={"source": source, "severity": severity, "title": title, **(payload or {})},
+        )
         loop = asyncio.get_event_loop()
         if loop.is_running():
             asyncio.run_coroutine_threadsafe(bus.publish(ev), loop)
