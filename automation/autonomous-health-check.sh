@@ -119,9 +119,17 @@ try:
     d = json.load(open(p))
 except Exception:
     print("unreadable"); raise SystemExit
-if d.get("hasCompletedOnboarding") is True:
+changed = False
+if d.get("hasCompletedOnboarding") is not True:
+    d["hasCompletedOnboarding"] = True; changed = True
+# CLI 2.1.x workspace-trust (disc#1289, 2026-07-09): trust yoksa headless spawn'da
+# permissions.allow YOK SAYILIR -> izin-gerektiren ilk tool-call fail. Uyari mesajinin
+# birebir istedigi anahtar: projects["/opt/linux-ai-server"].hasTrustDialogAccepted.
+proj = d.setdefault("projects", {}).setdefault("/opt/linux-ai-server", {})
+if proj.get("hasTrustDialogAccepted") is not True:
+    proj["hasTrustDialogAccepted"] = True; changed = True
+if not changed:
     print("ready"); raise SystemExit
-d["hasCompletedOnboarding"] = True
 tmp = p + ".onboard.tmp"
 with open(tmp, "w") as f:
     json.dump(d, f)
@@ -214,7 +222,9 @@ req = urllib.request.Request('http://127.0.0.1:8420/api/v1/memory/memories',
 try: urllib.request.urlopen(req, timeout=5).read()
 except Exception as e: print(f'write err: {e}')
 PY
+    echo "OUTCOME: fail | ${#FAILS[@]} kontrol FAIL: ${FAILS[*]}"
     exit 1
 else
+    echo "OUTCOME: pass | ${#PASSES[@]} kontrol OK"
     exit 0
 fi

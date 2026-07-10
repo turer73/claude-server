@@ -28,5 +28,6 @@ for d in data/hook-logs logs/e2e logs/self-pentest logs/nuclei; do
     find "$dir" -mindepth 1 -type d -empty -delete 2>/dev/null || true
 done
 
-# OUTCOME marker — klipper-cron-wrap.sh log + alert deseni
-echo "OUTCOME: artifact-cleanup OK — ${deleted_total} dosya silindi (retain=${RETAIN_DAYS}d)"
+# OUTCOME marker — klipper-cron-wrap.sh regex'i `^OUTCOME:\s*(pass|partial|fail)` bekler;
+# eski "artifact-cleanup OK" formati match etmiyordu -> outcome-undefined (PR#299 Codex#2).
+echo "OUTCOME: pass | artifact-cleanup ${deleted_total} dosya silindi (retain=${RETAIN_DAYS}d)"

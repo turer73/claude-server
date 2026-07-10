@@ -198,6 +198,27 @@ dlq_record_failure() {
     preview_sql=$(printf '%s' "$PREVIEW" | sed "s/'/''/g")
     err_sql=$(printf '%s' "$err_slug" | sed "s/'/''/g")
 
+    # disc#1289 (2026-07-09 olayi): 429 abonelik-limiti deneme SAYILMAZ. Limit gunler
+    # sonra resetlenir; 15dk'lik retry 3 hakki dakikalar icinde yakip her spawn'i
+    # kacinilmaz poison yapar (5/5 poison'un 4'u boyleydi). attempt_num artmaz,
+    # last_retry_at GELECEK-tarihli yazilir -> retry SELECT'in now-15min esigi o zamana
+    # kadar satiri gormez = limit-penceresi boyunca sessiz defer.
+    if grep -qE '"api_error_status":429|hit your (weekly|session|usage) limit' "$sl" 2>/dev/null; then
+        sqlite3 -cmd ".timeout 5000" "$DB" <<SQL 2>>"$LOG_FILE" || { log "DLQ limit-defer insert FAILED note=#$nid"; return 1; }
+INSERT INTO spawn_failures
+    (note_id, from_device, title, preview, attempt_num, exit_code, error_log, spawn_log_path, status, first_failed_at, last_retry_at)
+VALUES
+    ($nid, '$from_sql', '$title_sql', '$preview_sql', 0, $rc, '$err_sql', '$sl', 'pending_retry', datetime('now'), datetime('now', '+240 minutes'))
+ON CONFLICT(note_id) DO UPDATE SET
+    exit_code = $rc,
+    error_log = '$err_sql',
+    spawn_log_path = '$sl',
+    last_retry_at = datetime('now', '+240 minutes');
+SQL
+        log "DLQ RATE-LIMIT defer: note=#$nid rc=$rc (attempt sayilmadi, +4h)"
+        return 0
+    fi
+
     sqlite3 -cmd ".timeout 5000" "$DB" <<SQL 2>>"$LOG_FILE" || { log "DLQ insert FAILED note=#$nid"; return 1; }
 INSERT INTO spawn_failures
     (note_id, from_device, title, preview, attempt_num, exit_code, error_log, spawn_log_path, status, first_failed_at)

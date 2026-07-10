@@ -49,7 +49,7 @@
 - **Gozlem:** dozzle (9999), uptime-kuma (3001), grafana (3030), prometheus (9090), node-exporter (9100), cadvisor (9080)
 - **Otomasyon/RAG:** n8n (5678), qdrant (6333/6334)
 - **Arac:** stirling-pdf (8090)
-- Ollama host'ta (11434) — modeller: qwen2.5:3b (default LLM), qwen2.5:7b, qwen2.5-coder:7b, aya:8b (TR-hi), bge-m3 + nomic-embed-text (embed)
+- Ollama host'ta (11434) — modeller: qwen2.5:7b (RAG default LLM), qwen2.5:3b (consciousness deep-thought), qwen2.5-coder:7b, aya:8b (TR-hi), bge-m3 + nomic-embed-text (embed)
 
 VPS Dokploy uzerinde ayrica baska servisler var (asagi bkz).
 

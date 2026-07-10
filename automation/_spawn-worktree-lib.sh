@@ -244,12 +244,52 @@ Tests: <pass/fail>
 Result: <bir-iki cumle>"
 }
 
+# ── Workspace-trust ön-kaydı (PR#299 Codex#1 / disc#1289) ────────────────────
+# CLI 2.1.x, cwd'nin EXACT proje-yoluna trust bakar — health-check'in /opt kaydı
+# worktree-cwd'li spawn'ı (DEFAULT yol) KAPSAMAZ: permissions.allow yok sayılır,
+# izin-gerektiren ilk tool-call fail olur. Claude-çağrısından hemen önce spawn'ın
+# EFEKTİF cwd'sini spawn-user'ın ~/.claude.json'ına kaydet (idempotent+atomic).
+# Ayrıca SPAWN_WT_BASE altındaki silinmiş-worktree girdilerini buda (şişme önlemi).
+ensure_workspace_trust() {
+    local ws="$1"
+    [ -n "$ws" ] || return 0
+    WS_PATH="$ws" WT_BASE="$SPAWN_WT_BASE" python3 - <<'PY' 2>>"$LOG_FILE" || \
+        log "WARN: workspace-trust kaydi yazilamadi ($ws) — spawn trust'siz kosacak"
+import json, os
+p = os.path.expanduser("~/.claude.json")
+try:
+    d = json.load(open(p))
+except Exception:
+    d = {}
+changed = False
+if d.get("hasCompletedOnboarding") is not True:
+    d["hasCompletedOnboarding"] = True; changed = True
+projects = d.setdefault("projects", {})
+ws = os.environ["WS_PATH"]
+proj = projects.setdefault(ws, {})
+if proj.get("hasTrustDialogAccepted") is not True:
+    proj["hasTrustDialogAccepted"] = True; changed = True
+base = os.environ.get("WT_BASE") or ""
+if base:
+    for k in [k for k in list(projects)
+              if k.startswith(base.rstrip("/") + "/") and k != ws and not os.path.isdir(k)]:
+        projects.pop(k, None); changed = True
+if changed:
+    tmp = p + ".trust.tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f)
+    os.replace(tmp, p)  # atomik, partial-write korumasi
+PY
+}
+
 spawn_isolated_exec() {
     # Spawn-exec (worktree-cd subshell) + rc-BAĞIMSIZ commit-koruma/temizlik.
     # $1=note_id $2=prompt $3=spawn_log $4=memory_api_key $5=base_settings
     # Sonuç: SPAWN_RC (errexit-güvenli — dönüş-değeri değil global; caller set -e altında).
     local note_id="$1" prompt="$2" spawn_log="$3" mem_key="$4" base_settings="$5"
     SPAWN_RC=0
+    # Trust, cd'nin hedefleyeceği EFEKTİF cwd için (worktree ya da shared-fallback PWD).
+    ensure_workspace_trust "${WT_PATH:-$PWD}"
     # Caller'ın errexit-durumunu KORU (main=set -e, retry=bilinçli -e'siz — eski kopya
     # retry'da 'set -e' ile modu yanlışlıkla açıyordu; save/restore bunu da düzeltir).
     local had_errexit=0
