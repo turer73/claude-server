@@ -171,8 +171,13 @@ for n in sorted_notes:
         continue
     # disc#1289: CLAIM/RELEASE protokol-notu = is-talebi DEGIL, paralel-calisma isareti.
     # Spawn kota yakmasin (07-03 CLAIM-notu 3-deneme yakip poison olmustu).
-    # skipped_self ile ayni semantik: state ilerler, not gorunur kalir.
-    if (n['title'] or '').upper().startswith(('CLAIM:', 'RELEASE:')):
+    # DAR eslesme (PR#299 Codex#3): genis startswith 'Release: deploy hotfix' gibi
+    # GERCEK-actionable notu sonsuza-kadar-gorunmez yapardi. Kosullar: (a) bilinen
+    # ajan-cihazlardan, (b) BUYUK-harf prefix + 'CLAIM: <repo> <dash> <is>' tam-formati
+    # (feedback_claim_protocol_parallel_work). Format tutmayan her sey normal spawn yolunda.
+    _t = n['title'] or ''
+    if (n['from_device'] in ('surer', 'klipper', 'opencode')
+            and re.match(r'^(CLAIM|RELEASE):\s+\S+\s*[—–-]\s+\S', _t)):
         skipped_protocol.append(n['id'])
         continue
     src = n['from_device']

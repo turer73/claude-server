@@ -16,6 +16,15 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 CRONTAB = REPO / "automation" / "crontab"
 
+# Wrap'in runtime regex'i: ^OUTCOME:\s*(pass|partial|fail)  (scripts/klipper-cron-wrap.sh).
+# Statik kaynak-taramasi runtime-cikti goremez; bu yuzden kabul edilen KAYNAK formlari:
+#   - literal keyword:  echo "OUTCOME: pass | ..."   /  print(f"OUTCOME: pass | ...")
+#   - degisken sonuc:   echo "OUTCOME: $r | ..."     (pull-vps-backup, demo-reset-test)
+#   - f-string sonuc:   print(f"OUTCOME: {r} | ...")
+# 'OUTCOME: artifact-cleanup OK' gibi keyword'suz literaller ESLESMEZ (PR#299 Codex#2:
+# duz substring-match bunlari yanlis-gecirip wrapper'da outcome-undefined birakiyordu).
+OUTCOME_SRC_RE = re.compile(r'OUTCOME: *(pass|partial|fail|\$|\{)')
+
 # Ratchet-borcu: bu scriptler henuz OUTCOME basmiyor (2026-07-10 denetimi, disc#1288).
 # Yeni OUTCOME eklenen script buradan CIKARILMALI — test aksi halde kirilir.
 KNOWN_MISSING = {
@@ -78,7 +87,7 @@ def test_outcome_marker_ratchet():
         f = _repo_path(abs_path)
         if not f.is_file():
             continue  # varlik ayri testte
-        has_outcome = "OUTCOME:" in f.read_text(encoding="utf-8", errors="replace")
+        has_outcome = bool(OUTCOME_SRC_RE.search(f.read_text(encoding="utf-8", errors="replace")))
         if not has_outcome and f.name not in KNOWN_MISSING:
             new_missing.append(f.name)
         if has_outcome and f.name in KNOWN_MISSING:
