@@ -6,6 +6,7 @@ handler gövdeleri taşınırken birebir korundu (davranış değişmez, Faz 3).
 
 import hashlib
 import secrets
+from typing import Any
 
 from fastapi import Depends
 
@@ -13,7 +14,7 @@ from app.api.memory import DeviceRegister, _ensure_device_keys, get_db, router, 
 
 
 @router.get("/devices")
-async def list_devices():
+async def list_devices() -> list[dict[str, Any]]:
     db = get_db()
     try:
         return [dict(r) for r in db.execute("SELECT * FROM devices ORDER BY last_seen DESC").fetchall()]
@@ -22,7 +23,7 @@ async def list_devices():
 
 
 @router.post("/devices")
-async def register_device(data: DeviceRegister):
+async def register_device(data: DeviceRegister) -> dict[str, str]:
     db = get_db()
     try:
         db.execute(
@@ -44,7 +45,7 @@ async def register_device(data: DeviceRegister):
 
 
 @router.post("/devices/{name}/key", dependencies=[Depends(verify_master_key)])
-async def mint_device_key(name: str):
+async def mint_device_key(name: str) -> dict[str, str]:
     """P0 kimlik: per-device API-key uret/rotate — MASTER-key ZORUNLU (otonom/device-key
     REDDEDILIR; onboarding-leak dersi: yanit yalniz YENI device'in key'ini icerir, master
     asla gomulmez). Ayni cihaza tekrar cagri = rotate (eski key aninda gecersiz).
@@ -67,7 +68,7 @@ async def mint_device_key(name: str):
 
 
 @router.delete("/devices/{name}/key", dependencies=[Depends(verify_master_key)])
-async def revoke_device_key(name: str):
+async def revoke_device_key(name: str) -> dict[str, Any]:
     """Device-key iptal (active=0) — MASTER-key zorunlu. Cihaz master'a dusmez, 401 alir."""
     db = get_db()
     try:
@@ -80,7 +81,7 @@ async def revoke_device_key(name: str):
 
 
 @router.post("/devices/{name}/ping")
-async def ping_device(name: str):
+async def ping_device(name: str) -> dict[str, str]:
     db = get_db()
     try:
         db.execute("UPDATE devices SET last_seen=datetime('now') WHERE name=?", (name,))
