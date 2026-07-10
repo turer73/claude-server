@@ -129,12 +129,15 @@ async def create_note(data: NoteCreate, forced_origin: str = Depends(dispatch_or
         _ensure_verified(db)  # P0 kimlik migration (idempotent)
         db.execute("BEGIN IMMEDIATE")
         # 1. Tam dup (content identical) — 5dk pencere
+        # Codex#302-2tur #5: verified-aware — unverified (spoof-olasi) bir satir, GERCEK
+        # cihazin verified=1 yazimini dedup'la GOMEMESIN; yalniz esit/ustu-guven satir bloklar.
         recent_dup = db.execute(
             "SELECT id FROM notes WHERE from_device=? "
             "AND COALESCE(to_device,'')=COALESCE(?,'') "
             "AND title=? AND content=? "
+            "AND COALESCE(verified,0) >= ? "
             "AND created_at > datetime('now','-5 minutes')",
-            (from_device, data.to_device, data.title, content_clean),
+            (from_device, data.to_device, data.title, content_clean, verified),
         ).fetchone()
         if recent_dup:
             db.rollback()
@@ -152,8 +155,9 @@ async def create_note(data: NoteCreate, forced_origin: str = Depends(dispatch_or
             "SELECT id FROM notes WHERE from_device=? "
             "AND COALESCE(to_device,'')=COALESCE(?,'') "
             "AND title=? "
+            "AND COALESCE(verified,0) >= ? "
             "AND created_at > datetime('now','-30 seconds')",
-            (from_device, data.to_device, data.title),
+            (from_device, data.to_device, data.title, verified),
         ).fetchone()
         if title_dup:
             db.rollback()

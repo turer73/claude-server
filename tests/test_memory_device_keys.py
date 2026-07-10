@@ -112,3 +112,78 @@ async def test_revoked_device_key_fails_closed_not_master_legacy(client, memory_
         headers={"X-Memory-Key": key},
     )
     assert resp.status_code == 401  # master-legacy'ye dusmedi
+
+
+async def test_device_key_scoped_out_of_memory_router(client, memory_db):  # noqa: F811
+    # Codex#302-2tur #3 (Turgut karari, route-bazli scope): device-key SADECE /memory/*
+    # acar. verify_key'i import eden dis endpointler (dispatch/research/rag/classifier/
+    # prometheus/ws_status) device-key'i REDDEDER — notes-koordinasyon key'i gercek-aksiyon
+    # tetikleyememeli.
+    dev_key = (await _mint(client, "surer")).json()["key"]
+    # memory router: GECER (scoped dependency)
+    assert (await client.get("/api/v1/memory/devices", headers={"X-Memory-Key": dev_key})).status_code == 200
+    # verify_key'li dis endpoint: 401
+    assert (await client.get("/api/v1/ws/status", headers={"X-Memory-Key": dev_key})).status_code == 401
+    # ayni endpoint master ile GECER (davranis-korunumu)
+    assert (await client.get("/api/v1/ws/status", headers={"X-Memory-Key": TEST_MEMORY_KEY})).status_code == 200
+
+
+async def test_admin_equals_autonomous_collision_dormant(client, memory_db, monkeypatch):  # noqa: F811
+    # Codex#302-2tur #4: ADMIN==AUTONOMOUS config-hatasi -> admin DORMANT. Otonom-surec
+    # (insan degil) mint/rotate/revoke YAPAMAZ; dormant'ta master gecis-deseniyle calisir
+    # (master-collision davranisiyla tutarli — mint tamamen kilitlenmez).
+    from app.api import memory as mem_module
+
+    monkeypatch.setattr(mem_module, "MEMORY_API_KEY_AUTONOMOUS", "auto-secret-x")
+    monkeypatch.setattr(mem_module, "MEMORY_API_KEY_ADMIN", "auto-secret-x")
+    # otonom-key (admin'le ayni string) key-idaresi YAPAMAZ
+    assert (await _mint(client, "surer", key="auto-secret-x")).status_code == 401
+    # dormant -> master mint edebilir
+    assert (await _mint(client, "surer", key=TEST_MEMORY_KEY)).status_code == 200
+
+
+async def test_dedup_unverified_does_not_bury_verified_write(client, memory_db):  # noqa: F811
+    # Codex#302-2tur #5: master-key (unverified) ayni icerigi ONCE yazarsa, gercek cihazin
+    # device-key'li (verified) yazimi dedup'a takilip GOMULMEMELI; tersi yon bloklanir.
+    dev_key = (await _mint(client, "surer")).json()["key"]
+    body = {"from_device": "surer", "title": "ayni baslik", "content": "ayni icerik"}
+    r1 = await client.post("/api/v1/memory/notes", json=body, headers={"X-Memory-Key": TEST_MEMORY_KEY})
+    assert r1.json()["status"] == "created"
+    # verified yazim: unverified satir onu BLOKLAYAMAZ
+    r2 = await client.post("/api/v1/memory/notes", json=body, headers={"X-Memory-Key": dev_key})
+    assert r2.json()["status"] == "created"
+    assert r2.json()["id"] != r1.json()["id"]
+    # unverified duplicate: verified satir varken BLOKLANIR (verified>=0 esles)
+    r3 = await client.post("/api/v1/memory/notes", json=body, headers={"X-Memory-Key": TEST_MEMORY_KEY})
+    assert r3.json()["status"] in ("duplicate_skipped_5min", "duplicate_title_30s")
+
+
+async def test_sessions_tasks_discoveries_forced_origin(client, memory_db):  # noqa: F811
+    # Codex#302-2tur #1: forced-origin genellemesi — sessions/tasks/discoveries yazimlari da
+    # kimligi KEY'den turetir (body-iddiasi ezilir; create_note deseni).
+    import sqlite3 as _sq
+
+    dev_key = (await _mint(client, "surer")).json()["key"]
+    r = await client.post(
+        "/api/v1/memory/sessions",
+        json={"device_name": "klipper", "summary": "spoof denemesi"},
+        headers={"X-Memory-Key": dev_key},
+    )
+    assert r.status_code == 200
+    r = await client.post(
+        "/api/v1/memory/tasks",
+        json={"device_name": "klipper", "project": "test-proj", "task": "spoof task"},
+        headers={"X-Memory-Key": dev_key},
+    )
+    assert r.status_code == 200
+    r = await client.post(
+        "/api/v1/memory/discoveries",
+        json={"device_name": "klipper", "project": "test-proj", "type": "bug", "title": "spoof disc", "details": "d"},
+        headers={"X-Memory-Key": dev_key},
+    )
+    assert r.status_code == 200
+    con = _sq.connect(memory_db)
+    assert con.execute("SELECT device_name FROM sessions ORDER BY id DESC LIMIT 1").fetchone()[0] == "surer"
+    assert con.execute("SELECT device_name FROM tasks_log ORDER BY id DESC LIMIT 1").fetchone()[0] == "surer"
+    assert con.execute("SELECT device_name FROM discoveries ORDER BY id DESC LIMIT 1").fetchone()[0] == "surer"
+    con.close()

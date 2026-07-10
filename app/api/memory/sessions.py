@@ -3,9 +3,9 @@
 import asyncio
 import json
 
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException
 
-from app.api.memory import SessionCreate, _fire_event, get_db, router
+from app.api.memory import SessionCreate, _fire_event, dispatch_origin, get_db, router
 
 
 @router.get("/sessions")
@@ -43,7 +43,10 @@ async def get_session(session_id: int):
 
 
 @router.post("/sessions")
-async def create_session(data: SessionCreate):
+async def create_session(data: SessionCreate, forced_origin: str = Depends(dispatch_origin)):
+    # Codex#302-2tur #1: forced-origin genellemesi — device-key/otonom-key ile auth olduysa
+    # device_name KEY'den turetilir (unforgeable, create_note deseni); master-key -> body korunur.
+    data.device_name = forced_origin or data.device_name
     db = get_db()
     try:
         if not data.session_num:

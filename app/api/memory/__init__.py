@@ -35,10 +35,20 @@ VALID_STATUSES = ("active", "completed", "obsolete", "superseded")
 TRASH_TITLES = re.compile(r"^(test|test bug|test fix|test workaround|deneme|asdf|xxx)$", re.IGNORECASE)
 
 
+def _admin_key_active() -> bool:
+    """Admin-key devrede mi: set + master'dan VE otonom'dan distinct. admin==master VEYA
+    admin==otonom config-hatasi = dormant (collision-guard) — yoksa otonom-spawn surecleri
+    (insan degil) verify_admin_key'i gecip mint/rotate/revoke yapabilirdi (Codex#302-2tur #4)."""
+    return (
+        bool(MEMORY_API_KEY_ADMIN)
+        and MEMORY_API_KEY_ADMIN != MEMORY_API_KEY
+        and MEMORY_API_KEY_ADMIN != MEMORY_API_KEY_AUTONOMOUS
+    )
+
+
 def _is_admin_key(x_memory_key: str | None) -> bool:
-    """DISTINCT admin-key ile mi auth oldu (mint/revoke idaresi). Bos-key asla admin; admin==master
-    config-hatasi = dormant (collision-guard, autonomous-key deseni)."""
-    return bool(MEMORY_API_KEY_ADMIN) and MEMORY_API_KEY_ADMIN != MEMORY_API_KEY and x_memory_key == MEMORY_API_KEY_ADMIN
+    """DISTINCT admin-key ile mi auth oldu (mint/revoke idaresi). Bos-key asla admin."""
+    return _admin_key_active() and x_memory_key == MEMORY_API_KEY_ADMIN
 
 
 def _is_autonomous_key(x_memory_key: str | None) -> bool:
@@ -112,9 +122,23 @@ def verify_key(x_memory_key: str = Header(None)):
     # FAIL-CLOSED (güvenlik fix): MEMORY_API_KEY yüklenmemişse erişimi AÇMA.
     # Eski 'if KEY and ...' boş-key'de 401 atmıyordu -> env-yükleme hatasında
     # memory/RAG/research/classifier tamamen korumasız kalıyordu.
+    # SCOPE (Codex#302-2tur #3, Turgut karari): device-key BURADA KABUL EDILMEZ —
+    # bu dependency'yi dispatch/research/rag/classifier/prometheus/ws_status da import
+    # ediyor; notes-koordinasyonu icin uretilmis bir device-key dispatch/task gibi
+    # gercek-aksiyon endpoint'lerini ACMAMALI. Device-key'ler yalniz memory router'inin
+    # verify_key_memory_scoped'inde gecerli.
     if not MEMORY_API_KEY:
         raise HTTPException(503, "Memory API key not configured (fail-closed)")
-    # Master VEYA distinct-admin VEYA distinct-otonom VEYA aktif per-device-key kabul.
+    if x_memory_key == MEMORY_API_KEY or _is_admin_key(x_memory_key) or _is_autonomous_key(x_memory_key):
+        return
+    raise HTTPException(401, "Invalid memory API key")
+
+
+def verify_key_memory_scoped(x_memory_key: str = Header(None)):
+    """Memory router'a OZEL auth: verify_key + aktif per-device-key kabulu.
+    Device-key'in tek yetki-alani /api/v1/memory/* — baska router bunu KULLANMAMALI."""
+    if not MEMORY_API_KEY:
+        raise HTTPException(503, "Memory API key not configured (fail-closed)")
     if (
         x_memory_key == MEMORY_API_KEY
         or _is_admin_key(x_memory_key)
@@ -140,11 +164,12 @@ def verify_admin_key(x_memory_key: str = Header(None)) -> None:
     master (gecis). Ajan device-key'leri ve otonom-key HER DURUMDA reddedilir."""
     if not MEMORY_API_KEY:
         raise HTTPException(503, "Memory API key not configured (fail-closed)")
-    admin_active = bool(MEMORY_API_KEY_ADMIN) and MEMORY_API_KEY_ADMIN != MEMORY_API_KEY
     if _is_admin_key(x_memory_key):
         return
-    # admin-key set+distinct DEGILSE master gecise izin (dormant); set ISE master REDDEDILIR
-    if not admin_active and x_memory_key == MEMORY_API_KEY:
+    # admin-key aktif DEGILSE (unset veya collision-dormant) master gecise izin; aktif ISE
+    # master REDDEDILIR. _admin_key_active tek-kaynak: otonom-collision'da da dormant
+    # (yoksa mint tamamen kilitlenirdi — master-collision davranisiyla tutarli).
+    if not _admin_key_active() and x_memory_key == MEMORY_API_KEY:
         return
     raise HTTPException(401, "Key-idaresi icin ADMIN key gerekli (master su an herkesin credential'i)")
 
@@ -166,7 +191,7 @@ def dispatch_origin(x_memory_key: str = Header(None)) -> str:
     return device
 
 
-router = APIRouter(prefix="/api/v1/memory", tags=["memory"], dependencies=[Depends(verify_key)])
+router = APIRouter(prefix="/api/v1/memory", tags=["memory"], dependencies=[Depends(verify_key_memory_scoped)])
 # Onboarding endpoints embed MEMORY_API_KEY in their response prompts (so a
 # bootstrapped Claude instance has the auth header it needs). They MUST require
 # the key on the request side too — otherwise anyone reachable on the LAN /
@@ -197,9 +222,10 @@ def _ensure_read_by(db: Any) -> None:
         if "read_by" not in cols:
             db.execute("ALTER TABLE notes ADD COLUMN read_by TEXT DEFAULT ''")
             db.commit()
+        # ayni flag-yalniz-basarida deseni (Codex#302-2tur #2 sinifi, proaktif)
+        _read_by_ready = True
     except Exception:
         pass
-    _read_by_ready = True
 
 
 def _unread_pred(device):
@@ -225,9 +251,11 @@ def _ensure_verified(db: Any) -> None:
         if "verified" not in cols:
             db.execute("ALTER TABLE notes ADD COLUMN verified INTEGER DEFAULT 0")
             db.commit()
+        # Codex#302-2tur #2: flag YALNIZ basarida (_ensure_device_keys deseni) — transient
+        # ALTER-hatasinda 'hazir' denirse INSERT(...verified) restart'a dek her yazimda patlar
+        _verified_ready = True
     except Exception:
         pass
-    _verified_ready = True
 
 
 _status_ready = False
@@ -246,9 +274,10 @@ def _ensure_status(db: Any) -> None:
         if "status" not in cols:
             db.execute("ALTER TABLE notes ADD COLUMN status TEXT DEFAULT 'active'")
             db.commit()
+        # ayni flag-yalniz-basarida deseni (Codex#302-2tur #2 sinifi, proaktif)
+        _status_ready = True
     except Exception:
         pass
-    _status_ready = True
 
 
 # ============ Event / Webhook / Telegram Helpers ============
