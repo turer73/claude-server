@@ -119,14 +119,24 @@ def _require_owner(row: Any, device: str, x_memory_key: str | None) -> None:
 
 @router.put("/claims/{claim_id}/release")
 async def release_claim(claim_id: int, forced_origin: str = Depends(dispatch_origin), x_memory_key: str = Header(None)) -> dict[str, Any]:
+    # Codex#303-P2 sinifi (renew ile ayni desen, proaktif): expiry+read+owner+update tek
+    # BEGIN IMMEDIATE — read ile UPDATE arasinda TTL-dolumu/yeniden-acquire race'i kapali.
+    # 404/403 raise'lerinde acik transaction close()'ta rollback olur (lazy-expiry yeniden kosar).
     db = get_db()
     try:
         _ensure_claims(db)
+        db.execute("BEGIN IMMEDIATE")
         _expire_stale(db)
-        db.commit()
-        row = _load_active_claim(db, claim_id)
+        try:
+            row = _load_active_claim(db, claim_id)
+        except HTTPException:
+            db.commit()  # lazy-expiry sweep'i 404'te de kalici (eski gozlemlenir davranis)
+            raise
         _require_owner(row, forced_origin, x_memory_key)
-        db.execute("UPDATE active_claims SET active=0, released_at=datetime('now') WHERE id=?", (claim_id,))
+        cur = db.execute("UPDATE active_claims SET active=0, released_at=datetime('now') WHERE id=? AND active=1", (claim_id,))
+        if cur.rowcount == 0:
+            db.rollback()
+            raise HTTPException(409, "Claim release edilemedi (es-zamanli expire/release) — durumu yeniden sorgula")
         db.commit()
         return {"id": claim_id, "status": "released"}
     finally:
@@ -139,14 +149,28 @@ async def renew_claim(
 ) -> dict[str, Any]:
     if not (0.1 <= ttl_hours <= 72):
         raise HTTPException(422, "ttl_hours 0.1-72 araliginda olmali")
+    # Codex#303-P2: renew atomik degildi — read ile UPDATE arasinda TTL dolup baskasi ayni
+    # task_key'i yeniden acquire ederse, eski sahip inactive satiri guncelleyip sahte 'renewed'
+    # aliyordu (kilit baskasindayken yanlis-guven). Fix: acquire'daki gibi tek BEGIN IMMEDIATE
+    # + final UPDATE'e AND active=1 + rowcount=0 -> 409.
     db = get_db()
     try:
         _ensure_claims(db)
+        db.execute("BEGIN IMMEDIATE")
         _expire_stale(db)
-        db.commit()
-        row = _load_active_claim(db, claim_id)
+        try:
+            row = _load_active_claim(db, claim_id)
+        except HTTPException:
+            db.commit()  # lazy-expiry sweep'i 404'te de kalici (eski gozlemlenir davranis)
+            raise
         _require_owner(row, forced_origin, x_memory_key)
-        db.execute("UPDATE active_claims SET expires_at=datetime('now', ?) WHERE id=?", (f"+{ttl_hours} hours", claim_id))
+        cur = db.execute(
+            "UPDATE active_claims SET expires_at=datetime('now', ?) WHERE id=? AND active=1",
+            (f"+{ttl_hours} hours", claim_id),
+        )
+        if cur.rowcount == 0:
+            db.rollback()
+            raise HTTPException(409, "Claim yenilenemedi (es-zamanli expire/release) — yeniden acquire et")
         db.commit()
         return {"id": claim_id, "status": "renewed", "ttl_hours": ttl_hours}
     finally:

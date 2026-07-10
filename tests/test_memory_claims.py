@@ -114,3 +114,32 @@ async def test_list_filters_repo_branch(client, _claims_db):
     r = await client.get("/api/v1/memory/claims?repo=claude-server", headers=_hdr())
     claims = r.json()["claims"]
     assert len(claims) == 1 and claims[0]["branch"] == "feat/x"  # CI-gate botunun sorgusu
+
+
+async def test_renew_expired_claim_404_no_false_renewed(client, _claims_db):
+    # Codex#303-P2: renew artik expiry+read+owner+UPDATE'i tek BEGIN IMMEDIATE'de yapar.
+    # TTL'i dolmus claim renew'da 'renewed' DONMEMELI — ayni transaction'daki lazy-expiry
+    # onu dusurur -> 404 (eski kod expiry'yi ayri commit'liyordu; read-update arasi race).
+    cid = (await _acquire(client, "claude-server:renew-race", device="surer")).json()["id"]
+    con = sqlite3.connect(_claims_db)
+    con.execute("UPDATE active_claims SET expires_at=datetime('now','-1 minutes') WHERE id=?", (cid,))
+    con.commit()
+    con.close()
+    r = await client.put(f"/api/v1/memory/claims/{cid}/renew?ttl_hours=4", headers=_hdr())
+    assert r.status_code == 404
+    # DB'de satir inactive kaldi (sahte-renew ile canlanmadi)
+    con = sqlite3.connect(_claims_db)
+    active = con.execute("SELECT active FROM active_claims WHERE id=?", (cid,)).fetchone()[0]
+    con.close()
+    assert active == 0
+
+
+async def test_release_expired_claim_404(client, _claims_db):
+    # release da ayni atomik desene alindi (renew ile ayni sinif, proaktif)
+    cid = (await _acquire(client, "claude-server:release-race", device="surer")).json()["id"]
+    con = sqlite3.connect(_claims_db)
+    con.execute("UPDATE active_claims SET expires_at=datetime('now','-1 minutes') WHERE id=?", (cid,))
+    con.commit()
+    con.close()
+    r = await client.put(f"/api/v1/memory/claims/{cid}/release", headers=_hdr())
+    assert r.status_code == 404
