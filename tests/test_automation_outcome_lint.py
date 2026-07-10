@@ -23,7 +23,7 @@ CRONTAB = REPO / "automation" / "crontab"
 #   - f-string sonuc:   print(f"OUTCOME: {r} | ...")
 # 'OUTCOME: artifact-cleanup OK' gibi keyword'suz literaller ESLESMEZ (PR#299 Codex#2:
 # duz substring-match bunlari yanlis-gecirip wrapper'da outcome-undefined birakiyordu).
-OUTCOME_SRC_RE = re.compile(r'OUTCOME: *(pass|partial|fail|\$|\{)')
+OUTCOME_SRC_RE = re.compile(r"OUTCOME: *(pass|partial|fail|\$|\{)")
 
 # Ratchet-borcu: bu scriptler henuz OUTCOME basmiyor (2026-07-10 denetimi, disc#1288).
 # Yeni OUTCOME eklenen script buradan CIKARILMALI — test aksi halde kirilir.
@@ -94,10 +94,6 @@ def test_outcome_marker_ratchet():
             stale_allowlist.append(f.name)
 
     assert not new_missing, (
-        "cron-wrapped script OUTCOME: basmiyor — wrap 'outcome-undefined' kaydeder, "
-        f"gercek sonuc kaybolur: {new_missing}"
+        f"cron-wrapped script OUTCOME: basmiyor — wrap 'outcome-undefined' kaydeder, gercek sonuc kaybolur: {new_missing}"
     )
-    assert not stale_allowlist, (
-        "KNOWN_MISSING bayat — bunlar artik OUTCOME iceriyor, allowlist'ten cikar: "
-        f"{stale_allowlist}"
-    )
+    assert not stale_allowlist, f"KNOWN_MISSING bayat — bunlar artik OUTCOME iceriyor, allowlist'ten cikar: {stale_allowlist}"
