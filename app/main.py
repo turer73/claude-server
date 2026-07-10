@@ -42,6 +42,7 @@ from app.api.llm import router as llm_router
 from app.api.logs import router as logs_router
 from app.api.memory import public_router as memory_public_router
 from app.api.memory import router as memory_router
+from app.api.memory.discussions import ui_router as discussions_ui_router
 from app.api.monitoring import router as monitoring_router
 from app.api.n8n import router as n8n_router
 from app.api.network import router as network_router
@@ -465,6 +466,7 @@ def create_app() -> FastAPI:
 
     # ---- Routes ----
     app.include_router(auth_router)
+    app.include_router(discussions_ui_router)
     app.include_router(kernel_router)
     app.include_router(system_router)
     app.include_router(files_router)
