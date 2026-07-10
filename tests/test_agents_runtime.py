@@ -120,36 +120,37 @@ class _FakeCRA:
         }
 
 
-def test_codereview_card_signal_rate_30d_window():
-    # Sinyal-oranı = GERÇEK (completed) ÷ TRİYAJ (completed+obsolete), SON-30-GÜN penceresinden.
+def test_codereview_card_signal_rate_14d_window():
+    # Sinyal-oranı = GERÇEK (completed) ÷ TRİYAJ (completed+obsolete), SON-14-GÜN penceresinden.
     # Yaşam-boyu kümülatif oran qwen/FP-seli havuzunu (306 kayıt) paydada taşıyıp %16 gösteriyordu
-    # (gerçek pipeline %88'ken); tüm-zaman artık stats'ta ayrı satır.
+    # (gerçek pipeline %88'ken); tüm-zaman artık stats'ta ayrı satır. 30g DEĞİL 14g: klipper verify
+    # (PR#301) — 30g bugünün tarihinde kötü-havuzu hâlâ kapsıyordu, 14g bunu hemen dışlıyor.
     crdb = {
         "counts": {"active": 9, "completed": 15, "obsolete": 85},  # tüm-zaman: %15
-        "counts_30d": {"completed": 8, "obsolete": 2},  # son-30g: %80 — ana metrik BU
+        "counts_14d": {"completed": 8, "obsolete": 2},  # son-14g: %80 — ana metrik BU
         "findings": [
             {"time": "2026-06-20T09:00", "title": "app/api/dev.py:48 injection", "severity": "P1", "status": "active", "kind": "bug"}
         ],
     }
     card = _codereview_card(_FakeCRA(), crdb)
     assert card["key"] == "code-review"
-    assert card["success_rate"] == {"label": "Sinyal (gerçek÷triaj, 30g)", "value": 0.8, "n": 10}
+    assert card["success_rate"] == {"label": "Sinyal (gerçek÷triaj, 14g)", "value": 0.8, "n": 10}
     assert card["stats"]["Sinyal tüm-zaman"] == "15% (100)"
     assert card["current_task"] == "Son inceleme: app/api/dev.py:48"
     assert "claude-haiku-4-5-20251001 (tarama)" in card["models"]
     assert "claude-sonnet-4-6 (kontrol/sentez)" in card["models"]
 
 
-def test_codereview_card_30d_empty_falls_back_lifetime():
-    # 30g'de hiç triyaj yoksa (sessiz ay) tüm-zamana düş — ama etiket dürüst kalsın
-    crdb = {"counts": {"completed": 2, "obsolete": 6}, "counts_30d": {}, "findings": []}
+def test_codereview_card_14d_empty_falls_back_lifetime():
+    # 14g'de hiç triyaj yoksa (sessiz ay) tüm-zamana düş — ama etiket dürüst kalsın
+    crdb = {"counts": {"completed": 2, "obsolete": 6}, "counts_14d": {}, "findings": []}
     card = _codereview_card(_FakeCRA(), crdb)
     assert card["success_rate"] == {"label": "Sinyal (gerçek÷triaj, tüm-zaman)", "value": 0.25, "n": 8}
     assert "Sinyal tüm-zaman" not in card["stats"]  # zaten ana metrik tüm-zaman — çift gösterme
 
 
-def test_codereview_card_missing_counts_30d_backcompat():
-    # counts_30d anahtarı yoksa (eski üretici) counts'a düşer — kart çökmez
+def test_codereview_card_missing_counts_14d_backcompat():
+    # counts_14d anahtarı yoksa (eski üretici) counts'a düşer — kart çökmez
     crdb = {"counts": {"completed": 2, "obsolete": 6}, "findings": []}
     card = _codereview_card(_FakeCRA(), crdb)
     assert card["success_rate"]["value"] == 0.25
@@ -157,13 +158,13 @@ def test_codereview_card_missing_counts_30d_backcompat():
 
 
 def test_codereview_card_empty():
-    card = _codereview_card(_FakeCRA(), {"counts": {}, "counts_30d": {}, "findings": []})
+    card = _codereview_card(_FakeCRA(), {"counts": {}, "counts_14d": {}, "findings": []})
     assert card["success_rate"] is None
     assert card["current_task"] == "Kuyruk/sweep bekliyor"
 
 
-def test_codereview_db_30d_window(tmp_path, monkeypatch):
-    # _codereview_db SQL'i: 30g penceresi yalnız yeni kayıtları saymalı (created_at TEXT 'YYYY-MM-DD HH:MM:SS')
+def test_codereview_db_14d_window(tmp_path, monkeypatch):
+    # _codereview_db SQL'i: 14g penceresi yalnız yeni kayıtları saymalı (created_at TEXT 'YYYY-MM-DD HH:MM:SS')
     import sqlite3
 
     from app.api import agents
@@ -174,12 +175,12 @@ def test_codereview_db_30d_window(tmp_path, monkeypatch):
         "CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, status TEXT, title TEXT, details TEXT, created_at TEXT)"
     )
     rows = [
-        # eski dönem (>30g): 1 completed + 3 obsolete
+        # eski dönem (>14g): 1 completed + 3 obsolete
         ("completed", "-40 days"),
         ("obsolete", "-40 days"),
-        ("obsolete", "-35 days"),
-        ("obsolete", "-31 days"),
-        # yeni dönem (<30g): 4 completed + 1 obsolete
+        ("obsolete", "-20 days"),
+        ("obsolete", "-15 days"),
+        # yeni dönem (<14g): 4 completed + 1 obsolete
         ("completed", "-5 days"),
         ("completed", "-4 days"),
         ("completed", "-2 days"),
@@ -197,7 +198,7 @@ def test_codereview_db_30d_window(tmp_path, monkeypatch):
     monkeypatch.setattr(agents, "MEMORY_DB", str(db))
     crdb = agents._codereview_db()
     assert crdb["counts"] == {"completed": 5, "obsolete": 4}
-    assert crdb["counts_30d"] == {"completed": 4, "obsolete": 1}
+    assert crdb["counts_14d"] == {"completed": 4, "obsolete": 1}
     card = _codereview_card(_FakeCRA(), crdb)
-    assert card["success_rate"]["value"] == 0.8  # 4/5 — 30g penceresi
+    assert card["success_rate"]["value"] == 0.8  # 4/5 — 14g penceresi
     assert card["stats"]["Sinyal tüm-zaman"] == "56% (9)"  # 5/9 kümülatif, ayrı satırda
