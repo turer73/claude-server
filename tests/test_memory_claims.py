@@ -134,6 +134,19 @@ async def test_renew_expired_claim_404_no_false_renewed(client, _claims_db):
     assert active == 0
 
 
+async def test_admin_key_can_release_claim(client, _claims_db, monkeypatch):
+    # Codex#303-3tur: admin-key sahiplik kacis-kapisina dahil — admin kendi actigi
+    # (dispatch_origin admin'de '' -> body-device) claim'i release/renew EDEBILMELI
+    from app.api import memory as mem_module
+
+    monkeypatch.setattr(mem_module, "MEMORY_API_KEY_ADMIN", "admin-secret-claims")
+    cid = (await _acquire(client, "claude-server:admin-claim", device="turgut", key="admin-secret-claims")).json()["id"]
+    r = await client.put(f"/api/v1/memory/claims/{cid}/renew?ttl_hours=2", headers=_hdr("admin-secret-claims"))
+    assert r.status_code == 200
+    r = await client.put(f"/api/v1/memory/claims/{cid}/release", headers=_hdr("admin-secret-claims"))
+    assert r.status_code == 200
+
+
 async def test_release_expired_claim_404(client, _claims_db):
     # release da ayni atomik desene alindi (renew ile ayni sinif, proaktif)
     cid = (await _acquire(client, "claude-server:release-race", device="surer")).json()["id"]

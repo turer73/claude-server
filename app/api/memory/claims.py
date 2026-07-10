@@ -49,9 +49,11 @@ def _ensure_claims(db: Any) -> None:
         )""")
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_active_claims_key ON active_claims(task_key) WHERE active=1")
         db.commit()
+        # Codex#303-3tur: flag YALNIZ basarida (desen 3. kez — ortak ensure-helper'a cikarma
+        # onerisi rebase-sonrasi konsolidasyon commit'ine notlandi)
+        _claims_ready = True
     except Exception:
         pass
-    _claims_ready = True
 
 
 def _expire_stale(db: Any) -> None:
@@ -106,15 +108,17 @@ def _load_active_claim(db: Any, claim_id: int) -> Any:
 
 
 def _require_owner(row: Any, device: str, x_memory_key: str | None) -> None:
-    """Sahiplik: claim'in device'i VEYA master-key. Baska cihaz 403 — claim baskasinin
-    isini kapatamaz (kimlik-zorlamasi P0 ile anlamli; master = insan-mudahale kacis-kapisi)."""
+    """Sahiplik: claim'in device'i VEYA master/admin-key. Baska cihaz 403 — claim baskasinin
+    isini kapatamaz (kimlik-zorlamasi P0 ile anlamli; master/admin = insan-mudahale kacis-kapisi).
+    Codex#303-3tur: admin-key de kabul — dispatch_origin admin'de '' dondugu icin admin'in
+    actigi claim body-device'a duser, admin kendi claim'ini kapatamiyordu (fazla-kisitlayici)."""
     # Modul-referansiyla oku (from-import snapshot'i test-monkeypatch'i ve runtime
     # key-rotation'i gormez — verify_master_key ile ayni kaynak)
-    if x_memory_key == _mem.MEMORY_API_KEY:
+    if x_memory_key == _mem.MEMORY_API_KEY or _mem._is_admin_key(x_memory_key):
         return
     if device and device == row["device"]:
         return
-    raise HTTPException(403, f"Claim sahibi '{row['device']}' — sen '{device or 'bilinmiyor'}'. Release/renew sahibinde (ya da master).")
+    raise HTTPException(403, f"Claim sahibi '{row['device']}' — sen '{device or 'bilinmiyor'}'. Release/renew sahibinde (ya da master/admin).")
 
 
 @router.put("/claims/{claim_id}/release")
