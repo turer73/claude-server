@@ -336,6 +336,74 @@ def _ensure_status(db: Any) -> None:
         pass
 
 
+_thread_fields_ready = False
+
+
+def _ensure_thread_fields(db: Any) -> None:
+    """notes.thread_id/reply_to/hop_count/msg_type kolonlarini idempotent ekle (Faz-A,
+    docs/autonomous-comms-design.md §2 — otonom-haberlesme genisletme, #100447 12-madde
+    mutabakat). Mevcut satirlar NULL/0/'legacy' kalir (backward-tolerant; eski-istemci
+    yeni-alansiz POST /notes calismaya devam eder, server-default uygular).
+    _ensure_read_by/_ensure_status ile AYNI idempotent-desen."""
+    global _thread_fields_ready
+    if _thread_fields_ready:
+        return
+    try:
+        cols = [r[1] for r in db.execute("PRAGMA table_info(notes)").fetchall()]
+        if "thread_id" not in cols:
+            db.execute("ALTER TABLE notes ADD COLUMN thread_id INTEGER")
+            db.commit()
+        if "reply_to" not in cols:
+            db.execute("ALTER TABLE notes ADD COLUMN reply_to INTEGER")
+            db.commit()
+        if "hop_count" not in cols:
+            db.execute("ALTER TABLE notes ADD COLUMN hop_count INTEGER DEFAULT 0")
+            db.commit()
+        if "msg_type" not in cols:
+            db.execute("ALTER TABLE notes ADD COLUMN msg_type TEXT DEFAULT 'legacy'")
+            db.commit()
+        # ayni flag-yalniz-basarida deseni (Codex#302-2tur #2 sinifi, proaktif)
+        _thread_fields_ready = True
+    except Exception:
+        pass
+
+
+def _ensure_comms_audit_table(db: Any) -> None:
+    """autonomous_comms_audit tablosunu idempotent kur (Faz-A §10 — SUBSTRAT). APPEND-ONLY:
+    hicbir kod-yolu UPDATE/DELETE yapmaz (yalniz bu modul INSERT eder) — spawn/agent
+    edit/silemez. Diger her-sey (kill-switch denetim-izi, shadow-precision, provenans)
+    buradan okunur/buraya yazar."""
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS autonomous_comms_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            thread_id INTEGER,
+            note_id INTEGER,
+            device TEXT NOT NULL,
+            action TEXT NOT NULL,
+            detail TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now'))
+        )"""
+    )
+    db.execute("CREATE INDEX IF NOT EXISTS idx_comms_audit_thread ON autonomous_comms_audit(thread_id)")
+    db.commit()
+
+
+def _ensure_comms_halt_table(db: Any) -> None:
+    """autonomous_comms_halt tablosunu idempotent kur (Faz-A §5 — kill-switch katman-1).
+    Tek-satir (id=1), poller her-tick spawn-ONCESI okur; active=1 ise spawn atlanir."""
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS autonomous_comms_halt (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            active INTEGER NOT NULL DEFAULT 0,
+            reason TEXT DEFAULT '',
+            set_by TEXT DEFAULT '',
+            updated_at TEXT DEFAULT (datetime('now'))
+        )"""
+    )
+    db.execute("INSERT OR IGNORE INTO autonomous_comms_halt (id, active) VALUES (1, 0)")
+    db.commit()
+
+
 # ============ Event / Webhook / Telegram Helpers ============
 
 _WEBHOOK_TIMEOUT = 5

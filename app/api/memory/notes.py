@@ -12,6 +12,7 @@ from app.api.memory import (
     NoteCreate,
     _ensure_read_by,
     _ensure_status,
+    _ensure_thread_fields,
     _ensure_verified,
     _fire_event,
     _origin_str,
@@ -91,6 +92,7 @@ async def list_notes(device: str | None = None, unread_only: bool = False):
     try:
         _ensure_read_by(db)
         _ensure_status(db)
+        _ensure_thread_fields(db)
         query = "SELECT * FROM notes WHERE 1=1"
         params = []
         if device:
@@ -128,6 +130,7 @@ async def create_note(data: NoteCreate, forced_origin: str = Depends(dispatch_or
     try:
         _ensure_status(db)  # policy-gate #1222 migration (idempotent; BEGIN'den ONCE — ALTER+commit)
         _ensure_verified(db)  # P0 kimlik migration (idempotent)
+        _ensure_thread_fields(db)  # Faz-A migration (idempotent; docs/autonomous-comms-design.md)
         db.execute("BEGIN IMMEDIATE")
         # 1. Tam dup (content identical) — 5dk pencere
         # Codex#302-2tur #5: verified-aware — unverified (spoof-olasi) bir satir, GERCEK
