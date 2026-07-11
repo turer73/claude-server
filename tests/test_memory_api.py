@@ -1289,3 +1289,80 @@ async def test_status_migration_backward_compat(memory_db):
     row = conn.execute("SELECT COALESCE(status,'active') FROM notes WHERE title='eski'").fetchone()
     assert row[0] == "active"  # NULL -> active (geri-uyum)
     conn.close()
+
+
+async def test_thread_fields_migration_adds_columns_and_backward_compat(memory_db):
+    """Faz-A (docs/autonomous-comms-design.md §2): test-schema'da thread_id/reply_to/hop_count/
+    msg_type YOK -> gercek ALTER-yolu tetiklenir (status/verified'in aksine, orada zaten
+    schema'da-var no-op test ediliyordu). Eski-satir (yeni-alansiz INSERT) server-default alir."""
+    import sqlite3
+
+    import app.api.memory as mem
+
+    mem._thread_fields_ready = False  # global-flag reset (test-izolasyon)
+    conn = sqlite3.connect(memory_db)
+    conn.execute("INSERT INTO notes (from_device, title, content) VALUES ('k','eski-alansiz','x')")
+    conn.commit()
+    mem._ensure_thread_fields(conn)
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(notes)").fetchall()]
+    for c in ("thread_id", "reply_to", "hop_count", "msg_type"):
+        assert c in cols
+    row = conn.execute("SELECT thread_id, reply_to, hop_count, msg_type FROM notes WHERE title='eski-alansiz'").fetchone()
+    assert row == (None, None, 0, "legacy")  # server-default: NULL/NULL/0/'legacy'
+    # idempotent tekrar-cagri hata vermemeli
+    mem._ensure_thread_fields(conn)
+    conn.close()
+
+
+async def test_comms_audit_table_append_only_schema(memory_db):
+    """Faz-A §10: autonomous_comms_audit idempotent kurulur, INSERT calisir, tekrar-cagri no-op."""
+    import sqlite3
+
+    import app.api.memory as mem
+
+    conn = sqlite3.connect(memory_db)
+    mem._ensure_comms_audit_table(conn)
+    mem._ensure_comms_audit_table(conn)  # idempotent — CREATE TABLE IF NOT EXISTS
+    conn.execute(
+        "INSERT INTO autonomous_comms_audit (thread_id, note_id, device, action, detail) VALUES (1, 100, 'klipper', 'held', 'test')"
+    )
+    conn.commit()
+    row = conn.execute("SELECT thread_id, note_id, device, action FROM autonomous_comms_audit").fetchone()
+    assert row == (1, 100, "klipper", "held")
+    conn.close()
+
+
+async def test_comms_halt_table_default_inactive(memory_db):
+    """Faz-A §5: autonomous_comms_halt tek-satir, default active=0 (kill-switch varsayilan-kapali)."""
+    import sqlite3
+
+    import app.api.memory as mem
+
+    conn = sqlite3.connect(memory_db)
+    mem._ensure_comms_halt_table(conn)
+    row = conn.execute("SELECT active FROM autonomous_comms_halt WHERE id=1").fetchone()
+    assert row == (0,)
+    mem._ensure_comms_halt_table(conn)  # idempotent — INSERT OR IGNORE ikinci-cagride row'u bozmaz
+    row2 = conn.execute("SELECT active FROM autonomous_comms_halt WHERE id=1").fetchone()
+    assert row2 == (0,)
+    conn.close()
+
+
+async def test_create_note_wires_comms_substrate_tables(client, memory_db):
+    """code-review#311-P2: _ensure_comms_audit_table/_ensure_comms_halt_table onceden HICBIR
+    canli-yoldan cagrilmiyordu (yalniz testlerde) -> deploy olsa substrat hic olusmazdi. Gercek
+    POST /notes cagrisi tablolari YARATMALI (unit-test degil, entegrasyon-kaniti)."""
+    import sqlite3
+
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={"from_device": "klipper", "title": "comms-substrate-check", "content": "x"},
+    )
+    assert resp.status_code == 200
+    conn = sqlite3.connect(memory_db)
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    assert "autonomous_comms_audit" in tables
+    assert "autonomous_comms_halt" in tables
+    row = conn.execute("SELECT active FROM autonomous_comms_halt WHERE id=1").fetchone()
+    assert row == (0,)  # kill-switch varsayilan-kapali
+    conn.close()
