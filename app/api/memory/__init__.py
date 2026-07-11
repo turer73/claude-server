@@ -169,6 +169,13 @@ DEVICE_KEY_ROUTE_ALLOWLIST: frozenset = frozenset(
         ("PUT", "/api/v1/memory/claims/{claim_id}/release"),
         ("PUT", "/api/v1/memory/claims/{claim_id}/renew"),
         ("GET", "/api/v1/memory/claims"),
+        # tartisma-platformu (PR#305, kimlik-key'den — decide KASITLI DISI birakildi,
+        # zaten kendi verify_master_key'i var, default-deny onu ayrica korur)
+        ("POST", "/api/v1/memory/discussions"),
+        ("GET", "/api/v1/memory/discussions"),
+        ("POST", "/api/v1/memory/discussions/{topic_id}/positions"),
+        ("GET", "/api/v1/memory/discussions/{topic_id}/positions"),
+        ("POST", "/api/v1/memory/discussions/{topic_id}/synthesize"),
     }
 )
 
@@ -569,6 +576,49 @@ class ClaimCreate(BaseModel):
         return v
 
 
+class DiscussionCreate(BaseModel):
+    """Tartisma-platformu MVP (konu-2 sentezi #100561, Turgut onayli)."""
+
+    title: str
+    question: str
+    device: str  # master-legacy'de body'den; device-key auth'ta KEY kazanir
+    expected_devices: str = "turgut,surer,klipper,opencode"
+
+    @field_validator("title", "question")
+    @classmethod
+    def non_trivial(cls, v: str) -> str:
+        if len(v.strip()) < 5:
+            raise ValueError("en az 5 karakter")
+        return v.strip()
+
+
+class PositionCreate(BaseModel):
+    """Zorunlu sablon (4/4 yakinsama): pozisyon/dayanak/guven/beni-ne-ikna-eder/min-1-itiraz.
+    out_of_scope opsiyonel (klipper #100554 ek-onerisi, dusuk-guvenli -> zorunlu degil)."""
+
+    device: str
+    position: str
+    evidence: str
+    confidence: int
+    persuadable_by: str
+    objection: str
+    out_of_scope: str = ""
+
+    @field_validator("position", "evidence", "persuadable_by", "objection")
+    @classmethod
+    def non_empty(cls, v: str) -> str:
+        if len(v.strip()) < 10:
+            raise ValueError("sablon alani en az 10 karakter — bos-formalite doldurma (sycophancy-panzehiri)")
+        return v.strip()
+
+    @field_validator("confidence")
+    @classmethod
+    def conf_range(cls, v: int) -> int:
+        if not (1 <= v <= 10):
+            raise ValueError("confidence 1-10")
+        return v
+
+
 class DeviceProjectCreate(BaseModel):
     device_name: str
     project: str
@@ -592,6 +642,7 @@ from app.api.memory import claims as claims  # noqa: E402, F401
 from app.api.memory import dashboard as dashboard  # noqa: E402, F401
 from app.api.memory import devices as devices  # noqa: E402, F401
 from app.api.memory import discoveries as discoveries  # noqa: E402, F401
+from app.api.memory import discussions as discussions  # noqa: E402, F401
 from app.api.memory import health as health  # noqa: E402, F401
 from app.api.memory import memories as memories  # noqa: E402, F401
 from app.api.memory import misc as misc  # noqa: E402, F401

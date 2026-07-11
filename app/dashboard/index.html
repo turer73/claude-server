@@ -622,6 +622,11 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
           <p style="font-size:12px;color:var(--dim);margin:0">Canli arka-plan ajanlari — en son ne zaman calisti, hangi is, bulgular, model, basari orani.</p>
           <button class="vault-btn" onclick="loadAgents()">Yenile</button>
         </div>
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-title"><span>Tartisma Platformu <span class="badge">4-katilimci &middot; kor-tur API-zorlamali</span></span>
+            <button class="vault-btn" style="font-size:11px;padding:4px 10px" onclick="loadDiscussions()">Yenile</button></div>
+          <div id="discussionsContent" style="font-size:12px;color:var(--dim)">Yukleniyor...</div>
+        </div>
         <div id="agentsContent"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
       </div>
 
@@ -817,7 +822,7 @@ function nav(page, el) {
   if (page==='projects') loadProjects();
   if (page==='services') { loadServices(); loadN8n(); }
   if (page==='operations') loadOperations();
-  if (page==='agents') loadAgents();
+  if (page==='agents') { loadAgents(); loadDiscussions(); }
   if (page==='llm') loadLLM();
   if (page==='consciousness') loadConsciousness();
   if (page==='vps') setTimeout(() => { const i = document.getElementById('vpsCmd'); if (i) i.focus(); }, 50);
@@ -1185,6 +1190,19 @@ function _agCard(a) {
     ${sr}
     <div style="margin-top:12px"><div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Son Bulgular / Islemler</div>${finds}</div>
   </div>`;
+}
+const _DISC_ST = { open: ['KOR-TUR', 'var(--yellow)'], discussion: ['TARTISMA', 'var(--green)'], needs_turgut: ['KARAR BEKLIYOR', 'var(--red)'], decided: ['KARARA BAGLANDI', 'var(--dim)'], rejected: ['REDDEDILDI', 'var(--dim)'] };
+async function loadDiscussions() {
+  const el = document.getElementById('discussionsContent');
+  const d = await api('/discussions-ui/summary');
+  if (!d || !d.topics) { el.innerHTML = 'Erisim hatasi'; return; }
+  if (!d.topics.length) { el.innerHTML = 'Acik tartisma yok. Ajanlar POST /api/v1/memory/discussions ile konu acar.'; return; }
+  el.innerHTML = d.topics.map(t => {
+    const [lbl, col] = _DISC_ST[t.status] || [t.status, 'var(--dim)'];
+    return `<div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">
+      <span style="color:var(--text)">#${t.id} ${esc(t.title)} <span style="color:var(--dim)">(${esc(t.creator_device)} acti &middot; ${t.n_positions} pozisyon)</span></span>
+      <span style="flex:0 0 auto;color:${col};font-weight:600">${lbl}</span></div>`;
+  }).join('');
 }
 async function loadAgents() {
   const el = document.getElementById('agentsContent');
