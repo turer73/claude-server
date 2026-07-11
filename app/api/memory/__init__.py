@@ -576,6 +576,32 @@ class ClaimCreate(BaseModel):
         return v
 
 
+# Kör-tur koruması (canlı-bulgu #100609, surer'in kendi kullanım-hatası): discussion_topics'in
+# title/question alanları GET /discussions listesinde ve open-faz positions-endpoint'inde
+# HERKESE görünür — positions tablosunun blind-gate'ine TABİ DEĞİL. Creator buraya katılımcı-
+# atıflı sıralama/pozisyon gömerse (ör. "opencode sirasi: 4->3->5") kör-tur delinir: kimse
+# yazmadan başkasının pozisyonunu görür. Aşağıdaki validator o sınıfı reddeder. Defense-in-depth
+# (regex-denylist, mükemmel-değil — disiplin+kod birlikte, [[regex_denylist_defense_in_depth]]):
+# tek-cihaz meta-soruyu GEÇİRİR ("klipper'in önerisi doğru mu?"), yalnız atıflı-sıralama +
+# rakam-ok-dizisini KESER.
+_LEAK_RANK_ARROW = re.compile(r"\d\s*(?:->|→|=>)\s*\d")
+_LEAK_ATTR_POS = re.compile(
+    r"(?:surer|klipper|opencode|turgut)[^.\n]{0,25}?(?:sira|pozisyon|görüş|gorus|önceli|onceli)\w*\s*[:=]",
+    re.IGNORECASE,
+)
+
+
+def _reject_position_leak(text: str) -> None:
+    """title/question kör-tur delen içerik taşıyorsa ValueError. İki sinyal: (a) rakam-ok-dizisi
+    (4->3->5 = sıralama-beyanı), (b) cihaz-adı + sıra/pozisyon/görüş + ':' (atıflı-pozisyon)."""
+    if _LEAK_RANK_ARROW.search(text) or _LEAK_ATTR_POS.search(text):
+        raise ValueError(
+            "Acilis-metnine (title/question) katilimci pozisyonu/siralamasi gomme — kor-tur "
+            "delinir (herkese gorunur). Pozisyonlar YALNIZ positions-endpoint'ten blind yazilir; "
+            "question = yalniz notr soru + baglam."
+        )
+
+
 class DiscussionCreate(BaseModel):
     """Tartisma-platformu MVP (konu-2 sentezi #100561, Turgut onayli)."""
 
@@ -587,9 +613,11 @@ class DiscussionCreate(BaseModel):
     @field_validator("title", "question")
     @classmethod
     def non_trivial(cls, v: str) -> str:
-        if len(v.strip()) < 5:
+        v = v.strip()
+        if len(v) < 5:
             raise ValueError("en az 5 karakter")
-        return v.strip()
+        _reject_position_leak(v)  # kör-tur sızıntı koruması
+        return v
 
 
 class PositionCreate(BaseModel):
