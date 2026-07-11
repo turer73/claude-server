@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS learning_events (
 _DOWNTREND_TRIGGER = 0.5
 _MIN_OBSERVATIONS = 10
 _LEARN_COOLDOWN = 3600
+# score_after ölçüm-gecikmesi: eşik-ayarının etkisini görmek için ayar-sonrası bu kadar bekleyip
+# o anki 15min-ortalamayı geriye yazıyoruz (score_before ile aynı pencere — karşılaştırılabilir).
+_SCORE_AFTER_DELAY = 900
 
 
 def _ensure_learning_table() -> None:
@@ -52,17 +55,30 @@ def _ensure_learning_table() -> None:
         log.warning("learning schema error: %s", e)
 
 
-def _record_learning_event(event_type: str, detail: str, score_before: float | None = None, score_after: float | None = None) -> None:
+def _record_learning_event(event_type: str, detail: str, score_before: float | None = None, score_after: float | None = None) -> int | None:
     try:
         con = sqlite3.connect(_MEMORY_DB, timeout=5)
-        con.execute(
+        cur = con.execute(
             "INSERT INTO learning_events (event_type, detail, score_before, score_after) VALUES (?, ?, ?, ?)",
             (event_type, detail, score_before, score_after),
         )
         con.commit()
+        row_id = cur.lastrowid
         con.close()
+        return row_id
     except sqlite3.Error as e:
         log.warning("learning event record error: %s", e)
+        return None
+
+
+def _update_score_after(event_id: int, score_after: float) -> None:
+    try:
+        con = sqlite3.connect(_MEMORY_DB, timeout=5)
+        con.execute("UPDATE learning_events SET score_after=? WHERE id=?", (score_after, event_id))
+        con.commit()
+        con.close()
+    except sqlite3.Error as e:
+        log.warning("score_after update error: %s", e)
 
 
 def _load_prompt(component: str) -> str | None:
@@ -101,6 +117,9 @@ class LearningLoop:
         self._current_thresholds: dict[str, Any] = {}
         self._learn_count = 0
         self._last_run: str | None = None
+        # event_id -> due-ts: her learn-event'in "etki oldu mu" ölçümü ayardan _SCORE_AFTER_DELAY
+        # sonra yapılır (flywheel'in açık-döngüsü: score_after NULL kalıp bir daha doldurulmuyordu).
+        self._pending_score_after: dict[int, float] = {}
 
     @property
     def status(self) -> dict[str, Any]:
@@ -177,11 +196,27 @@ class LearningLoop:
             try:
                 self._last_run = datetime.now(UTC).isoformat()
                 await self._evaluate_and_learn()
+                await self._resolve_pending_score_after()
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 log.warning("learning loop error: %s", e)
             await asyncio.sleep(self._interval)
+
+    async def _resolve_pending_score_after(self) -> None:
+        """Vadesi gelen learn-event'lerin score_after'ını o anki 15min-ortalamayla doldurur."""
+        if not self._pending_score_after:
+            return
+        now = time.time()
+        due = [eid for eid, due_ts in self._pending_score_after.items() if now >= due_ts]
+        if not due:
+            return
+        avg_15min = self._get_windows().get("15min")
+        if avg_15min is None:
+            return
+        for event_id in due:
+            await asyncio.to_thread(_update_score_after, event_id, avg_15min)
+            del self._pending_score_after[event_id]
 
     async def _evaluate_and_learn(self) -> None:
         if len(self._scores) < _MIN_OBSERVATIONS:
@@ -232,12 +267,14 @@ class LearningLoop:
                 thresholds=self._current_thresholds,
             )
 
-            await asyncio.to_thread(
+            event_id = await asyncio.to_thread(
                 _record_learning_event,
                 "threshold_adjustment",
                 detail,
                 score_before=avg_15min,
             )
+            if event_id is not None:
+                self._pending_score_after[event_id] = now + _SCORE_AFTER_DELAY
 
             await bus.publish(
                 Event(

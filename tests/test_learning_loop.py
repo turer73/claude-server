@@ -10,10 +10,12 @@ import time
 import pytest
 
 from app.core.learning_loop import (
+    _SCORE_AFTER_DELAY,
     _ensure_learning_table,
     _load_prompt,
     _record_learning_event,
     _save_prompt,
+    _update_score_after,
 )
 
 
@@ -50,6 +52,27 @@ class TestDbOperations:
         assert row[1] == "test event"
         assert row[2] == 5.0
         assert row[3] == 6.0
+
+    def test_record_learning_event_returns_row_id(self, learning_db):
+        # score_after doldurma (flywheel açık-döngü fix): id dönmeli ki caller sonra UPDATE edebilsin.
+        event_id = _record_learning_event("threshold_adjustment", "test event", score_before=5.0)
+        assert isinstance(event_id, int)
+        con = sqlite3.connect(learning_db)
+        row = con.execute("SELECT score_after FROM learning_events WHERE id=?", (event_id,)).fetchone()
+        con.close()
+        assert row[0] is None  # baslangicta NULL
+
+    def test_update_score_after(self, learning_db):
+        event_id = _record_learning_event("threshold_adjustment", "test event", score_before=5.0)
+        _update_score_after(event_id, 7.2)
+        con = sqlite3.connect(learning_db)
+        row = con.execute("SELECT score_after FROM learning_events WHERE id=?", (event_id,)).fetchone()
+        con.close()
+        assert row[0] == 7.2
+
+    def test_update_score_after_bad_db_no_crash(self, monkeypatch):
+        monkeypatch.setattr("app.core.learning_loop._MEMORY_DB", "/nonexistent/testing.sqlite")
+        _update_score_after(1, 5.0)  # patlamamali
 
     def test_save_and_load_prompt(self, learning_db):
         _save_prompt("consciousness", "You are a helpful assistant.", avg_score=7.5)
@@ -307,3 +330,69 @@ class TestLearningLoopClass:
         _save_prompt("critic", "critic prompt", avg_score=8.0)
         history = learning_loop.get_prompt_history()
         assert len(history) >= 1
+
+
+class TestScoreAfterResolution:
+    """score_after flywheel-fix: learn-event tetiklendiğinde pending'e girer, gecikme dolunca
+    o anki 15min-ortalamasıyla DB'de doldurulur (önceden hiçbir zaman doldurulmuyordu)."""
+
+    @pytest.mark.anyio
+    async def test_learn_registers_pending_score_after(self, learning_loop):
+        now = time.time()
+        scores = [{"score": 7, "ts": now - 3000 + i * 50, "boredom_issues": []} for i in range(7)]
+        scores += [{"score": 4, "ts": now - t, "boredom_issues": []} for t in (100, 80, 60)]
+        learning_loop._scores.extend(scores)
+
+        await learning_loop._evaluate_and_learn()
+
+        assert learning_loop._learn_count == 1
+        assert len(learning_loop._pending_score_after) == 1
+        (due_ts,) = learning_loop._pending_score_after.values()
+        assert due_ts >= now + _SCORE_AFTER_DELAY
+
+    @pytest.mark.anyio
+    async def test_resolve_not_due_yet_leaves_pending_and_null(self, learning_loop, learning_db):
+        event_id = _record_learning_event("threshold_adjustment", "test", score_before=5.0)
+        learning_loop._pending_score_after[event_id] = time.time() + 3600  # henuz vadesi gelmedi
+        learning_loop._scores.append({"score": 8, "ts": time.time()})
+
+        await learning_loop._resolve_pending_score_after()
+
+        assert event_id in learning_loop._pending_score_after
+        con = sqlite3.connect(learning_db)
+        row = con.execute("SELECT score_after FROM learning_events WHERE id=?", (event_id,)).fetchone()
+        con.close()
+        assert row[0] is None
+
+    @pytest.mark.anyio
+    async def test_resolve_due_fills_score_after_and_clears_pending(self, learning_loop, learning_db):
+        event_id = _record_learning_event("threshold_adjustment", "test", score_before=4.0)
+        learning_loop._pending_score_after[event_id] = time.time() - 1  # vadesi gecmis
+        learning_loop._scores.append({"score": 8, "ts": time.time()})
+
+        await learning_loop._resolve_pending_score_after()
+
+        assert event_id not in learning_loop._pending_score_after
+        con = sqlite3.connect(learning_db)
+        row = con.execute("SELECT score_after FROM learning_events WHERE id=?", (event_id,)).fetchone()
+        con.close()
+        assert row[0] == pytest.approx(8.0)
+
+    @pytest.mark.anyio
+    async def test_resolve_due_without_window_data_stays_pending(self, learning_loop, learning_db):
+        # 15min penceresi bos (skor yok) -> doldurulamaz, tekrar denenmek uzere pending kalmali.
+        event_id = _record_learning_event("threshold_adjustment", "test", score_before=4.0)
+        learning_loop._pending_score_after[event_id] = time.time() - 1
+
+        await learning_loop._resolve_pending_score_after()
+
+        assert event_id in learning_loop._pending_score_after
+        con = sqlite3.connect(learning_db)
+        row = con.execute("SELECT score_after FROM learning_events WHERE id=?", (event_id,)).fetchone()
+        con.close()
+        assert row[0] is None
+
+    @pytest.mark.anyio
+    async def test_resolve_empty_pending_no_crash(self, learning_loop):
+        await learning_loop._resolve_pending_score_after()
+        assert learning_loop._pending_score_after == {}
