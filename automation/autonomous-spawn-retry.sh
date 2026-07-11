@@ -86,6 +86,11 @@ SPAWN_TIMEOUT="${AUTONOMOUS_SPAWN_TIMEOUT:-900}"
 # (Max-plan) = sıfır API faturası. Script claude dışında ANTHROPIC_API_KEY kullanmıyor → unset güvenli.
 unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
 POISON_THRESHOLD="${POISON_THRESHOLD:-3}"
+# #1297 (surer-doğrulama #100639): POISON_THRESHOLD doğrudan sqlite3 sorgusuna interpolate
+# ediliyor (aşağıda "attempt_num < $POISON_THRESHOLD") — env-override açık olduğu için
+# sayısal-olmayan bir değer SQL-injection yüzeyi açar. Defense-in-depth: sayı değilse güvenli
+# varsayılana dön (pratik-risk düşük — cron-only + env'e-erişen zaten içeride — ama ucuz fix).
+[[ "$POISON_THRESHOLD" =~ ^[0-9]+$ ]] || POISON_THRESHOLD=3
 INTER_SPAWN_SLEEP="${INTER_SPAWN_SLEEP:-5}"
 HOOK_LOG_DIR="${HOOK_LOG_DIR:-/opt/linux-ai-server/data/hook-logs}"
 
