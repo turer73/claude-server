@@ -90,6 +90,43 @@ async def test_ensure_admin_key_writes_0600_file_not_log(db, monkeypatch, tmp_pa
 
 
 @pytest.mark.anyio
+async def test_ensure_admin_key_file_fail_rolls_back(db, monkeypatch):
+    """klipper-review P2#1 (KRİTİK): dosya-yazma FAIL olursa üretilen key GERİ ALINMALI.
+    Aksi: DB'de kurtarılamaz-key kalır → sonraki DEFAULT_API_KEY restart'ta 'WHERE NOT EXISTS'
+    engeller → servis KALICI kilitlenir. Fix: DELETE row + return None + fail-loud."""
+    from app import main as m
+
+    monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
+    # Yazılamaz hedef: var-olmayan dizin altında dosya → os.open OSError
+    monkeypatch.setenv("ADMIN_KEY_BOOTSTRAP_FILE", "/nonexistent-dir-xyz/sub/ak.txt")
+    result = await m._ensure_admin_key(db)
+    assert result is None  # kurtarılamaz → None (default_key DÖNDÜRÜLMEZ)
+    # ASIL regresyon: DB'de admin-key row KALMAMALI (geri-alındı) → sonraki restart temiz
+    rows = await db.fetch_all("SELECT id FROM api_keys WHERE name='admin'")
+    assert len(rows) == 0  # rollback: kilit-önleyici
+
+
+@pytest.mark.anyio
+async def test_ensure_admin_key_rejects_tmp_fallback(db, monkeypatch):
+    """klipper-review P2#3: systemd PrivateTmp → /tmp izole, key kurtarılamaz. /tmp-hedefi
+    reddet + row geri-al (explicit env hariç). POSIX-only (path-semantiği)."""
+    import os as _os
+
+    if _os.name == "nt":
+        pytest.skip("POSIX /tmp path semantiği")
+    from app import main as m
+    from app.db import data_layer
+
+    monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
+    monkeypatch.delenv("ADMIN_KEY_BOOTSTRAP_FILE", raising=False)
+    monkeypatch.setattr(data_layer, "server_db_path", lambda: "/tmp/isolated/server.db")
+    result = await m._ensure_admin_key(db)
+    assert result is None  # /tmp-izole → kurtarılamaz → None + rollback
+    rows = await db.fetch_all("SELECT id FROM api_keys WHERE name='admin'")
+    assert len(rows) == 0
+
+
+@pytest.mark.anyio
 async def test_ensure_admin_key_uses_env_and_does_not_leak(db, monkeypatch):
     """DEFAULT_API_KEY set → o key kullanılır, plaintext DÖNDÜRÜLMEZ (zaten biliniyor, log'lama yok)."""
     from app import main as m

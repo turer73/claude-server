@@ -185,31 +185,51 @@ async def _ensure_admin_key(db) -> str | None:
         # CLAUDE.md) → plaintext-secret birikir, backup/merkezi-log/okuma ile sızar. Bunun
         # yerine 0600-restricted dosyaya yaz + log'da yalnız POINTER. Kurtarılabilirlik korunur
         # (#1198: admin dosyadan okur→.env'e taşır→siler), ama log-sızıntı-yüzeyi kalkar.
-        import stat
         from pathlib import Path
 
         from app.db.data_layer import server_db_path
 
         key_file = Path(os.environ.get("ADMIN_KEY_BOOTSTRAP_FILE") or (Path(server_db_path()).parent / "admin-key-firstboot.txt"))
-        try:
-            key_file.write_text(default_key + "\n", encoding="utf-8")
-            key_file.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600 — yalnız owner
+        # klipper-review P2#3: env-yoksa server_db_path /tmp'e düşebilir (DB_PATH-unset config).
+        # systemd PrivateTmp=yes → operatör izole-tmpfs'e ERİŞEMEZ → pointer'ı cat etse bile key
+        # kurtarılamaz. /tmp'i güvenli-hedef sayma (explicit ADMIN_KEY_BOOTSTRAP_FILE hariç).
+        unsafe_tmp = not os.environ.get("ADMIN_KEY_BOOTSTRAP_FILE") and str(key_file).startswith(("/tmp/", "/var/tmp/"))
+        write_ok = False
+        if not unsafe_tmp:
+            try:
+                # klipper-review P2#2: write_text()+chmod() arası TOCTOU — dosya varsayılan-umask
+                # (644) ile oluşup chmod'a dek plaintext AÇIKTA. os.open(mode=0o600) atomik-oluşturur;
+                # fchmod (fd-üzeri, path değil → TOCTOU-yok) dosya-zaten-vardıysa da 0600-garanti.
+                fd = os.open(str(key_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                try:
+                    if hasattr(os, "fchmod"):  # POSIX; Windows'ta os.open mode kısmen uygular
+                        os.fchmod(fd, 0o600)
+                    os.write(fd, (default_key + "\n").encode())
+                finally:
+                    os.close(fd)
+                write_ok = True
+            except OSError as e:
+                logger.error("İlk-boot admin-key dosya-yazma hatası (%s): %s", key_file, e)
+        if write_ok:
             logger.warning(
                 "İlk-boot: admin API key ÜRETİLDİ (DEFAULT_API_KEY set değil). Plaintext key "
                 "LOG'a yazılmadı (güvenlik); 0600-dosyaya yazıldı: %s — OKU, .env'de DEFAULT_API_KEY "
                 "olarak sabitle, sonra DOSYAYI SİL.",
                 key_file,
             )
-        except OSError as e:
-            # Dosya-yazma başarısız (izin/disk): son-çare — key DB'ye girdi ama plaintext hiçbir
-            # yerde yok. Log'a yine YAZMA (sızıntı); operatör DEFAULT_API_KEY ile restart etmeli.
-            logger.error(
-                "İlk-boot admin-key dosyaya YAZILAMADI (%s): %s. Key üretildi ama kurtarılamaz; "
-                ".env'de DEFAULT_API_KEY ayarlayıp yeniden başlatın.",
-                key_file,
-                e,
-            )
-        return default_key
+            return default_key
+        # klipper-review P2#1 (KRİTİK, surer'in şerh-hatası): dosya-yazılamadı VEYA /tmp-izole →
+        # plaintext kurtarılamaz. Key DB'de KALIRSA sonraki restart'ta DEFAULT_API_KEY versen bile
+        # 'WHERE NOT EXISTS' yeni-insert'i engeller → servis KALICI kilitlenir. Üretilen row'u GERİ
+        # AL ki restart temiz-başlasın (env-key insert edilebilsin). Fail-loud.
+        await db.execute("DELETE FROM api_keys WHERE key_hash = ? AND name = 'admin'", (hash_api_key(default_key),))
+        logger.error(
+            "İlk-boot admin-key güvenli-kaydedilemedi (path=%s, tmp-izole=%s). Üretilen key GERİ ALINDI; "
+            ".env'de DEFAULT_API_KEY ayarlayıp yeniden başlatın.",
+            key_file,
+            unsafe_tmp,
+        )
+        return None
     return None
 
 
