@@ -12,7 +12,9 @@ from app.api.memory import (
     NoteCreate,
     _ensure_read_by,
     _ensure_status,
+    _ensure_verified,
     _fire_event,
+    _origin_str,
     _unread_pred,
     dispatch_origin,
     get_db,
@@ -118,18 +120,25 @@ async def create_note(data: NoteCreate, forced_origin: str = Depends(dispatch_or
     # GAP-1 item-D (#1222 A-2): otonom-key ile auth olduysa from_device ZORLA-override
     # ('klipper-autonomous') — body-claim gozardi (unforgeable). Normal-key -> body korunur.
     from_device = forced_origin or data.from_device
+    # P0 kimlik: forced_origin dolu = kimlik KEY'den turetildi (device-key/otonom) -> verified.
+    # Bos = legacy master-key, body-iddiasina dusuluyor -> unverified (durust etiket).
+    verified = 1 if forced_origin else 0
     content_clean, redacted_labels = redact(data.content)
     db = get_db()
     try:
         _ensure_status(db)  # policy-gate #1222 migration (idempotent; BEGIN'den ONCE — ALTER+commit)
+        _ensure_verified(db)  # P0 kimlik migration (idempotent)
         db.execute("BEGIN IMMEDIATE")
         # 1. Tam dup (content identical) — 5dk pencere
+        # Codex#302-2tur #5: verified-aware — unverified (spoof-olasi) bir satir, GERCEK
+        # cihazin verified=1 yazimini dedup'la GOMEMESIN; yalniz esit/ustu-guven satir bloklar.
         recent_dup = db.execute(
             "SELECT id FROM notes WHERE from_device=? "
             "AND COALESCE(to_device,'')=COALESCE(?,'') "
             "AND title=? AND content=? "
+            "AND COALESCE(verified,0) >= ? "
             "AND created_at > datetime('now','-5 minutes')",
-            (from_device, data.to_device, data.title, content_clean),
+            (from_device, data.to_device, data.title, content_clean, verified),
         ).fetchone()
         if recent_dup:
             db.rollback()
@@ -147,8 +156,9 @@ async def create_note(data: NoteCreate, forced_origin: str = Depends(dispatch_or
             "SELECT id FROM notes WHERE from_device=? "
             "AND COALESCE(to_device,'')=COALESCE(?,'') "
             "AND title=? "
+            "AND COALESCE(verified,0) >= ? "
             "AND created_at > datetime('now','-30 seconds')",
-            (from_device, data.to_device, data.title),
+            (from_device, data.to_device, data.title, verified),
         ).fetchone()
         if title_dup:
             db.rollback()
@@ -163,8 +173,8 @@ async def create_note(data: NoteCreate, forced_origin: str = Depends(dispatch_or
         note_status, scan_result = _gate_dispatch(from_device, data.to_device, content_clean)
 
         cur = db.execute(
-            "INSERT INTO notes (from_device, to_device, title, content, status) VALUES (?, ?, ?, ?, ?)",
-            (from_device, data.to_device, data.title, content_clean, note_status),
+            "INSERT INTO notes (from_device, to_device, title, content, status, verified) VALUES (?, ?, ?, ?, ?, ?)",
+            (from_device, data.to_device, data.title, content_clean, note_status, verified),
         )
         db.commit()
 
@@ -193,10 +203,16 @@ async def create_note(data: NoteCreate, forced_origin: str = Depends(dispatch_or
 
 
 @router.put("/notes/{note_id}/read")
-async def mark_note_read(note_id: int, device: str | None = None):
+async def mark_note_read(note_id: int, device: str | None = None, forced_origin: str = Depends(dispatch_origin)):
     """Notu okundu işaretle. device verilirse PER-DEVICE (read_by'a eklenir, diğer
     device'lar için okunmamış kalır — #647). device yoksa LEGACY global read=1
-    (geri-uyum: eski çağıranlar bozulmaz, ama çoğulcu-okuma kaybolur → device gönderin)."""
+    (geri-uyum: eski çağıranlar bozulmaz, ama çoğulcu-okuma kaybolur → device gönderin).
+    Codex#302-3tur #2: device-key auth'ta okuyan-kimlik KEY'den zorlanır — ?device=
+    iddiasıyla BAŞKASININ notları 'okundu'ya çekilemez, global-read=1 de atılamaz
+    (per-device read-tracking #647 garantisi korunur)."""
+    forced = _origin_str(forced_origin)
+    if forced:
+        device = forced
     db = get_db()
     try:
         _ensure_read_by(db)

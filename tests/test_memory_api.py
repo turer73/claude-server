@@ -88,7 +88,17 @@ CREATE TABLE notes (
     read INTEGER DEFAULT 0,
     read_by TEXT DEFAULT '',
     status TEXT DEFAULT 'active',
+    verified INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE device_keys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device TEXT NOT NULL UNIQUE,
+    key_hash TEXT NOT NULL UNIQUE,
+    active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now')),
+    last_used_at TEXT
 );
 
 CREATE TABLE device_projects (

@@ -6,9 +6,19 @@ Gövdeler birebir taşındı (Faz 3).
 import asyncio
 import sqlite3
 
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException
 
-from app.api.memory import DiscoveryCreate, DiscoveryUpdate, _fire_event, _sync_fts, _track_read, get_db, router
+from app.api.memory import (
+    DiscoveryCreate,
+    DiscoveryUpdate,
+    _fire_event,
+    _origin_str,
+    _sync_fts,
+    _track_read,
+    dispatch_origin,
+    get_db,
+    router,
+)
 from app.api.memory import signal_quality as sq
 from app.core.privacy import redact
 
@@ -74,7 +84,7 @@ async def get_discovery(discovery_id: int):
 
 
 @router.post("/discoveries")
-async def create_discovery(data: DiscoveryCreate):
+async def create_discovery(data: DiscoveryCreate, forced_origin: str = Depends(dispatch_origin)):
     """Duplicate korumalı discovery oluştur — bi-temporal + semantik-dedup + importance.
 
     Koruma katmanları (sırayla, HEPSİ fail-safe — yazma yolu Ollama/Qdrant'a bağımlı değil):
@@ -85,6 +95,10 @@ async def create_discovery(data: DiscoveryCreate):
     - Exact-title fallback: ayni project+type+title aktif kayıt → güncelle.
     - importance (1-10, fail→5) + valid_at (bi-temporal) + Qdrant upsert (fail-safe).
     """
+    # Codex#302-2tur #1: forced-origin genellemesi (create_note/create_session deseni).
+    # _origin_str ŞART: main.py dead-gate-emit bu fonksiyonu DI-disi DOGRUDAN cagirir —
+    # sentinel kimlik sanilirsa SQL bind patlar, except yutar, boot-discovery sessiz kaybolur.
+    data.device_name = _origin_str(forced_origin) or data.device_name
     details_clean, redacted_labels = redact(data.details)
 
     db = get_db()

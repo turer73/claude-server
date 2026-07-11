@@ -4,11 +4,12 @@ Duplicate koruması, FTS arama, read tracking, lifecycle yönetimi.
 """
 
 import asyncio
+import hashlib
 import re
 from typing import Any, Literal
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, field_validator
 
 from app.core.config import read_env_var
@@ -21,11 +22,29 @@ MEMORY_API_KEY = read_env_var("MEMORY_API_KEY")
 # create_note from_device'i 'klipper-autonomous'a ZORLA-override eder (unforgeable —
 # spawn body'de ne derse desin). Set edilmemisse ozellik dormant (geriye-uyumlu).
 MEMORY_API_KEY_AUTONOMOUS = read_env_var("MEMORY_API_KEY_AUTONOMOUS")
+# P0-P1fix (#100564 Codex-P1): mint/revoke icin master'dan AYRI admin-key. Master su an
+# HERKESIN gunluk-credential'i (onboard-prompt gomuyor) -> master-only koruma iluzyon:
+# herhangi bir ajan digerinin key'ini rotate edebilirdi. Admin-key YALNIZ Turgut/operator'de
+# kalir, hicbir ajanin gunluk-credential'i olmaz. Set edilmemisse dormant (geriye-uyum,
+# autonomous-key gecis-deseni); master==admin config-hatasi = dormant (collision-guard).
+MEMORY_API_KEY_ADMIN = read_env_var("MEMORY_API_KEY_ADMIN")
 AUTONOMOUS_FROM_DEVICE = "klipper-autonomous"
 
 VALID_DISCOVERY_TYPES = ("bug", "fix", "learning", "config", "workaround", "architecture", "plan")
 VALID_STATUSES = ("active", "completed", "obsolete", "superseded")
 TRASH_TITLES = re.compile(r"^(test|test bug|test fix|test workaround|deneme|asdf|xxx)$", re.IGNORECASE)
+
+
+def _admin_key_active() -> bool:
+    """Admin-key devrede mi: set + master'dan VE otonom'dan distinct. admin==master VEYA
+    admin==otonom config-hatasi = dormant (collision-guard) — yoksa otonom-spawn surecleri
+    (insan degil) verify_admin_key'i gecip mint/rotate/revoke yapabilirdi (Codex#302-2tur #4)."""
+    return bool(MEMORY_API_KEY_ADMIN) and MEMORY_API_KEY_ADMIN != MEMORY_API_KEY and MEMORY_API_KEY_ADMIN != MEMORY_API_KEY_AUTONOMOUS
+
+
+def _is_admin_key(x_memory_key: str | None) -> bool:
+    """DISTINCT admin-key ile mi auth oldu (mint/revoke idaresi). Bos-key asla admin."""
+    return _admin_key_active() and x_memory_key == MEMORY_API_KEY_ADMIN
 
 
 def _is_autonomous_key(x_memory_key: str | None) -> bool:
@@ -35,16 +54,143 @@ def _is_autonomous_key(x_memory_key: str | None) -> bool:
     return bool(MEMORY_API_KEY_AUTONOMOUS) and MEMORY_API_KEY_AUTONOMOUS != MEMORY_API_KEY and x_memory_key == MEMORY_API_KEY_AUTONOMOUS
 
 
-def verify_key(x_memory_key: str = Header(None)):
+# ── P0 kimlik (konu-1 karari, Turgut onayi): per-device API-key ──
+# Otonom-key deseninin (GAP-1 A-2 unforgeable) TUM cihazlara genellenmesi: her cihazin
+# AYRI key'i, from_device sunucu-tarafinda KEY'DEN turetilir (client-iddiasi degil).
+# Key'ler duz saklanmaz — sha256 hash (credential-plan-docs dersi). Master-key legacy
+# calismaya devam eder (kilitleme yok, kademeli gecis) ama yazdiklari verified=0 kalir.
+
+_device_keys_ready = False
+
+
+def _ensure_device_keys(db: Any) -> None:
+    """device_keys tablosunu idempotent kur (_ensure_read_by deseni)."""
+    global _device_keys_ready
+    if _device_keys_ready:
+        return
+    try:
+        db.execute("""CREATE TABLE IF NOT EXISTS device_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device TEXT NOT NULL UNIQUE,
+            key_hash TEXT NOT NULL UNIQUE,
+            active INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now')),
+            last_used_at TEXT
+        )""")
+        db.commit()
+        # Codex#302-P2: flag YALNIZ basarida — transient-lock'ta eski hali 'hazir' deyip
+        # process-yasam-boyu (restart'a dek) mint-500/auth-401 kilitliyordu; simdi retry eder
+        _device_keys_ready = True
+    except Exception:
+        pass
+
+
+def _resolve_device_key(x_memory_key: str | None) -> str:
+    """Key aktif bir device-key ise cihaz adini dondur, degilse ''.
+    Master/otonom-key burada COZULMEZ (oncelik verify_key/dispatch_origin'de) — master
+    string'i yanlislikla device-key yapilirsa master-yolu kazanir (fail-safe, collision-guard
+    deseniyle tutarli). Her cagride SELECT: lokal SQLite, cache-invalidation karmasasina degmez."""
+    if not x_memory_key or x_memory_key == MEMORY_API_KEY or _is_admin_key(x_memory_key) or _is_autonomous_key(x_memory_key):
+        return ""
+    key_hash = hashlib.sha256(x_memory_key.encode()).hexdigest()
+    try:
+        db = get_db()
+        try:
+            _ensure_device_keys(db)
+            row = db.execute("SELECT device FROM device_keys WHERE key_hash=? AND active=1", (key_hash,)).fetchone()
+            if row:
+                # Codex#302-P2: telemetri-UPDATE'i best-effort — lock/race'te kimlik DUSMESIN
+                # (eski hali '' donup create_note'u master-legacy/spoof'a dusurebiliyordu)
+                try:
+                    db.execute("UPDATE device_keys SET last_used_at=datetime('now') WHERE key_hash=?", (key_hash,))
+                    db.commit()
+                except Exception:
+                    pass
+                return str(row[0])
+        finally:
+            db.close()
+    except Exception as e:
+        raise HTTPException(503, "device_keys erisilemedi (transient) — yeniden dene") from e
+    return ""
+
+
+def verify_key(x_memory_key: str = Header(None)) -> None:
     # FAIL-CLOSED (güvenlik fix): MEMORY_API_KEY yüklenmemişse erişimi AÇMA.
     # Eski 'if KEY and ...' boş-key'de 401 atmıyordu -> env-yükleme hatasında
     # memory/RAG/research/classifier tamamen korumasız kalıyordu.
+    # SCOPE (Codex#302-2tur #3, Turgut karari): device-key BURADA KABUL EDILMEZ —
+    # bu dependency'yi dispatch/research/rag/classifier/prometheus/ws_status da import
+    # ediyor; notes-koordinasyonu icin uretilmis bir device-key dispatch/task gibi
+    # gercek-aksiyon endpoint'lerini ACMAMALI. Device-key'ler yalniz memory router'inin
+    # verify_key_memory_scoped'inde gecerli.
     if not MEMORY_API_KEY:
         raise HTTPException(503, "Memory API key not configured (fail-closed)")
-    # Normal-key VEYA distinct-otonom-key kabul (ikisi de gecerli-auth).
-    if x_memory_key == MEMORY_API_KEY or _is_autonomous_key(x_memory_key):
+    if x_memory_key == MEMORY_API_KEY or _is_admin_key(x_memory_key) or _is_autonomous_key(x_memory_key):
         return
     raise HTTPException(401, "Invalid memory API key")
+
+
+# Codex#302-3tur (klipper #100579 mimari-oneri): DEFAULT-DENY + route-allowlist.
+# Router-seviyesi genel-kabul her review-turunda yeni alt-kapsam aciyordu (notes ->
+# read-tracking -> maintenance -> memories/devices). Device-key yalniz asagida ACIKCA
+# izin verilen (method, path) ciftlerini acar; YENI route'lar otomatik master/admin-only
+# dogar (whack-a-mole yapisal biter). Kural: yazma-route'u ancak kimligi forced-origin
+# ile KEY'den turetiyorsa listeye girer. NOT: 303 (claims) ve 305 (discussions) rebase'te
+# kendi route'larini eklemeli.
+DEVICE_KEY_ROUTE_ALLOWLIST: frozenset = frozenset(
+    {
+        # koordinasyon (forced-origin'li yazim + inbox okuma)
+        ("GET", "/api/v1/memory/notes"),
+        ("POST", "/api/v1/memory/notes"),
+        ("PUT", "/api/v1/memory/notes/{note_id}/read"),
+        # zorunlu-kayit akislari (forced-origin'li)
+        ("GET", "/api/v1/memory/sessions"),
+        ("GET", "/api/v1/memory/sessions/{session_id}"),
+        ("POST", "/api/v1/memory/sessions"),
+        ("GET", "/api/v1/memory/tasks"),
+        ("POST", "/api/v1/memory/tasks"),
+        ("PATCH", "/api/v1/memory/tasks/{task_id}"),
+        # Codex#302-4tur: discoveries/search/dashboard/devices/device-projects/projects GET'i
+        # BURADAN CIKARILDI — hepsi unscoped-global sorgu (caller-kimligine gore filtrelemiyor),
+        # bir device-key TUM cihazlarin discovery/task-gecmisi/local-path/hostname/IP'sini
+        # gorebiliyordu. Bu route'lar P0'in amaci (yazi-provenance) icin GEREKMIYOR — master/
+        # admin-only'e donduruldu (default-deny: ihtiyac-kanitlanmadan acilmaz).
+        ("POST", "/api/v1/memory/discoveries"),
+        ("PUT", "/api/v1/memory/discoveries/{discovery_id}"),
+        ("PUT", "/api/v1/memory/discoveries/{discovery_id}/resolve"),
+        ("GET", "/api/v1/memory/memories"),
+        ("GET", "/api/v1/memory/memories/{memory_id}"),
+        ("POST", "/api/v1/memory/memories"),
+        ("GET", "/api/v1/memory/surface"),
+        ("GET", "/api/v1/memory/world-model"),
+        ("GET", "/api/v1/memory/health"),
+    }
+)
+
+
+def verify_key_memory_scoped(request: Request, x_memory_key: str = Header(None)) -> None:
+    """Memory router'a OZEL auth: master/admin/otonom her route; device-key YALNIZ
+    DEVICE_KEY_ROUTE_ALLOWLIST'teki (method, path) — geri kalan her sey 403 (default-deny).
+    Baska router bu dependency'yi KULLANMAMALI (device-key'in tek yetki-alani burasi)."""
+    if not MEMORY_API_KEY:
+        raise HTTPException(503, "Memory API key not configured (fail-closed)")
+    if x_memory_key == MEMORY_API_KEY or _is_admin_key(x_memory_key) or _is_autonomous_key(x_memory_key):
+        return
+    if _resolve_device_key(x_memory_key):
+        route = request.scope.get("route")
+        path_fmt = getattr(route, "path_format", None) or getattr(route, "path", "")
+        if (request.method, path_fmt) in DEVICE_KEY_ROUTE_ALLOWLIST:
+            return
+        raise HTTPException(403, "Device-key bu route'ta yetkili degil (default-deny; master/admin gerekli)")
+    raise HTTPException(401, "Invalid memory API key")
+
+
+def _origin_str(forced_origin: Any) -> str:
+    """dispatch_origin sonucunu normalize et. FastAPI DI DISI dogrudan cagrilarda (orn.
+    main.py boot dead-gate emit -> create_discovery) parametre Depends-SENTINEL objesi
+    olarak gelir — TRUTHY ama string degil; 'forced_origin or ...' onu kimlik sanip SQL
+    bind'i patlatiyordu (Codex#302-3tur #1). String olmayan her sey '' (master-legacy)."""
+    return forced_origin if isinstance(forced_origin, str) else ""
 
 
 def verify_master_key(x_memory_key: str = Header(None)) -> None:
@@ -57,14 +203,39 @@ def verify_master_key(x_memory_key: str = Header(None)) -> None:
         raise HTTPException(401, "Invalid memory API key (master required)")
 
 
+def verify_admin_key(x_memory_key: str = Header(None)) -> None:
+    """Key-IDARESI (mint/revoke) icin: admin-key set+distinct ise YALNIZ o kabul; dormant'ta
+    master (gecis). Ajan device-key'leri ve otonom-key HER DURUMDA reddedilir."""
+    if not MEMORY_API_KEY:
+        raise HTTPException(503, "Memory API key not configured (fail-closed)")
+    if _is_admin_key(x_memory_key):
+        return
+    # admin-key aktif DEGILSE (unset veya collision-dormant) master gecise izin; aktif ISE
+    # master REDDEDILIR. _admin_key_active tek-kaynak: otonom-collision'da da dormant
+    # (yoksa mint tamamen kilitlenirdi — master-collision davranisiyla tutarli).
+    if not _admin_key_active() and x_memory_key == MEMORY_API_KEY:
+        return
+    raise HTTPException(401, "Key-idaresi icin ADMIN key gerekli (master su an herkesin credential'i)")
+
+
 def dispatch_origin(x_memory_key: str = Header(None)) -> str:
-    """create_note icin FastAPI bagimliligi: istek otonom-key ile auth olduysa ZORLANACAK
-    from_device'i ('klipper-autonomous') dondur; aksi halde '' (body-from_device korunur).
-    Unforgeable: spawn yalniz otonom-key'e sahip -> body-claim override edilir (GAP-1 A-2)."""
-    return AUTONOMOUS_FROM_DEVICE if _is_autonomous_key(x_memory_key) else ""
+    """create_note icin FastAPI bagimliligi: istek otonom-key veya per-device-key ile auth
+    olduysa ZORLANACAK from_device'i dondur; master-key -> '' (body-from_device korunur,
+    legacy/unverified). Unforgeable-genellemesi (P0): hangi key authenticate ettiyse kimlik
+    ODUR — #100526 kimlik-karismasi sinifinin yapisal cozumu."""
+    if _is_autonomous_key(x_memory_key):
+        return AUTONOMOUS_FROM_DEVICE
+    if not x_memory_key or x_memory_key == MEMORY_API_KEY or _is_admin_key(x_memory_key):
+        return ""  # master/admin-legacy: body korunur (verified=0)
+    device = _resolve_device_key(x_memory_key)
+    if not device:
+        # verify_key'den GECMIS ama cozulemiyor (revoke-race/transient) — Codex#302-P2:
+        # master-legacy'ye DUSME (spoof-yuzeyi), fail-closed
+        raise HTTPException(401, "Device-key cozulemedi (revoked/transient) — yeniden dene")
+    return device
 
 
-router = APIRouter(prefix="/api/v1/memory", tags=["memory"], dependencies=[Depends(verify_key)])
+router = APIRouter(prefix="/api/v1/memory", tags=["memory"], dependencies=[Depends(verify_key_memory_scoped)])
 # Onboarding endpoints embed MEMORY_API_KEY in their response prompts (so a
 # bootstrapped Claude instance has the auth header it needs). They MUST require
 # the key on the request side too — otherwise anyone reachable on the LAN /
@@ -95,9 +266,10 @@ def _ensure_read_by(db: Any) -> None:
         if "read_by" not in cols:
             db.execute("ALTER TABLE notes ADD COLUMN read_by TEXT DEFAULT ''")
             db.commit()
+        # ayni flag-yalniz-basarida deseni (Codex#302-2tur #2 sinifi, proaktif)
+        _read_by_ready = True
     except Exception:
         pass
-    _read_by_ready = True
 
 
 def _unread_pred(device):
@@ -106,6 +278,28 @@ def _unread_pred(device):
     if device:
         return "read=0 AND (read_by IS NULL OR read_by NOT LIKE ?)", [f"%|{device}|%"]
     return "read=0", []
+
+
+_verified_ready = False
+
+
+def _ensure_verified(db: Any) -> None:
+    """notes.verified kolonunu idempotent ekle (P0 kimlik): 1 = from_device sunucu-tarafinda
+    key'den turetildi (unforgeable), 0 = legacy master-key yazimi (body-iddiasi, dogrulanmamis).
+    Gecmis kayitlar NULL/0 kalir — durustce 'unverified' (gecmisi yeniden-etiketleme YOK)."""
+    global _verified_ready
+    if _verified_ready:
+        return
+    try:
+        cols = [r[1] for r in db.execute("PRAGMA table_info(notes)").fetchall()]
+        if "verified" not in cols:
+            db.execute("ALTER TABLE notes ADD COLUMN verified INTEGER DEFAULT 0")
+            db.commit()
+        # Codex#302-2tur #2: flag YALNIZ basarida (_ensure_device_keys deseni) — transient
+        # ALTER-hatasinda 'hazir' denirse INSERT(...verified) restart'a dek her yazimda patlar
+        _verified_ready = True
+    except Exception:
+        pass
 
 
 _status_ready = False
@@ -124,9 +318,10 @@ def _ensure_status(db: Any) -> None:
         if "status" not in cols:
             db.execute("ALTER TABLE notes ADD COLUMN status TEXT DEFAULT 'active'")
             db.commit()
+        # ayni flag-yalniz-basarida deseni (Codex#302-2tur #2 sinifi, proaktif)
+        _status_ready = True
     except Exception:
         pass
-    _status_ready = True
 
 
 # ============ Event / Webhook / Telegram Helpers ============
