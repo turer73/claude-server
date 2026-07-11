@@ -1346,3 +1346,23 @@ async def test_comms_halt_table_default_inactive(memory_db):
     row2 = conn.execute("SELECT active FROM autonomous_comms_halt WHERE id=1").fetchone()
     assert row2 == (0,)
     conn.close()
+
+
+async def test_create_note_wires_comms_substrate_tables(client, memory_db):
+    """code-review#311-P2: _ensure_comms_audit_table/_ensure_comms_halt_table onceden HICBIR
+    canli-yoldan cagrilmiyordu (yalniz testlerde) -> deploy olsa substrat hic olusmazdi. Gercek
+    POST /notes cagrisi tablolari YARATMALI (unit-test degil, entegrasyon-kaniti)."""
+    import sqlite3
+
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={"from_device": "klipper", "title": "comms-substrate-check", "content": "x"},
+    )
+    assert resp.status_code == 200
+    conn = sqlite3.connect(memory_db)
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    assert "autonomous_comms_audit" in tables
+    assert "autonomous_comms_halt" in tables
+    row = conn.execute("SELECT active FROM autonomous_comms_halt WHERE id=1").fetchone()
+    assert row == (0,)  # kill-switch varsayilan-kapali
+    conn.close()

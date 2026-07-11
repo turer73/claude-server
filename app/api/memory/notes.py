@@ -10,6 +10,8 @@ from fastapi import Depends, HTTPException
 
 from app.api.memory import (
     NoteCreate,
+    _ensure_comms_audit_table,
+    _ensure_comms_halt_table,
     _ensure_read_by,
     _ensure_status,
     _ensure_thread_fields,
@@ -131,6 +133,11 @@ async def create_note(data: NoteCreate, forced_origin: str = Depends(dispatch_or
         _ensure_status(db)  # policy-gate #1222 migration (idempotent; BEGIN'den ONCE — ALTER+commit)
         _ensure_verified(db)  # P0 kimlik migration (idempotent)
         _ensure_thread_fields(db)  # Faz-A migration (idempotent; docs/autonomous-comms-design.md)
+        # code-review#311-P2: audit/halt tablolari onceden HICBIR canli-yoldan cagrilmiyordu —
+        # deploy olsa bile substrat hic olusmazdi. CREATE TABLE IF NOT EXISTS + tek-satir INSERT OR
+        # IGNORE, ucuz-idempotent (ALTER-riski yok, her istekte guvenle cagrilabilir).
+        _ensure_comms_audit_table(db)
+        _ensure_comms_halt_table(db)
         db.execute("BEGIN IMMEDIATE")
         # 1. Tam dup (content identical) — 5dk pencere
         # Codex#302-2tur #5: verified-aware — unverified (spoof-olasi) bir satir, GERCEK
