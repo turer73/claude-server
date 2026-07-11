@@ -55,6 +55,35 @@ async def _mint(client, name):
     return (await client.post(f"/api/v1/memory/devices/{name}/key", headers=_hdr())).json()["key"]
 
 
+async def test_question_position_leak_rejected(client, discussions_db):
+    # Canlı-bulgu #100609 (surer'in kendi kullanım-hatası): question/title'a katılımcı-atıflı
+    # sıralama gömmek kör-turu deler (bu alanlar herkese açık). Tam-o-metin reddedilmeli.
+    leak = "opencode sirasi: 4->3->5. surer sirasi: 4a->5->3."
+    r = await client.post(
+        "/api/v1/memory/discussions",
+        json={"title": "Oncelik konusu", "question": leak, "device": "turgut"},
+        headers=_hdr(),
+    )
+    assert r.status_code == 422  # kör-tur sızıntı reddi
+    # title'da da: rakam-ok-dizisi
+    r = await client.post(
+        "/api/v1/memory/discussions",
+        json={"title": "3->5 sirasi mi", "question": "Bu tasarim dogru mu?", "device": "turgut"},
+        headers=_hdr(),
+    )
+    assert r.status_code == 422
+
+
+async def test_neutral_question_with_device_name_allowed(client, discussions_db):
+    # Defense-in-depth ama tek-cihaz meta-soruyu GEÇİRMELİ (atıflı-pozisyon değil, ':' yok, ok yok)
+    r = await client.post(
+        "/api/v1/memory/discussions",
+        json={"title": "Klipper onerisi degerlendirmesi", "question": "klipper'in onerisi dogru mu, tartisalim?", "device": "turgut"},
+        headers=_hdr(),
+    )
+    assert r.status_code == 200
+
+
 async def _pos(client, tid, device, key=TEST_MEMORY_KEY, **over):
     return await client.post(f"/api/v1/memory/discussions/{tid}/positions", json={"device": device, **_TPL, **over}, headers=_hdr(key))
 
