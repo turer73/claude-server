@@ -192,19 +192,28 @@ async def _ensure_admin_key(db) -> str | None:
         key_file = Path(os.environ.get("ADMIN_KEY_BOOTSTRAP_FILE") or (Path(server_db_path()).parent / "admin-key-firstboot.txt"))
         # klipper-review P2#3: env-yoksa server_db_path /tmp'e düşebilir (DB_PATH-unset config).
         # systemd PrivateTmp=yes → operatör izole-tmpfs'e ERİŞEMEZ → pointer'ı cat etse bile key
-        # kurtarılamaz. /tmp'i güvenli-hedef sayma (explicit ADMIN_KEY_BOOTSTRAP_FILE hariç).
-        unsafe_tmp = not os.environ.get("ADMIN_KEY_BOOTSTRAP_FILE") and str(key_file).startswith(("/tmp/", "/var/tmp/"))
+        # kurtarılamaz. klipper-review 2.tur #1: explicit ADMIN_KEY_BOOTSTRAP_FILE=/tmp exemption'ı
+        # KALDIRILDI (operatör açıkça ayarlasa bile PrivateTmp-izole kurtarılamazlığı değişmez).
+        # Ama /tmp reddi CONTEXT'e bağlı: INVOCATION_ID yalnız systemd-unit'lerde set (PrivateTmp'nin
+        # tek-geçerli olduğu yer); manuel/test-çalıştırmada /tmp erişilebilir → gereksiz-red yok.
+        systemd_ctx = bool(os.environ.get("INVOCATION_ID"))
+        unsafe_tmp = systemd_ctx and str(key_file).startswith(("/tmp/", "/var/tmp/"))
         write_ok = False
         if not unsafe_tmp:
             try:
                 # klipper-review P2#2: write_text()+chmod() arası TOCTOU — dosya varsayılan-umask
                 # (644) ile oluşup chmod'a dek plaintext AÇIKTA. os.open(mode=0o600) atomik-oluşturur;
                 # fchmod (fd-üzeri, path değil → TOCTOU-yok) dosya-zaten-vardıysa da 0600-garanti.
+                data = (default_key + "\n").encode()
                 fd = os.open(str(key_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
                 try:
                     if hasattr(os, "fchmod"):  # POSIX; Windows'ta os.open mode kısmen uygular
                         os.fchmod(fd, 0o600)
-                    os.write(fd, (default_key + "\n").encode())
+                    # klipper-review 2.tur #2: os.write kısmi-yazabilir (disk-dolu/quota) → TRUNCATED-key
+                    # auth-edemez ama write_ok=True sanılırdı. Tam-yazma doğrula, değilse rollback-yolu.
+                    written = os.write(fd, data)
+                    if written != len(data):
+                        raise OSError(f"kısmi-yazma: {written}/{len(data)} byte (disk-dolu/quota?)")
                 finally:
                     os.close(fd)
                 write_ok = True

@@ -107,9 +107,9 @@ async def test_ensure_admin_key_file_fail_rolls_back(db, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_ensure_admin_key_rejects_tmp_fallback(db, monkeypatch):
-    """klipper-review P2#3: systemd PrivateTmp → /tmp izole, key kurtarılamaz. /tmp-hedefi
-    reddet + row geri-al (explicit env hariç). POSIX-only (path-semantiği)."""
+async def test_ensure_admin_key_rejects_tmp_in_systemd(db, monkeypatch):
+    """klipper-review P2#3 + 2.tur#1: systemd-context'te (INVOCATION_ID set → PrivateTmp geçerli)
+    /tmp-hedefi kurtarılamaz → reddet + rollback. explicit-env EXEMPTION YOK (2.tur#1). POSIX-only."""
     import os as _os
 
     if _os.name == "nt":
@@ -118,12 +118,46 @@ async def test_ensure_admin_key_rejects_tmp_fallback(db, monkeypatch):
     from app.db import data_layer
 
     monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
+    monkeypatch.setenv("INVOCATION_ID", "systemd-unit-simule")  # PrivateTmp-context
+    # 2.tur#1: explicit ADMIN_KEY_BOOTSTRAP_FILE=/tmp bile REDDEDİLMELİ (exemption kalktı)
+    monkeypatch.setenv("ADMIN_KEY_BOOTSTRAP_FILE", "/tmp/explicit/ak.txt")
+    result = await m._ensure_admin_key(db)
+    assert result is None  # systemd+/tmp → kurtarılamaz → None + rollback (explicit-bypass YOK)
+    assert len(await db.fetch_all("SELECT id FROM api_keys WHERE name='admin'")) == 0
+    # server_db_path /tmp'e düşme senaryosu da (env'siz) aynı reddedilmeli
     monkeypatch.delenv("ADMIN_KEY_BOOTSTRAP_FILE", raising=False)
     monkeypatch.setattr(data_layer, "server_db_path", lambda: "/tmp/isolated/server.db")
+    assert await m._ensure_admin_key(db) is None
+
+
+@pytest.mark.anyio
+async def test_ensure_admin_key_tmp_ok_without_systemd(db, monkeypatch, tmp_path):
+    """2.tur#1 tamamlayıcı: systemd-context YOKSA (INVOCATION_ID yok → PrivateTmp yok) /tmp
+    erişilebilir → gereksiz-red yapma. CI'da pytest tmp_path /tmp altında olabilir; kırmamalı."""
+    from app import main as m
+
+    monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
+    monkeypatch.delenv("INVOCATION_ID", raising=False)  # systemd-dışı (test/manuel)
+    monkeypatch.setenv("ADMIN_KEY_BOOTSTRAP_FILE", str(tmp_path / "ak.txt"))
     result = await m._ensure_admin_key(db)
-    assert result is None  # /tmp-izole → kurtarılamaz → None + rollback
-    rows = await db.fetch_all("SELECT id FROM api_keys WHERE name='admin'")
-    assert len(rows) == 0
+    assert result  # systemd-yok → /tmp güvenli → key yazıldı (red yok)
+
+
+@pytest.mark.anyio
+async def test_ensure_admin_key_partial_write_rolls_back(db, monkeypatch, tmp_path):
+    """klipper-review 2.tur#2: os.write kısmi-yazarsa (disk-dolu/quota) TRUNCATED-key auth-edemez;
+    başarılı-sanılmamalı. Tam-yazma doğrulanmalı, değilse rollback."""
+    import os as _os
+
+    from app import main as m
+
+    monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
+    monkeypatch.delenv("INVOCATION_ID", raising=False)
+    monkeypatch.setenv("ADMIN_KEY_BOOTSTRAP_FILE", str(tmp_path / "ak.txt"))
+    monkeypatch.setattr(_os, "write", lambda fd, data: 1)  # kısmi: hep 1 byte döndür
+    result = await m._ensure_admin_key(db)
+    assert result is None  # kısmi-yazma → rollback → None
+    assert len(await db.fetch_all("SELECT id FROM api_keys WHERE name='admin'")) == 0
 
 
 @pytest.mark.anyio
