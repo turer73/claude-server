@@ -196,7 +196,11 @@ async def _ensure_admin_key(db) -> str | None:
         # set eder (CI'da 2 test kırdı). Runtime-heuristic yerine DEPLOY-ZAMANI-CONFIG-FACT: systemd
         # unit'te PrivateTmp=yes'in YANINA Environment="ADMIN_KEY_TMP_ISOLATED=1" konur (install.sh).
         # Yalnız BU-unit True; CI/manuel/başka-systemd false-pozitif vermez (GITHUB_TOKEN Environment-deseni).
-        tmp_isolated = os.environ.get("ADMIN_KEY_TMP_ISOLATED") == "1"
+        # dead-gate-guard (klipper #100658 + bugünkü ders): raw os.environ.get() config-gate'i
+        # systemd Environment= geçmezse sessiz-kırılır → read_env_var (process-env + .env-file okur).
+        from app.core.config import read_env_var
+
+        tmp_isolated = read_env_var("ADMIN_KEY_TMP_ISOLATED") == "1"
         # 3.tur (#100653): path-traversal — '/opt/../tmp/x' literal-'/tmp/' ile başlamaz ama os.open
         # ile /tmp'e yazar. resolve() ÖNCE, sonra startswith (sembolik-link + relatif-traversal kapanır).
         resolved = str(key_file.resolve())
