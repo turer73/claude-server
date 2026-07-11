@@ -48,11 +48,12 @@ async def test_admin_key_insert_is_race_safe_idempotent(db):
 
 
 @pytest.mark.anyio
-async def test_ensure_admin_key_generates_and_returns_on_first_boot(db, monkeypatch):
+async def test_ensure_admin_key_generates_and_returns_on_first_boot(db, monkeypatch, tmp_path):
     """#1198: DEFAULT_API_KEY yok + boş DB → key üretilir VE döndürülür (kurtarılabilir)."""
     from app import main as m
 
     monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
+    monkeypatch.setenv("ADMIN_KEY_BOOTSTRAP_FILE", str(tmp_path / "ak.txt"))  # gerçek /opt'a yazma
     generated = await m._ensure_admin_key(db)
     assert generated  # üretilen plaintext döndü (eskiden kayıptı)
     rows = await db.fetch_all("SELECT name FROM api_keys")
@@ -61,6 +62,31 @@ async def test_ensure_admin_key_generates_and_returns_on_first_boot(db, monkeypa
     # idempotent: ikinci çağrı key zaten var → üretmez/döndürmez (no-op)
     assert await m._ensure_admin_key(db) is None
     assert len(await db.fetch_all("SELECT id FROM api_keys")) == 1
+
+
+@pytest.mark.anyio
+async def test_ensure_admin_key_writes_0600_file_not_log(db, monkeypatch, tmp_path, caplog):
+    """#1304 regresyon: üretilen key 0600-dosyaya yazılır, LOG'a plaintext YAZILMAZ.
+    /var/log rotate-yok (append-only) → log'a yazılan secret birikir/sızar; asıl güvenlik-iddiası
+    'plaintext log-çıktısında geçmemeli'."""
+    import logging
+    import os
+    import stat
+
+    from app import main as m
+
+    monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
+    key_file = tmp_path / "admin-key-firstboot.txt"
+    monkeypatch.setenv("ADMIN_KEY_BOOTSTRAP_FILE", str(key_file))
+    with caplog.at_level(logging.WARNING):
+        generated = await m._ensure_admin_key(db)
+    assert generated
+    assert key_file.read_text(encoding="utf-8").strip() == generated  # dosyaya yazıldı
+    # ASIL regresyon-kilidi: plaintext-key log-çıktısında GEÇMEMELİ (yalnız pointer)
+    assert generated not in caplog.text
+    assert str(key_file) in caplog.text
+    if os.name != "nt":  # POSIX permission; Windows chmod farklı semantik
+        assert stat.S_IMODE(key_file.stat().st_mode) == 0o600
 
 
 @pytest.mark.anyio

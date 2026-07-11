@@ -181,11 +181,34 @@ async def _ensure_admin_key(db) -> str | None:
         (hash_api_key(default_key), "admin", "admin"),
     )
     if cursor.rowcount and not env_key:
-        logger.warning(
-            "İlk-boot: admin API key ÜRETİLDİ (DEFAULT_API_KEY set değil). Bu key bir daha "
-            "GÖSTERİLMEZ — ŞİMDİ kaydet veya .env'de DEFAULT_API_KEY ile sabitle:\n  %s",
-            default_key,
-        )
+        # #1304 güvenlik: plaintext key'i LOG'a yazma. /var/log rotate-yok (append-only,
+        # CLAUDE.md) → plaintext-secret birikir, backup/merkezi-log/okuma ile sızar. Bunun
+        # yerine 0600-restricted dosyaya yaz + log'da yalnız POINTER. Kurtarılabilirlik korunur
+        # (#1198: admin dosyadan okur→.env'e taşır→siler), ama log-sızıntı-yüzeyi kalkar.
+        import stat
+        from pathlib import Path
+
+        from app.db.data_layer import server_db_path
+
+        key_file = Path(os.environ.get("ADMIN_KEY_BOOTSTRAP_FILE") or (Path(server_db_path()).parent / "admin-key-firstboot.txt"))
+        try:
+            key_file.write_text(default_key + "\n", encoding="utf-8")
+            key_file.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600 — yalnız owner
+            logger.warning(
+                "İlk-boot: admin API key ÜRETİLDİ (DEFAULT_API_KEY set değil). Plaintext key "
+                "LOG'a yazılmadı (güvenlik); 0600-dosyaya yazıldı: %s — OKU, .env'de DEFAULT_API_KEY "
+                "olarak sabitle, sonra DOSYAYI SİL.",
+                key_file,
+            )
+        except OSError as e:
+            # Dosya-yazma başarısız (izin/disk): son-çare — key DB'ye girdi ama plaintext hiçbir
+            # yerde yok. Log'a yine YAZMA (sızıntı); operatör DEFAULT_API_KEY ile restart etmeli.
+            logger.error(
+                "İlk-boot admin-key dosyaya YAZILAMADI (%s): %s. Key üretildi ama kurtarılamaz; "
+                ".env'de DEFAULT_API_KEY ayarlayıp yeniden başlatın.",
+                key_file,
+                e,
+            )
         return default_key
     return None
 
