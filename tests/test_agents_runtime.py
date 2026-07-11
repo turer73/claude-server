@@ -53,6 +53,134 @@ def test_cron_card_success_rate_from_outcomes(tmp_path, monkeypatch):
     assert card["running"] is True
 
 
+def test_cron_success_uses_job_override_when_key_mismatches_outcomes(tmp_path, monkeypatch):
+    # code-review-bulgu: memory-synthesize/intent-liveness-audit/autonomous-daily-summary'nin
+    # manifest-key'i cron_outcomes.job ile UYUŞMUYOR (job='memory-synth' vb.) — spec['job']
+    # override'i olmadan success_rate hep None kalıyordu.
+    import sqlite3
+
+    from app.api import agents
+
+    db = tmp_path / "srv.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY, job TEXT, result TEXT, timestamp TEXT)")
+    for r in ("pass", "pass", "fail"):
+        con.execute("INSERT INTO cron_outcomes (job,result,timestamp) VALUES ('memory-synth',?,datetime('now'))", (r,))
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(db))
+
+    spec = next(a for a in _AGENT_MANIFEST if a["key"] == "memory-synthesize")
+    assert spec["job"] == "memory-synth"  # manifest-key != gercek job (bilinen ayrisma)
+    last, rate = agents._cron_success(spec)
+    assert rate is not None
+    assert rate["n"] == 3
+    assert last is not None
+
+
+def test_manifest_job_override_agents_match_known_mismatches():
+    mismatches = {
+        "memory-synthesize": "memory-synth",
+        "intent-liveness-audit": "intent-liveness",
+        "autonomous-daily-summary": "autonomous-summary",
+    }
+    by_key = {a["key"]: a for a in _AGENT_MANIFEST}
+    for key, job in mismatches.items():
+        assert by_key[key].get("job") == job, f"{key}: job-override eksik/yanlış"
+
+
+def test_discoveries_for_filters_project_type_and_title(tmp_path, monkeypatch):
+    import sqlite3
+
+    from app.api import agents
+
+    db = tmp_path / "mem.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, created_at TEXT)")
+    rows = [
+        ("linux-ai-server", "learning", "Haftalık veri analizi (data-analyst) — 2026-W28"),
+        ("linux-ai-server", "learning", "Teknik-SEO denetimi (seo-audit)"),  # farklı-ajan, eslesmemeli
+        ("code-review", "bug", "scripts/data-analyst.py:1 SQL Injection (data-analyst)"),  # yanlış-project
+        ("linux-ai-server", "bug", "AUTO-alert: cron:data-analyst"),  # yanlış-type (types=learning istendi)
+    ]
+    for project, typ, title in rows:
+        con.execute("INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))", (project, typ, title))
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "MEMORY_DB", str(db))
+
+    findings = agents._discoveries_for("%(data-analyst)%")
+    assert len(findings) == 1
+    assert "data-analyst" in findings[0]["title"]
+    assert findings[0]["kind"] == "discovery"
+
+
+def test_discoveries_for_multi_type(tmp_path, monkeypatch):
+    import sqlite3
+
+    from app.api import agents
+
+    db = tmp_path / "mem.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, created_at TEXT)")
+    con.execute(
+        "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
+        ("linux-ai-server", "learning", "GSC fırsatı: sc-domain:x.com"),
+    )
+    con.execute(
+        "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
+        ("linux-ai-server", "bug", "GSC: sc-domain:y.com"),
+    )
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "MEMORY_DB", str(db))
+
+    findings = agents._discoveries_for("GSC%", types=("learning", "bug"))
+    assert len(findings) == 2
+
+
+def test_discoveries_for_bad_db_no_crash(monkeypatch):
+    from app.api import agents
+
+    monkeypatch.setattr(agents, "MEMORY_DB", "/nonexistent/testing.sqlite")
+    assert agents._discoveries_for("%x%") == []
+
+
+def test_cron_card_uses_discoveries_when_disc_like_set(tmp_path, monkeypatch):
+    # code-review-bulgu: ad-advisor/data-analyst/seo-audit/seo-gsc'nin GERÇEK ciktisi
+    # server.db.events'te DEGIL, discoveries'te -- _events_for onlari hep 'Bulgu yok'
+    # gosteriyordu. disc_like set'liyken _cron_card discoveries'i kullanmali, events'i DEGIL.
+    import sqlite3
+
+    from app.api import agents
+
+    mem_db = tmp_path / "mem.db"
+    con = sqlite3.connect(mem_db)
+    con.execute("CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, created_at TEXT)")
+    con.execute(
+        "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
+        ("linux-ai-server", "learning", "Reklam fırsatları (ad-advisor)"),
+    )
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "MEMORY_DB", str(mem_db))
+
+    srv_db = tmp_path / "srv.db"
+    con = sqlite3.connect(srv_db)
+    con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, source TEXT, title TEXT, severity TEXT, timestamp TEXT)")
+    con.execute("INSERT INTO events (source,title,severity,timestamp) VALUES ('cron:ad-advisor','irrelevant-alert','warn',datetime('now'))")
+    con.execute("CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY, job TEXT, result TEXT, timestamp TEXT)")
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(srv_db))
+
+    spec = next(a for a in _AGENT_MANIFEST if a["key"] == "ad-advisor")
+    card = agents._cron_card(spec)
+    assert len(card["findings"]) == 1
+    assert "ad-advisor" in card["findings"][0]["title"]
+    assert card["findings"][0]["kind"] == "discovery"
+
+
 def test_research_card_ondemand_not_triggerable():
     spec = {"key": "research", "name": "Araştırma", "role": "r", "schedule": "istek-üzerine", "models": ["qwen", "claude CLI"]}
     card = _research_card(

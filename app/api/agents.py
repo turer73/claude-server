@@ -20,7 +20,8 @@ _LOG_DIR = "/var/log/linux-ai-server"
 _AUTOMATION = "/opt/linux-ai-server/automation"
 
 # Karar-ajanları manifesti — sürekli(inmem) dışındaki on-demand + cron ajanları.
-# type: ondemand(research) | cron(log mtime + events). script: manuel-tetikleme (allowlist).
+# tip: ondemand(research) | cron(log mtime + events). script: manuel-tetikleme (allowlist).
+# (mypy "# type:" ile baslayan yorumu eski-tarz type-comment sanip parse-hatasi veriyordu)
 _AGENT_MANIFEST = [
     {
         "key": "research",
@@ -41,6 +42,8 @@ _AGENT_MANIFEST = [
         "log": "ad-advisor.log",
         "evsrc": "ad-advisor",
         "script": "ad-advisor.sh",
+        # Gercek ciktisi server.db.events'te DEGIL, discoveries'te (bkz _discoveries_for).
+        "disc_like": "%(ad-advisor)%",
     },
     {
         "key": "adsense-readiness",
@@ -63,6 +66,7 @@ _AGENT_MANIFEST = [
         "log": "data-analyst.log",
         "evsrc": "data-analyst",
         "script": "data-analyst.sh",
+        "disc_like": "%(data-analyst)%",
     },
     {
         "key": "seo-audit",
@@ -74,6 +78,7 @@ _AGENT_MANIFEST = [
         "log": "seo-audit.log",
         "evsrc": "seo-audit",
         "script": "seo-audit.sh",
+        "disc_like": "%(seo-audit)%",
     },
     {
         "key": "seo-gsc",
@@ -85,6 +90,9 @@ _AGENT_MANIFEST = [
         "log": "seo-gsc.log",
         "evsrc": "seo-gsc",
         "script": "seo-gsc.sh",
+        # "(seo-gsc)" degil "GSC..." basligi kullanir (bkz GSC firsati/GSC: sc-domain hata).
+        "disc_like": "GSC%",
+        "disc_types": ("learning", "bug"),
     },
     {
         "key": "seo-plausible",
@@ -107,6 +115,8 @@ _AGENT_MANIFEST = [
         "log": "memory-synth.log",
         "evsrc": "memory-synth",
         "script": "memory-synthesize.sh",
+        # cron_outcomes.job = 'memory-synth', manifest-key'den FARKLI (bkz _cron_success).
+        "job": "memory-synth",
     },
     {
         "key": "memory-triage",
@@ -151,6 +161,7 @@ _AGENT_MANIFEST = [
         "log": "intent-liveness.log",
         "evsrc": "intent-liveness",
         "script": "intent-liveness-audit.sh",
+        "job": "intent-liveness",
     },
     {
         "key": "autonomous-daily-summary",
@@ -162,6 +173,7 @@ _AGENT_MANIFEST = [
         "log": "autonomous-summary.log",
         "evsrc": "autonomous",
         "script": "autonomous-daily-summary.sh",
+        "job": "autonomous-summary",
     },
 ]
 _CRON_SCRIPTS = {a["key"]: a["script"] for a in _AGENT_MANIFEST if a.get("script")}
@@ -343,11 +355,43 @@ def _events_for(evsrc: str | None, limit: int = 5) -> list[dict]:
         return []
 
 
+def _discoveries_for(title_like: str, types: tuple[str, ...] = ("learning",), limit: int = 5) -> list[dict]:
+    """claude_memory.db discoveries'ten başlık-eşleşen son bulgular — bazı cron-ajanların
+    (ad-advisor/data-analyst/seo-audit/seo-gsc) GERÇEK çıktısı burada, server.db.events'te
+    DEĞİL (_events_for onları hep 'Bulgu yok' gösteriyordu). Read-only."""
+    try:
+        con = get_conn(MEMORY_DB, readonly=True)
+        try:
+            placeholders = ",".join("?" for _ in types)
+            rows = con.execute(
+                f"SELECT created_at, title, type FROM discoveries "
+                f"WHERE project='linux-ai-server' AND type IN ({placeholders}) AND title LIKE ? "
+                f"ORDER BY id DESC LIMIT ?",
+                (*types, title_like, limit),
+            ).fetchall()
+            return [
+                {
+                    "time": r["created_at"],
+                    "title": r["title"],
+                    "severity": "P2" if r["type"] == "bug" else "",
+                    "status": r["type"],
+                    "kind": "discovery",
+                }
+                for r in rows
+            ]
+        finally:
+            con.close()
+    except Exception:
+        return []
+
+
 def _cron_success(spec: dict) -> tuple:
-    """cron_outcomes'tan (job=spec['key']) son-koşu zamanı + başarı-oranı. Read-only, fail-safe.
-    Dashboard 'success_rate: None' hardcode'u script-ajanları SÜS gibi gösteriyordu — gerçek
-    pass/fail oranı cron_outcomes'ta var. (job adı = spec['key'], ör. data-analyst/seo-audit.)"""
-    job = spec.get("key")
+    """cron_outcomes'tan (job=spec['job'] veya spec['key']) son-koşu zamanı + başarı-oranı.
+    Read-only, fail-safe. Dashboard 'success_rate: None' hardcode'u script-ajanları SÜS gibi
+    gösteriyordu — gerçek pass/fail oranı cron_outcomes'ta var. 3 ajanın (memory-synthesize/
+    intent-liveness-audit/autonomous-daily-summary) manifest-key'i gerçek job-adıyla uyuşmuyordu
+    (bkz spec['job'] override) — bunlarda success_rate hep None kalıyordu."""
+    job = spec.get("job") or spec.get("key")
     if not job:
         return None, None
     try:
@@ -369,7 +413,10 @@ def _cron_success(spec: dict) -> tuple:
 
 
 def _cron_card(spec: dict) -> dict:
-    findings = _events_for(spec.get("evsrc"))
+    if spec.get("disc_like"):
+        findings = _discoveries_for(spec["disc_like"], types=spec.get("disc_types", ("learning",)))
+    else:
+        findings = _events_for(spec.get("evsrc"))
     cron_last, success_rate = _cron_success(spec)
     last_run = cron_last or _cron_last_run(spec) or (findings[0]["time"] if findings else None)
     return {
