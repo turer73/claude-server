@@ -123,6 +123,10 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=/var/lib/linux-ai-server /var/log/linux-ai-server /var/AI-stump
 PrivateTmp=yes
+# admin-key #1304: PrivateTmp=yes → /tmp izole-tmpfs (operatör erişemez). app/main.py bu
+# DEPLOY-ZAMANI-CONFIG-FACT'i okur (INVOCATION_ID gibi güvenilmez-runtime-heuristic DEĞİL,
+# klipper-review #100655): yalnız BU-unit True → ilk-boot admin-key'i /tmp'e YAZMAZ (kurtarılamaz).
+Environment="ADMIN_KEY_TMP_ISOLATED=1"
 # UMask=0002: server.db + -wal/-shm grup-yazilabilir (664) olsun -> setgid data-dir
 # + ortak-grup ile ikinci-bir-user (or. note-poller/klipper-auto emit-event.sh
 # uzerinden) da yazabilsin -> SQLITE_READONLY (#517) sinifi kapali.

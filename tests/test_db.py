@@ -48,11 +48,12 @@ async def test_admin_key_insert_is_race_safe_idempotent(db):
 
 
 @pytest.mark.anyio
-async def test_ensure_admin_key_generates_and_returns_on_first_boot(db, monkeypatch):
+async def test_ensure_admin_key_generates_and_returns_on_first_boot(db, monkeypatch, tmp_path):
     """#1198: DEFAULT_API_KEY yok + boş DB → key üretilir VE döndürülür (kurtarılabilir)."""
     from app import main as m
 
     monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
+    monkeypatch.setenv("ADMIN_KEY_BOOTSTRAP_FILE", str(tmp_path / "ak.txt"))  # gerçek /opt'a yazma
     generated = await m._ensure_admin_key(db)
     assert generated  # üretilen plaintext döndü (eskiden kayıptı)
     rows = await db.fetch_all("SELECT name FROM api_keys")
@@ -61,6 +62,121 @@ async def test_ensure_admin_key_generates_and_returns_on_first_boot(db, monkeypa
     # idempotent: ikinci çağrı key zaten var → üretmez/döndürmez (no-op)
     assert await m._ensure_admin_key(db) is None
     assert len(await db.fetch_all("SELECT id FROM api_keys")) == 1
+
+
+@pytest.mark.anyio
+async def test_ensure_admin_key_writes_0600_file_not_log(db, monkeypatch, tmp_path, caplog):
+    """#1304 regresyon: üretilen key 0600-dosyaya yazılır, LOG'a plaintext YAZILMAZ.
+    /var/log rotate-yok (append-only) → log'a yazılan secret birikir/sızar; asıl güvenlik-iddiası
+    'plaintext log-çıktısında geçmemeli'."""
+    import logging
+    import os
+    import stat
+
+    from app import main as m
+
+    monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
+    key_file = tmp_path / "admin-key-firstboot.txt"
+    monkeypatch.setenv("ADMIN_KEY_BOOTSTRAP_FILE", str(key_file))
+    with caplog.at_level(logging.WARNING):
+        generated = await m._ensure_admin_key(db)
+    assert generated
+    assert key_file.read_text(encoding="utf-8").strip() == generated  # dosyaya yazıldı
+    # ASIL regresyon-kilidi: plaintext-key log-çıktısında GEÇMEMELİ (yalnız pointer)
+    assert generated not in caplog.text
+    assert str(key_file) in caplog.text
+    if os.name != "nt":  # POSIX permission; Windows chmod farklı semantik
+        assert stat.S_IMODE(key_file.stat().st_mode) == 0o600
+
+
+@pytest.mark.anyio
+async def test_ensure_admin_key_file_fail_rolls_back(db, monkeypatch):
+    """klipper-review P2#1 (KRİTİK): dosya-yazma FAIL olursa üretilen key GERİ ALINMALI.
+    Aksi: DB'de kurtarılamaz-key kalır → sonraki DEFAULT_API_KEY restart'ta 'WHERE NOT EXISTS'
+    engeller → servis KALICI kilitlenir. Fix: DELETE row + return None + fail-loud."""
+    from app import main as m
+
+    monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
+    # Yazılamaz hedef: var-olmayan dizin altında dosya → os.open OSError
+    monkeypatch.setenv("ADMIN_KEY_BOOTSTRAP_FILE", "/nonexistent-dir-xyz/sub/ak.txt")
+    result = await m._ensure_admin_key(db)
+    assert result is None  # kurtarılamaz → None (default_key DÖNDÜRÜLMEZ)
+    # ASIL regresyon: DB'de admin-key row KALMAMALI (geri-alındı) → sonraki restart temiz
+    rows = await db.fetch_all("SELECT id FROM api_keys WHERE name='admin'")
+    assert len(rows) == 0  # rollback: kilit-önleyici
+
+
+@pytest.mark.anyio
+async def test_ensure_admin_key_rejects_tmp_when_isolated(db, monkeypatch):
+    """3.tur (#100655 config-fact): PrivateTmp-unit'te (ADMIN_KEY_TMP_ISOLATED=1 = deploy-zamanı
+    install.sh'ın koyduğu gerçek) /tmp-hedefi kurtarılamaz → reddet + rollback. explicit-bypass YOK.
+    INVOCATION_ID DEĞİL (o CI'da da set → false-pozitif). POSIX-only (path)."""
+    import os as _os
+
+    if _os.name == "nt":
+        pytest.skip("POSIX /tmp path semantiği")
+    from app import main as m
+    from app.db import data_layer
+
+    monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
+    monkeypatch.setenv("ADMIN_KEY_TMP_ISOLATED", "1")  # PrivateTmp-unit config-fact
+    monkeypatch.setenv("ADMIN_KEY_BOOTSTRAP_FILE", "/tmp/explicit/ak.txt")  # explicit bile reddedilir
+    result = await m._ensure_admin_key(db)
+    assert result is None
+    assert len(await db.fetch_all("SELECT id FROM api_keys WHERE name='admin'")) == 0
+    # server_db_path /tmp'e düşme senaryosu da (env'siz) aynı reddedilmeli
+    monkeypatch.delenv("ADMIN_KEY_BOOTSTRAP_FILE", raising=False)
+    monkeypatch.setattr(data_layer, "server_db_path", lambda: "/tmp/isolated/server.db")
+    assert await m._ensure_admin_key(db) is None
+
+
+@pytest.mark.anyio
+async def test_ensure_admin_key_rejects_tmp_traversal_when_isolated(db, monkeypatch):
+    """3.tur (#100653 path-traversal): '/opt/../tmp/x' literal-'/tmp/' ile başlamaz ama resolve
+    edilince /tmp'e gider → os.open orada yazar, PrivateTmp-izolasyon delinir. resolve()-önce-kontrol."""
+    import os as _os
+
+    if _os.name == "nt":
+        pytest.skip("POSIX path-resolve semantiği")
+    from app import main as m
+
+    monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
+    monkeypatch.setenv("ADMIN_KEY_TMP_ISOLATED", "1")
+    # literal-/tmp'le başlamaz ama resolve → /tmp; eski kontrol (startswith-önce-resolve-yok) GEÇERDI
+    monkeypatch.setenv("ADMIN_KEY_BOOTSTRAP_FILE", "/var/tmp/../../tmp/traversal-ak.txt")
+    result = await m._ensure_admin_key(db)
+    assert result is None  # resolve-sonrası /tmp → reddedildi (traversal kapandı)
+    assert len(await db.fetch_all("SELECT id FROM api_keys WHERE name='admin'")) == 0
+
+
+@pytest.mark.anyio
+async def test_ensure_admin_key_tmp_ok_without_isolation(db, monkeypatch, tmp_path):
+    """3.tur tamamlayıcı (CI-kırmızı-fix): ADMIN_KEY_TMP_ISOLATED YOKSA (CI/manuel — PrivateTmp yok)
+    /tmp erişilebilir → gereksiz-red yok. CI'da pytest tmp_path Linux'ta /tmp-altında; ARTIK kırmaz."""
+    from app import main as m
+
+    monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
+    monkeypatch.delenv("ADMIN_KEY_TMP_ISOLATED", raising=False)  # izole-değil (test/CI/manuel)
+    monkeypatch.setenv("ADMIN_KEY_BOOTSTRAP_FILE", str(tmp_path / "ak.txt"))
+    result = await m._ensure_admin_key(db)
+    assert result  # izolasyon-yok → /tmp güvenli → key yazıldı (red yok)
+
+
+@pytest.mark.anyio
+async def test_ensure_admin_key_partial_write_rolls_back(db, monkeypatch, tmp_path):
+    """klipper-review 2.tur#2: os.write kısmi-yazarsa (disk-dolu/quota) TRUNCATED-key auth-edemez;
+    başarılı-sanılmamalı. Tam-yazma doğrulanmalı, değilse rollback."""
+    import os as _os
+
+    from app import main as m
+
+    monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
+    monkeypatch.delenv("ADMIN_KEY_TMP_ISOLATED", raising=False)
+    monkeypatch.setenv("ADMIN_KEY_BOOTSTRAP_FILE", str(tmp_path / "ak.txt"))
+    monkeypatch.setattr(_os, "write", lambda fd, data: 1)  # kısmi: hep 1 byte döndür
+    result = await m._ensure_admin_key(db)
+    assert result is None  # kısmi-yazma → rollback → None
+    assert len(await db.fetch_all("SELECT id FROM api_keys WHERE name='admin'")) == 0
 
 
 @pytest.mark.anyio

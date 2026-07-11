@@ -181,12 +181,77 @@ async def _ensure_admin_key(db) -> str | None:
         (hash_api_key(default_key), "admin", "admin"),
     )
     if cursor.rowcount and not env_key:
-        logger.warning(
-            "İlk-boot: admin API key ÜRETİLDİ (DEFAULT_API_KEY set değil). Bu key bir daha "
-            "GÖSTERİLMEZ — ŞİMDİ kaydet veya .env'de DEFAULT_API_KEY ile sabitle:\n  %s",
-            default_key,
+        # #1304 güvenlik: plaintext key'i LOG'a yazma. /var/log rotate-yok (append-only,
+        # CLAUDE.md) → plaintext-secret birikir, backup/merkezi-log/okuma ile sızar. Bunun
+        # yerine 0600-restricted dosyaya yaz + log'da yalnız POINTER. Kurtarılabilirlik korunur
+        # (#1198: admin dosyadan okur→.env'e taşır→siler), ama log-sızıntı-yüzeyi kalkar.
+        from pathlib import Path
+
+        from app.db.data_layer import server_db_path
+
+        key_file = Path(os.environ.get("ADMIN_KEY_BOOTSTRAP_FILE") or (Path(server_db_path()).parent / "admin-key-firstboot.txt"))
+        # klipper-review P2#3: env-yoksa server_db_path /tmp'e düşebilir. systemd PrivateTmp=yes →
+        # operatör izole-tmpfs'e ERİŞEMEZ → key kurtarılamaz. 2.tur#1: explicit /tmp exemption KALDIRILDI.
+        # 3.tur (#100655, CI-log-kanıtı): INVOCATION_ID GÜVENİLMEZ — GitHub-runner da systemd-altında
+        # set eder (CI'da 2 test kırdı). Runtime-heuristic yerine DEPLOY-ZAMANI-CONFIG-FACT: systemd
+        # unit'te PrivateTmp=yes'in YANINA Environment="ADMIN_KEY_TMP_ISOLATED=1" konur (install.sh).
+        # Yalnız BU-unit True; CI/manuel/başka-systemd false-pozitif vermez (GITHUB_TOKEN Environment-deseni).
+        # dead-gate-guard (klipper #100658 + bugünkü ders): raw os.environ.get() config-gate'i
+        # systemd Environment= geçmezse sessiz-kırılır → read_env_var (process-env + .env-file okur).
+        from app.core.config import read_env_var
+
+        tmp_isolated = read_env_var("ADMIN_KEY_TMP_ISOLATED") == "1"
+        write_ok = False
+        try:
+            # 3.tur (#100653): path-traversal — resolve() ÖNCE, sonra startswith (symlink+relatif kapanır).
+            # klipper 4.tur #1: resolve() try-İÇİNDE — symlink-loop'ta OSError atarsa da rollback-yoluna
+            # düşer (eskiden try-dışıydı → patlar, DB-row kilitli kalırdı).
+            resolved = str(key_file.resolve())
+            if tmp_isolated and resolved.startswith(("/tmp/", "/var/tmp/")):
+                raise OSError("tmp-izole hedef (systemd PrivateTmp) — operatör erişemez, kurtarılamaz")
+            data = (default_key + "\n").encode()
+            # klipper-review P2#2: write_text()+chmod() arası TOCTOU — dosya varsayılan-umask (644) ile
+            # oluşup chmod'a dek plaintext AÇIKTA. os.open(mode=0o600) atomik-oluşturur.
+            # klipper 4.tur #2: O_EXCL — saldırgan hedef-dosyayı ÖNCEDEN kendi-owner'ıyla oluşturursa
+            # fchmod(0600) SAHİPLİĞİ değiştirmez → owner-okur (priv-esc). O_EXCL dosya-varsa fail eder →
+            # rollback. NOT: legit-kalıntı (eski-key silinmemiş + DB-boş) durumunda da fail → operatör
+            # dosyayı silip restart etmeli (fail-loud; tek-kullanıcı-lab'da kabul).
+            fd = os.open(str(key_file), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                if hasattr(os, "fchmod"):  # POSIX; Windows'ta os.open mode kısmen uygular
+                    os.fchmod(fd, 0o600)
+                # klipper-review 2.tur: os.write kısmi-yazabilir (disk-dolu/quota) → TRUNCATED-key.
+                written = os.write(fd, data)
+                if written != len(data):
+                    raise OSError(f"kısmi-yazma: {written}/{len(data)} byte (disk-dolu/quota?)")
+                # klipper 4.tur #3: fsync — os.write başarılı dönse de kernel-crash/güç-kesintisinde
+                # dosya-içeriği kaybolabilir (DB-commit kalıcı) → restart-tutarsızlık. fsync ile kalıcılaştır.
+                if hasattr(os, "fsync"):
+                    os.fsync(fd)
+            finally:
+                os.close(fd)
+            write_ok = True
+        except OSError as e:
+            logger.error("İlk-boot admin-key dosya-yazma/güvenlik hatası (%s): %s", key_file, e)
+        if write_ok:
+            logger.warning(
+                "İlk-boot: admin API key ÜRETİLDİ (DEFAULT_API_KEY set değil). Plaintext key "
+                "LOG'a yazılmadı (güvenlik); 0600-dosyaya yazıldı: %s — OKU, .env'de DEFAULT_API_KEY "
+                "olarak sabitle, sonra DOSYAYI SİL.",
+                key_file,
+            )
+            return default_key
+        # klipper-review P2#1 (KRİTİK, surer'in şerh-hatası): dosya-yazılamadı VEYA /tmp-izole →
+        # plaintext kurtarılamaz. Key DB'de KALIRSA sonraki restart'ta DEFAULT_API_KEY versen bile
+        # 'WHERE NOT EXISTS' yeni-insert'i engeller → servis KALICI kilitlenir. Üretilen row'u GERİ
+        # AL ki restart temiz-başlasın (env-key insert edilebilsin). Fail-loud.
+        await db.execute("DELETE FROM api_keys WHERE key_hash = ? AND name = 'admin'", (hash_api_key(default_key),))
+        logger.error(
+            "İlk-boot admin-key güvenli-kaydedilemedi (path=%s). Üretilen key GERİ ALINDI; "
+            ".env'de DEFAULT_API_KEY ayarlayıp yeniden başlatın.",
+            key_file,
         )
-        return default_key
+        return None
     return None
 
 
