@@ -6,14 +6,17 @@ import os
 import sqlite3
 import tempfile
 import time
+from datetime import UTC, datetime
 
 import pytest
 
 from app.core.learning_loop import (
+    _SCORE_AFTER_DELAY,
     _ensure_learning_table,
     _load_prompt,
     _record_learning_event,
     _save_prompt,
+    _update_score_after,
 )
 
 
@@ -50,6 +53,27 @@ class TestDbOperations:
         assert row[1] == "test event"
         assert row[2] == 5.0
         assert row[3] == 6.0
+
+    def test_record_learning_event_returns_row_id(self, learning_db):
+        # score_after doldurma (flywheel açık-döngü fix): id dönmeli ki caller sonra UPDATE edebilsin.
+        event_id = _record_learning_event("threshold_adjustment", "test event", score_before=5.0)
+        assert isinstance(event_id, int)
+        con = sqlite3.connect(learning_db)
+        row = con.execute("SELECT score_after FROM learning_events WHERE id=?", (event_id,)).fetchone()
+        con.close()
+        assert row[0] is None  # baslangicta NULL
+
+    def test_update_score_after(self, learning_db):
+        event_id = _record_learning_event("threshold_adjustment", "test event", score_before=5.0)
+        assert _update_score_after(event_id, 7.2) is True
+        con = sqlite3.connect(learning_db)
+        row = con.execute("SELECT score_after FROM learning_events WHERE id=?", (event_id,)).fetchone()
+        con.close()
+        assert row[0] == 7.2
+
+    def test_update_score_after_bad_db_no_crash(self, monkeypatch):
+        monkeypatch.setattr("app.core.learning_loop._MEMORY_DB", "/nonexistent/testing.sqlite")
+        assert _update_score_after(1, 5.0) is False  # patlamamali, basarisizlik-sinyali doner
 
     def test_save_and_load_prompt(self, learning_db):
         _save_prompt("consciousness", "You are a helpful assistant.", avg_score=7.5)
@@ -307,3 +331,206 @@ class TestLearningLoopClass:
         _save_prompt("critic", "critic prompt", avg_score=8.0)
         history = learning_loop.get_prompt_history()
         assert len(history) >= 1
+
+
+class TestScoreAfterResolution:
+    """score_after flywheel-fix: learn-event tetiklendiğinde bağımsız bir asyncio-task'e
+    zamanlanır (code-review#307-P2: _run_loop'un tick-cadence'ına bağlı DEĞİL — prod'da
+    interval=3600s iken tick-tabanlı olsaydı 15dk hedefi saatlik-tick'e kayardı), vadesi
+    dolunca o anki 15min-ortalamasıyla DB'de doldurulur, geçici hata retry'lanır."""
+
+    @pytest.mark.anyio
+    async def test_learn_registers_pending_and_spawns_task(self, learning_loop):
+        now = time.time()
+        scores = [{"score": 7, "ts": now - 3000 + i * 50, "boredom_issues": []} for i in range(7)]
+        scores += [{"score": 4, "ts": now - t, "boredom_issues": []} for t in (100, 80, 60)]
+        learning_loop._scores.extend(scores)
+
+        await learning_loop._evaluate_and_learn()
+
+        assert learning_loop._learn_count == 1
+        assert len(learning_loop._pending_score_after) == 1
+        assert len(learning_loop._score_after_tasks) == 1
+        (due_ts,) = learning_loop._pending_score_after.values()
+        assert due_ts >= now + _SCORE_AFTER_DELAY
+        for t in learning_loop._score_after_tasks:
+            t.cancel()
+
+    @pytest.mark.anyio
+    async def test_resolve_score_after_fills_and_clears_pending(self, learning_loop, learning_db):
+        event_id = _record_learning_event("threshold_adjustment", "test", score_before=4.0)
+        learning_loop._pending_score_after[event_id] = time.time() - 1  # vadesi gecmis
+        learning_loop._scores.append({"score": 8, "ts": time.time()})
+
+        await learning_loop._resolve_score_after(event_id, time.time() - 1)
+
+        assert event_id not in learning_loop._pending_score_after
+        con = sqlite3.connect(learning_db)
+        row = con.execute("SELECT score_after FROM learning_events WHERE id=?", (event_id,)).fetchone()
+        con.close()
+        assert row[0] == pytest.approx(8.0)
+
+    @pytest.mark.anyio
+    async def test_resolve_score_after_waits_for_due_ts(self, learning_loop, learning_db):
+        event_id = _record_learning_event("threshold_adjustment", "test", score_before=4.0)
+        learning_loop._scores.append({"score": 8, "ts": time.time()})
+        start = time.time()
+
+        await learning_loop._resolve_score_after(event_id, time.time() + 0.05)
+
+        assert time.time() - start >= 0.05
+
+    @pytest.mark.anyio
+    async def test_resolve_score_after_retries_then_succeeds(self, learning_loop, learning_db, monkeypatch):
+        # Ilk deneme gecici-hata (DB-lock benzeri), ikinci deneme basarili -> tek-hatada
+        # kalici-NULL birakan eski davranisin regresyonu (code-review#307-P2).
+        monkeypatch.setattr("app.core.learning_loop._SCORE_AFTER_RETRY_DELAY", 0.01)
+        event_id = _record_learning_event("threshold_adjustment", "test", score_before=4.0)
+        learning_loop._pending_score_after[event_id] = time.time() - 1
+        learning_loop._scores.append({"score": 8, "ts": time.time()})
+
+        calls = {"n": 0}
+        real_update = _update_score_after
+
+        def flaky_update(eid, score):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return False
+            return real_update(eid, score)
+
+        monkeypatch.setattr("app.core.learning_loop._update_score_after", flaky_update)
+
+        await learning_loop._resolve_score_after(event_id, time.time() - 1)
+
+        assert calls["n"] == 2
+        assert event_id not in learning_loop._pending_score_after
+        con = sqlite3.connect(learning_db)
+        row = con.execute("SELECT score_after FROM learning_events WHERE id=?", (event_id,)).fetchone()
+        con.close()
+        assert row[0] == pytest.approx(8.0)
+
+    @pytest.mark.anyio
+    async def test_resolve_score_after_retries_past_old_five_attempt_cap(self, learning_loop, learning_db, monkeypatch):
+        # Eski tasarim 5 denemede pes ediyordu (code-review#307-P2 2.tur bunu yakaladi) — artik
+        # pes-etme YOK: 6 basarisiz denemeden sonra bile calismaya devam edip basarili olmali.
+        monkeypatch.setattr("app.core.learning_loop._SCORE_AFTER_RETRY_DELAY", 0.01)
+        event_id = _record_learning_event("threshold_adjustment", "test", score_before=4.0)
+        learning_loop._pending_score_after[event_id] = time.time() - 1
+        learning_loop._scores.append({"score": 8, "ts": time.time()})
+
+        calls = {"n": 0}
+        real_update = _update_score_after
+
+        def flaky_update(eid, score):
+            calls["n"] += 1
+            if calls["n"] <= 6:
+                return False
+            return real_update(eid, score)
+
+        monkeypatch.setattr("app.core.learning_loop._update_score_after", flaky_update)
+
+        await learning_loop._resolve_score_after(event_id, time.time() - 1)
+
+        assert calls["n"] == 7  # eski 5-deneme sinirini asti
+        assert event_id not in learning_loop._pending_score_after
+        con = sqlite3.connect(learning_db)
+        row = con.execute("SELECT score_after FROM learning_events WHERE id=?", (event_id,)).fetchone()
+        con.close()
+        assert row[0] == pytest.approx(8.0)
+
+    @pytest.mark.anyio
+    async def test_resolve_score_after_without_window_data_never_gives_up(self, learning_loop, learning_db, monkeypatch):
+        import asyncio
+
+        monkeypatch.setattr("app.core.learning_loop._SCORE_AFTER_RETRY_DELAY", 0.01)
+        event_id = _record_learning_event("threshold_adjustment", "test", score_before=4.0)
+        learning_loop._pending_score_after[event_id] = time.time() - 1
+        # _scores bos -> 15min penceresi hep None, retry sonsuza kadar surer (pes-etme YOK)
+
+        task = asyncio.create_task(learning_loop._resolve_score_after(event_id, time.time() - 1))
+        await asyncio.sleep(0.05)  # birkac retry-turu gecsin
+        assert not task.done()  # hala calisiyor, pes etmedi
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert event_id in learning_loop._pending_score_after
+        con = sqlite3.connect(learning_db)
+        row = con.execute("SELECT score_after FROM learning_events WHERE id=?", (event_id,)).fetchone()
+        con.close()
+        assert row[0] is None
+
+
+class TestPendingScoreAfterRecovery:
+    """Restart-recovery (code-review#307-P2): süreç yeniden-başlarsa in-memory pending-state
+    kaybolmasın diye score_after NULL kalan satırlar created_at'tan geri-hesaplanır."""
+
+    def test_load_pending_recovers_recent_row(self, learning_db):
+        # Restart-recovery penceresi icinde (birkac dakika once) -> geri-yuklenmeli.
+        recent = datetime.fromtimestamp(time.time() - 300, tz=UTC).strftime("%Y-%m-%d %H:%M:%S")
+        con = sqlite3.connect(learning_db)
+        con.execute(
+            "INSERT INTO learning_events (event_type, detail, score_before, created_at) VALUES (?, ?, ?, ?)",
+            ("threshold_adjustment", "d", 5.0, recent),
+        )
+        con.commit()
+        event_id = con.execute("SELECT id FROM learning_events").fetchone()[0]
+        con.close()
+
+        from app.core.learning_loop import _load_pending_score_after
+
+        pending = _load_pending_score_after()
+        assert event_id in pending
+        expected_due = datetime.strptime(recent, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC).timestamp() + _SCORE_AFTER_DELAY
+        assert pending[event_id] == pytest.approx(expected_due)
+
+    def test_load_pending_skips_stale_row(self, learning_db):
+        # code-review#307-P2 2.tur: fix-oncesi biriken gunler-eski score_after=NULL satirlar
+        # "bugunun" ortalamasiyla kirletilmemeli -> stale-cutoff'tan eski satir ATLANMALI.
+        con = sqlite3.connect(learning_db)
+        con.execute(
+            "INSERT INTO learning_events (event_type, detail, score_before, created_at) VALUES (?, ?, ?, ?)",
+            ("threshold_adjustment", "d", 5.0, "2026-01-01 00:00:00"),
+        )
+        con.commit()
+        event_id = con.execute("SELECT id FROM learning_events").fetchone()[0]
+        con.close()
+
+        from app.core.learning_loop import _load_pending_score_after
+
+        assert event_id not in _load_pending_score_after()
+
+    def test_load_pending_ignores_non_threshold_events(self, learning_db):
+        _record_learning_event("some_other_event", "d", score_before=5.0)
+        from app.core.learning_loop import _load_pending_score_after
+
+        assert _load_pending_score_after() == {}
+
+    def test_load_pending_ignores_already_resolved(self, learning_db):
+        _record_learning_event("threshold_adjustment", "d", score_before=5.0, score_after=6.0)
+        from app.core.learning_loop import _load_pending_score_after
+
+        assert _load_pending_score_after() == {}
+
+    def test_load_pending_bad_db_no_crash(self, monkeypatch):
+        monkeypatch.setattr("app.core.learning_loop._MEMORY_DB", "/nonexistent/testing.sqlite")
+        from app.core.learning_loop import _load_pending_score_after
+
+        assert _load_pending_score_after() == {}
+
+    @pytest.mark.anyio
+    async def test_start_recovers_and_schedules(self, learning_loop, learning_db):
+        con = sqlite3.connect(learning_db)
+        con.execute(
+            "INSERT INTO learning_events (event_type, detail, score_before, created_at) VALUES (?, ?, ?, datetime('now'))",
+            ("threshold_adjustment", "d", 5.0),
+        )
+        con.commit()
+        con.close()
+
+        learning_loop.start()
+        try:
+            assert len(learning_loop._pending_score_after) == 1
+            assert len(learning_loop._score_after_tasks) == 1
+        finally:
+            await learning_loop.stop()

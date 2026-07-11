@@ -40,6 +40,16 @@ CREATE TABLE IF NOT EXISTS learning_events (
 _DOWNTREND_TRIGGER = 0.5
 _MIN_OBSERVATIONS = 10
 _LEARN_COOLDOWN = 3600
+# score_after ölçüm-gecikmesi: eşik-ayarının etkisini görmek için ayar-sonrası bu kadar bekleyip
+# o anki 15min-ortalamayı geriye yazıyoruz (score_before ile aynı pencere — karşılaştırılabilir).
+# Bağımsız asyncio-task ile zamanlanır (_run_loop'un self._interval tick-cadence'ına BAĞLI DEĞİL —
+# prod'da interval=3600s, tick'e bağlı olsaydı 15dk hedefi saatlik-tick'e kayardı, code-review#307-P2).
+_SCORE_AFTER_DELAY = 900
+_SCORE_AFTER_RETRY_DELAY = 60
+# restart-recovery gec-kalma toleransi (code-review#307-P2 2.tur): bundan daha eski satirlar
+# geri-yuklenmez — aksi halde upgrade-oncesi biriken gunler/haftalar-eski score_after=NULL
+# satirlari "bugunun" ortalamasiyla kirletirdik (production'da fix-oncesi 68 boyle satir vardi).
+_SCORE_AFTER_STALE_CUTOFF = 3600
 
 
 def _ensure_learning_table() -> None:
@@ -52,17 +62,61 @@ def _ensure_learning_table() -> None:
         log.warning("learning schema error: %s", e)
 
 
-def _record_learning_event(event_type: str, detail: str, score_before: float | None = None, score_after: float | None = None) -> None:
+def _record_learning_event(event_type: str, detail: str, score_before: float | None = None, score_after: float | None = None) -> int | None:
     try:
         con = sqlite3.connect(_MEMORY_DB, timeout=5)
-        con.execute(
+        cur = con.execute(
             "INSERT INTO learning_events (event_type, detail, score_before, score_after) VALUES (?, ?, ?, ?)",
             (event_type, detail, score_before, score_after),
         )
         con.commit()
+        row_id = cur.lastrowid
         con.close()
+        return row_id
     except sqlite3.Error as e:
         log.warning("learning event record error: %s", e)
+        return None
+
+
+def _update_score_after(event_id: int, score_after: float) -> bool:
+    try:
+        con = sqlite3.connect(_MEMORY_DB, timeout=5)
+        con.execute("UPDATE learning_events SET score_after=? WHERE id=?", (score_after, event_id))
+        con.commit()
+        con.close()
+        return True
+    except sqlite3.Error as e:
+        log.warning("score_after update error: %s", e)
+        return False
+
+
+def _load_pending_score_after() -> dict[int, float]:
+    """Restart-recovery (code-review#307-P2): score_after hâlâ NULL olan threshold_adjustment
+    satırlarını created_at'tan due-ts hesaplayarak geri-yükler — süreç yeniden-başlarsa
+    in-memory pending-state kaybolup ölçüm sonsuza dek NULL kalmasın. _SCORE_AFTER_STALE_CUTOFF'tan
+    daha eski satırlar ATLANIR (code-review#307-P2 2.tur): aksi halde bu fix-öncesi biriken
+    günler-eski satırlar "bugünün" ortalamasıyla üzerine yazılıp tarihsel veri kirlenirdi."""
+    pending: dict[int, float] = {}
+    now = time.time()
+    try:
+        con = sqlite3.connect(_MEMORY_DB, timeout=5)
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            "SELECT id, created_at FROM learning_events WHERE event_type='threshold_adjustment' AND score_after IS NULL"
+        ).fetchall()
+        con.close()
+        for row in rows:
+            try:
+                created_ts = datetime.strptime(row["created_at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC).timestamp()
+            except (TypeError, ValueError):
+                continue
+            due_ts = created_ts + _SCORE_AFTER_DELAY
+            if now - due_ts > _SCORE_AFTER_STALE_CUTOFF:
+                continue  # cok-eski, dogru pencereyi artik olcemeyiz - uydurma-veri yazma, NULL kalsin
+            pending[row["id"]] = due_ts
+    except sqlite3.Error as e:
+        log.warning("pending score_after load error: %s", e)
+    return pending
 
 
 def _load_prompt(component: str) -> str | None:
@@ -101,6 +155,10 @@ class LearningLoop:
         self._current_thresholds: dict[str, Any] = {}
         self._learn_count = 0
         self._last_run: str | None = None
+        # event_id -> due-ts: her learn-event'in "etki oldu mu" ölçümü ayardan _SCORE_AFTER_DELAY
+        # sonra yapılır (flywheel'in açık-döngüsü: score_after NULL kalıp bir daha doldurulmuyordu).
+        self._pending_score_after: dict[int, float] = {}
+        self._score_after_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def status(self) -> dict[str, Any]:
@@ -137,7 +195,14 @@ class LearningLoop:
         bus.register_agent("learning_loop", "Closed-loop improvement engine")
         bus.subscribe("critic:score", self._on_score)
         _ensure_learning_table()
-        log.info("learning loop started (interval=%ss)", self._interval)
+        self._pending_score_after = _load_pending_score_after()
+        for event_id, due_ts in self._pending_score_after.items():
+            self._spawn_score_after_task(event_id, due_ts)
+        log.info(
+            "learning loop started (interval=%ss, %s pending score_after recovered)",
+            self._interval,
+            len(self._pending_score_after),
+        )
 
     async def stop(self) -> None:
         self._running = False
@@ -148,9 +213,37 @@ class LearningLoop:
             except asyncio.CancelledError:
                 pass
             self._task = None
+        for t in list(self._score_after_tasks):
+            t.cancel()
         bus = get_bus()
         bus.unsubscribe("critic:score", self._on_score)
         log.info("learning loop stopped")
+
+    def _spawn_score_after_task(self, event_id: int, due_ts: float) -> None:
+        task = asyncio.create_task(self._resolve_score_after(event_id, due_ts))
+        self._score_after_tasks.add(task)
+        task.add_done_callback(self._score_after_tasks.discard)
+
+    async def _resolve_score_after(self, event_id: int, due_ts: float) -> None:
+        """due_ts'e kadar bekleyip score_after'ı doldurur — _run_loop'un tick-cadence'ından
+        BAĞIMSIZ (code-review#307-P2: prod interval=3600s iken tick'e bağlı olsaydı 15dk hedefi
+        saatlik-tick'e kayardı). Geçici DB-hatasında/veri-yokluğunda SINIRSIZ retry eder — sabit
+        deneme-sayısında pes etmek yalnız restart-recovery'ye güveniyordu, aynı süreç çalışırken
+        bir daha hiç denenmiyordu (code-review#307-P2 2.tur). stop() bu task'i iptal eder, sonsuz
+        döngü güvenli — event'ler nadir (cooldown=1h) olduğundan kaynak-maliyeti yok."""
+        await asyncio.sleep(max(0.0, due_ts - time.time()))
+        attempt = 0
+        while True:
+            avg_15min = self._get_windows().get("15min")
+            if avg_15min is not None:
+                ok = await asyncio.to_thread(_update_score_after, event_id, avg_15min)
+                if ok:
+                    self._pending_score_after.pop(event_id, None)
+                    return
+            attempt += 1
+            if attempt % 10 == 0:
+                log.warning("score_after event #%s hala cozulemedi (%s deneme)", event_id, attempt)
+            await asyncio.sleep(_SCORE_AFTER_RETRY_DELAY)
 
     def _get_windows(self) -> dict[str, float | None]:
         now = time.time()
@@ -232,12 +325,16 @@ class LearningLoop:
                 thresholds=self._current_thresholds,
             )
 
-            await asyncio.to_thread(
+            event_id = await asyncio.to_thread(
                 _record_learning_event,
                 "threshold_adjustment",
                 detail,
                 score_before=avg_15min,
             )
+            if event_id is not None:
+                due_ts = now + _SCORE_AFTER_DELAY
+                self._pending_score_after[event_id] = due_ts
+                self._spawn_score_after_task(event_id, due_ts)
 
             await bus.publish(
                 Event(
