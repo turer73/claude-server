@@ -46,7 +46,10 @@ _LEARN_COOLDOWN = 3600
 # prod'da interval=3600s, tick'e bağlı olsaydı 15dk hedefi saatlik-tick'e kayardı, code-review#307-P2).
 _SCORE_AFTER_DELAY = 900
 _SCORE_AFTER_RETRY_DELAY = 60
-_SCORE_AFTER_MAX_RETRIES = 5
+# restart-recovery gec-kalma toleransi (code-review#307-P2 2.tur): bundan daha eski satirlar
+# geri-yuklenmez — aksi halde upgrade-oncesi biriken gunler/haftalar-eski score_after=NULL
+# satirlari "bugunun" ortalamasiyla kirletirdik (production'da fix-oncesi 68 boyle satir vardi).
+_SCORE_AFTER_STALE_CUTOFF = 3600
 
 
 def _ensure_learning_table() -> None:
@@ -90,8 +93,11 @@ def _update_score_after(event_id: int, score_after: float) -> bool:
 def _load_pending_score_after() -> dict[int, float]:
     """Restart-recovery (code-review#307-P2): score_after hâlâ NULL olan threshold_adjustment
     satırlarını created_at'tan due-ts hesaplayarak geri-yükler — süreç yeniden-başlarsa
-    in-memory pending-state kaybolup ölçüm sonsuza dek NULL kalmasın."""
+    in-memory pending-state kaybolup ölçüm sonsuza dek NULL kalmasın. _SCORE_AFTER_STALE_CUTOFF'tan
+    daha eski satırlar ATLANIR (code-review#307-P2 2.tur): aksi halde bu fix-öncesi biriken
+    günler-eski satırlar "bugünün" ortalamasıyla üzerine yazılıp tarihsel veri kirlenirdi."""
     pending: dict[int, float] = {}
+    now = time.time()
     try:
         con = sqlite3.connect(_MEMORY_DB, timeout=5)
         con.row_factory = sqlite3.Row
@@ -104,7 +110,10 @@ def _load_pending_score_after() -> dict[int, float]:
                 created_ts = datetime.strptime(row["created_at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC).timestamp()
             except (TypeError, ValueError):
                 continue
-            pending[row["id"]] = created_ts + _SCORE_AFTER_DELAY
+            due_ts = created_ts + _SCORE_AFTER_DELAY
+            if now - due_ts > _SCORE_AFTER_STALE_CUTOFF:
+                continue  # cok-eski, dogru pencereyi artik olcemeyiz - uydurma-veri yazma, NULL kalsin
+            pending[row["id"]] = due_ts
     except sqlite3.Error as e:
         log.warning("pending score_after load error: %s", e)
     return pending
@@ -218,19 +227,23 @@ class LearningLoop:
     async def _resolve_score_after(self, event_id: int, due_ts: float) -> None:
         """due_ts'e kadar bekleyip score_after'ı doldurur — _run_loop'un tick-cadence'ından
         BAĞIMSIZ (code-review#307-P2: prod interval=3600s iken tick'e bağlı olsaydı 15dk hedefi
-        saatlik-tick'e kayardı). Geçici DB-hatasında sessizce vazgeçmez, backoff'la retry eder
-        (code-review#307-P2: eski hali tek-hatada event'i kalıcı-NULL bırakıyordu)."""
+        saatlik-tick'e kayardı). Geçici DB-hatasında/veri-yokluğunda SINIRSIZ retry eder — sabit
+        deneme-sayısında pes etmek yalnız restart-recovery'ye güveniyordu, aynı süreç çalışırken
+        bir daha hiç denenmiyordu (code-review#307-P2 2.tur). stop() bu task'i iptal eder, sonsuz
+        döngü güvenli — event'ler nadir (cooldown=1h) olduğundan kaynak-maliyeti yok."""
         await asyncio.sleep(max(0.0, due_ts - time.time()))
-        for attempt in range(_SCORE_AFTER_MAX_RETRIES):
+        attempt = 0
+        while True:
             avg_15min = self._get_windows().get("15min")
             if avg_15min is not None:
                 ok = await asyncio.to_thread(_update_score_after, event_id, avg_15min)
                 if ok:
                     self._pending_score_after.pop(event_id, None)
                     return
-            if attempt < _SCORE_AFTER_MAX_RETRIES - 1:
-                await asyncio.sleep(_SCORE_AFTER_RETRY_DELAY)
-        log.warning("score_after event #%s cozulemedi (%s deneme sonrasi) - NULL kaldi", event_id, _SCORE_AFTER_MAX_RETRIES)
+            attempt += 1
+            if attempt % 10 == 0:
+                log.warning("score_after event #%s hala cozulemedi (%s deneme)", event_id, attempt)
+            await asyncio.sleep(_SCORE_AFTER_RETRY_DELAY)
 
     def _get_windows(self) -> dict[str, float | None]:
         now = time.time()
