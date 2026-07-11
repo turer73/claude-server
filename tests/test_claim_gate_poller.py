@@ -75,3 +75,55 @@ def test_decide_override_label_escape_hatch():
     state, desc = cgp.decide(None, enforce=True, has_override=True)
     assert state == "success"
     assert "AUDIT" in desc
+
+
+def test_check_claim_missing_table_returns_none(tmp_path):
+    # Codex#304 bulgu-3: active_claims lazy-kurulur, ilk /claims öncesi hiç yok — crash değil None
+    con = sqlite3.connect(tmp_path / "empty.db")
+    con.row_factory = sqlite3.Row
+    assert cgp.check_claim(con, "turer73/claude-server", "feat/x") is None
+
+
+def test_check_claim_other_operational_error_reraises():
+    # Sadece 'no such table' yutulur — başka DB-hatası (ör. kilit) sessizce gizlenmemeli
+    class _LockedDB:
+        def execute(self, *a, **kw):
+            raise sqlite3.OperationalError("database is locked")
+
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        cgp.check_claim(_LockedDB(), "turer73/claude-server", "feat/x")
+
+
+def test_should_post_clears_stale_success_when_claim_gone():
+    # Codex#304 bulgu-1: claim kalkınca eski 'success' GH'de asılı kalmamalı — pending'e çekilir
+    result = cgp._should_post(None, "advisory: claim yok", {"state": "success", "description": "eski"})
+    assert result == (cgp.STALE_CLEAR_STATE, cgp.STALE_CLEAR_DESC)
+
+
+def test_should_post_skips_when_no_claim_and_no_prior_status():
+    # Advisory niyeti korunur: claim hiç olmadıysa (veya zaten pending) gürültü üretme
+    assert cgp._should_post(None, "advisory: claim yok", None) is None
+    assert cgp._should_post(None, "advisory: claim yok", {"state": "pending", "description": "x"}) is None
+
+
+def test_should_post_dedups_identical_state():
+    # Codex#304 bulgu-4: 1000-status/SHA limiti — aynı (state,desc) tekrar postalanmaz
+    latest = {"state": "success", "description": "claim: surer (a:b, bitiş t)"}
+    assert cgp._should_post("success", "claim: surer (a:b, bitiş t)", latest) is None
+
+
+def test_should_post_posts_when_state_changed():
+    latest = {"state": "success", "description": "claim: surer (a:b, bitiş eski)"}
+    result = cgp._should_post("success", "claim: klipper (a:b, bitiş yeni)", latest)
+    assert result == ("success", "claim: klipper (a:b, bitiş yeni)")
+
+
+def test_next_page_url_parses_link_header():
+    link = '<https://api.github.com/repos/x/y/pulls?page=2>; rel="next", <https://api.github.com/repos/x/y/pulls?page=5>; rel="last"'
+    assert cgp._next_page_url(link) == "https://api.github.com/repos/x/y/pulls?page=2"
+
+
+def test_next_page_url_none_on_last_page():
+    link = '<https://api.github.com/repos/x/y/pulls?page=1>; rel="first"'
+    assert cgp._next_page_url(link) is None
+    assert cgp._next_page_url("") is None
