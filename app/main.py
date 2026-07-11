@@ -190,14 +190,17 @@ async def _ensure_admin_key(db) -> str | None:
         from app.db.data_layer import server_db_path
 
         key_file = Path(os.environ.get("ADMIN_KEY_BOOTSTRAP_FILE") or (Path(server_db_path()).parent / "admin-key-firstboot.txt"))
-        # klipper-review P2#3: env-yoksa server_db_path /tmp'e düşebilir (DB_PATH-unset config).
-        # systemd PrivateTmp=yes → operatör izole-tmpfs'e ERİŞEMEZ → pointer'ı cat etse bile key
-        # kurtarılamaz. klipper-review 2.tur #1: explicit ADMIN_KEY_BOOTSTRAP_FILE=/tmp exemption'ı
-        # KALDIRILDI (operatör açıkça ayarlasa bile PrivateTmp-izole kurtarılamazlığı değişmez).
-        # Ama /tmp reddi CONTEXT'e bağlı: INVOCATION_ID yalnız systemd-unit'lerde set (PrivateTmp'nin
-        # tek-geçerli olduğu yer); manuel/test-çalıştırmada /tmp erişilebilir → gereksiz-red yok.
-        systemd_ctx = bool(os.environ.get("INVOCATION_ID"))
-        unsafe_tmp = systemd_ctx and str(key_file).startswith(("/tmp/", "/var/tmp/"))
+        # klipper-review P2#3: env-yoksa server_db_path /tmp'e düşebilir. systemd PrivateTmp=yes →
+        # operatör izole-tmpfs'e ERİŞEMEZ → key kurtarılamaz. 2.tur#1: explicit /tmp exemption KALDIRILDI.
+        # 3.tur (#100655, CI-log-kanıtı): INVOCATION_ID GÜVENİLMEZ — GitHub-runner da systemd-altında
+        # set eder (CI'da 2 test kırdı). Runtime-heuristic yerine DEPLOY-ZAMANI-CONFIG-FACT: systemd
+        # unit'te PrivateTmp=yes'in YANINA Environment="ADMIN_KEY_TMP_ISOLATED=1" konur (install.sh).
+        # Yalnız BU-unit True; CI/manuel/başka-systemd false-pozitif vermez (GITHUB_TOKEN Environment-deseni).
+        tmp_isolated = os.environ.get("ADMIN_KEY_TMP_ISOLATED") == "1"
+        # 3.tur (#100653): path-traversal — '/opt/../tmp/x' literal-'/tmp/' ile başlamaz ama os.open
+        # ile /tmp'e yazar. resolve() ÖNCE, sonra startswith (sembolik-link + relatif-traversal kapanır).
+        resolved = str(key_file.resolve())
+        unsafe_tmp = tmp_isolated and resolved.startswith(("/tmp/", "/var/tmp/"))
         write_ok = False
         if not unsafe_tmp:
             try:

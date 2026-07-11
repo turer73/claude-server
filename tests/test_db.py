@@ -107,9 +107,10 @@ async def test_ensure_admin_key_file_fail_rolls_back(db, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_ensure_admin_key_rejects_tmp_in_systemd(db, monkeypatch):
-    """klipper-review P2#3 + 2.tur#1: systemd-context'te (INVOCATION_ID set → PrivateTmp geçerli)
-    /tmp-hedefi kurtarılamaz → reddet + rollback. explicit-env EXEMPTION YOK (2.tur#1). POSIX-only."""
+async def test_ensure_admin_key_rejects_tmp_when_isolated(db, monkeypatch):
+    """3.tur (#100655 config-fact): PrivateTmp-unit'te (ADMIN_KEY_TMP_ISOLATED=1 = deploy-zamanı
+    install.sh'ın koyduğu gerçek) /tmp-hedefi kurtarılamaz → reddet + rollback. explicit-bypass YOK.
+    INVOCATION_ID DEĞİL (o CI'da da set → false-pozitif). POSIX-only (path)."""
     import os as _os
 
     if _os.name == "nt":
@@ -118,11 +119,10 @@ async def test_ensure_admin_key_rejects_tmp_in_systemd(db, monkeypatch):
     from app.db import data_layer
 
     monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
-    monkeypatch.setenv("INVOCATION_ID", "systemd-unit-simule")  # PrivateTmp-context
-    # 2.tur#1: explicit ADMIN_KEY_BOOTSTRAP_FILE=/tmp bile REDDEDİLMELİ (exemption kalktı)
-    monkeypatch.setenv("ADMIN_KEY_BOOTSTRAP_FILE", "/tmp/explicit/ak.txt")
+    monkeypatch.setenv("ADMIN_KEY_TMP_ISOLATED", "1")  # PrivateTmp-unit config-fact
+    monkeypatch.setenv("ADMIN_KEY_BOOTSTRAP_FILE", "/tmp/explicit/ak.txt")  # explicit bile reddedilir
     result = await m._ensure_admin_key(db)
-    assert result is None  # systemd+/tmp → kurtarılamaz → None + rollback (explicit-bypass YOK)
+    assert result is None
     assert len(await db.fetch_all("SELECT id FROM api_keys WHERE name='admin'")) == 0
     # server_db_path /tmp'e düşme senaryosu da (env'siz) aynı reddedilmeli
     monkeypatch.delenv("ADMIN_KEY_BOOTSTRAP_FILE", raising=False)
@@ -131,16 +131,35 @@ async def test_ensure_admin_key_rejects_tmp_in_systemd(db, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_ensure_admin_key_tmp_ok_without_systemd(db, monkeypatch, tmp_path):
-    """2.tur#1 tamamlayıcı: systemd-context YOKSA (INVOCATION_ID yok → PrivateTmp yok) /tmp
-    erişilebilir → gereksiz-red yapma. CI'da pytest tmp_path /tmp altında olabilir; kırmamalı."""
+async def test_ensure_admin_key_rejects_tmp_traversal_when_isolated(db, monkeypatch):
+    """3.tur (#100653 path-traversal): '/opt/../tmp/x' literal-'/tmp/' ile başlamaz ama resolve
+    edilince /tmp'e gider → os.open orada yazar, PrivateTmp-izolasyon delinir. resolve()-önce-kontrol."""
+    import os as _os
+
+    if _os.name == "nt":
+        pytest.skip("POSIX path-resolve semantiği")
     from app import main as m
 
     monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
-    monkeypatch.delenv("INVOCATION_ID", raising=False)  # systemd-dışı (test/manuel)
+    monkeypatch.setenv("ADMIN_KEY_TMP_ISOLATED", "1")
+    # literal-/tmp'le başlamaz ama resolve → /tmp; eski kontrol (startswith-önce-resolve-yok) GEÇERDI
+    monkeypatch.setenv("ADMIN_KEY_BOOTSTRAP_FILE", "/var/tmp/../../tmp/traversal-ak.txt")
+    result = await m._ensure_admin_key(db)
+    assert result is None  # resolve-sonrası /tmp → reddedildi (traversal kapandı)
+    assert len(await db.fetch_all("SELECT id FROM api_keys WHERE name='admin'")) == 0
+
+
+@pytest.mark.anyio
+async def test_ensure_admin_key_tmp_ok_without_isolation(db, monkeypatch, tmp_path):
+    """3.tur tamamlayıcı (CI-kırmızı-fix): ADMIN_KEY_TMP_ISOLATED YOKSA (CI/manuel — PrivateTmp yok)
+    /tmp erişilebilir → gereksiz-red yok. CI'da pytest tmp_path Linux'ta /tmp-altında; ARTIK kırmaz."""
+    from app import main as m
+
+    monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
+    monkeypatch.delenv("ADMIN_KEY_TMP_ISOLATED", raising=False)  # izole-değil (test/CI/manuel)
     monkeypatch.setenv("ADMIN_KEY_BOOTSTRAP_FILE", str(tmp_path / "ak.txt"))
     result = await m._ensure_admin_key(db)
-    assert result  # systemd-yok → /tmp güvenli → key yazıldı (red yok)
+    assert result  # izolasyon-yok → /tmp güvenli → key yazıldı (red yok)
 
 
 @pytest.mark.anyio
@@ -152,7 +171,7 @@ async def test_ensure_admin_key_partial_write_rolls_back(db, monkeypatch, tmp_pa
     from app import main as m
 
     monkeypatch.delenv("DEFAULT_API_KEY", raising=False)
-    monkeypatch.delenv("INVOCATION_ID", raising=False)
+    monkeypatch.delenv("ADMIN_KEY_TMP_ISOLATED", raising=False)
     monkeypatch.setenv("ADMIN_KEY_BOOTSTRAP_FILE", str(tmp_path / "ak.txt"))
     monkeypatch.setattr(_os, "write", lambda fd, data: 1)  # kısmi: hep 1 byte döndür
     result = await m._ensure_admin_key(db)
