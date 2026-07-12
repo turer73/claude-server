@@ -20,6 +20,10 @@ INSTALL_SH = (REPO_ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
 FAIL_CLOSED_DEPS = [
     ("ci-fixer-settings.json", False),
     ("spawn-write-guard.sh", True),
+    # klipper-review #316-P2: note-poller.sh (AUTONOMOUS_MODE=1) bu modülü MUTLAK-yoldan çağırır;
+    # yoksa spawn `|| echo $last_seen` ile sessizce no-op'lar, Faz-A kill-switch/audit yolu hiç
+    # canlı olmaz (docs/autonomous-comms-design.md §5+§10).
+    ("note_poller_decide.py", True),
 ]
 
 
