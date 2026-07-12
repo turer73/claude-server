@@ -157,6 +157,16 @@ def memory_db(tmp_path, monkeypatch):
     return db_path
 
 
+async def test_memory_client_fixture_builds_working_client_and_db(memory_client, memory_db):
+    """#1318: conftest.py'nin memory_client fixture'i app.database/app.utils'tan import
+    ediyordu (mevcut-olmayan modüller, ModuleNotFoundError) — hiçbir test bu fixture'ı
+    doğrudan kullanmadığı için fark edilmemişti. Top-level app.db.database/app.auth.api_key
+    ile hizalandı; bu test fixture'ın artık gerçekten çalışan bir client+db çifti kurduğunu
+    doğrular (regresyon-koruması)."""
+    resp = await memory_client.get("/api/v1/memory/devices")
+    assert resp.status_code == 200
+
+
 # ---------------------------------------------------------------------------
 # Devices
 # ---------------------------------------------------------------------------

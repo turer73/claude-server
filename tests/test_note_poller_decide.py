@@ -141,6 +141,54 @@ def test_spawn_invokes_autonomous_claude_with_correct_args(db, monkeypatch):
     assert rows == [(7, "klipper-test", "spawned", "from=surer")]
 
 
+def test_main_argv_bounds_check_exits_nonzero(db):
+    """#1316: sys.argv[1]/[2]'ye korunmasiz erisim yerine acik hata + exit(1)."""
+    repo_root = Path(__file__).resolve().parents[1]
+    proc = subprocess.run(
+        [sys.executable, str(repo_root / "automation" / "note_poller_decide.py"), db],
+        input="[]",
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+        timeout=10,
+    )
+    assert proc.returncode == 1
+    assert "Kullanım" in proc.stderr
+
+
+def test_main_malformed_json_fails_safe(db):
+    """#1317: gecersiz JSON crash yerine last_seen'i stdout'a yazip sessizce doner (fail-safe)."""
+    repo_root = Path(__file__).resolve().parents[1]
+    proc = subprocess.run(
+        [sys.executable, str(repo_root / "automation" / "note_poller_decide.py"), db, "klipper-test", "42"],
+        input="{not valid json",
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+        timeout=10,
+    )
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == "42"
+    assert "JSON-parse basarisiz" in proc.stderr
+
+
+def test_main_skips_notes_missing_required_keys(db):
+    """#1315: 'id'/'from_device' eksik not KeyError ile spawn-dongusunu cokertmez, atlanip loglanir."""
+    repo_root = Path(__file__).resolve().parents[1]
+    notes = [{"id": 1, "from_device": "surer", "title": "gecerli", "preview": ""}, {"title": "id-eksik"}, {"id": 2}]
+    proc = subprocess.run(
+        [sys.executable, str(repo_root / "automation" / "note_poller_decide.py"), db, "klipper-test", "0"],
+        input=json.dumps(notes),
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+        timeout=10,
+    )
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == "1"
+    assert "gecersiz not" in proc.stderr
+
+
 def test_main_cli_end_to_end_with_halt_never_spawns(db):
     """note-poller.sh'nin gercekten cagirdigi CLI-arayuzunu (argv+stdin+stdout) subprocess
     ile uctan-uca test eder. halt=1 KULLANILIR ki gercek autonomous-claude.sh ASLA

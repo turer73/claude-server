@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -44,7 +44,10 @@ def server_db(tmp_path: Path) -> str:
 def _insert_remediation(db_path: str, source: str, action: str, success: bool, days_ago: int = 0) -> None:
     """Test remediation kaydı ekle."""
     con = sqlite3.connect(db_path)
-    ts = (datetime.now() - timedelta(days=days_ago)).isoformat()
+    # UTC + SQLite-native format (üretim datetime('now') ile ayni bicim) — Python .isoformat()'in
+    # T-ayirici+mikrosaniyesi + local-saat, takvim-gunu UTC-cutoff'la ortustugunde 'T'>' ' ASCII
+    # karsilastirmasi yuzunden 31-gun-once kaydini yanlislikla pencereye sokuyordu (flaky, 2026-07-13).
+    ts = (datetime.now(UTC) - timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")
     con.execute(
         "INSERT INTO remediation_log (timestamp, alert_source, severity, mode, action, command, executed, success) "
         "VALUES (?, ?, 'critical', 'auto', ?, 'test-cmd', 1, ?)",

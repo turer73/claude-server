@@ -31,29 +31,31 @@ router = APIRouter(prefix="/api/v1/rag", tags=["rag"], dependencies=[Depends(ver
 
 def _init_metrics_db():
     conn = get_conn(METRICS_DB)  # P1-a: busy_timeout+WAL (onceden timeout'suz)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS rag_queries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts INTEGER NOT NULL,
-            endpoint TEXT NOT NULL,
-            query TEXT NOT NULL,
-            project TEXT,
-            source TEXT,
-            top_k INTEGER,
-            hit_count INTEGER,
-            top_score REAL,
-            duration_ms INTEGER,
-            tokens INTEGER,
-            tokens_per_sec REAL,
-            client_ip TEXT,
-            user_agent TEXT
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON rag_queries(ts)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_project ON rag_queries(project)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_endpoint ON rag_queries(endpoint)")
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS rag_queries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts INTEGER NOT NULL,
+                endpoint TEXT NOT NULL,
+                query TEXT NOT NULL,
+                project TEXT,
+                source TEXT,
+                top_k INTEGER,
+                hit_count INTEGER,
+                top_score REAL,
+                duration_ms INTEGER,
+                tokens INTEGER,
+                tokens_per_sec REAL,
+                client_ip TEXT,
+                user_agent TEXT
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON rag_queries(ts)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_project ON rag_queries(project)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_endpoint ON rag_queries(endpoint)")
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # Modul-load zamani init: CI veya path-eksik ortamda fail edebilir, sessiz gec.
@@ -68,20 +70,22 @@ except sqlite3.OperationalError:
 def _log_query(endpoint, query, project, source, top_k, hits, duration_ms, tokens=None, tps=None, request=None):
     try:
         conn = get_conn(METRICS_DB, busy_timeout_ms=2000)  # P1-a: timeout=2 parite
-        ip = ua = None
-        if request:
-            ip = request.client.host if request.client else None
-            ua = request.headers.get("user-agent", "")[:200]
-        top_score = float(hits[0]["score"]) if hits else None
-        conn.execute(
-            """
-            INSERT INTO rag_queries (ts, endpoint, query, project, source, top_k, hit_count, top_score, duration_ms, tokens, tokens_per_sec, client_ip, user_agent)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (int(time.time()), endpoint, query[:500], project, source, top_k, len(hits), top_score, duration_ms, tokens, tps, ip, ua),
-        )
-        conn.commit()
-        conn.close()
+        try:
+            ip = ua = None
+            if request:
+                ip = request.client.host if request.client else None
+                ua = request.headers.get("user-agent", "")[:200]
+            top_score = float(hits[0]["score"]) if hits else None
+            conn.execute(
+                """
+                INSERT INTO rag_queries (ts, endpoint, query, project, source, top_k, hit_count, top_score, duration_ms, tokens, tokens_per_sec, client_ip, user_agent)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+                (int(time.time()), endpoint, query[:500], project, source, top_k, len(hits), top_score, duration_ms, tokens, tps, ip, ua),
+            )
+            conn.commit()
+        finally:
+            conn.close()
     except Exception:
         pass
 
@@ -226,8 +230,10 @@ def health():
         o = requests.get(f"{OLLAMA_URL}/api/version", timeout=5).json()
         _init_metrics_db()  # Idempotent — CI/fresh-install path icin garanti
         conn = get_conn(METRICS_DB, busy_timeout_ms=2000)  # P1-a: timeout=2 parite
-        total_queries = conn.execute("SELECT COUNT(*) FROM rag_queries").fetchone()[0]
-        conn.close()
+        try:
+            total_queries = conn.execute("SELECT COUNT(*) FROM rag_queries").fetchone()[0]
+        finally:
+            conn.close()
         return {
             "qdrant": {"ok": True, "points": q.get("result", {}).get("points_count")},
             "ollama": {"ok": True, "version": o.get("version")},
@@ -377,57 +383,67 @@ def metrics(days: int = Query(30, ge=1, le=365)):
     since = int(time.time()) - days * 86400
     _init_metrics_db()  # Idempotent — bos DB'de tabloyu garanti et
     conn = get_conn(METRICS_DB, busy_timeout_ms=5000)  # P1-a: timeout=5 parite
-    cur = conn.cursor()
+    try:
+        cur = conn.cursor()
 
-    # Toplam istatistik
-    cur.execute("SELECT COUNT(*), AVG(duration_ms), AVG(hit_count), AVG(top_score) FROM rag_queries WHERE ts >= ?", (since,))
-    total, avg_dur, avg_hits, avg_score = cur.fetchone()
+        # Toplam istatistik
+        cur.execute("SELECT COUNT(*), AVG(duration_ms), AVG(hit_count), AVG(top_score) FROM rag_queries WHERE ts >= ?", (since,))
+        total, avg_dur, avg_hits, avg_score = cur.fetchone()
 
-    # Endpoint dagilim
-    cur.execute("SELECT endpoint, COUNT(*) FROM rag_queries WHERE ts >= ? GROUP BY endpoint", (since,))
-    by_endpoint = dict(cur.fetchall())
+        # Endpoint dagilim
+        cur.execute("SELECT endpoint, COUNT(*) FROM rag_queries WHERE ts >= ? GROUP BY endpoint", (since,))
+        by_endpoint = dict(cur.fetchall())
 
-    # Proje dagilim
-    cur.execute("SELECT COALESCE(project, '(all)'), COUNT(*) FROM rag_queries WHERE ts >= ? GROUP BY project ORDER BY 2 DESC", (since,))
-    by_project = [{"project": p, "count": c} for p, c in cur.fetchall()]
+        # Proje dagilim
+        cur.execute("SELECT COALESCE(project, '(all)'), COUNT(*) FROM rag_queries WHERE ts >= ? GROUP BY project ORDER BY 2 DESC", (since,))
+        by_project = [{"project": p, "count": c} for p, c in cur.fetchall()]
 
-    # Top 20 sorgu (sik)
-    cur.execute(
-        """
-        SELECT query, COUNT(*) cnt, AVG(top_score) score, AVG(duration_ms) dur
-        FROM rag_queries WHERE ts >= ?
-        GROUP BY query ORDER BY cnt DESC LIMIT 20
-    """,
-        (since,),
-    )
-    top_queries = [{"query": r[0], "count": r[1], "avg_score": r[2], "avg_duration_ms": r[3]} for r in cur.fetchall()]
+        # Top 20 sorgu (sik)
+        cur.execute(
+            """
+            SELECT query, COUNT(*) cnt, AVG(top_score) score, AVG(duration_ms) dur
+            FROM rag_queries WHERE ts >= ?
+            GROUP BY query ORDER BY cnt DESC LIMIT 20
+        """,
+            (since,),
+        )
+        top_queries = [{"query": r[0], "count": r[1], "avg_score": r[2], "avg_duration_ms": r[3]} for r in cur.fetchall()]
 
-    # Son 10 sorgu
-    cur.execute(
-        """
-        SELECT ts, endpoint, query, project, hit_count, top_score, duration_ms, tokens
-        FROM rag_queries WHERE ts >= ?
-        ORDER BY ts DESC LIMIT 10
-    """,
-        (since,),
-    )
-    recent = [
-        {"ts": r[0], "endpoint": r[1], "query": r[2], "project": r[3], "hits": r[4], "top_score": r[5], "duration_ms": r[6], "tokens": r[7]}
-        for r in cur.fetchall()
-    ]
+        # Son 10 sorgu
+        cur.execute(
+            """
+            SELECT ts, endpoint, query, project, hit_count, top_score, duration_ms, tokens
+            FROM rag_queries WHERE ts >= ?
+            ORDER BY ts DESC LIMIT 10
+        """,
+            (since,),
+        )
+        recent = [
+            {
+                "ts": r[0],
+                "endpoint": r[1],
+                "query": r[2],
+                "project": r[3],
+                "hits": r[4],
+                "top_score": r[5],
+                "duration_ms": r[6],
+                "tokens": r[7],
+            }
+            for r in cur.fetchall()
+        ]
 
-    # Gunluk dagilim
-    cur.execute(
-        """
-        SELECT DATE(ts, 'unixepoch') d, COUNT(*) cnt
-        FROM rag_queries WHERE ts >= ?
-        GROUP BY d ORDER BY d DESC LIMIT 30
-    """,
-        (since,),
-    )
-    daily = [{"date": r[0], "count": r[1]} for r in cur.fetchall()]
-
-    conn.close()
+        # Gunluk dagilim
+        cur.execute(
+            """
+            SELECT DATE(ts, 'unixepoch') d, COUNT(*) cnt
+            FROM rag_queries WHERE ts >= ?
+            GROUP BY d ORDER BY d DESC LIMIT 30
+        """,
+            (since,),
+        )
+        daily = [{"date": r[0], "count": r[1]} for r in cur.fetchall()]
+    finally:
+        conn.close()
 
     return {
         "period_days": days,

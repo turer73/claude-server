@@ -146,10 +146,26 @@ def spawn(n: dict, db_path: str, device: str) -> None:
 
 
 def main() -> None:
+    if len(sys.argv) < 3:
+        sys.stderr.write("Kullanım: note_poller_decide.py <db_path> <device> [last_seen]\n")
+        sys.exit(1)
     db_path = sys.argv[1]
     device = sys.argv[2]
     last_seen = int(sys.argv[3]) if len(sys.argv) > 3 else 0
-    notes = json.load(sys.stdin)
+
+    try:
+        raw_notes = json.load(sys.stdin)
+    except json.JSONDecodeError as e:
+        sys.stderr.write(f"stdin JSON-parse basarisiz (spawn atlanir, last_seen korunur): {e}\n")
+        print(last_seen)
+        return
+
+    notes = []
+    for n in raw_notes:
+        if not isinstance(n, dict) or "id" not in n or "from_device" not in n:
+            sys.stderr.write(f"gecersiz not (id/from_device eksik, atlanir): {n}\n")
+            continue
+        notes.append(n)
 
     result = decide(notes, db_path, device)
     for n in result["spawned"]:
