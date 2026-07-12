@@ -173,7 +173,10 @@ def test_main_malformed_json_fails_safe(db):
 
 
 def test_main_skips_notes_missing_required_keys(db):
-    """#1315: 'id'/'from_device' eksik not KeyError ile spawn-dongusunu cokertmez, atlanip loglanir."""
+    """#1315: 'id'/'from_device' eksik not KeyError ile spawn-dongusunu cokertmez, atlanip loglanir.
+    halt=1 KULLANILIR ki gecerli not spawn()'a ulasip gercek autonomous-claude.sh'i tetiklemesin
+    (test_main_cli_end_to_end_with_halt_never_spawns ile ayni guvenlik-deseni)."""
+    _set_halt(db, 1)
     repo_root = Path(__file__).resolve().parents[1]
     notes = [{"id": 1, "from_device": "surer", "title": "gecerli", "preview": ""}, {"title": "id-eksik"}, {"id": 2}]
     proc = subprocess.run(
@@ -187,6 +190,7 @@ def test_main_skips_notes_missing_required_keys(db):
     assert proc.returncode == 0
     assert proc.stdout.strip() == "1"
     assert "gecersiz not" in proc.stderr
+    assert "halt=True" in proc.stderr
 
 
 def test_main_cli_end_to_end_with_halt_never_spawns(db):
