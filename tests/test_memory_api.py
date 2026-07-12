@@ -1366,3 +1366,86 @@ async def test_create_note_wires_comms_substrate_tables(client, memory_db):
     row = conn.execute("SELECT active FROM autonomous_comms_halt WHERE id=1").fetchone()
     assert row == (0,)  # kill-switch varsayilan-kapali
     conn.close()
+
+
+async def test_create_note_derives_msg_type_dialogue(client, memory_db):
+    """Faz-A §3: duz-prose not -> sunucu msg_type='dialogue' turetir (client-iddiasi yok)."""
+    import sqlite3
+
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={"from_device": "klipper", "title": "sohbet", "content": "selam, nasil gidiyor?"},
+    )
+    assert resp.status_code == 200
+    note_id = resp.json()["id"]
+    conn = sqlite3.connect(memory_db)
+    row = conn.execute("SELECT msg_type FROM notes WHERE id=?", (note_id,)).fetchone()
+    conn.close()
+    assert row == ("dialogue",)
+
+
+async def test_create_note_derives_msg_type_dispatch(client, memory_db):
+    """Faz-A §3: JSON task-paketi icerikli not -> sunucu msg_type='dispatch' turetir."""
+    import json
+    import sqlite3
+
+    resp = await client.post(
+        "/api/v1/memory/notes",
+        json={
+            "from_device": "klipper",
+            "title": "gorev-paketi",
+            "content": json.dumps({"gorev": "test-yaz", "adimlar": ["pytest calistir"]}),
+        },
+    )
+    assert resp.status_code == 200
+    note_id = resp.json()["id"]
+    conn = sqlite3.connect(memory_db)
+    row = conn.execute("SELECT msg_type FROM notes WHERE id=?", (note_id,)).fetchone()
+    conn.close()
+    assert row == ("dispatch",)
+
+
+async def test_comms_halt_default_inactive(client, memory_db):
+    """Faz-A §5: kill-switch varsayilan-kapali (guvenli-varsayilan)."""
+    resp = await client.get("/api/v1/memory/comms-halt")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["active"] is False
+
+
+async def test_comms_halt_set_and_read_back(client, memory_db):
+    """Faz-A §5: MASTER-key ile active=True set edilir, GET aninda yansir."""
+    resp = await client.put(
+        "/api/v1/memory/comms-halt",
+        json={"active": True, "reason": "test-acil-durdurma", "set_by": "test-operator"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "updated", "active": True}
+
+    r2 = await client.get("/api/v1/memory/comms-halt")
+    body = r2.json()
+    assert body["active"] is True
+    assert body["reason"] == "test-acil-durdurma"
+    assert body["set_by"] == "test-operator"
+
+
+async def test_comms_halt_set_requires_master_key(client, memory_db, monkeypatch):
+    """Faz-A §5 self-halt/self-unhalt baypasi engeli: otonom-key ile PUT -> 401
+    (approve/reject ile AYNI desen — kill-switch'i otonom-ajan kendisi degistiremez)."""
+    monkeypatch.setattr("app.api.memory.MEMORY_API_KEY_AUTONOMOUS", "autonomous-test-key-xyz")
+    resp = await client.put(
+        "/api/v1/memory/comms-halt",
+        json={"active": True},
+        headers={"X-Memory-Key": "autonomous-test-key-xyz"},
+    )
+    assert resp.status_code == 401
+
+
+async def test_comms_halt_note_poller_decide_sees_live_toggle(client, memory_db):
+    """Uctan-uca kanit: API'den set edilen halt, note_poller_decide.read_halt_flag ile
+    AYNI DB-satirini gorur (iki farkli dil/surec, tek-kaynak DB)."""
+    from automation.note_poller_decide import read_halt_flag
+
+    assert read_halt_flag(memory_db) is False
+    await client.put("/api/v1/memory/comms-halt", json={"active": True})
+    assert read_halt_flag(memory_db) is True

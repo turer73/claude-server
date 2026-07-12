@@ -70,6 +70,14 @@ cp "$SRC_DIR/automation/ci-fixer-settings.json" /opt/linux-ai-server/automation/
 # WRITE_GUARD varsayılanı bu path'e çözülür; dosya yoksa make_spawn_settings FAIL →
 # her izole-spawn shared-fallback'e düşer (izolasyon sessizce devre-dışı). Installer da koysun.
 install -m 0755 "$SRC_DIR/automation/spawn-write-guard.sh" /opt/linux-ai-server/automation/
+# klipper-review #316-P2: note-poller.sh (AUTONOMOUS_MODE=1) bu modulu MUTLAK-yoldan cagirir
+# (/opt/linux-ai-server/automation/note_poller_decide.py) — yoksa Faz-A kill-switch/audit yolu
+# hic canli olmaz, spawn sessizce state'i ilerletip cikar (|| echo $last_seen). Diger automation/*
+# script'leri (note-poller.sh, autonomous-claude.sh) de ayni ontoloji-varsayimla (repo zaten
+# /opt/linux-ai-server'da git-checkout) calisir — bu installer'in daha genis eksikligi, tam-
+# kapsam-duzeltmesi ayri/daha-riskli bir is (bkz install.sh User=aiserver vs canli User=klipperos
+# ayrisimasi); burada yalniz BU-PR'in spesifik-bosluğunu kapatiyoruz.
+install -m 0755 "$SRC_DIR/automation/note_poller_decide.py" /opt/linux-ai-server/automation/
 rm -rf /etc/linux-ai-server/config
 cp -r "$SRC_DIR/config" /etc/linux-ai-server/
 cp "$SRC_DIR/config/env" /etc/linux-ai-server/env 2>/dev/null || true

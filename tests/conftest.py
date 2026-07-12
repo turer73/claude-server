@@ -80,6 +80,24 @@ def _reset_rate_limiters():
 
 
 @pytest.fixture(autouse=True)
+def _reset_memory_migration_flags():
+    """Reset app.api.memory._ensure_*'nin modül-global 'hazır' flag'lerini testler-arası.
+
+    Bu flag'ler (`_device_keys_ready`/`_read_by_ready`/`_verified_ready`/`_status_ready`/
+    `_thread_fields_ready`) PRODUCTION'da doğru optimizasyon (tek-kalıcı-DB, migration bir-kez
+    yeter) ama TEST'te her test kendi izole-taze-DB'sini alıyor (_isolate_db_path) — flag ilk
+    testte True olunca sonraki testlerin taze-DB'sinde ALTER TABLE hiç çalışmaz, kolon/tablo
+    sessizce eksik kalır (2026-07-12 msg_type-wiring'te keşfedildi: "table notes has no column
+    named msg_type", test-sırasına bağlı flaky). _reset_rate_limiters ile aynı desen."""
+    from app.api import memory as mem
+
+    for name in ("_device_keys_ready", "_read_by_ready", "_verified_ready", "_status_ready", "_thread_fields_ready"):
+        if hasattr(mem, name):
+            setattr(mem, name, False)
+    return
+
+
+@pytest.fixture(autouse=True)
 def _disable_semantic_dedup(monkeypatch):
     """Write-path testleri deterministik olmalı — semantic-dedup canlı Ollama/Qdrant'a
     bağımlıdır (klipper: non-determinizm + bayat-Qdrant-payload false-merge). Testte

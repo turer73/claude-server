@@ -2,9 +2,10 @@
 
 > **Lane:** design=klipper, impl=bölüşülür (schema+güvenlik-çekirdeği §2-§10=klipper, surer-taraf-parite
 > Faz-B=surer) — **Turgut #100674 ile ONAYLI** (zamanlama koordineli, B-DONE=test-kanıtı+klipper-doğrulama).
-> **Durum:** surer spec-verify TAMAM (#100672, 12/12 madde doğru-yansıtılmış, itiraz-yok) — bu revizyon
-> o 5 maddeyi (2 eksik + 3 netleştirme) işliyor, ardından **IMPL-READY**. Açık kalan: §14 s14-1/s14-2
-> (kapsam-daraltma + NVIDIA-router-sıralaması) hâlâ Turgut'ta.
+> **Durum:** surer spec-verify TAMAM (#100672, 12/12 madde doğru-yansıtılmış, itiraz-yok), §14
+> s14-1/s14-2 Turgut kararıyla (#100701) kapandı — **BİRİNCİ-DALGA GÜVENLİK-ÇEKİRDEĞİ (§3+§5+§10)
+> İMPLEMENTE EDİLDİ** (§11 bilinçli-ertelendi, bkz §14 alt-başlık). Kalan-12-madde ikinci-dalga,
+> Faz-C'ye kadar.
 > **Bağlam:** Turgut 2026-07-05'te "klipper ile daha kapsamlı otonom haberleşme kuralım" dedi. surer #100447
 > ile 4 boşluk + fazlı-öneri (A-D) gönderdi, 12-madde mutabakat #100447→#100472/#100466/#100469 zincirinde
 > kapandı (2026-07-05, 0 açık-itiraz). Şimdi (2026-07-11) P0-kimlik (PR#302, per-device-key) + P1-CLAIM-lock
@@ -201,17 +202,44 @@ surer'de (Faz-B), sözleşme burada sabit.
 
 ## 14. Açık Kararlar (Turgut)
 
-1. Faz-A'nın gerçek-önceliği: bugünkü tartışma-platformu (PR#305, discussion#1/#2'de canlı
-   kullanıldı) YAPILANDIRILMIŞ-deliberasyon için Faz-A'nın çözmeye çalıştığı "otonom-diyalog-kopuk"
-   sorununu KISMEN karşılıyor olabilir — kapsam daraltılsın mı (yalnız §3+§5+§10 çekirdek-güvenlik,
-   ham-diyalog-zinciri değil), yoksa tam-12-madde mi? **[AÇIK — s14-1, Turgut'ta]**
-2. Sıralama: NVIDIA-router (P0-P1 fix'leri, bugün aktif) ile Faz-A hangisi önce? **[AÇIK — s14-2,
-   Turgut'ta]**
+1. ~~Faz-A'nın gerçek-önceliği~~ **[KARARLANDI — #100701, 2026-07-12]:** tam-12-madde HEDEF kalır
+   ama impl-SIRASI güvenlik-çekirdeği-önce: **§3 otorite-üçgeni + §5 kill-switch + §10 audit-substrat
+   + §11 shadow-ilk-dalga** (birinci-dalga), kalan maddeler artımlı ikinci-dalga. Kapsam-daraltma
+   sorusu böylece fiilen çözüldü: çekirdek ship edilir, gerisi ölçerek gelir.
+2. ~~Sıralama~~ **[KARARLANDI — #100701, 2026-07-12]:** Faz-A-çekirdeği ÖNCE, NVIDIA-router sonra
+   — gerekçe: router zaten canlı+P1-fixli+release'li (opencode #100656), acil-iş değil; Faz-A ise
+   Faz-C'nin önkoşulu ve B-DONE (surer, #100677/#100681, klipper-doğrulandı #100679/#100682) zaten
+   hazır bekliyor.
 3. ~~Impl-lane bölüşümü onayı~~ **[KARARLANDI — #100674, 2026-07-12]:** şema+güvenlik-çekirdeği
    (§2-§10)=klipper, surer-parite(Faz-B)=surer, **zamanlama KOORDİNELİ**. surer mutabık: A+B-paralel
    → B-DONE-gate → C sırası geçerli (§1 kilit-karar değişmedi). surer Faz-B'ye §9 lock-sözleşmesinden
    (server-side `active_claims`-ailesi) bağımsız-olarak başlıyor; B-DONE = test-kanıtı-notu +
    klipper-doğrulaması (honor-system değil, §1'deki tanım aynen geçerli).
+
+### Birinci-dalga implementasyon durumu (2026-07-12, bu revizyon)
+
+- **§3 (msg_type server-türetimi): CANLI.** `derive_msg_type()` (action_review.py, mevcut
+  `_try_parse_task_package`'ı reuse eder — task-paketi=`dispatch`, aksi-halde=`dialogue`).
+  `create_note`'a wired (yeni-notlar gerçek-türetilmiş msg_type alır; `legacy`-pin değişmedi).
+  NOT: bu bir GÜVENLİK-KAPISI DEĞİL, Faz-C için sınıflandırma-etiketidir — gerçek dispatch-
+  enforcement (held/active) zaten ayrı-ve-canlı (`scan_dispatch_note`+`dispatch_policy_gate_enabled`).
+- **§5 (kill-switch): CANLI.** `automation/note_poller_decide.py` (yeni, bağımsız/test-edilebilir
+  modül — önceden `note-poller.sh` içinde embedded-heredoc'tu, bash-quote-escaping kırılganlığı +
+  pytest'ten import-edilemezlik nedeniyle çıkarıldı). `AUTONOMOUS_MODE=1` spawn-döngüsü her-tick
+  `autonomous_comms_halt.active`'i okur; aktifse TÜM spawn atlanır. **FAIL-OPEN bilinçli-seçim**
+  (okuma-hatası → eski-davranışa dön, spawn devam) — fail-CLOSED burada YANLIŞ olurdu: geçici-DB-
+  hiccup tüm-otonom-hattı sessizce durdurup 2026-07-12'deki DeepSeek/OAuth 3-haftalık-sessiz-ölüm
+  sınıfında yeni bir kör-nokta yaratırdı. `PUT /api/v1/memory/comms-halt` (MASTER-key zorunlu,
+  approve/reject ile aynı self-bypass-engeli deseni) + `GET` (durum-okuma, normal-key) admin-arayüzü
+  eklendi — dashboard-UI (§5'in "tek-tuş" hedefi) HENÜZ YOK, API hazır.
+- **§10 (audit-substrat): CANLI (genişletildi).** `autonomous_comms_audit`'e artık hem `create_note`
+  (PR#311'den beri) HEM `note_poller_decide.py`'nin her spawn-kararı (spawned/skipped_halt/
+  skipped_self/skipped_protocol/deferred_rate_limit) yazıyor.
+- **§11 (shadow-rollout): BİLİNÇLİ ERTELENDİ, spec'e işaretlendi.** Kod-araştırması gösterdi: şu an
+  hiçbir "otonom-cevap üreten" mekanizma yok (Faz-C hiç başlamadı) — shadow-hold mekanizması
+  kuracak HİÇBİR ŞEY olmadan inşa etmek, bu oturumun kendi dersine (`feedback_ensure_migration_must_wire_live_caller`:
+  yeni-kod canlı-çağıran-yola bağlanmalı, spekülatif-inşa değil) aykırı olurdu. Faz-C'nin ilk
+  dialogue-üretim mekanizması yazıldığında birlikte ele alınacak — **erteleme kararı**, atlama değil.
 
 ---
 **Kaynak-notlar:** surer #100447/#100450/#100466/#100469, klipper #100449/#100461/#100467/#100472.

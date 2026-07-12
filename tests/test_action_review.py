@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from app.core.action_review import scan_ci_fixer_diff, scan_dispatch_note
+from app.core.action_review import derive_msg_type, scan_ci_fixer_diff, scan_dispatch_note
 
 
 def _diff(body: str) -> str:
@@ -872,3 +872,32 @@ diff --git a/tests/test_cleanup.py b/tests/test_cleanup.py
     )
     r = scan_ci_fixer_diff(d)
     assert "destructive_pattern_added" in r["signals"]
+
+
+# ---------------------------------------------------------------------------
+# derive_msg_type — Faz-A §3 (docs/autonomous-comms-design.md)
+# ---------------------------------------------------------------------------
+
+
+def test_derive_msg_type_plain_prose_is_dialogue():
+    assert derive_msg_type("selam, nasilsin? PR#312 merge oldu.") == "dialogue"
+
+
+def test_derive_msg_type_task_package_is_dispatch():
+    content = json.dumps({"gorev": "test-yaz", "adimlar": ["pytest calistir"]})
+    assert derive_msg_type(content) == "dispatch"
+
+
+def test_derive_msg_type_json_without_task_keys_is_dialogue():
+    assert derive_msg_type(json.dumps({"foo": "bar"})) == "dialogue"
+
+
+def test_derive_msg_type_empty_or_none_is_dialogue():
+    assert derive_msg_type("") == "dialogue"
+    assert derive_msg_type(None) == "dialogue"
+
+
+def test_derive_msg_type_invalid_json_is_dialogue():
+    # Duz-prose (gecersiz-JSON) = konusma, action_review'in guvenlik-enforcement'i
+    # (scan_dispatch_note+dispatch_policy_gate_enabled) bundan BAGIMSIZ zaten calisir.
+    assert derive_msg_type("{bozuk json degil normal metin") == "dialogue"

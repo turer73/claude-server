@@ -505,6 +505,21 @@ def _collect_exec_strings(task: dict[str, Any]) -> list[str]:
     return out
 
 
+def derive_msg_type(content: str | None) -> str:
+    """Faz-A §3 (docs/autonomous-comms-design.md): notes.msg_type sunucu-tarafi turetimi.
+
+    content bir JSON dispatch-task-paketiyse (_try_parse_task_package: adimlar/gorev/cmd/steps
+    gibi executable-alanlar icerir) 'dispatch' (consequential); aksi halde (duz-prose, JSON-ama-
+    task-degil, gecersiz-JSON) 'dialogue'. NOT: bu fonksiyon bir GUVENLIK-KAPISI DEGIL, ileriye-
+    donuk (Faz-C) SINIFLANDIRMA etiketidir. Gercek dispatch-guvenlik-enforcement'i (held/active)
+    zaten AYRI ve CANLI: scan_dispatch_note + dispatch_policy_gate_enabled (bkz _gate_dispatch,
+    notes.py). msg_type yanlis-siniflandirilsa bile (ornegin bozuk-JSON kenar-durumu) bu-gunku
+    guvenlik-enforcement'i ATLAMAZ/ZAYIFLATMAZ."""
+    if not content:
+        return "dialogue"
+    return "dispatch" if _try_parse_task_package(content) is not None else "dialogue"
+
+
 def _is_autonomous_origin(from_device: str | None) -> bool:
     """from_device otonom-varyanti mi (or. 'klipper-autonomous'). Interactive 'klipper' DEGIL."""
     return from_device is not None and "autonomous" in from_device.lower()
