@@ -49,7 +49,7 @@
 - **Gozlem:** dozzle (9999), uptime-kuma (3001), grafana (3030), prometheus (9090), node-exporter (9100), cadvisor (9080)
 - **Otomasyon/RAG:** n8n (5678), qdrant (6333/6334)
 - **Arac:** stirling-pdf (8090)
-- Ollama host'ta (11434) — modeller: qwen2.5:7b (RAG default LLM), qwen2.5:3b (consciousness deep-thought), qwen2.5-coder:7b, aya:8b (TR-hi), bge-m3 + nomic-embed-text (embed)
+- Ollama host'ta (11434) — modeller: qwen3:30b-a3b-instruct-2507-q4_K_M (RAG default + reasoning/classify, thinking-siz MoE), qwen2.5:3b (consciousness deep-thought), qwen3-coder:30b (code-review fallback), gemma3:12b-it-qat (TR-hi), qwen2.5:7b (emekli — rollback-güvenliği için diskte tutuluyor, 2026-07-19'da kaldırılabilir), bge-m3 + nomic-embed-text (embed)
 
 VPS Dokploy uzerinde ayrica baska servisler var (asagi bkz).
 

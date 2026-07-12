@@ -414,7 +414,7 @@ class ResearchConfig(BaseModel):
     # >1 = bulgulara göre yeni alt-soru üretip derinleşir; yeni-kaynak gelmezse otonom erken-durur.
     max_hops: int = Field(2, ge=1, le=4)
     # Sentez modeli: sonnet = Claude Sonnet (en derin, varsayılan); haiku = Claude Haiku
-    # (hızlı/ucuz); ollama = yerel aya:8b (anahtarsız). Claude'lar fail→aya fallback.
+    # (hızlı/ucuz); ollama = yerel gemma3:12b-it-qat (anahtarsız). Claude'lar fail→gemma3 fallback.
     # Plan hep hızlı-Ollama (qwen) — bu YALNIZ sentez adımı.
     synth_model: Literal["sonnet", "haiku", "ollama"] = "sonnet"
     # Web arama (FAZ2): True = RAG'a EK olarak DDG-lite web sonuçları (anahtarsız, opt-in;

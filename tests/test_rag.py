@@ -151,7 +151,7 @@ def _make_ask_mocks():
 
 @pytest.mark.anyio
 async def test_rag_ask_default_model(client):
-    """/ask without model param uses qwen2.5:7b by default; response includes model field."""
+    """/ask without model param uses qwen3:30b-a3b-instruct-2507-q4_K_M by default; response includes model field."""
     embed_resp, search_resp, scroll_resp, ollama_resp = _make_ask_mocks()
 
     def fake_post(url, **_):
@@ -167,7 +167,7 @@ async def test_rag_ask_default_model(client):
         resp = await client.post("/api/v1/rag/ask", json={"q": "test question"})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["model"] == "qwen2.5:7b"
+    assert body["model"] == "qwen3:30b-a3b-instruct-2507-q4_K_M"
     assert body["answer"] == "test answer"
 
 

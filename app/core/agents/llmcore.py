@@ -37,13 +37,25 @@ _HIGH_PRIORITY_TASKS = {"diagnosis"}
 # atan bash-cron ajanları (ad-advisor vb.) LLMCore'dan geçmez → bu vana onları KAPSAMAZ.
 _OLLAMA_CONCURRENCY = max(1, int(read_env_var("LLM_OLLAMA_CONCURRENCY") or "2"))
 
+# 2026-07-12 TR-eval bulgusu: gemma3:12b-it-qat bazı yanıtlarda şablon-özel token'ı ("<end_of_turn>")
+# metne sızdırıyor (Ollama-paket template-sorunu, kaynak-modelde değil). Kök-neden yerine defansif
+# temizlik — hangi model/backend'den gelirse gelsin görünür-özel-token asla kullanıcıya/RAG'a gitmesin.
+_LEAKED_SPECIAL_TOKENS = ("<end_of_turn>", "</end_of_turn>", "<|im_end|>", "<|endoftext|>")
+
+
+def _strip_leaked_special_tokens(text: str) -> str:
+    for tok in _LEAKED_SPECIAL_TOKENS:
+        text = text.replace(tok, "")
+    return text.strip()
+
+
 # Task → (backend, model). Mevcut çağrı-yerlerindeki gerçek modeller (spekülasyon değil).
 _TASK_ROUTES: dict[str, tuple[str, str]] = {
     "code-review": ("ollama", "qwen3-coder:30b"),  # code_reviewer._ask_coder (LLM_ROUTE_CODE_REVIEW ile claude'a override edilir)
     "diagnosis": ("ollama", "qwen2.5:3b"),  # devops_agent._ask_diagnosis
     "research": ("ollama", "qwen2.5:3b"),  # research._ollama_generate
-    "reasoning": ("ollama", "qwen2.5:7b"),  # daha güçlü yerel akıl-yürütme
-    "classify": ("ollama", "qwen2.5:7b"),  # classifier.classify_note (DEFAULT_MODEL)
+    "reasoning": ("ollama", "qwen3:30b-a3b-instruct-2507-q4_K_M"),  # MoE, thinking-siz (2026-07-12 TR-eval: 20/20 vs qwen2.5:7b 18/20)
+    "classify": ("ollama", "qwen3:30b-a3b-instruct-2507-q4_K_M"),  # classifier.classify_note (DEFAULT_MODEL)
     "rag": ("ollama", "qwen2.5:3b"),  # rag.ask (model çağrıcıdan; complete_sync)
     "escalate": ("claude", "claude-haiku-4-5-20251001"),  # hızlı/ucuz Claude (Max-abonelik)
     "verify": ("claude", "claude-haiku-4-5-20251001"),  # #4 adversarial-verify: qwen-coder kendi FP'sini çürütemiyor → güçlü model
@@ -205,7 +217,7 @@ class LLMCore:
                     json=self._payload(prompt, model, system, temperature, num_predict, fmt),
                 )
             r.raise_for_status()
-            return ((r.json() or {}).get("response") or "").strip()
+            return _strip_leaked_special_tokens((r.json() or {}).get("response") or "")
 
     def generate_sync(
         self,
@@ -257,7 +269,7 @@ class LLMCore:
                 timeout=timeout,
             )
             r.raise_for_status()
-            return (r.json().get("response") or "").strip()
+            return _strip_leaked_special_tokens(r.json().get("response") or "")
 
     def complete_sync(
         self,
@@ -290,6 +302,8 @@ class LLMCore:
                 resp = r.json() or {}
             _ok = True
             _tokens = resp.get("eval_count")
+            if "response" in resp:
+                resp["response"] = _strip_leaked_special_tokens(resp["response"] or "")
             return resp
         except Exception:
             if raise_on_error:
@@ -333,7 +347,7 @@ class LLMCore:
                 resp = r.json() or {}
             _ok = True
             _tokens = resp.get("eval_count")
-            return (resp.get("message") or {}).get("content", "").strip()
+            return _strip_leaked_special_tokens((resp.get("message") or {}).get("content", ""))
         except Exception:
             if raise_on_error:
                 raise
