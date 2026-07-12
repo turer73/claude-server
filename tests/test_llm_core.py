@@ -22,7 +22,7 @@ def test_route_table_known_tasks(monkeypatch):
     # code-review/verify claude'a yönlendirilebilir; bu test saf tablo defaultlarını doğrular).
     monkeypatch.setattr(lc, "read_env_var", lambda k: None)
     core = LLMCore()
-    assert core.route("code-review") == ("ollama", "qwen2.5-coder:7b")
+    assert core.route("code-review") == ("ollama", "qwen3-coder:30b")
     assert core.route("diagnosis") == ("ollama", "qwen2.5:3b")
     assert core.route("escalate")[0] == "claude"
     assert core.route("synthesis") == ("claude", "claude-sonnet-4-6")
@@ -41,7 +41,7 @@ def test_route_env_override(monkeypatch):
 def test_route_env_override_malformed_ignored(monkeypatch):
     """Bozuk env (':' yok / boş taraf) yok sayılır → tabloya düşer."""
     monkeypatch.setattr(lc, "read_env_var", lambda k: "garbage-no-colon" if k.startswith("LLM_ROUTE") else None)
-    assert LLMCore().route("code-review") == ("ollama", "qwen2.5-coder:7b")
+    assert LLMCore().route("code-review") == ("ollama", "qwen3-coder:30b")
 
 
 async def test_generate_ollama_backend(monkeypatch):

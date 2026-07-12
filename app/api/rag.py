@@ -23,7 +23,7 @@ OLLAMA_URL = "http://localhost:11434"
 COLLECTION = "klipper-memory"
 EMBED_MODEL = "bge-m3"
 LLM_MODEL = "qwen2.5:7b"
-ALLOWED_LLM_MODELS = {"qwen2.5:3b", "qwen2.5:7b", "qwen2.5-coder:7b", "aya:8b"}
+ALLOWED_LLM_MODELS = {"qwen2.5:3b", "qwen2.5:7b", "qwen3-coder:30b", "aya:8b"}
 METRICS_DB = os.environ.get("RAG_METRICS_DB", "/opt/linux-ai-server/data/rag_metrics.db")
 
 router = APIRouter(prefix="/api/v1/rag", tags=["rag"], dependencies=[Depends(verify_key)])
