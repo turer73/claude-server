@@ -92,8 +92,10 @@ async def classify_note(
 
     started = time.monotonic()
     try:
+        # timeout=90 (eski 20): DEFAULT_MODEL artık 18GB (qwen3-instruct-2507) — cold-load canlı-
+        # ölçümde 40-58s sürdü (2026-07-12 PR#313 deploy-sonrası 502 bulgusu), 20s bunu kapsamıyordu.
         raw_text = await llm_core.generate(
-            prompt, task="classify", model=model, temperature=0.1, num_predict=30, timeout=20, raise_on_error=True, fmt=LABEL_SCHEMA
+            prompt, task="classify", model=model, temperature=0.1, num_predict=30, timeout=90, raise_on_error=True, fmt=LABEL_SCHEMA
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"ollama upstream error: {e}") from e
