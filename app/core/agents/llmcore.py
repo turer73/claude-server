@@ -63,6 +63,19 @@ _TASK_ROUTES: dict[str, tuple[str, str]] = {
     "default": ("ollama", "qwen2.5:3b"),
 }
 
+# Turgut kararı (#100701, 2026-07-12): SER8'de 2507(18GB)+gemma3(8GB) aynı-anda RAM'e sığmıyor
+# (~26GB usable). 2507 = ana-iş (reasoning/classify/rag) → resident (uzun keep_alive, reload-
+# maliyetini engeller). gemma3 = TR-hi (research, düşük-frekans) → on-demand (kısa keep_alive,
+# 2507'nin yerini işgal etmesin). Diğer modeller Ollama varsayılanını (5dk) kullanır (None → payload'a eklenmez).
+_MODEL_KEEP_ALIVE: dict[str, str] = {
+    "qwen3:30b-a3b-instruct-2507-q4_K_M": "30m",
+    "gemma3:12b-it-qat": "10s",
+}
+
+
+def _keep_alive_for(model: str) -> str | None:
+    return _MODEL_KEEP_ALIVE.get(model)
+
 
 def _record_llm_call(task: str, backend: str, model: str, latency_ms: float, ok: bool, tokens: int | None = None) -> None:
     """LLM çağrısını rag_metrics.db/llm_calls'a kaydet — merkezi LLM-gözlemlenebilirlik
@@ -168,6 +181,9 @@ class LLMCore:
             payload["system"] = system
         if fmt:
             payload["format"] = fmt  # Ollama structured-output (JSON-schema) → garantili geçerli JSON
+        keep_alive = _keep_alive_for(model)
+        if keep_alive is not None:
+            payload["keep_alive"] = keep_alive
         return payload
 
     async def generate(
@@ -295,7 +311,10 @@ class LLMCore:
         _ok = False
         _tokens = None
         try:
-            payload = {"model": model, "prompt": prompt, "stream": False, "options": options or {}}
+            payload: dict[str, Any] = {"model": model, "prompt": prompt, "stream": False, "options": options or {}}
+            keep_alive = _keep_alive_for(model)
+            if keep_alive is not None:
+                payload["keep_alive"] = keep_alive
             with self._ollama_gate_sync(prio):  # yerel-CPU vanası (thread) + öncelik
                 r = requests.post(f"{self._ollama}/api/generate", json=payload, timeout=timeout)
                 r.raise_for_status()
@@ -341,6 +360,9 @@ class LLMCore:
                 payload: dict[str, Any] = {"model": model, "messages": messages, "stream": False}
                 if fmt:
                     payload["format"] = fmt  # Ollama structured-output (JSON-schema)
+                keep_alive = _keep_alive_for(model)
+                if keep_alive is not None:
+                    payload["keep_alive"] = keep_alive
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     r = await client.post(f"{self._ollama}/api/chat", json=payload)
                 r.raise_for_status()

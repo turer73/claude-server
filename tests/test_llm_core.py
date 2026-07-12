@@ -432,3 +432,38 @@ async def test_ollama_async_strips_leaked_tokens(monkeypatch):
     monkeypatch.setattr(lc.httpx, "AsyncClient", lambda **k: FakeClient())
     out = await LLMCore()._ollama_async("p", "gemma3:12b-it-qat", None, 0.1, None, 10)
     assert out == "Cevap."
+
+
+def test_keep_alive_for_known_models():
+    # Turgut karari #100701: 2507 resident (uzun), gemma3 on-demand (kisa); digerleri Ollama-varsayilani.
+    assert lc._keep_alive_for("qwen3:30b-a3b-instruct-2507-q4_K_M") == "30m"
+    assert lc._keep_alive_for("gemma3:12b-it-qat") == "10s"
+    assert lc._keep_alive_for("qwen2.5:3b") is None
+
+
+def test_payload_includes_keep_alive_for_managed_models():
+    p = LLMCore._payload("p", "qwen3:30b-a3b-instruct-2507-q4_K_M", None, 0.1, None)
+    assert p["keep_alive"] == "30m"
+    p2 = LLMCore._payload("p", "qwen2.5:3b", None, 0.1, None)
+    assert "keep_alive" not in p2
+
+
+def test_complete_sync_threads_keep_alive(monkeypatch):
+    captured = {}
+
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"response": "x", "eval_count": 1}
+
+    def fake_post(url, json=None, **k):
+        captured["json"] = json
+        return FakeResp()
+
+    import requests as _requests
+
+    monkeypatch.setattr(_requests, "post", fake_post)
+    LLMCore().complete_sync("p", task="rag", model="gemma3:12b-it-qat")
+    assert captured["json"]["keep_alive"] == "10s"
