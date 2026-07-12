@@ -133,86 +133,10 @@ PY
     local spawned_max_id
     spawned_max_id=$last_seen
     if [ "${AUTONOMOUS_MODE:-0}" = "1" ]; then
-        spawned_max_id=$(printf '%s' "$new_notes" | python3 -c "
-import json, sys, subprocess, os, re
-notes = json.load(sys.stdin)
-
-# Priority scoring (yuksek = once spawn)
-def score(n):
-    title = (n['title'] or '').upper()
-    s = 0
-    # URGENT keyword bonus
-    if any(k in title for k in ('URGENT', 'ACIL', 'BREACH', 'KVKK', 'CVE', 'SALDIRI', 'INCIDENT')):
-        s += 1000
-    # Gorev paketi structure -> ACTIONABLE early
-    if 'GOREV PAKETI' in title or 'gorev_paketi' in (n.get('preview') or '').lower():
-        s += 500
-    # ACK prefix -> low priority
-    if title.startswith('ACK'):
-        s -= 100
-    # Recency bonus (newer first)
-    s += n['id']  # id monotonic
-    return -s  # ters cevir (sort asc -> high priority first)
-
-# Source diversity rate limit: ayni source'tan max 3 spawn bu batch'te
-sorted_notes = sorted(notes, key=score)
-source_count = {}
-spawned = []
-skipped_self = []   # klipper'in KENDI threat-detect notlari: spawn YOK ama not GORUNUR kalir
-skipped_protocol = []  # CLAIM:/RELEASE: koordinasyon-isaretleri: spawn YOK, not GORUNUR kalir
-deferred_rate_limit = []
-for n in sorted_notes:
-    # DONGU KIR (Codex P2): klipper'in kendi 'URGENT: Threat #' notuna spawn ETME — aksi
-    # halde spawn->threat-detect->urgent-not->(priority1000)->spawn... kendini-besleyen dongu.
-    # WHERE'de DEGIL burada: not new_notes'ta KALIR (manuel/hook surface'inde gorunur) +
-    # state ILERLER (asagida skipped_self max'a dahil -> yeniden-islenmez).
-    if n['from_device'] == 'klipper' and (n['title'] or '').startswith('URGENT: Threat #'):
-        skipped_self.append(n['id'])
-        continue
-    # disc#1289: CLAIM/RELEASE protokol-notu = is-talebi DEGIL, paralel-calisma isareti.
-    # Spawn kota yakmasin (07-03 CLAIM-notu 3-deneme yakip poison olmustu).
-    # DAR eslesme (PR#299 Codex#3): genis startswith 'Release: deploy hotfix' gibi
-    # GERCEK-actionable notu sonsuza-kadar-gorunmez yapardi. Kosullar: (a) bilinen
-    # ajan-cihazlardan, (b) BUYUK-harf prefix + 'CLAIM: <repo> <dash> <is>' tam-formati
-    # (feedback_claim_protocol_parallel_work). Format tutmayan her sey normal spawn yolunda.
-    _t = n['title'] or ''
-    if (n['from_device'] in ('surer', 'klipper', 'opencode')
-            and re.match(r'^(CLAIM|RELEASE):\s+\S+\s*[—–-]\s+\S', _t)):
-        skipped_protocol.append(n['id'])
-        continue
-    src = n['from_device']
-    cnt = source_count.get(src, 0)
-    if cnt >= 3:
-        deferred_rate_limit.append(n['id'])
-        continue
-    source_count[src] = cnt + 1
-    spawned.append(n)
-
-# Spawn (priority order)
-for n in spawned:
-    nid = n['id']
-    frm = n['from_device']
-    title = (n['title'] or '')[:200]
-    preview = (n['preview'] or '')[:500]
-    cmd = ['/opt/linux-ai-server/automation/autonomous-claude.sh',
-           str(nid), frm, title, preview]
-    subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
-                     stdout=subprocess.DEVNULL,
-                     stderr=subprocess.STDOUT, start_new_session=True,
-                     env={**os.environ, 'ENFORCE_INTERACTIVE_CHECK': '1'})
-
-# State: spawned + skipped_self (kendi threat-notlari) + skipped_protocol (CLAIM/RELEASE)
-# ILERLET — deferred HARIC (onlar retry).
-# skipped_* state'e dahil ki yeniden-fetch edilip dongu olusturmasin (Codex P2).
-import sys
-handled_ids = [n['id'] for n in spawned] + skipped_self + skipped_protocol
-if handled_ids:
-    spawned_max = max(handled_ids)
-else:
-    spawned_max = $last_seen
-sys.stderr.write(f'spawned (priority order): {[n[\"id\"] for n in spawned]} skipped_self: {skipped_self} skipped_protocol: {skipped_protocol} deferred: {deferred_rate_limit}\n')
-print(spawned_max)
-" 2>>"$LOG_FILE" || echo $last_seen)
+        # Faz-A SS5 kill-switch + SS10 audit (docs/autonomous-comms-design.md): karar-mantigi
+        # bagimsiz/test-edilebilir modulde (embedded-heredoc bash-quote-escaping kirilganligindan
+        # kacinmak + pytest'ten import edilebilmek icin, bkz automation/note_poller_decide.py).
+        spawned_max_id=$(printf '%s' "$new_notes" | python3 /opt/linux-ai-server/automation/note_poller_decide.py "$HOOK_DB" "$HOOK_DEVICE" "$last_seen" 2>>"$LOG_FILE" || echo $last_seen)
     else
         # AUTONOMOUS_MODE=0: tum batch state'e gec
         spawned_max_id=$(printf '%s' "$new_notes" | python3 -c "import json,sys; d=json.load(sys.stdin); print(max(n['id'] for n in d) if d else 0)" 2>/dev/null || echo 0)

@@ -6,7 +6,7 @@ Gövdeler birebir taşındı (Faz 3).
 import asyncio
 from typing import Any
 
-from fastapi import Depends, HTTPException
+from fastapi import Body, Depends, HTTPException
 
 from app.api.memory import (
     NoteCreate,
@@ -26,6 +26,7 @@ from app.api.memory import (
 )
 from app.core.action_review import (
     _is_autonomous_origin,
+    derive_msg_type,
     dispatch_policy_gate_enabled,
     scan_dispatch_note,
 )
@@ -181,10 +182,14 @@ async def create_note(data: NoteCreate, forced_origin: str = Depends(dispatch_or
         # Policy-gate #1222: scan-BEFORE-insert (tasarim §3.3). gate-ON+suspicious+otonom -> 'held'
         # (aliciya teslim YOK, insan-onayi bekler). gate-OFF/interaktif/benign -> 'active'. FAIL-OPEN.
         note_status, scan_result = _gate_dispatch(from_device, data.to_device, content_clean)
+        # Faz-A §3 (docs/autonomous-comms-design.md): msg_type SUNUCU-tarafi turetilir, client-
+        # iddiasi kabul edilmez. Guvenlik-enforcement DEGIL (o note_status/held, yukarida) — Faz-C
+        # icin siniflandirma etiketi. Yeni-not = gercek-turetim; eski-notlar 'legacy' DEFAULT'ta kalir.
+        msg_type = derive_msg_type(content_clean)
 
         cur = db.execute(
-            "INSERT INTO notes (from_device, to_device, title, content, status, verified) VALUES (?, ?, ?, ?, ?, ?)",
-            (from_device, data.to_device, data.title, content_clean, note_status, verified),
+            "INSERT INTO notes (from_device, to_device, title, content, status, verified, msg_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (from_device, data.to_device, data.title, content_clean, note_status, verified, msg_type),
         )
         db.commit()
 
@@ -298,5 +303,43 @@ async def reject_note(note_id: int) -> dict[str, Any]:
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="held note not found (yok veya zaten active/rejected)")
         return {"status": "rejected", "note_id": note_id}
+    finally:
+        db.close()
+
+
+@router.get("/comms-halt")
+async def get_comms_halt() -> dict[str, Any]:
+    """Faz-A §5 kill-switch (docs/autonomous-comms-design.md): mevcut durumu oku. Auth = normal
+    verify_key (router-level dependency) — durumu-GORMEK dusuk-risk, DEGISTIRMEK MASTER-key ister
+    (asagida)."""
+    db = get_db()
+    try:
+        _ensure_comms_halt_table(db)
+        row = db.execute("SELECT active, reason, set_by, updated_at FROM autonomous_comms_halt WHERE id=1").fetchone()
+        return {"active": bool(row[0]), "reason": row[1] or "", "set_by": row[2] or "", "updated_at": row[3]}
+    finally:
+        db.close()
+
+
+@router.put("/comms-halt", dependencies=[Depends(verify_master_key)])
+async def set_comms_halt(
+    active: bool = Body(..., embed=True), reason: str = Body("", embed=True), set_by: str = Body("master", embed=True)
+) -> dict[str, Any]:
+    """Faz-A §5 kill-switch — ACIL-DURDURMA anahtari. MASTER-key ZORUNLU (otonom-key 401, self-halt/
+    self-unhalt baypasi engeli — approve/reject ile ayni desen). note-poller.sh (klipper) + surer
+    Windows-poller HER-tick spawn-ONCESI bu bayragi okur (read_halt_flag, automation/note_poller_decide.py);
+    active=1 -> TUM otonom-spawn atlanir (fail-CLOSED enforcement), okuma-hatasi ise fail-OPEN
+    (bkz note_poller_decide.read_halt_flag docstring — bilincli-secim, OAuth-olayindan ders).
+    set_by client-iddiasidir (MASTER-key paylasimli-sir, per-device-kimlik yok — bilgilendirici,
+    guvenlik-karari icin KULLANILMAZ, o zaten MASTER-key-zorunlulugundan gelir)."""
+    db = get_db()
+    try:
+        _ensure_comms_halt_table(db)
+        db.execute(
+            "UPDATE autonomous_comms_halt SET active=?, reason=?, set_by=?, updated_at=datetime('now') WHERE id=1",
+            (1 if active else 0, reason[:300], set_by[:100]),
+        )
+        db.commit()
+        return {"status": "updated", "active": active}
     finally:
         db.close()
