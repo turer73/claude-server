@@ -69,6 +69,14 @@ PLAYBOOKS: dict[str, list[dict[str, str]]] = {
     # reclaim: image/container/network prune (volume HARIC), cache/eski-tmp temizle,
     # dev log truncate. Backup-rotation = daily-backup.sh'in isi, remediation'in DEGIL.
     "memory_critical": [
+        # disc#1321: eski playbook yalniz disk-temizligi yapiyordu (docker-image/pip-cache/tmp) —
+        # bunlarin hicbiri calisan-process RAM'ini dusurmuyor, verify her seferinde basarisiz
+        # kalip escalation'i (4x/7g) tetikliyordu. Gercek RAM-dusuren adim: resident Ollama
+        # modellerini bosalt (keep_alive stratejisiyle en buyuk RAM tuketicisi genelde bu).
+        {
+            "desc": "Unload resident Ollama models (RAM-lowering)",
+            "cmd": "for m in $(ollama ps 2>/dev/null | tail -n +2 | awk '{print $1}'); do ollama stop \"$m\"; done 2>/dev/null || true",
+        },
         {"desc": "Docker prune (volume HARIC)", "cmd": "docker system prune -f 2>/dev/null || true"},
         {"desc": "Clear pip cache", "cmd": "pip cache purge 2>/dev/null || true"},
         {"desc": "Clear old tmp files", "cmd": "find /tmp -type f -mtime +1 -delete 2>/dev/null || true"},

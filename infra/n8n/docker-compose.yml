@@ -25,6 +25,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      # disc#1295: crash-sonrasi restart-policy=always yeniden-baslatiyor ama start_period
+      # yoktu (Docker varsayilan 0s) -> boot/recovery penceresindeki gecici basarisiz-probe'lar
+      # dogrudan retries sayacina isliyordu, "unhealthy" gecisi escalation:docker:n8n'i 62x/7g
+      # tetikliyordu. start_period suresince basarisiz probe'lar sayilmaz (container "starting").
+      start_period: 90s
 
 volumes:
   n8n-data:
