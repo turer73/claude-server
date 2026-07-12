@@ -447,7 +447,8 @@ async def research_new_structure(topic: str) -> bool:
         if not answer:
             # Codex#168: Claude-CLI down → sentez boş döner; ollama'ya (task=reasoning→qwen) düş
             # ki research her tick web-sonucu sessizce DÜŞÜRMESİN (degrade, fail-değil).
-            answer = (await llm_core.generate(prompt, task="reasoning", timeout=60) or "").strip()
+            # timeout=90 (eski 60): DEFAULT_MODEL 18GB'a çıktı (PR#313), cold-load 40-58s ölçüldü.
+            answer = (await llm_core.generate(prompt, task="reasoning", timeout=90) or "").strip()
         if not answer or answer.upper().startswith("YOK") or len(answer) < 25:
             return False
         lines = [ln for ln in answer.splitlines() if ln.strip()]
