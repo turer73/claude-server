@@ -10,6 +10,7 @@ import json
 import sqlite3
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -145,12 +146,13 @@ def test_main_cli_end_to_end_with_halt_never_spawns(db):
     ile uctan-uca test eder. halt=1 KULLANILIR ki gercek autonomous-claude.sh ASLA
     tetiklenmesin (bu test gercek bir claude-oturumu baslatmamali)."""
     _set_halt(db, 1)
+    repo_root = Path(__file__).resolve().parents[1]  # tests/ -> repo-kok (CI'da farkli path'te checkout, sabit-kodlanmaz)
     proc = subprocess.run(
-        [sys.executable, "automation/note_poller_decide.py", db, "klipper-test", "0"],
+        [sys.executable, str(repo_root / "automation" / "note_poller_decide.py"), db, "klipper-test", "0"],
         input=json.dumps(NOTES),
         capture_output=True,
         text=True,
-        cwd="/opt/linux-ai-server",
+        cwd=str(repo_root),
         timeout=10,
     )
     assert proc.returncode == 0
