@@ -188,9 +188,6 @@ async def client(app, tmp_path, monkeypatch):
 @pytest.fixture
 async def memory_client(app, tmp_path, monkeypatch):
     """Client with X-Memory-Key default header (memory/RAG/research endpoints)."""
-    from app.database import Database
-    from app.utils import hash_api_key
-
     db_path = str(tmp_path / "test.db")
     db = Database(db_path)
     await db.initialize()
