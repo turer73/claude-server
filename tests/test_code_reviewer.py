@@ -382,6 +382,26 @@ async def test_research_no_web_results(tmp_db, monkeypatch):
     assert await cr.research_new_structure("X") is False
 
 
+async def test_research_synthesis_falls_back_to_reasoning(tmp_db, monkeypatch):
+    """Codex#168: Claude-sentez (task='synthesis') boş dönerse task='reasoning' (yerel-ollama)
+    yedeğe düşer — research tick'i sessizce düşmez (PR#314: bu yedek-yolun timeout'u ayarlandı)."""
+    import app.api.research as research
+
+    async def _generate(prompt, **k):
+        if k.get("task") == "synthesis":
+            return ""
+        assert k.get("task") == "reasoning"
+        assert k.get("timeout") == 90
+        return "Lifespan-scoped DB havuzu benimse\nBağlantı-başı yerine havuz daha verimli."
+
+    monkeypatch.setattr(cr, "_RESEARCH_ENABLED", True)
+    monkeypatch.setattr(research, "_web_search", lambda q, n=5: [{"title": "FastAPI 0.115 lifespan DB pool", "text": "new pattern"}])
+    monkeypatch.setattr(cr.llm_core, "generate", _generate)
+    assert await cr.research_new_structure("FastAPI") is True
+    arch = _rows(tmp_db, type="architecture")
+    assert len(arch) == 1
+
+
 async def test_agent_drain_queue(tmp_db, tmp_path, monkeypatch):
     """Agent commit-kuyruğunu okur, inceler, temizler (event-trigger)."""
     from app.core import code_review_agent as cra
