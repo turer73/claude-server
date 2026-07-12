@@ -29,7 +29,7 @@ _AGENT_MANIFEST = [
         "role": "İnternet araştırma · grounding · sentez",
         "type": "ondemand",
         "schedule": "istek-üzerine",
-        "models": ["qwen2.5:3b / aya:8b", "claude CLI (sentez)"],
+        "models": ["qwen2.5:3b / gemma3:12b-it-qat", "claude CLI (sentez)"],
         "src": "research",
     },
     {

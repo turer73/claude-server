@@ -22,8 +22,8 @@ QDRANT_URL = "http://localhost:6333"
 OLLAMA_URL = "http://localhost:11434"
 COLLECTION = "klipper-memory"
 EMBED_MODEL = "bge-m3"
-LLM_MODEL = "qwen2.5:7b"
-ALLOWED_LLM_MODELS = {"qwen2.5:3b", "qwen2.5:7b", "qwen3-coder:30b", "aya:8b"}
+LLM_MODEL = "qwen3:30b-a3b-instruct-2507-q4_K_M"
+ALLOWED_LLM_MODELS = {"qwen2.5:3b", "qwen2.5:7b", "qwen3-coder:30b", "qwen3:30b-a3b-instruct-2507-q4_K_M", "gemma3:12b-it-qat"}
 METRICS_DB = os.environ.get("RAG_METRICS_DB", "/opt/linux-ai-server/data/rag_metrics.db")
 
 router = APIRouter(prefix="/api/v1/rag", tags=["rag"], dependencies=[Depends(verify_key)])

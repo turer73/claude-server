@@ -24,6 +24,8 @@ def test_route_table_known_tasks(monkeypatch):
     core = LLMCore()
     assert core.route("code-review") == ("ollama", "qwen3-coder:30b")
     assert core.route("diagnosis") == ("ollama", "qwen2.5:3b")
+    assert core.route("reasoning") == ("ollama", "qwen3:30b-a3b-instruct-2507-q4_K_M")
+    assert core.route("classify") == ("ollama", "qwen3:30b-a3b-instruct-2507-q4_K_M")
     assert core.route("escalate")[0] == "claude"
     assert core.route("synthesis") == ("claude", "claude-sonnet-4-6")
 
@@ -400,3 +402,33 @@ async def test_generate_threads_fmt_to_ollama(monkeypatch):
     schema = {"type": "object", "properties": {"label": {"type": "string"}}}
     assert await LLMCore().generate("p", task="classify", fmt=schema) == "x"
     assert captured["fmt"] == schema
+
+
+def test_strip_leaked_special_tokens():
+    # 2026-07-12 TR-eval bulgusu: gemma3:12b-it-qat bazen şablon-özel token'ı yanıta sızdırıyor.
+    assert lc._strip_leaked_special_tokens("Cevap: 42.\n</end_of_turn>") == "Cevap: 42."
+    assert lc._strip_leaked_special_tokens("<end_of_turn>Merhaba") == "Merhaba"
+    assert lc._strip_leaked_special_tokens("temiz cevap") == "temiz cevap"
+
+
+async def test_ollama_async_strips_leaked_tokens(monkeypatch):
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"response": "Cevap.\n</end_of_turn>"}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            return FakeResp()
+
+    monkeypatch.setattr(lc.httpx, "AsyncClient", lambda **k: FakeClient())
+    out = await LLMCore()._ollama_async("p", "gemma3:12b-it-qat", None, 0.1, None, 10)
+    assert out == "Cevap."

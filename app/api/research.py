@@ -40,7 +40,7 @@ from app.models.schemas import ResearchConfig, ResearchReport
 
 MEMORY_DB = "/opt/linux-ai-server/data/claude_memory.db"
 LLM_MODEL = "qwen2.5:3b"  # default: ~35 tok/s, Turkce yeterli
-LLM_MODEL_HI = "aya:8b"  # high-accuracy TR: Cohere aya-23, ~16 tok/s, daha dogal Turkce
+LLM_MODEL_HI = "gemma3:12b-it-qat"  # high-accuracy TR (2026-07-12 TR-eval: 13/20 vs aya:8b 8/20 idiom/dogallik)
 OLLAMA_URL = "http://localhost:11434"
 LLM_TIMEOUT = 90
 LLM_NUM_PREDICT = 300  # 3B model @ ~35 tok/s -> 300 token ~9sn
@@ -217,7 +217,7 @@ def _anthropic_generate(system: str, user: str, model: str = ANTHROPIC_MODEL) ->
     düşüyordu. Artık _build_env() API-key/auth-token'ı strip eder → abonelik kimliği =
     sıfır API faturası (#156 spawn-fix ile aynı desen). Sync (research /run threadpool'da
     koşar → subprocess bloklaması event-loop'u kesmez). Tool-suz salt-üretim (-p headless).
-    Fail → çağıran aya:8b'ye düşer (research düşmesin). Ad legacy; transport=CLI."""
+    Fail → çağıran gemma3'e düşer (research düşmesin). Ad legacy; transport=CLI."""
     binary = cc_module._find_claude()
     if not binary:
         raise HTTPException(503, "claude CLI bulunamadi (abonelik sentezi icin gerekli)")
@@ -248,8 +248,8 @@ SYNTH_SYS = (
 
 def _synth_llm(model: str) -> Callable[[str], str]:
     """Araştırma sentezi için model-seçici. sonnet → Claude Sonnet (en derin);
-    haiku → Claude Haiku (hızlı); ikisi de fail/anahtar-yok → aya:8b yerel fallback.
-    ollama → doğrudan aya:8b. Plan adımı ayrı (hep hızlı qwen); bu YALNIZ sentez içindir."""
+    haiku → Claude Haiku (hızlı); ikisi de fail/anahtar-yok → gemma3:12b-it-qat yerel fallback.
+    ollama → doğrudan gemma3:12b-it-qat. Plan adımı ayrı (hep hızlı qwen); bu YALNIZ sentez içindir."""
 
     def aya(prompt: str) -> str:
         return _ollama_generate(prompt, model=LLM_MODEL_HI)
@@ -396,7 +396,7 @@ class AskRequest(BaseModel):
     max_chunks: int = 8
     # Engine:
     #   "local"    -> qwen2.5:3b (default, ~35 tok/s, 5-10sn)
-    #   "local-hi" -> aya:8b (high-accuracy Turkce, ~16 tok/s, 10-20sn)
+    #   "local-hi" -> gemma3:12b-it-qat (high-accuracy Turkce, ~16 tok/s, 10-20sn)
     #   "claude"   -> haiku 4.5 (~1-3sn, ~$0.007/call, citation tutarli)
     #   "auto"     -> max_chunks>=8 ise claude, yoksa local
     engine: str = "auto"
@@ -462,7 +462,7 @@ def research_ask(req: AskRequest):
         prompt = f"{SYS_PROMPT}\n\n# Kaynaklar:\n{context}\n\n# Soru: {req.q}\n\n# Cevap:"
         answer = _ollama_generate(prompt, model=LLM_MODEL)
     elif engine == "local-hi":
-        # aya:8b dogal TR icin, citation icin DEGIL — 2026-05-24 prompt-tuning
+        # gemma3:12b-it-qat dogal TR icin, citation icin DEGIL — 2026-05-24 prompt-tuning
         # testlerinde (v1/v2/v3) "kararli citation + relevance" dengesi
         # yakalanamadi. v1 (no per-engine tweak): 0 cit, konu-odakli. v2 (sert
         # kural): 4 cit ama konu-disi paragraflar. v3 (esnek): 0 cit. Aya 8B
@@ -564,7 +564,7 @@ def research_run(config: ResearchConfig) -> ResearchReport:
 
     Auth: router-level verify_key (X-Memory-Key). RAG=canlı Qdrant (ChromaDB ÖLÜ).
     Plan=hızlı Ollama (qwen). SENTEZ=synth_model: sonnet(varsayılan)/haiku/ollama —
-    Claude'lar fail/anahtar-yok'ta aya:8b'ye düşer. Web=opt-in (include_web). Multi-hop=max_hops.
+    Claude'lar fail/anahtar-yok'ta gemma3'e düşer. Web=opt-in (include_web). Multi-hop=max_hops.
     Critic=opt-in (config.critic): sentezi eleştir→gerekirse tek revizyon (synth_model'de).
     Save=opt-in (config.save): raporu discoveries'e 'learning' kaydet (kümülatif araştırma).
     Ağır iş → sync endpoint threadpool'da koşar, event-loop'u bloklamaz.

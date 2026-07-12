@@ -395,7 +395,7 @@ def process_update(update: dict[str, Any]) -> dict:
             (
                 "*Kullanim:*\n"
                 "`/research <soru>` — auto (qwen2.5:3b veya Claude, ~3-10s)\n"
-                "`/research-hi <soru>` — aya:8b dogal Turkce (~15-30s, citation zayif)\n"
+                "`/research-hi <soru>` — gemma3:12b-it-qat dogal Turkce (~15-30s, citation zayif)\n"
                 "`/research-claude <soru>` — Claude Haiku (~3s, en tutarli citation)\n\n"
                 "*Ornek:*\n`/research bilge-arena security header eksiklikleri`"
             ),
@@ -404,7 +404,7 @@ def process_update(update: dict[str, Any]) -> dict:
         return {"ok": True, "action": "help"}
 
     # Periodic typing keep-alive — Telegram typing indicator ~5sn'de soner;
-    # aya:8b (engine=local-hi) ~27sn surer, kullanici "stuck" sanir. Her 4sn'de
+    # gemma3:12b-it-qat (engine=local-hi) ~27sn surer, kullanici "stuck" sanir. Her 4sn'de
     # bir typing re-trigger. Threading.Event ile temiz cleanup.
     stop = threading.Event()
 
