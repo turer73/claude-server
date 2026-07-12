@@ -87,3 +87,16 @@ def test_report_clean_site_green():
 def test_report_p1_site_red():
     r = [{"site": "y.com", "visitors": 0, "pageviews": 0, "bounce": 0, "duration": 0, "findings": [("P1", "çekilemedi")]}]
     assert "🔴" in pl.build_report(r)
+
+
+# ── _country_filters (disc#1319: 3d-labx.com CN-bot kirliligi) ────────────────
+
+
+def test_country_filters_applies_for_configured_site():
+    assert pl._country_filters("3d-labx.com") == [["is_not", "visit:country", ["CN"]]]
+
+
+def test_country_filters_empty_for_other_sites():
+    """Genellenmez — CN diger sitelerde MESRU-sinyal olabilir, kor-filtre yanlis-negatif yaratir."""
+    assert pl._country_filters("bilgearena.com") == []
+    assert pl._country_filters("panola.app") == []

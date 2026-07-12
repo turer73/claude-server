@@ -40,6 +40,21 @@ DEFAULT_SITES = [
 # Organik-arama kaynakları (Plausible visit:source etiketleri) — organik-pay hesabı için.
 ORGANIC_SOURCES = {"google", "bing", "yahoo!", "yahoo", "duckduckgo", "yandex.com.tr", "yandex", "ecosia"}
 
+# disc#1319 (2026-07-12): 3d-labx.com'da CN-kaynaklı headless-Chrome scraper filosu (25-Haz'dan
+# beri, 30g'de 394 ziyaretci = trafigin buyuk-cogunlugu, %100-bounce, 0s-sure) bulgulari sisirip
+# gercek-davranis sinyalini maskeliyordu (CN-dahil aggregate %100'e-yakin-bounce gosterirken,
+# CN-haric gercek tablo %89-bounce/39s idi). Cloudflare-seviyesinde managed-challenge kurali
+# eklendi (klipper, ayni-gun) ama Plausible-tarafinda da HARIC-TUTMA ekleniyor: (a) kural
+# devreye-girmeden-once atilmis tarihsel-veri zaten kirli kalir, (b) challenge'i gecen
+# nadir-bot/gercek-CN-VPN-trafigi icin ikinci-katman guvence. Site-bazli (genellemez — diger
+# sitelerde CN-trafigi MESRU-sinyal olabilir, korlemek yanlis-negatif yaratir).
+EXCLUDE_COUNTRIES: dict[str, list[str]] = {"3d-labx.com": ["CN"]}
+
+
+def _country_filters(site: str) -> list[list[Any]]:
+    countries = EXCLUDE_COUNTRIES.get(site)
+    return [["is_not", "visit:country", countries]] if countries else []
+
 
 def _envget(key: str) -> str:
     v = os.environ.get(key)
@@ -129,6 +144,7 @@ def audit_site(url: str, key: str, site: str) -> dict[str, Any]:
     qurl = f"{url}/api/v2/query"
     visitors = pageviews = 0
     bounce = dur = 0.0
+    cfilters = _country_filters(site)
     # 1) Aggregate (site-geneli özet)
     try:
         agg = _query(
@@ -138,6 +154,7 @@ def audit_site(url: str, key: str, site: str) -> dict[str, Any]:
                 "site_id": site,
                 "metrics": ["visitors", "pageviews", "bounce_rate", "visit_duration"],
                 "date_range": dr,
+                "filters": cfilters,
             },
         )
         res = (agg.get("results") or [{}])[0].get("metrics") or [0, 0, 0, 0]
@@ -157,6 +174,7 @@ def audit_site(url: str, key: str, site: str) -> dict[str, Any]:
                 "dimensions": ["event:page"],
                 "order_by": [["visitors", "desc"]],
                 "pagination": {"limit": 10},
+                "filters": cfilters,
             },
         )
         findings += analyze_pages(pg.get("results", []))
@@ -174,6 +192,7 @@ def audit_site(url: str, key: str, site: str) -> dict[str, Any]:
                 "dimensions": ["visit:source"],
                 "order_by": [["visitors", "desc"]],
                 "pagination": {"limit": 12},
+                "filters": cfilters,
             },
         )
         findings += analyze_sources(src.get("results", []), visitors)
