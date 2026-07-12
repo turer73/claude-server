@@ -55,7 +55,10 @@ _TASK_ROUTES: dict[str, tuple[str, str]] = {
     "diagnosis": ("ollama", "qwen2.5:3b"),  # devops_agent._ask_diagnosis
     "research": ("ollama", "qwen2.5:3b"),  # research._ollama_generate
     "reasoning": ("ollama", "qwen3:30b-a3b-instruct-2507-q4_K_M"),  # MoE, thinking-siz (2026-07-12 TR-eval: 20/20 vs qwen2.5:7b 18/20)
-    "classify": ("ollama", "qwen3:30b-a3b-instruct-2507-q4_K_M"),  # classifier.classify_note (DEFAULT_MODEL)
+    "classify": (
+        "ollama",
+        "qwen3.5:9b",
+    ),  # classifier.classify_note (DEFAULT_MODEL) — 5/5+5/5 mini-eval, 2507'yi classify-yükünden kurtarır (#100701/#100713)
     "rag": ("ollama", "qwen2.5:3b"),  # rag.ask (model çağrıcıdan; complete_sync)
     "escalate": ("claude", "claude-haiku-4-5-20251001"),  # hızlı/ucuz Claude (Max-abonelik)
     "verify": ("claude", "claude-haiku-4-5-20251001"),  # #4 adversarial-verify: qwen-coder kendi FP'sini çürütemiyor → güçlü model
@@ -63,12 +66,14 @@ _TASK_ROUTES: dict[str, tuple[str, str]] = {
     "default": ("ollama", "qwen2.5:3b"),
 }
 
-# Turgut kararı (#100701, 2026-07-12): SER8'de 2507(18GB)+gemma3(8GB) aynı-anda RAM'e sığmıyor
-# (~26GB usable). 2507 = ana-iş (reasoning/classify/rag) → resident (uzun keep_alive, reload-
-# maliyetini engeller). gemma3 = TR-hi (research, düşük-frekans) → on-demand (kısa keep_alive,
-# 2507'nin yerini işgal etmesin). Diğer modeller Ollama varsayılanını (5dk) kullanır (None → payload'a eklenmez).
+# Turgut kararı (#100701/#100713, 2026-07-12): SER8'de 2507(18GB)+gemma3(8GB) aynı-anda RAM'e
+# sığmıyor (~26GB usable) ama 2507+qwen3.5:9b(6.6GB)=~24.6GB rahat sığar (classify artık 9b'ye
+# taşındı — 2507'nin "ana-iş" yükü reasoning/rag'e daraldı, ikisi de resident kalabilir). gemma3 =
+# TR-hi (research, düşük-frekans) → hâlâ on-demand (kısa keep_alive). Diğer modeller Ollama
+# varsayılanını (5dk) kullanır (None → payload'a eklenmez).
 _MODEL_KEEP_ALIVE: dict[str, str] = {
     "qwen3:30b-a3b-instruct-2507-q4_K_M": "30m",
+    "qwen3.5:9b": "20m",  # classify sık-çağrılır (her not) — sıcak-tutmaya değer, 2507'den kısa (küçük/ucuz-reload)
     "gemma3:12b-it-qat": "10s",
 }
 
@@ -176,7 +181,12 @@ class LLMCore:
         options: dict[str, Any] = {"temperature": temperature}
         if num_predict:
             options["num_predict"] = num_predict
-        payload: dict[str, Any] = {"model": model, "prompt": prompt, "stream": False, "options": options}
+        # think:false KOSULSUZ (2026-07-12, Turgut karari #100713 zorunlu-onkosul): hibrit-thinking
+        # modeller (qwen3:30b-a3b orijinal + qwen3.5/3.6 ailesi, bu-oturumda 2x tekrar-tuzagi)
+        # varsayilan-ACIK gelir, basit-promptlarda bile 60-180s+ surer/500-hata verir. Thinking-
+        # DESTEKLEMEYEN modeller (qwen2.5:*, qwen3-coder) parametreyi zararsizca yok-sayar (dogrulandi:
+        # qwen2.5:3b'de normal-cevap, hata-yok) - allowlist bakim-yuku yerine KOSULSUZ-guvenli-varsayilan.
+        payload: dict[str, Any] = {"model": model, "prompt": prompt, "stream": False, "options": options, "think": False}
         if system:
             payload["system"] = system
         if fmt:
@@ -311,7 +321,7 @@ class LLMCore:
         _ok = False
         _tokens = None
         try:
-            payload: dict[str, Any] = {"model": model, "prompt": prompt, "stream": False, "options": options or {}}
+            payload: dict[str, Any] = {"model": model, "prompt": prompt, "stream": False, "options": options or {}, "think": False}
             keep_alive = _keep_alive_for(model)
             if keep_alive is not None:
                 payload["keep_alive"] = keep_alive
@@ -357,7 +367,7 @@ class LLMCore:
         _tokens = None
         try:
             async with self._ollama_gate_async(prio):  # yerel-CPU vanası + öncelik
-                payload: dict[str, Any] = {"model": model, "messages": messages, "stream": False}
+                payload: dict[str, Any] = {"model": model, "messages": messages, "stream": False, "think": False}
                 if fmt:
                     payload["format"] = fmt  # Ollama structured-output (JSON-schema)
                 keep_alive = _keep_alive_for(model)
