@@ -25,7 +25,7 @@ def test_route_table_known_tasks(monkeypatch):
     assert core.route("code-review") == ("ollama", "qwen3-coder:30b")
     assert core.route("diagnosis") == ("ollama", "qwen2.5:3b")
     assert core.route("reasoning") == ("ollama", "qwen3:30b-a3b-instruct-2507-q4_K_M")
-    assert core.route("classify") == ("ollama", "qwen3:30b-a3b-instruct-2507-q4_K_M")
+    assert core.route("classify") == ("ollama", "qwen3.5:9b")
     assert core.route("escalate")[0] == "claude"
     assert core.route("synthesis") == ("claude", "claude-sonnet-4-6")
 
@@ -435,8 +435,10 @@ async def test_ollama_async_strips_leaked_tokens(monkeypatch):
 
 
 def test_keep_alive_for_known_models():
-    # Turgut karari #100701: 2507 resident (uzun), gemma3 on-demand (kisa); digerleri Ollama-varsayilani.
+    # Turgut karari #100701/#100713: 2507+qwen3.5:9b resident (classify 9b'ye tasindi, ikisi
+    # RAM'e birlikte sigar), gemma3 on-demand (kisa); digerleri Ollama-varsayilani.
     assert lc._keep_alive_for("qwen3:30b-a3b-instruct-2507-q4_K_M") == "30m"
+    assert lc._keep_alive_for("qwen3.5:9b") == "20m"
     assert lc._keep_alive_for("gemma3:12b-it-qat") == "10s"
     assert lc._keep_alive_for("qwen2.5:3b") is None
 
@@ -446,6 +448,14 @@ def test_payload_includes_keep_alive_for_managed_models():
     assert p["keep_alive"] == "30m"
     p2 = LLMCore._payload("p", "qwen2.5:3b", None, 0.1, None)
     assert "keep_alive" not in p2
+
+
+def test_payload_always_includes_think_false():
+    # Turgut karari #100713 zorunlu-onkosul: hibrit-thinking modeller (qwen3.5/3.6 ailesi, bu
+    # oturumda 2x tekrar-tuzagi) KOSULSUZ think:false alir - allowlist bakim-yuku yerine
+    # guvenli-varsayilan (thinking-desteklemeyen modeller parametreyi zararsizca yok-sayar).
+    assert LLMCore._payload("p", "qwen3.5:9b", None, 0.1, None)["think"] is False
+    assert LLMCore._payload("p", "qwen2.5:3b", None, 0.1, None)["think"] is False
 
 
 def test_complete_sync_threads_keep_alive(monkeypatch):
@@ -467,3 +477,4 @@ def test_complete_sync_threads_keep_alive(monkeypatch):
     monkeypatch.setattr(_requests, "post", fake_post)
     LLMCore().complete_sync("p", task="rag", model="gemma3:12b-it-qat")
     assert captured["json"]["keep_alive"] == "10s"
+    assert captured["json"]["think"] is False

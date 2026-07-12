@@ -27,7 +27,7 @@ from app.core.agents.llmcore import llm_core
 
 router = APIRouter(prefix="/api/v1/classify", tags=["classify"])
 
-DEFAULT_MODEL = "qwen3:30b-a3b-instruct-2507-q4_K_M"  # 2026-07-12 TR-eval: llmcore "classify" route ile parite
+DEFAULT_MODEL = "qwen3.5:9b"  # 2026-07-12: llmcore "classify" route ile parite (5/5-classify+5/5-reasoning mini-eval, #100701/#100713)
 
 CLASSIFIER_PROMPT_TEMPLATE = (
     "SYSTEM: You are a message router. Classify the note into exactly one "
