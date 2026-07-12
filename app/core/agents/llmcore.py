@@ -39,7 +39,7 @@ _OLLAMA_CONCURRENCY = max(1, int(read_env_var("LLM_OLLAMA_CONCURRENCY") or "2"))
 
 # Task → (backend, model). Mevcut çağrı-yerlerindeki gerçek modeller (spekülasyon değil).
 _TASK_ROUTES: dict[str, tuple[str, str]] = {
-    "code-review": ("ollama", "qwen2.5-coder:7b"),  # code_reviewer._ask_coder
+    "code-review": ("ollama", "qwen3-coder:30b"),  # code_reviewer._ask_coder (LLM_ROUTE_CODE_REVIEW ile claude'a override edilir)
     "diagnosis": ("ollama", "qwen2.5:3b"),  # devops_agent._ask_diagnosis
     "research": ("ollama", "qwen2.5:3b"),  # research._ollama_generate
     "reasoning": ("ollama", "qwen2.5:7b"),  # daha güçlü yerel akıl-yürütme
