@@ -1,7 +1,10 @@
 # Faz-A: Otonom-Haberleşme Genişletme — Notes-Schema + Güvenlik-Çekirdeği (Tasarım)
 
-> **Lane:** design=klipper, impl=bölüşülür (schema+güvenlik-çekirdeği=klipper, surer-taraf-parite=surer).
-> **Durum:** taslak, surer spec-verify + Turgut onayı bekliyor.
+> **Lane:** design=klipper, impl=bölüşülür (schema+güvenlik-çekirdeği §2-§10=klipper, surer-taraf-parite
+> Faz-B=surer) — **Turgut #100674 ile ONAYLI** (zamanlama koordineli, B-DONE=test-kanıtı+klipper-doğrulama).
+> **Durum:** surer spec-verify TAMAM (#100672, 12/12 madde doğru-yansıtılmış, itiraz-yok) — bu revizyon
+> o 5 maddeyi (2 eksik + 3 netleştirme) işliyor, ardından **IMPL-READY**. Açık kalan: §14 s14-1/s14-2
+> (kapsam-daraltma + NVIDIA-router-sıralaması) hâlâ Turgut'ta.
 > **Bağlam:** Turgut 2026-07-05'te "klipper ile daha kapsamlı otonom haberleşme kuralım" dedi. surer #100447
 > ile 4 boşluk + fazlı-öneri (A-D) gönderdi, 12-madde mutabakat #100447→#100472/#100466/#100469 zincirinde
 > kapandı (2026-07-05, 0 açık-itiraz). Şimdi (2026-07-11) P0-kimlik (PR#302, per-device-key) + P1-CLAIM-lock
@@ -57,6 +60,10 @@ uygulanır: taze/pre-migration DB'de poller kırılmaz.
    `action_review`-yakalı bir aksiyon-tetikliyorsa (task-paketi/dispatch-komut/spawn-emri) →
    `dispatch`(consequential); aksi halde `dialogue`. Bilinmeyen/parse-edilemeyen → `dispatch`
    (fail-closed, asla `dialogue`'a düşme).
+   **PIN (surer spec-verify #100672 netleştirme-1):** `legacy` (mevcut-tüm-notlar, şema-öncesi
+   trafik) Faz-C router'da **`dispatch`-eşdeğeri** sayılır — fail-closed, `dialogue`'a asla
+   otomatik-terfi etmez. Aksi-halde bugüne-dek atılan HER not (hepsi `legacy`) router-gate'in
+   dışında kalır, yani gate hiç-devrede-değilmiş gibi davranır (sessiz-bypass).
 2. **`sender`** — `from_device` DEĞİL (body-iddiası, spoofable — X-Memory-Key şu an paylaşımlı-master
    tarafından da kabul ediliyordu, P0-kimlik'ten önce). Artık: **per-device-key**'den türetilir
    (`_resolve_device_key`, PR#302 CANLI) — `dispatch_origin` deseni discussions/claims'te zaten
@@ -104,6 +111,13 @@ eder — N-thread × claude-p patlaması riskini keser. Tavan-davranışı `msg_
 (consequential) tavan-aşımında **reddedilir + insan-bildirim**; `dialogue` tavan-aşımında **defer**
 (sıraya-alınır, kayıp-değil).
 
+**Thread-CREATION-limit (surer spec-verify #100672 eksik-2, #100450'e ek — BİLİNÇLİ-BİRLEŞTİRME):**
+global-bütçe eşzamanlı-spawn'ı sınırlar ama YENİ-thread-açma hızını ayrıca sınırlamaz — N-thread'in
+her biri tek-tek bütçe-altında kalıp toplam thread-sayısı patlayabilir (yavaş-sızıntı, ani-patlama
+değil). Ayrı bir sayaç yerine aynı `autonomous_comms_budget` tablosuna `threads_created_today`
+kolonu eklenir (aynı günlük-reset, aynı fail-closed davranış) — thread-creation ayrı-mekanizma
+değil, mevcut bütçe-sayacının bir boyutu.
+
 ## 8. Idempotency (#5, surer-düzeltme KABUL)
 
 Anahtar: **`(thread_id, note_id)`** — surer'in düzeltmesi (msg-hash değil, çünkü aynı-içerik
@@ -114,10 +128,29 @@ tekilleştirilir, `processed_notes(thread_id, note_id)` unique-index).
 
 ## 9. Thread-Serialization (#8)
 
-Spawn-lock **`note_id→thread_id` bazlı**: aynı thread'de aynı-anda yalnız 1 spawn in-flight
-(worktree-nonce zaten dosya-çakışmasını önlüyor — bu KISMİ, ayrı-katman; thread-serial mantık-sırasını
-garantiler, worktree fiziksel-izolasyonu garantiler, ikisi birlikte gerekli).
-İlgili: [[feedback_spawn_task_same_dir_git_crosstalk]].
+**Lock anahtarı = `thread_id`** (surer spec-verify #100672 netleştirme-2: eski "note_id→thread_id
+bazlı" ifadesi belirsizdi — kilitlenen kaynak thread'in kendisi, not değil). **Lock lokasyonu =
+SERVER-SIDE DB**, `active_claims` ailesinin (PR#303, P1-CLAIM-lock) aynı deseni yeniden-kullanılır
+(atomik acquire + TTL + sahiplik-kolonu). Yerel-mutex YETERSİZ: iki lane (klipper+surer) aynı-anda
+aynı thread'e spawn atabilir — kilit sunucuda-paylaşılmazsa collision klipper-tarafında görünmez
+kalır. Aynı-anda yalnız 1 spawn in-flight (worktree-nonce zaten dosya-çakışmasını önlüyor — bu
+KISMİ, ayrı-katman; thread-serial mantık-sırasını garantiler, worktree fiziksel-izolasyonu
+garantiler, ikisi birlikte gerekli). İlgili: [[feedback_spawn_task_same_dir_git_crosstalk]].
+
+**surer Faz-B etkileşimi (#100672 onaylı):** kilit klipper tarafında `active_claims`-ailesinde
+açılır; surer Windows-poller'dan aynı satırı server-API üzerinden tüketir (kendi-lokal-mutex'i
+DEĞİL, bu satırı okur/yazar) — implementasyon detayı Faz-B'de surer'de, sözleşme burada sabitlenir.
+
+## 9a. Self-Reply-Skip (mekanik guard, ayrı-madde — surer spec-verify #100672 eksik-1)
+
+§13'teki Faz-C-kapsamlı "semantik-loop" (anlamsal ping-pong, `held` gerektirir) ile **KARIŞTIRILMAMALI**
+— bu, ondan bağımsız, Faz-A'da şimdiden gerekli bir **mekanik** guard: bir device kendi gönderdiği
+notun `reply_to` zincirine kendi-kendine cevap üretmemeli. note-poller'daki mevcut self-skip
+(bugünkü tek-cihaz filtresi) `from_device == kendi-device` genellemesiyle thread-farkındalığına
+taşınır: `reply_to`'nun kök-notunu takip edip zincirdeki en-son-mesajın `sender`'ı (§3 server-türetilen
+kimlik) kendi-device'a eşitse, poller o thread'de spawn ATLAR (kendi mesajına kendi cevap vermez).
+Bu, semantik-loop-guard'ın ÖNKOŞULU değil ama ondan ayrı bir echo-önleme katmanıdır — ikisi birlikte
+gerekli, biri diğerinin yerini tutmaz.
 
 ## 10. Append-Only Audit (#12, surer-eklemesi — SUBSTRAT)
 
@@ -153,6 +186,13 @@ retry. `dispatch` (consequential) **FAIL-FAST** — gecikmiş-replay tehlikeli (
 eski-bir-dispatch'in bugünkü-bağlamda çalıştırılması riski). Dokümante-edilecek: surer kendi
 store-and-forward implementasyonunu Faz-B ile birlikte yazar.
 
+**FLUSH-anı revalidasyon (surer spec-verify #100672 netleştirme-3):** kuyruk boşaltılırken (klipper
+geri-geldiğinde) her kuyruklu-mesaj gönderilmeden ÖNCE yeniden kontrol edilir: halt-flag (§5) +
+thread-state (§6/§9, poison/kapanmış-mı) + hop-TTL (§4, kesinti-süresince dolmuş-mu). Kuyrukta-bekleyen
+`dialogue` tanım-gereği **bayat**: kesinti-sırasında thread kapanmış veya halt açılmış olabilir —
+flush düz-tekrar-gönderim değil, her mesaj güncel-duruma karşı yeniden-değerlendirilir. İmplementasyon
+surer'de (Faz-B), sözleşme burada sabit.
+
 ## 13. Faz-A Kapsamı-DIŞI (Faz-C+ konuları)
 
 - **#9 semantik-loop (livelock guard, hop-TTL-ötesi):** iki-ajan konu-döngüsünde hop-limitin
@@ -164,10 +204,14 @@ store-and-forward implementasyonunu Faz-B ile birlikte yazar.
 1. Faz-A'nın gerçek-önceliği: bugünkü tartışma-platformu (PR#305, discussion#1/#2'de canlı
    kullanıldı) YAPILANDIRILMIŞ-deliberasyon için Faz-A'nın çözmeye çalıştığı "otonom-diyalog-kopuk"
    sorununu KISMEN karşılıyor olabilir — kapsam daraltılsın mı (yalnız §3+§5+§10 çekirdek-güvenlik,
-   ham-diyalog-zinciri değil), yoksa tam-12-madde mi?
-2. Sıralama: NVIDIA-router (P0-P1 fix'leri, bugün aktif) ile Faz-A hangisi önce?
-3. Impl-lane bölüşümü onayı: şema+güvenlik-çekirdeği(§2-§10)=klipper, surer-parite(Faz-B)=surer,
-   zamanlama koordineli mi ayrı mı?
+   ham-diyalog-zinciri değil), yoksa tam-12-madde mi? **[AÇIK — s14-1, Turgut'ta]**
+2. Sıralama: NVIDIA-router (P0-P1 fix'leri, bugün aktif) ile Faz-A hangisi önce? **[AÇIK — s14-2,
+   Turgut'ta]**
+3. ~~Impl-lane bölüşümü onayı~~ **[KARARLANDI — #100674, 2026-07-12]:** şema+güvenlik-çekirdeği
+   (§2-§10)=klipper, surer-parite(Faz-B)=surer, **zamanlama KOORDİNELİ**. surer mutabık: A+B-paralel
+   → B-DONE-gate → C sırası geçerli (§1 kilit-karar değişmedi). surer Faz-B'ye §9 lock-sözleşmesinden
+   (server-side `active_claims`-ailesi) bağımsız-olarak başlıyor; B-DONE = test-kanıtı-notu +
+   klipper-doğrulaması (honor-system değil, §1'deki tanım aynen geçerli).
 
 ---
 **Kaynak-notlar:** surer #100447/#100450/#100466/#100469, klipper #100449/#100461/#100467/#100472.
