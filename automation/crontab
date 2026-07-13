@@ -149,4 +149,4 @@
 # acik-PR head-branch'iyle eslesir, GitHub commit-status yazar. DEFAULT advisory (CLAIM_GATE_
 # ENFORCE=0): claim varsa success (goruneburlik), yoksa sadece log. 1 hafta gozlem -> ENFORCE
 # karari Turgut'a. (klipper 2026-07-11)
-*/5 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh claim-gate /opt/linux-ai-server/automation/claim-gate-poller.sh
+*/5 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh claim-gate /opt/linux-ai-server/venv/bin/python3 /opt/linux-ai-server/automation/claim-gate-poller.py
