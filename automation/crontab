@@ -8,6 +8,11 @@
 45 3 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh artifact-cleanup /opt/linux-ai-server/automation/cleanup-artifacts.sh
 # Daily test runner — tüm projeler
 0 6 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh test-runner /opt/linux-ai-server/automation/test-runner.sh
+# Otonom CI-fix hatti — soft-gate shadow verisi (#1230, Turgut 2026-07-13). /ci/run-all: 9 projede
+# test + fail'de attempt_fix (Claude, gate-OFF/notify-only) -> action_review event = SHADOW verisi.
+# 2026-05-01'de emekliye ayrilan hat yeniden baglandi; gercek shadow sonrasi FLIP degerlendirilecek.
+# 05:00: nuclei(04:40) / test-runner(06:00) arasi bos-slot (CPU/termal yiginlanmasin, SER8).
+0 5 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh ci-fix-runall /opt/linux-ai-server/automation/ci-fix-runall.sh
 # Haftalık dependency audit — Pazartesi 09:00
 0 9 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh weekly-audit /opt/linux-ai-server/automation/weekly-audit.sh
 # Panola ERP — Gece demo reset + E2E test
@@ -139,3 +144,9 @@
 # Korelasyon (gap-5): events-spine cross-source (exception/anomaly/drift/log-novelty/watchdog) 15dk
 # penceresi → ≥2 farklı-kaynak = korele incident (keep-pattern, fingerprint-dedup). fatigue↓. (klipper #100128)
 */15 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh correlation-check /opt/linux-ai-server/venv/bin/python3 /opt/linux-ai-server/automation/correlation-check.py
+
+# Claim-gate poller (konu-1 paket 3/3, PR#304): DB-CLAIM'i PR'a zorlayan kopru — active_claims'i
+# acik-PR head-branch'iyle eslesir, GitHub commit-status yazar. DEFAULT advisory (CLAIM_GATE_
+# ENFORCE=0): claim varsa success (goruneburlik), yoksa sadece log. 1 hafta gozlem -> ENFORCE
+# karari Turgut'a. (klipper 2026-07-11)
+*/5 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh claim-gate /opt/linux-ai-server/venv/bin/python3 /opt/linux-ai-server/automation/claim-gate-poller.py
