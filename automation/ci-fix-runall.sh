@@ -31,7 +31,7 @@ if [ -z "${INTERNAL_API_KEY:-}" ] && [ -f /opt/linux-ai-server/.env ]; then
 fi
 
 if [ -z "${INTERNAL_API_KEY:-}" ]; then
-  echo "ci-fix-runall: INTERNAL_API_KEY bulunamadi (.env) -> abort" >&2
+  echo "OUTCOME: fail | INTERNAL_API_KEY bulunamadi (.env)" >&2
   exit 2
 fi
 
@@ -46,6 +46,14 @@ RC=$?
 
 echo "ci-fix-runall rc=$RC resp=${RESP:0:2000}"
 
-# rc!=0: curl transport-hatasi (timeout/connection) -> wrapper outcome=fail. Icerikteki
-# total_failed>0 NORMAL (fix denendi) -> HTTP basariliysa exit 0; shadow-analizi event'lerde.
+# OUTCOME-contract (tools/lint-cron-outcome.sh): wrapper bunu cron_outcomes'a yazar.
+# rc!=0: curl transport-hatasi (timeout/connection) = fail. rc=0: HTTP basarili -> pass;
+# icerikteki total_failed>0 NORMAL (fix denendi/shadow), transport-fail DEGIL. Shadow
+# analizi event'lerde (action-review/ci_fixer), OUTCOME sadece calisti-mi sinyali.
+if [ "$RC" -ne 0 ]; then
+  echo "OUTCOME: fail | /ci/run-all cagrisi basarisiz (curl rc=$RC, timeout/connection)"
+else
+  echo "OUTCOME: pass | /ci/run-all tamam (shadow: action-review/ci_fixer event'lerine bak)"
+fi
+
 exit "$RC"
