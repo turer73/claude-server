@@ -241,7 +241,12 @@ class CriticAgent:
                     tid = t.get("id", 0)
                     if tid and tid <= self._last_scored_id:
                         continue
-                    await self._on_thought(Event(type="thought:new", source="critic:loop", payload={"thought_id": tid, "thought": t}))
+                    # BUS'a publish et (dogrudan self-call DEGIL): boylece thought:new'e
+                    # abone TUM ajanlar (critic._on_thought + memory_consolidator._on_thought)
+                    # alir. Onceki self-call, consolidator'i thought-akisindan tamamen dislyor
+                    # ve temporal-graph/transition-edge'lerini olu birakiyordu. publish hata-
+                    # izole (gather+return_exceptions) ve eszamanli -> critic-loop'u yavaslatmaz.
+                    await get_bus().publish(Event(type="thought:new", source="critic:loop", payload={"thought_id": tid, "thought": t}))
             except asyncio.CancelledError:
                 break
             except Exception as e:
