@@ -35,16 +35,39 @@ if [ -z "${INTERNAL_API_KEY:-}" ]; then
   exit 2
 fi
 
+# Transient bag­lanti-hatasi rc'leri: 7=connect-fail, 52=empty-reply, 56=recv-error.
+# Bunlar "HIC yanit gelmedi" demek -> sunucu-tarafi is BASLAMADI (kismi-yan-etki yok) ->
+# retry GUVENLI (2026-07-14: worker-recycle sirasinda 05:00-run rc=52 aldi, flood-koku).
+# rc=28 (timeout) BILINCLI haric: /ci/run-all idempotent DEGIL (working-tree degistirir,
+# Claude-fix kosar) -> timeout is uzun-kostu demek, retry cift-kosum riski. Sadece hizli-
+# baglanti-hatalarini yeniden dene.
+_TRANSIENT_RC=" 7 52 56 "
+MAX_TRIES=3
+RETRY_BACKOFF=20  # worker-recycle'in oturmasi icin
+
 echo "ci-fix-runall: POST $API/api/v1/ci/run-all ($(date -Is))"
 
-# /ci/run-all senkron: 9 proje test + fail'de Claude-fix. Fix varsa uzun surer -> genis timeout
-# (45dk). Bos-yesil suite'te hizli doner. Timeout = transport-fail (outcome fail).
-RESP=$(curl -s --max-time 2700 -X POST "$API/api/v1/ci/run-all" \
-  -H 'Content-Type: application/json' \
-  -H "X-API-Key: ${INTERNAL_API_KEY}")
-RC=$?
+RESP=""
+RC=0
+for try in $(seq 1 "$MAX_TRIES"); do
+  # /ci/run-all senkron: 9 proje test + fail'de Claude-fix. Fix varsa uzun surer -> genis
+  # timeout (45dk). Bos-yesil suite'te hizli doner.
+  RESP=$(curl -s --max-time 2700 -X POST "$API/api/v1/ci/run-all" \
+    -H 'Content-Type: application/json' \
+    -H "X-API-Key: ${INTERNAL_API_KEY}")
+  RC=$?
+  echo "ci-fix-runall deneme $try/$MAX_TRIES: rc=$RC resp=${RESP:0:2000}"
 
-echo "ci-fix-runall rc=$RC resp=${RESP:0:2000}"
+  # Basari (rc=0) VEYA transient-OLMAYAN hata -> dongu bitir (retry etme).
+  if [ "$RC" -eq 0 ] || [ "${_TRANSIENT_RC/ $RC /}" = "$_TRANSIENT_RC" ]; then
+    break
+  fi
+  # Transient + deneme kaldi -> backoff + retry.
+  if [ "$try" -lt "$MAX_TRIES" ]; then
+    echo "ci-fix-runall: transient rc=$RC (yanit yok, is baslamadi) -> ${RETRY_BACKOFF}s sonra retry"
+    sleep "$RETRY_BACKOFF"
+  fi
+done
 
 # OUTCOME-contract (tools/lint-cron-outcome.sh): wrapper bunu cron_outcomes'a yazar.
 # rc!=0: curl transport-hatasi (timeout/connection) = fail. rc=0: HTTP basarili -> pass;
