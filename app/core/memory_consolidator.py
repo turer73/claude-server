@@ -121,26 +121,35 @@ def _upsert_edge(source: str, target: str, relation: str) -> None:
 
 
 def _find_patterns() -> list[dict[str, Any]]:
-    """Find recurring patterns: emotion→focus transitions that repeat often."""
+    """Sik tekrarlayan emotion->focus pattern'lerini bul (critic gozlemlerinden).
+
+    KAYNAK = 'critic_observed' edge'leri (_on_critic_score yazar: emotion:X -> focus:Y).
+    Onceki-bug: 'transition' relation'i sorgulaniyordu ama (a) o edge'ler _on_thought'a
+    bagli ve _on_thought bus-wiring-gap'i yuzunden hic atesenmiyordu (0 satir), (b) transition
+    edge'i FOCUS->FOCUS'tur (bu fonksiyonun dondurdugu emotion->focus semantigiyle uyumsuz).
+    Gercek emotion->focus sinyali critic_observed'da (canli + zengin, count'lar >>3). Prefix
+    ('emotion:'/'focus:') gosterim icin soyulur.
+    """
     patterns = []
     try:
         con = sqlite3.connect(_MEMORY_DB, timeout=5)
         rows = con.execute(
-            """SELECT e.source_key as emotion, e.target_key as focus,
-                      e.count as transition_count, e.relation
-               FROM memory_edges e
-               WHERE e.relation = 'transition'
-               ORDER BY e.count DESC LIMIT 10"""
+            """SELECT source_key, target_key, count
+               FROM memory_edges
+               WHERE relation = 'critic_observed'
+               ORDER BY count DESC LIMIT 10"""
         ).fetchall()
         con.close()
         for r in rows:
             if r[2] >= 3:
+                emotion = r[0].removeprefix("emotion:")
+                focus = r[1].removeprefix("focus:")
                 patterns.append(
                     {
-                        "emotion": r[0],
-                        "focus": r[1],
+                        "emotion": emotion,
+                        "focus": focus,
                         "count": r[2],
-                        "pattern": f"{r[0]} -> {r[1]} ({r[2]}x)",
+                        "pattern": f"{emotion} -> {focus} ({r[2]}x)",
                     }
                 )
     except sqlite3.Error as e:

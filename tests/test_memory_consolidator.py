@@ -81,19 +81,21 @@ class TestDbOperations:
         assert row[0] == 2
 
     def test_find_patterns(self, memory_db):
-        _upsert_edge("emotion:calm", "focus:debug", "transition")
-        _upsert_edge("emotion:calm", "focus:debug", "transition")
-        _upsert_edge("emotion:calm", "focus:debug", "transition")
+        # _find_patterns 'critic_observed' (emotion->focus) edge'lerini okur; prefix soyulur.
+        _upsert_edge("emotion:calm", "focus:debug", "critic_observed")
+        _upsert_edge("emotion:calm", "focus:debug", "critic_observed")
+        _upsert_edge("emotion:calm", "focus:debug", "critic_observed")
         patterns = _find_patterns()
         assert len(patterns) >= 1
-        assert patterns[0]["emotion"] == "emotion:calm"
+        assert patterns[0]["emotion"] == "calm"
+        assert patterns[0]["focus"] == "debug"
         assert patterns[0]["count"] >= 3
 
     def test_find_patterns_below_threshold(self, memory_db):
-        _upsert_edge("emotion:calm", "focus:idle", "transition")
-        _upsert_edge("emotion:calm", "focus:idle", "transition")
+        _upsert_edge("emotion:calm", "focus:idle", "critic_observed")
+        _upsert_edge("emotion:calm", "focus:idle", "critic_observed")
         patterns = _find_patterns()
-        matching = [p for p in patterns if p["emotion"] == "emotion:calm" and p["focus"] == "focus:idle"]
+        matching = [p for p in patterns if p["emotion"] == "calm" and p["focus"] == "idle"]
         assert len(matching) == 0
 
     def test_get_top_memories(self, memory_db):
@@ -126,7 +128,13 @@ class TestDbOperations:
         con.close()
         assert len(remaining) <= 3
 
-    def test_error_handling_bad_db_path(self):
+    def test_error_handling_bad_db_path(self, monkeypatch):
+        # _MEMORY_DB'yi ERISILEMEZ bir yola isaretle -> sqlite hatasi -> graceful degrade
+        # (try/except: log.warning + bos donus), crash YOK. Onceki hali fixture'siz'di =>
+        # DEFAULT prod claude_memory.db'ye yaziyordu (test-kirliligi: key/val + a/b/c, count=28)
+        # VE _find_patterns artik critic_observed okudugundan prod-pattern'leri donup
+        # 'assert patterns == []'i kiriyordu. Bad-path monkeypatch ikisini de cozer.
+        monkeypatch.setattr("app.core.memory_consolidator._MEMORY_DB", "/nonexistent/dir/nope.db")
         _upsert_node("focus", "key", "val")
         _upsert_edge("a", "b", "c")
         patterns = _find_patterns()
