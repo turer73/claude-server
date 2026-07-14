@@ -221,6 +221,49 @@ class TestMemoryConsolidatorClass:
         assert consolidator._last_state.get("focus") == "debug"
 
     @pytest.mark.anyio
+    async def test_on_thought_builds_transition_edge(self, consolidator, memory_db):
+        # Race-fix davranis-korumasi: farkli-focus'lu ardisik thought'lar prev->new transition
+        # edge'i uretmeli (atomik read-modify-write prev'i dogru yakalar).
+        from app.core.agent_bus import Event
+
+        for i, foc in enumerate(["debug", "idle"]):
+            await consolidator._on_thought(
+                Event(
+                    type="thought:new", source="t", payload={"thought_id": i, "thought": {"focus": foc, "emotion": "calm", "content": "x"}}
+                )
+            )
+        con = sqlite3.connect(memory_db)
+        edge = con.execute("SELECT source_key, target_key FROM memory_edges WHERE relation='transition'").fetchone()
+        con.close()
+        assert edge == ("debug", "idle")
+        assert consolidator._last_state["focus"] == "idle"
+
+    @pytest.mark.anyio
+    async def test_on_thought_concurrent_state_consistent(self, consolidator, memory_db):
+        # Race-fix (runtime-review #169): es-zamanli _on_thought'lar (gather) _last_state'i bozmamali
+        # ne de crash olmali. Atomik read-modify-write sayesinde final-state tutarli (iki anahtar da
+        # var, focus degeri girdilerden biri — yarim/karisik degil).
+        import asyncio
+
+        from app.core.agent_bus import Event
+
+        focuses = [f"f{i}" for i in range(20)]
+        await asyncio.gather(
+            *[
+                consolidator._on_thought(
+                    Event(
+                        type="thought:new",
+                        source="t",
+                        payload={"thought_id": i, "thought": {"focus": foc, "emotion": f"e{i}", "content": "x"}},
+                    )
+                )
+                for i, foc in enumerate(focuses)
+            ]
+        )
+        assert set(consolidator._last_state.keys()) == {"focus", "emotion"}
+        assert consolidator._last_state["focus"] in focuses
+
+    @pytest.mark.anyio
     async def test_on_critic_score(self, consolidator, monkeypatch):
         from app.core.agent_bus import Event
 

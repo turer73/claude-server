@@ -189,7 +189,7 @@ class MemoryConsolidator:
             "running": self._running,
             "agent_type": "memory_consolidator",
             "pattern_count": len(self._pattern_cache),
-            "last_state": self._last_state,
+            "last_state": dict(self._last_state),  # snapshot-kopya: cagiran await'inde _on_thought mutasyonuna maruz kalmasin
             "interval_s": self._interval,
             "models": ["kural-tabanlı (önem skorlaması, pattern detection)"],
             # _last_state yalnız focus/emotion tutar — "ts" hiç yazılmadığından last_run ebedi None
@@ -238,20 +238,25 @@ class MemoryConsolidator:
         emotion = thought.get("emotion", "calm")
         content = thought.get("content", "")
 
+        # ATOMIK read-modify-write (runtime-review #169 race-fix): prev'i oku + _last_state'i
+        # GUNCELLE, ARADA await YOK. Coroutine'ler yalniz await'te yield ettigi icin bu blok
+        # bolunmez -> iki es-zamanli _on_thought (bugun tek-seri-critic; ileride thought:deep
+        # ayri-publisher kazanirsa es-zamanli) interleave etse bile _last_state lost-update /
+        # stale-prev yasamaz. Onceki kod prev'i okuyup DB-await'lerinden SONRA yaziyordu =
+        # read-await-write yarisi. DB yazimlari (asagida) state'ten bagimsiz -> sira fark etmez.
+        prev_focus = self._last_state.get("focus")
+        prev_emotion = self._last_state.get("emotion")
+        self._last_state["focus"] = focus
+        self._last_state["emotion"] = emotion
+
         await asyncio.to_thread(_upsert_node, "focus", f"focus:{focus}", focus, importance=1.0)
         await asyncio.to_thread(_upsert_node, "emotion", f"emotion:{emotion}", emotion, importance=0.8)
         thought_key = f"thought:{event.payload.get('thought_id', 0)}"
         await asyncio.to_thread(_upsert_node, "content_preview", thought_key, content[:200], importance=0.3)
-
-        prev_focus = self._last_state.get("focus")
-        prev_emotion = self._last_state.get("emotion")
         if prev_focus and prev_focus != focus:
             await asyncio.to_thread(_upsert_edge, prev_focus, focus, "transition")
         if prev_emotion and prev_emotion != emotion:
             await asyncio.to_thread(_upsert_edge, prev_emotion, emotion, "shift")
-
-        self._last_state["focus"] = focus
-        self._last_state["emotion"] = emotion
 
     async def _on_critic_score(self, event: Event) -> None:
         score = event.payload.get("score", 5)
