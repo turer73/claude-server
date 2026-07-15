@@ -500,7 +500,9 @@ def _discoveries_for(
     #328-P2 r3: any_project=True filtreyi TAMAMEN düşürüyordu — /agents/runtime yalnız
     require_auth ister, bu yüzden herhangi-authenticated kullanıcı TÜM projelerin bug'larını
     görebilirdi. self-pentest.domains whitelist'i app.api.security._load_targets ile aynı
-    kaynaktan — kapsam pentest-target'larla sınırlı, sızdırma yok)."""
+    kaynaktan — kapsam pentest-target'larla sınırlı, sızdırma yok). Çok-projeli sorguda başlığa
+    project-öneki eklenir (Codex #328-P2 r4-P3: her domain aynı jenerik başlığı kullanıyor,
+    "self-pentest: eksik security header" — hangi domain olduğu belirsizdi)."""
     patterns = title_like if isinstance(title_like, list) else [title_like]
     try:
         con = get_conn(MEMORY_DB, readonly=True)
@@ -515,15 +517,18 @@ def _discoveries_for(
                 project_clause = "project='linux-ai-server' AND "
                 project_params = []
             rows = con.execute(
-                f"SELECT created_at, title, type FROM discoveries "
-                f"WHERE {project_clause}type IN ({placeholders}) AND ({title_clause}) "
+                f"SELECT created_at, title, type, project FROM discoveries "
+                # Codex #328-P2 r4-P2: status filtresi YOKTU — resolved/obsolete pentest-bulguları
+                # dashboard'da sonsuza dek 'aktif' görünürdü. status='active' pentest API'nin
+                # (app/api/security.py list_findings) kullandığı varsayılanla aynı.
+                f"WHERE status='active' AND {project_clause}type IN ({placeholders}) AND ({title_clause}) "
                 f"ORDER BY id DESC LIMIT ?",
                 (*project_params, *types, *patterns, limit),
             ).fetchall()
             return [
                 {
                     "time": r["created_at"],
-                    "title": r["title"],
+                    "title": f"{r['project']}: {r['title']}" if projects else r["title"],
                     "severity": "P2" if r["type"] == "bug" else "",
                     "status": r["type"],
                     "kind": "discovery",

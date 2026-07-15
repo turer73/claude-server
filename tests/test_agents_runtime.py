@@ -101,7 +101,10 @@ def test_discoveries_for_filters_project_type_and_title(tmp_path, monkeypatch):
 
     db = tmp_path / "mem.db"
     con = sqlite3.connect(db)
-    con.execute("CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, created_at TEXT)")
+    con.execute(
+        "CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, "
+        "created_at TEXT, status TEXT DEFAULT 'active')"
+    )
     rows = [
         ("linux-ai-server", "learning", "Haftalık veri analizi (data-analyst) — 2026-W28"),
         ("linux-ai-server", "learning", "Teknik-SEO denetimi (seo-audit)"),  # farklı-ajan, eslesmemeli
@@ -127,7 +130,10 @@ def test_discoveries_for_multi_type(tmp_path, monkeypatch):
 
     db = tmp_path / "mem.db"
     con = sqlite3.connect(db)
-    con.execute("CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, created_at TEXT)")
+    con.execute(
+        "CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, "
+        "created_at TEXT, status TEXT DEFAULT 'active')"
+    )
     con.execute(
         "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
         ("linux-ai-server", "learning", "GSC fırsatı: sc-domain:x.com"),
@@ -162,7 +168,10 @@ def test_discoveries_for_list_patterns_and_project_whitelist(tmp_path, monkeypat
 
     db = tmp_path / "mem.db"
     con = sqlite3.connect(db)
-    con.execute("CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, created_at TEXT)")
+    con.execute(
+        "CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, "
+        "created_at TEXT, status TEXT DEFAULT 'active')"
+    )
     con.execute(
         "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
         ("petvet.panola.app", "bug", "self-pentest: eksik security header"),
@@ -186,12 +195,46 @@ def test_discoveries_for_list_patterns_and_project_whitelist(tmp_path, monkeypat
     findings = agents._discoveries_for(["GUVENLIK:%", "self-pentest:%"], types=("bug",), projects=["linux-ai-server", "petvet.panola.app"])
     assert len(findings) == 2  # kuafor.panola.app whitelist-dışı — dahil edilmedi
     titles = {f["title"] for f in findings}
-    assert any("self-pentest" in t for t in titles)
-    assert any("GUVENLIK" in t for t in titles)
+    # Codex #328-P2 r4-P3: projects verilince başlığa domain-öneki eklenmeli (jenerik başlıklar
+    # domainler-arası ayırt edilemez olmasın diye).
+    assert "petvet.panola.app: self-pentest: eksik security header" in titles
+    assert "linux-ai-server: GUVENLIK: sunucu-API auth-bypass (2 endpoint)" in titles
 
-    # projects verilmezse (varsayılan) yalnız linux-ai-server'ı görmeli
+    # projects verilmezse (varsayılan) yalnız linux-ai-server'ı görmeli, öneksiz
     scoped = agents._discoveries_for(["GUVENLIK:%", "self-pentest:%"], types=("bug",))
     assert len(scoped) == 1
+    assert scoped[0]["title"] == "GUVENLIK: sunucu-API auth-bypass (2 endpoint)"
+
+
+def test_discoveries_for_excludes_resolved_status(tmp_path, monkeypatch):
+    # Codex #328-P2 r4-P2: status filtresi YOKTU — bir pentest-bulgusu mevcut pentest API'siyle
+    # (app/api/security.py) resolved/completed işaretlense bile Ajanlar sekmesinde sonsuza dek
+    # 'aktif' P2 olarak görünmeye devam ederdi.
+    import sqlite3
+
+    from app.api import agents
+
+    db = tmp_path / "mem.db"
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, "
+        "created_at TEXT, status TEXT DEFAULT 'active')"
+    )
+    con.execute(
+        "INSERT INTO discoveries (project,type,title,created_at,status) VALUES (?,?,?,datetime('now'),?)",
+        ("linux-ai-server", "bug", "GUVENLIK: sunucu-API auth-bypass (2 endpoint)", "completed"),
+    )
+    con.execute(
+        "INSERT INTO discoveries (project,type,title,created_at,status) VALUES (?,?,?,datetime('now'),?)",
+        ("linux-ai-server", "bug", "GUVENLIK: hâlâ açık bir sorun", "active"),
+    )
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "MEMORY_DB", str(db))
+
+    findings = agents._discoveries_for("GUVENLIK:%", types=("bug",))
+    assert len(findings) == 1
+    assert "hâlâ açık" in findings[0]["title"]
 
 
 def test_cron_card_self_pentest_scopes_to_pentest_targets(tmp_path, monkeypatch):
@@ -204,7 +247,10 @@ def test_cron_card_self_pentest_scopes_to_pentest_targets(tmp_path, monkeypatch)
 
     mem_db = tmp_path / "mem.db"
     con = sqlite3.connect(mem_db)
-    con.execute("CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, created_at TEXT)")
+    con.execute(
+        "CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, "
+        "created_at TEXT, status TEXT DEFAULT 'active')"
+    )
     con.execute(
         "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
         ("petvet.panola.app", "bug", "self-pentest: eksik security header"),
@@ -233,7 +279,9 @@ def test_cron_card_self_pentest_scopes_to_pentest_targets(tmp_path, monkeypatch)
     assert spec["disc_pentest_scope"] is True
     card = agents._cron_card(spec)
     assert len(card["findings"]) == 1
-    assert "petvet.panola.app" not in card["findings"][0]["title"]  # başlıkta yok ama project-scope doğrulandı
+    # Codex #328-P2 r4-P3: her domain aynı jenerik başlığı paylaşıyor — hangi domain olduğu
+    # project-önekiyle görünmeli (evil.example.com whitelist-dışı olduğu için görünmemeli).
+    assert card["findings"][0]["title"].startswith("petvet.panola.app: ")
     assert card["triggerable"] is False
 
 
@@ -303,7 +351,10 @@ def test_cron_card_prioritizes_newer_cron_fail_over_stale_discovery(tmp_path, mo
 
     mem_db = tmp_path / "mem.db"
     con = sqlite3.connect(mem_db)
-    con.execute("CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, created_at TEXT)")
+    con.execute(
+        "CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, "
+        "created_at TEXT, status TEXT DEFAULT 'active')"
+    )
     con.execute(
         "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,?)",
         ("linux-ai-server", "learning", "Tekrar Eden Pattern'ler — eski", "2026-06-01 00:00:00"),
@@ -344,7 +395,10 @@ def test_cron_card_uses_discoveries_when_disc_like_set(tmp_path, monkeypatch):
     # halde datetime('now') wall-clock-timing'e bağlı flaky-test riski olurdu.
     mem_db = tmp_path / "mem.db"
     con = sqlite3.connect(mem_db)
-    con.execute("CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, created_at TEXT)")
+    con.execute(
+        "CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, "
+        "created_at TEXT, status TEXT DEFAULT 'active')"
+    )
     con.execute(
         "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,?)",
         ("linux-ai-server", "learning", "Reklam fırsatları (ad-advisor)", "2026-07-15 12:00:00"),
