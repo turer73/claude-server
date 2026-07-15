@@ -607,14 +607,23 @@ def _cron_card(spec: dict) -> dict:
     else:
         findings = _events_for(spec.get("evsrc"))
     cron_last, success_rate, latest_ok = _cron_success(spec)
-    # Codex #328-P2 r1: disc_like/evsrc/pending_table yalnız script'in KENDİ yazdığı çıktıyı yakalar;
-    # klipper-cron-wrap.sh RESULT!=pass'te source=cron:<job> event'i yazar (satır 95-104 — pass'ta
-    # events satırı YOK, yalnız cron_outcomes). r3: yalnız findings-BOŞKEN değil, HER ZAMAN kontrol
-    # et ve daha YENİYSE öne al. r6 (Codex düzeltmesi): latest_ok True iken (en-son cron_outcomes
-    # sonucu pass/partial-is-success) fallback'i GÖSTERME — aksi halde events'teki HAFTALARCA-eski
-    # tek fail satırı (yeni pass'lar hiç event yazmadığı için) sonsuza dek 'güncel hata' gibi
-    # görünürdü, oysa job artık sağlıklı.
-    if latest_ok is False:
+    # klipper-cron-wrap.sh RESULT!=pass'te source=cron:<job> title="cron <job> <result>" event'i
+    # yazar (satır 95-104 — pass'ta events satırı YOK, yalnız cron_outcomes).
+    wrapper_prefix = f"cron {job} "
+    if latest_ok and cron_last:
+        # Codex #328-P2 r7: r6'nın latest_ok-gate'i yalnız FALLBACK-eklemeyi engelliyordu; ama
+        # evsrc bare-job-adına ayarlı kartlarda (cross-source-consolidation — r4/r6'da BİLEREK
+        # cron:<job>'ı yakalasın diye) PRİMARY findings zaten substring-eşleşmesiyle o eski wrapper-
+        # event'ini içeriyordu, latest_ok=True olsa bile hiç filtrelenmiyordu. SIKI `< cron_last`
+        # (eşit DEĞİL) kullan: partial_is_success kartlarında (memory-synthesize/intent-liveness-
+        # audit) latest_ok=True İKEN dahi en-son-run'ın KENDİ wrapper-event'i (timestamp==cron_last)
+        # hâlâ o run'ın gerçek/güncel özeti — bunu silme, yalnız STRICT-ESKİ olanları at.
+        findings = [f for f in findings if not (f["kind"] == "event" and f["title"].startswith(wrapper_prefix) and f["time"] < cron_last)]
+    elif latest_ok is False:
+        # r1: disc_like/evsrc/pending_table yalnız script'in KENDİ yazdığı çıktıyı yakalar — r3:
+        # findings-BOŞKEN değil HER ZAMAN kontrol et ve daha YENİYSE öne al. r6: yalnız latest_ok
+        # False iken (en-son run gerçekten fail/partial) göster, aksi halde stale-fail sonsuza dek
+        # 'güncel hata' gibi görünürdü.
         cron_events = _events_for(f"cron:{job}", limit=1)
         if cron_events and (not findings or cron_events[0]["time"] > findings[0]["time"]):
             findings = (cron_events + findings)[:5]

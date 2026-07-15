@@ -405,6 +405,71 @@ def test_cron_card_hides_stale_fail_event_after_later_pass(tmp_path, monkeypatch
     assert card["success_rate"]["value"] == round(2 / 3, 3)  # _cron_success 3-ondalık yuvarlıyor
 
 
+def test_cron_card_filters_stale_wrapper_event_from_primary_evsrc_path(tmp_path, monkeypatch):
+    # Codex #328-P2 r7: r6'nın latest_ok-gate'i yalnız FALLBACK-eklemeyi engelliyordu. evsrc bare-
+    # job-adına ayarlı kartlarda (cross-source-consolidation gibi) PRİMARY findings zaten substring-
+    # eşleşmesiyle stale wrapper-event'i içeriyordu — bu, cron_events fallback'ine hiç uğramadan
+    # doğrudan _events_for(evsrc) çağrısından geliyordu, r6'nın gate'i bunu kaçırıyordu.
+    import sqlite3
+
+    from app.api import agents
+
+    srv_db = tmp_path / "srv.db"
+    con = sqlite3.connect(srv_db)
+    con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, source TEXT, title TEXT, severity TEXT, timestamp TEXT, detail TEXT)")
+    con.execute(
+        "INSERT INTO events (source,title,severity,timestamp) "
+        "VALUES ('cron:cross-source-consolidation','cron cross-source-consolidation fail',"
+        "'critical','2026-06-01 00:00:00')"
+    )
+    con.execute("CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY, job TEXT, result TEXT, timestamp TEXT)")
+    for r, ts in (("fail", "2026-06-01 00:00:00"), ("pass", "2026-07-06 00:00:00")):
+        con.execute("INSERT INTO cron_outcomes (job,result,timestamp) VALUES ('cross-source-consolidation',?,?)", (r, ts))
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(srv_db))
+
+    spec = next(a for a in _AGENT_MANIFEST if a["key"] == "cross-source-consolidation")
+    card = agents._cron_card(spec)
+    assert card["findings"] == []  # stale fail PRİMARY-yoldan geldi ama filtrelendi
+    assert card["success_rate"]["value"] == 0.5
+
+
+def test_cron_card_keeps_current_run_event_for_partial_is_success(tmp_path, monkeypatch):
+    # Codex #328-P2 r7: partial_is_success kartlarında (memory-synthesize/intent-liveness-audit)
+    # latest_ok=True İKEN dahi en-son-run'ın KENDİ wrapper-event'i (timestamp==cron_last) o run'ın
+    # gerçek/güncel özeti — round-6 detail-fix'in amacı bunu göstermekti, r7'nin stale-filtresi
+    # bunu YANLIŞLIKLA silmemeli (yalnız STRICT-ESKİ event'ler atılmalı).
+    import sqlite3
+
+    from app.api import agents
+
+    srv_db = tmp_path / "srv.db"
+    con = sqlite3.connect(srv_db)
+    con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, source TEXT, title TEXT, severity TEXT, timestamp TEXT, detail TEXT)")
+    con.execute(
+        "INSERT INTO events (source,title,severity,timestamp,detail) VALUES (?,?,?,?,?)",
+        (
+            "cron:memory-synth",
+            "cron memory-synth partial",
+            "warning",
+            "2026-07-13 06:47:02",
+            "rc=0 memory-synth DRY_RUN: 5 küme önerisi (APPLY=1 ile uygula)",
+        ),
+    )
+    con.execute("CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY, job TEXT, result TEXT, timestamp TEXT)")
+    con.execute("INSERT INTO cron_outcomes (job,result,timestamp) VALUES ('memory-synth','partial','2026-07-13 06:47:02')")
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(srv_db))
+
+    spec = next(a for a in _AGENT_MANIFEST if a["key"] == "memory-synthesize")
+    card = agents._cron_card(spec)
+    assert len(card["findings"]) == 1  # güncel-run'ın kendi event'i KORUNDU
+    assert "5 küme önerisi" in card["findings"][0]["title"]
+    assert card["success_rate"]["value"] == 1.0  # partial_is_success → 100%
+
+
 def test_events_for_appends_detail_to_title(tmp_path, monkeypatch):
     # Codex #328-P2 r6: klipper-cron-wrap.sh title'ı jenerik basar ("cron <job> <result>"), asıl
     # bilgi (rc + OUTCOME-satırı) detail'de — bu kayboluyor, _events_for yalnız title okuyordu.
