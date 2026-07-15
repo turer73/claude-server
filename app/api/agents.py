@@ -268,13 +268,15 @@ _AGENT_MANIFEST = [
         "schedule": "haftalık",
         "models": ["kural-tabanlı"],
         "log": "self-pentest.log",
-        # Codex #328-P2: gerçek domain-bulguları project=$domain (linux-ai-server DEĞİL) altında
+        # Codex #328-P2 r1: gerçek domain-bulguları project=$domain (linux-ai-server DEĞİL) altında
         # "self-pentest: ..." başlıklarıyla yazılıyor — 'GUVENLIK:%' yalnız localhost-bypass durumunu
-        # yakalar (nadir). İkisi de OR'lanır + any_project=True (project='linux-ai-server' sabit-
-        # filtresi domain-bulgularını hep gizliyordu).
+        # yakalar (nadir). İkisi de OR'lanır. r3: any_project=True TÜM projelere açıyordu (bilgi-
+        # sızdırma riski, /agents/runtime yalnız require_auth ister) — disc_pentest_scope ile
+        # self-pentest.domains whitelist'ine daraltıldı (bkz _cron_card, app.api.security._load_targets
+        # ile aynı kaynak).
         "disc_like": ["GUVENLIK:%", "self-pentest:%"],
         "disc_types": ("bug",),
-        "disc_any_project": True,
+        "disc_pentest_scope": True,
         "script": "self-pentest.sh",
         # Codex #328-P2 (2 sorun): (1) tam-tarama 51-path×domain + 30sn ara-bekleme > generic 600s-
         # timeout, elle-tetikle sessizce öldürülür; (2) argümansız-full-scan tasarlanmamış manuel-
@@ -486,28 +488,37 @@ def _discoveries_for(
     title_like: str | list[str],
     types: tuple[str, ...] = ("learning",),
     limit: int = 5,
-    any_project: bool = False,
+    projects: list[str] | None = None,
 ) -> list[dict]:
     """claude_memory.db discoveries'ten başlık-eşleşen son bulgular — bazı cron-ajanların
     (ad-advisor/data-analyst/seo-audit/seo-gsc) GERÇEK çıktısı burada, server.db.events'te
     DEĞİL (_events_for onları hep 'Bulgu yok' gösteriyordu). Read-only.
 
-    title_like: tek pattern veya OR'lanacak pattern listesi (Codex #328-P2: self-pentest hem
+    title_like: tek pattern veya OR'lanacak pattern listesi (Codex #328-P2 r1: self-pentest hem
     'GUVENLIK:%' hem 'self-pentest:%' yazıyor, tek LIKE yetmiyordu).
-    any_project: True ise project filtresi düşer (self-pentest domain-başına $domain yazıyor,
-    'linux-ai-server' sabit-filtresi domain-bulgularını hep gizliyordu)."""
+    projects: verilirse project filtresi 'linux-ai-server' yerine bu whitelist'e döner (Codex
+    #328-P2 r3: any_project=True filtreyi TAMAMEN düşürüyordu — /agents/runtime yalnız
+    require_auth ister, bu yüzden herhangi-authenticated kullanıcı TÜM projelerin bug'larını
+    görebilirdi. self-pentest.domains whitelist'i app.api.security._load_targets ile aynı
+    kaynaktan — kapsam pentest-target'larla sınırlı, sızdırma yok)."""
     patterns = title_like if isinstance(title_like, list) else [title_like]
     try:
         con = get_conn(MEMORY_DB, readonly=True)
         try:
             placeholders = ",".join("?" for _ in types)
             title_clause = " OR ".join("title LIKE ?" for _ in patterns)
-            project_clause = "" if any_project else "project='linux-ai-server' AND "
+            if projects:
+                proj_ph = ",".join("?" for _ in projects)
+                project_clause = f"project IN ({proj_ph}) AND "
+                project_params: list[str] = projects
+            else:
+                project_clause = "project='linux-ai-server' AND "
+                project_params = []
             rows = con.execute(
                 f"SELECT created_at, title, type FROM discoveries "
                 f"WHERE {project_clause}type IN ({placeholders}) AND ({title_clause}) "
                 f"ORDER BY id DESC LIMIT ?",
-                (*types, *patterns, limit),
+                (*project_params, *types, *patterns, limit),
             ).fetchall()
             return [
                 {
@@ -586,20 +597,29 @@ def _cron_success(spec: dict) -> tuple:
 
 
 def _cron_card(spec: dict) -> dict:
+    job = spec.get("job") or spec["key"]
     if spec.get("pending_table"):
         findings = _pending_for(spec["pending_table"])
     elif spec.get("disc_like"):
-        findings = _discoveries_for(
-            spec["disc_like"], types=spec.get("disc_types", ("learning",)), any_project=spec.get("disc_any_project", False)
-        )
+        projects = None
+        if spec.get("disc_pentest_scope"):
+            # Codex #328-P2 r3: any_project=True filtreyi TAMAMEN düşürüyordu — /agents/runtime
+            # yalnız require_auth ister, herhangi-authenticated kullanıcı TÜM projelerin bug'larını
+            # görebilirdi. Whitelist'e daralt (dedicated pentest API'nin kullandığı KAYNAK aynı).
+            from app.api.security import _load_targets
+
+            projects = ["linux-ai-server", *_load_targets()]
+        findings = _discoveries_for(spec["disc_like"], types=spec.get("disc_types", ("learning",)), projects=projects)
     else:
         findings = _events_for(spec.get("evsrc"))
-    # Codex #328-P2: disc_like/evsrc/pending_table yalnız script'in KENDİ yazdığı çıktıyı yakalar;
+    # Codex #328-P2 r1: disc_like/evsrc/pending_table yalnız script'in KENDİ yazdığı çıktıyı yakalar;
     # klipper-cron-wrap.sh HER çalışmada (pass/partial/fail) source=cron:<job> event'i zaten yazıyor
-    # (satır 104) — birincil kaynak boşsa (ör. Memory-API-down → discovery hiç yazılmadı) bu her-zaman-
-    # var-olan cron-seviyesi kaydı fallback olarak göster, "Bulgu yok" sessizliği yerine hata-detayı.
-    if not findings:
-        findings = _events_for(f"cron:{spec.get('job') or spec['key']}")
+    # (satır 104). r3: yalnız findings-BOŞKEN değil, HER ZAMAN kontrol et ve daha YENİYSE öne al —
+    # aksi halde eski bir primary-finding (ör. haftalar-önceki discovery) varken son-run'ın taze
+    # fail'i stale-bulgunun arkasında gizli kalırdı (r1'in "sadece boşsa" fallback'i bunu kaçırıyordu).
+    cron_events = _events_for(f"cron:{job}", limit=1)
+    if cron_events and (not findings or cron_events[0]["time"] > findings[0]["time"]):
+        findings = (cron_events + findings)[:5]
     cron_last, success_rate = _cron_success(spec)
     last_run = cron_last or _cron_last_run(spec) or (findings[0]["time"] if findings else None)
     return {
