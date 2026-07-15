@@ -463,14 +463,17 @@ def _events_for(evsrc: str | None, limit: int = 5) -> list[dict]:
         con = get_conn(server_db_path(), readonly=True)
         try:
             rows = con.execute(
-                "SELECT timestamp, title, severity FROM events WHERE source LIKE ? ORDER BY id DESC LIMIT ?",
+                "SELECT timestamp, title, severity, detail FROM events WHERE source LIKE ? ORDER BY id DESC LIMIT ?",
                 (f"%{evsrc}%", limit),
             ).fetchall()
             sevmap = {"critical": "P1", "warn": "P2"}
             return [
                 {
                     "time": r["timestamp"],
-                    "title": r["title"],
+                    # Codex #328-P2 r6: klipper-cron-wrap.sh title'ı jenerik basar ("cron <job>
+                    # <result>"), asıl bilgi (rc + OUTCOME-satırı) detail'de — bkz emit-event.sh
+                    # <type> <source> <sev> <title> [detail]. detail varsa ekle, aksi halde salt-title.
+                    "title": f"{r['title']}: {r['detail']}" if r["detail"] else r["title"],
                     "severity": sevmap.get(r["severity"], ""),
                     "status": r["severity"],
                     "kind": "event",
@@ -559,14 +562,19 @@ def _pending_for(table: str, limit: int = 5) -> list[dict[str, Any]]:
 
 
 def _cron_success(spec: dict) -> tuple:
-    """cron_outcomes'tan (job=spec['job'] veya spec['key']) son-koşu zamanı + başarı-oranı.
-    Read-only, fail-safe. Dashboard 'success_rate: None' hardcode'u script-ajanları SÜS gibi
-    gösteriyordu — gerçek pass/fail oranı cron_outcomes'ta var. 3 ajanın (memory-synthesize/
-    intent-liveness-audit/autonomous-daily-summary) manifest-key'i gerçek job-adıyla uyuşmuyordu
-    (bkz spec['job'] override) — bunlarda success_rate hep None kalıyordu."""
+    """cron_outcomes'tan (job=spec['job'] veya spec['key']) son-koşu zamanı + başarı-oranı +
+    en-son-koşu-OK-mu. Read-only, fail-safe. Dashboard 'success_rate: None' hardcode'u script-
+    ajanları SÜS gibi gösteriyordu — gerçek pass/fail oranı cron_outcomes'ta var. 3 ajanın
+    (memory-synthesize/intent-liveness-audit/autonomous-daily-summary) manifest-key'i gerçek
+    job-adıyla uyuşmuyordu (bkz spec['job'] override) — bunlarda success_rate hep None kalıyordu.
+
+    3. dönüş değeri (Codex #328-P2 r6): klipper-cron-wrap.sh yalnız RESULT!=pass'te events
+    satırı yazar (satır 95-97) — bir job haftalarca-önce fail edip sonra pass'lamaya başlasa
+    bile events'teki en-son satır hâlâ o ESKİ fail'e ait olur (yeni pass hiç event yazmaz).
+    _cron_card bu bayrağı cron:<job> event-fallback'ini bastırmak için kullanır."""
     job = spec.get("job") or spec.get("key")
     if not job:
-        return None, None
+        return None, None, None
     try:
         con = get_conn(server_db_path(), readonly=True)
         try:
@@ -577,9 +585,9 @@ def _cron_success(spec: dict) -> tuple:
         finally:
             con.close()
     except Exception:
-        return None, None
+        return None, None, None
     if not rows:
-        return None, None
+        return None, None, None
     # #1334-sweep: bazı scriptler 'partial'ı BİLEREK "ran fine, reportable outcome" için kullanır
     # (bkz spec['partial_is_success'] — memory-synthesize DRY_RUN, intent-liveness-audit bulgu-var).
     # Diğer scriptlerde 'partial' gerçek kısmi-başarısızlık anlamına gelir (bkz meta_cognition/
@@ -587,7 +595,7 @@ def _cron_success(spec: dict) -> tuple:
     ok_results = {"pass", "partial"} if spec.get("partial_is_success") else {"pass"}
     ok = sum(1 for r in rows if r["result"] in ok_results)
     rate = {"label": "Cron başarısı", "value": round(ok / len(rows), 3), "n": len(rows)}
-    return rows[0]["timestamp"], rate
+    return rows[0]["timestamp"], rate, rows[0]["result"] in ok_results
 
 
 def _cron_card(spec: dict) -> dict:
@@ -598,15 +606,18 @@ def _cron_card(spec: dict) -> dict:
         findings = _discoveries_for(spec["disc_like"], types=spec.get("disc_types", ("learning",)))
     else:
         findings = _events_for(spec.get("evsrc"))
+    cron_last, success_rate, latest_ok = _cron_success(spec)
     # Codex #328-P2 r1: disc_like/evsrc/pending_table yalnız script'in KENDİ yazdığı çıktıyı yakalar;
-    # klipper-cron-wrap.sh HER çalışmada (pass/partial/fail) source=cron:<job> event'i zaten yazıyor
-    # (satır 104). r3: yalnız findings-BOŞKEN değil, HER ZAMAN kontrol et ve daha YENİYSE öne al —
-    # aksi halde eski bir primary-finding (ör. haftalar-önceki discovery) varken son-run'ın taze
-    # fail'i stale-bulgunun arkasında gizli kalırdı (r1'in "sadece boşsa" fallback'i bunu kaçırıyordu).
-    cron_events = _events_for(f"cron:{job}", limit=1)
-    if cron_events and (not findings or cron_events[0]["time"] > findings[0]["time"]):
-        findings = (cron_events + findings)[:5]
-    cron_last, success_rate = _cron_success(spec)
+    # klipper-cron-wrap.sh RESULT!=pass'te source=cron:<job> event'i yazar (satır 95-104 — pass'ta
+    # events satırı YOK, yalnız cron_outcomes). r3: yalnız findings-BOŞKEN değil, HER ZAMAN kontrol
+    # et ve daha YENİYSE öne al. r6 (Codex düzeltmesi): latest_ok True iken (en-son cron_outcomes
+    # sonucu pass/partial-is-success) fallback'i GÖSTERME — aksi halde events'teki HAFTALARCA-eski
+    # tek fail satırı (yeni pass'lar hiç event yazmadığı için) sonsuza dek 'güncel hata' gibi
+    # görünürdü, oysa job artık sağlıklı.
+    if latest_ok is False:
+        cron_events = _events_for(f"cron:{job}", limit=1)
+        if cron_events and (not findings or cron_events[0]["time"] > findings[0]["time"]):
+            findings = (cron_events + findings)[:5]
     last_run = cron_last or _cron_last_run(spec) or (findings[0]["time"] if findings else None)
     return {
         "key": spec["key"],
