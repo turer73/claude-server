@@ -268,15 +268,14 @@ _AGENT_MANIFEST = [
         "schedule": "haftalık",
         "models": ["kural-tabanlı"],
         "log": "self-pentest.log",
-        # Codex #328-P2 r1: gerçek domain-bulguları project=$domain (linux-ai-server DEĞİL) altında
-        # "self-pentest: ..." başlıklarıyla yazılıyor — 'GUVENLIK:%' yalnız localhost-bypass durumunu
-        # yakalar (nadir). İkisi de OR'lanır. r3: any_project=True TÜM projelere açıyordu (bilgi-
-        # sızdırma riski, /agents/runtime yalnız require_auth ister) — disc_pentest_scope ile
-        # self-pentest.domains whitelist'ine daraltıldı (bkz _cron_card, app.api.security._load_targets
-        # ile aynı kaynak).
-        "disc_like": ["GUVENLIK:%", "self-pentest:%"],
-        "disc_types": ("bug",),
-        "disc_pentest_scope": True,
+        # Codex #328-P2 r1→r4: disc_like ile gerçek vulnerability-başlıkları ("GUVENLIK: auth-
+        # bypass", "self-pentest: eksik security header/TLS/cookie") gösterilmeye çalışıldı, sırayla
+        # whitelist'e daraltıldı + status='active' filtrelendi. r5: KÖK-SORUN kaldı — bu detaylar
+        # dedicated pentest API'de (app/api/security.py) verify_pentest_key arkasında, ama
+        # /agents/runtime yalnız require_auth ister → herhangi-authenticated kullanıcı düşük-
+        # ayrıcalıklı bir yoldan vulnerability-detaylarını görebilirdi. Fix: disc_like tamamen
+        # kaldırıldı — kart yalnız cron:<job> wrapper-ÖZETİ gösterir (sayı, "X/Y domain tarandı,
+        # N bulgu" — detay YOK). Gerçek bulgular için tek yol: dedicated /security/pentest/findings.
         "script": "self-pentest.sh",
         # Codex #328-P2 (2 sorun): (1) tam-tarama 51-path×domain + 30sn ara-bekleme > generic 600s-
         # timeout, elle-tetikle sessizce öldürülür; (2) argümansız-full-scan tasarlanmamış manuel-
@@ -488,47 +487,37 @@ def _discoveries_for(
     title_like: str | list[str],
     types: tuple[str, ...] = ("learning",),
     limit: int = 5,
-    projects: list[str] | None = None,
 ) -> list[dict]:
     """claude_memory.db discoveries'ten başlık-eşleşen son bulgular — bazı cron-ajanların
     (ad-advisor/data-analyst/seo-audit/seo-gsc) GERÇEK çıktısı burada, server.db.events'te
-    DEĞİL (_events_for onları hep 'Bulgu yok' gösteriyordu). Read-only.
+    DEĞİL (_events_for onları hep 'Bulgu yok' gösteriyordu). Read-only. project SABİT
+    'linux-ai-server' — self-pentest gibi çoklu-domain/hassas-güvenlik-detaylı ajanlar BU
+    fonksiyonu kullanmamalı (Codex #328-P2 r1→r5: whitelist-scope + status-filtre denendi,
+    KÖK-SORUN kaldı — /agents/runtime yalnız require_auth ister, dedicated pentest API
+    verify_pentest_key ister; vulnerability-detayı düşük-ayrıcalıklı yoldan sızardı. self-pentest
+    artık disc_like KULLANMIYOR, yalnız cron:<job> wrapper-özeti gösteriyor — bkz _cron_card).
 
-    title_like: tek pattern veya OR'lanacak pattern listesi (Codex #328-P2 r1: self-pentest hem
-    'GUVENLIK:%' hem 'self-pentest:%' yazıyor, tek LIKE yetmiyordu).
-    projects: verilirse project filtresi 'linux-ai-server' yerine bu whitelist'e döner (Codex
-    #328-P2 r3: any_project=True filtreyi TAMAMEN düşürüyordu — /agents/runtime yalnız
-    require_auth ister, bu yüzden herhangi-authenticated kullanıcı TÜM projelerin bug'larını
-    görebilirdi. self-pentest.domains whitelist'i app.api.security._load_targets ile aynı
-    kaynaktan — kapsam pentest-target'larla sınırlı, sızdırma yok). Çok-projeli sorguda başlığa
-    project-öneki eklenir (Codex #328-P2 r4-P3: her domain aynı jenerik başlığı kullanıyor,
-    "self-pentest: eksik security header" — hangi domain olduğu belirsizdi)."""
+    title_like: tek pattern veya OR'lanacak pattern listesi (birden çok başlık-deseni OR'lamak
+    için)."""
     patterns = title_like if isinstance(title_like, list) else [title_like]
     try:
         con = get_conn(MEMORY_DB, readonly=True)
         try:
             placeholders = ",".join("?" for _ in types)
             title_clause = " OR ".join("title LIKE ?" for _ in patterns)
-            if projects:
-                proj_ph = ",".join("?" for _ in projects)
-                project_clause = f"project IN ({proj_ph}) AND "
-                project_params: list[str] = projects
-            else:
-                project_clause = "project='linux-ai-server' AND "
-                project_params = []
             rows = con.execute(
-                f"SELECT created_at, title, type, project FROM discoveries "
-                # Codex #328-P2 r4-P2: status filtresi YOKTU — resolved/obsolete pentest-bulguları
-                # dashboard'da sonsuza dek 'aktif' görünürdü. status='active' pentest API'nin
-                # (app/api/security.py list_findings) kullandığı varsayılanla aynı.
-                f"WHERE status='active' AND {project_clause}type IN ({placeholders}) AND ({title_clause}) "
+                f"SELECT created_at, title, type FROM discoveries "
+                # Codex #328-P2 r4: status filtresi YOKTU — resolved/obsolete bulgular dashboard'da
+                # sonsuza dek 'aktif' görünürdü. status='active' pentest API'nin (app/api/security.py
+                # list_findings) kullandığı varsayılanla aynı.
+                f"WHERE status='active' AND project='linux-ai-server' AND type IN ({placeholders}) AND ({title_clause}) "
                 f"ORDER BY id DESC LIMIT ?",
-                (*project_params, *types, *patterns, limit),
+                (*types, *patterns, limit),
             ).fetchall()
             return [
                 {
                     "time": r["created_at"],
-                    "title": f"{r['project']}: {r['title']}" if projects else r["title"],
+                    "title": r["title"],
                     "severity": "P2" if r["type"] == "bug" else "",
                     "status": r["type"],
                     "kind": "discovery",
@@ -606,15 +595,7 @@ def _cron_card(spec: dict) -> dict:
     if spec.get("pending_table"):
         findings = _pending_for(spec["pending_table"])
     elif spec.get("disc_like"):
-        projects = None
-        if spec.get("disc_pentest_scope"):
-            # Codex #328-P2 r3: any_project=True filtreyi TAMAMEN düşürüyordu — /agents/runtime
-            # yalnız require_auth ister, herhangi-authenticated kullanıcı TÜM projelerin bug'larını
-            # görebilirdi. Whitelist'e daralt (dedicated pentest API'nin kullandığı KAYNAK aynı).
-            from app.api.security import _load_targets
-
-            projects = ["linux-ai-server", *_load_targets()]
-        findings = _discoveries_for(spec["disc_like"], types=spec.get("disc_types", ("learning",)), projects=projects)
+        findings = _discoveries_for(spec["disc_like"], types=spec.get("disc_types", ("learning",)))
     else:
         findings = _events_for(spec.get("evsrc"))
     # Codex #328-P2 r1: disc_like/evsrc/pending_table yalnız script'in KENDİ yazdığı çıktıyı yakalar;

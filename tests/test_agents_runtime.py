@@ -157,11 +157,8 @@ def test_discoveries_for_bad_db_no_crash(monkeypatch):
     assert agents._discoveries_for("%x%") == []
 
 
-def test_discoveries_for_list_patterns_and_project_whitelist(tmp_path, monkeypatch):
-    # Codex #328-P2 r1: self-pentest domain-bulguları project=$domain altında "self-pentest: ..."
-    # başlığıyla yazılır (project='linux-ai-server' sabit-filtresi bunları hep gizliyordu),
-    # localhost-bypass ise "GUVENLIK: ..." altında ayrı bir başlık deseni kullanır — ikisi OR'lanmalı.
-    # r3: any_project=True yerine EXPLICIT whitelist — off-whitelist proje sızmamalı.
+def test_discoveries_for_list_patterns_or_together(tmp_path, monkeypatch):
+    # Birden çok title_like pattern'i OR'lanmalı (tek çağrıda birden fazla başlık-deseni eşleştir).
     import sqlite3
 
     from app.api import agents
@@ -174,36 +171,25 @@ def test_discoveries_for_list_patterns_and_project_whitelist(tmp_path, monkeypat
     )
     con.execute(
         "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
-        ("petvet.panola.app", "bug", "self-pentest: eksik security header"),
-    )
-    con.execute(
-        "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
         ("linux-ai-server", "bug", "GUVENLIK: sunucu-API auth-bypass (2 endpoint)"),
     )
     con.execute(
         "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
-        ("petvet.panola.app", "learning", "self-pentest: eksik security header"),  # yanlış-type, eslesmemeli
+        ("linux-ai-server", "bug", "ALARM: disk kritik eşik"),
     )
     con.execute(
         "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
-        ("kuafor.panola.app", "bug", "self-pentest: eksik security header"),  # whitelist-dışı, sızmamalı
+        ("linux-ai-server", "bug", "hiçbiriyle eşleşmeyen başlık"),
     )
     con.commit()
     con.close()
     monkeypatch.setattr(agents, "MEMORY_DB", str(db))
 
-    findings = agents._discoveries_for(["GUVENLIK:%", "self-pentest:%"], types=("bug",), projects=["linux-ai-server", "petvet.panola.app"])
-    assert len(findings) == 2  # kuafor.panola.app whitelist-dışı — dahil edilmedi
+    findings = agents._discoveries_for(["GUVENLIK:%", "ALARM:%"], types=("bug",))
+    assert len(findings) == 2
     titles = {f["title"] for f in findings}
-    # Codex #328-P2 r4-P3: projects verilince başlığa domain-öneki eklenmeli (jenerik başlıklar
-    # domainler-arası ayırt edilemez olmasın diye).
-    assert "petvet.panola.app: self-pentest: eksik security header" in titles
-    assert "linux-ai-server: GUVENLIK: sunucu-API auth-bypass (2 endpoint)" in titles
-
-    # projects verilmezse (varsayılan) yalnız linux-ai-server'ı görmeli, öneksiz
-    scoped = agents._discoveries_for(["GUVENLIK:%", "self-pentest:%"], types=("bug",))
-    assert len(scoped) == 1
-    assert scoped[0]["title"] == "GUVENLIK: sunucu-API auth-bypass (2 endpoint)"
+    assert "GUVENLIK: sunucu-API auth-bypass (2 endpoint)" in titles
+    assert "ALARM: disk kritik eşik" in titles
 
 
 def test_discoveries_for_excludes_resolved_status(tmp_path, monkeypatch):
@@ -237,10 +223,12 @@ def test_discoveries_for_excludes_resolved_status(tmp_path, monkeypatch):
     assert "hâlâ açık" in findings[0]["title"]
 
 
-def test_cron_card_self_pentest_scopes_to_pentest_targets(tmp_path, monkeypatch):
-    # Codex #328-P2 r3: disc_pentest_scope=True → _cron_card app.api.security._load_targets'ı
-    # çağırıp whitelist'i dinamik yüklemeli (statik-manifest'e gömülmemeli — domains dosyası
-    # değişebilir), off-whitelist proje dahil edilmemeli.
+def test_cron_card_self_pentest_shows_summary_not_vulnerability_details(tmp_path, monkeypatch):
+    # Codex #328-P2 r1→r5: self-pentest için disc_like/whitelist-scope sırayla denendi, KÖK-SORUN
+    # kaldı — vulnerability-detayları (TLS/header/auth-bypass) dedicated pentest API'de
+    # verify_pentest_key arkasında, /agents/runtime yalnız require_auth ister. Fix: disc_like
+    # TAMAMEN kaldırıldı — kart artık discoveries'e HİÇ bakmıyor, yalnız cron:<job> wrapper-
+    # özetini (sayı, detay-YOK) gösteriyor.
     import sqlite3
 
     from app.api import agents
@@ -255,10 +243,6 @@ def test_cron_card_self_pentest_scopes_to_pentest_targets(tmp_path, monkeypatch)
         "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
         ("petvet.panola.app", "bug", "self-pentest: eksik security header"),
     )
-    con.execute(
-        "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
-        ("evil.example.com", "bug", "self-pentest: eksik security header"),  # whitelist-dışı
-    )
     con.commit()
     con.close()
     monkeypatch.setattr(agents, "MEMORY_DB", str(mem_db))
@@ -266,22 +250,21 @@ def test_cron_card_self_pentest_scopes_to_pentest_targets(tmp_path, monkeypatch)
     srv_db = tmp_path / "srv.db"
     con2 = sqlite3.connect(srv_db)
     con2.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, source TEXT, title TEXT, severity TEXT, timestamp TEXT)")
+    con2.execute(
+        "INSERT INTO events (source,title,severity,timestamp) "
+        "VALUES ('cron:self-pentest','self-pentest: 3/3 domain tarandı, 1 bulgu','warn',datetime('now'))"
+    )
     con2.execute("CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY, job TEXT, result TEXT, timestamp TEXT)")
     con2.commit()
     con2.close()
     monkeypatch.setattr(agents, "server_db_path", lambda: str(srv_db))
 
-    from app.api import security as security_mod
-
-    monkeypatch.setattr(security_mod, "_load_targets", lambda: ["petvet.panola.app"])
-
     spec = next(a for a in _AGENT_MANIFEST if a["key"] == "self-pentest")
-    assert spec["disc_pentest_scope"] is True
+    assert "disc_like" not in spec  # vulnerability-detayına doğrudan erişim YOK
     card = agents._cron_card(spec)
     assert len(card["findings"]) == 1
-    # Codex #328-P2 r4-P3: her domain aynı jenerik başlığı paylaşıyor — hangi domain olduğu
-    # project-önekiyle görünmeli (evil.example.com whitelist-dışı olduğu için görünmemeli).
-    assert card["findings"][0]["title"].startswith("petvet.panola.app: ")
+    assert card["findings"][0]["kind"] == "event"  # cron-özeti, discovery DEĞİL
+    assert "eksik security header" not in card["findings"][0]["title"]  # detay sızmadı
     assert card["triggerable"] is False
 
 
