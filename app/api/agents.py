@@ -117,6 +117,10 @@ _AGENT_MANIFEST = [
         "script": "memory-synthesize.sh",
         # cron_outcomes.job = 'memory-synth', manifest-key'den FARKLI (bkz _cron_success).
         "job": "memory-synth",
+        # #1334-sweep: script varsayılan DRY_RUN modunda BİLEREK 'partial' basar (pass sadece
+        # APPLY=1 veya sentezlenecek küme yokken) — bu bir hata değil, tasarım. _cron_success bunu
+        # 'partial'ı da başarı sayarak yansıtsın (aksi halde dashboard %16 gösterip yanlış-alarm verir).
+        "partial_is_success": True,
     },
     {
         "key": "memory-triage",
@@ -162,6 +166,9 @@ _AGENT_MANIFEST = [
         "evsrc": "intent-liveness",
         "script": "intent-liveness-audit.sh",
         "job": "intent-liveness",
+        # #1334-sweep: script bulgu bulunca BİLEREK 'partial' basar (pass sadece bulgu-yokken) —
+        # bu bir hata değil, denetçinin normal işi. Bkz memory-synthesize'daki aynı desen.
+        "partial_is_success": True,
     },
     {
         "key": "autonomous-daily-summary",
@@ -174,6 +181,96 @@ _AGENT_MANIFEST = [
         "evsrc": "autonomous",
         "script": "autonomous-daily-summary.sh",
         "job": "autonomous-summary",
+    },
+    # ── 2026-07-15 sweep (#1334 dashboard-denetimi): bu 8 ajan crontab'da canlı-çalışıyordu ama
+    # manifest-dışıydı (Ajanlar sekmesinde görünmüyordu). Bkz reference_agents_dashboard_sweep.
+    {
+        "key": "meta-cognition",
+        "name": "Meta-Biliş",
+        "role": "Düşünce kalitesi / confidence denetimi",
+        "type": "cron",
+        "schedule": "günlük",
+        "models": ["kural-tabanlı (istatistik+heuristic)"],
+        "log": "meta-cognition.log",
+        "evsrc": "meta-cognition-agent",
+        "script": "meta_cognition.sh",
+    },
+    {
+        "key": "pattern-recognition",
+        "name": "Pattern Tanıma",
+        "role": "Bilinç düşüncelerinde tekrarlayan pattern tespiti",
+        "type": "cron",
+        "schedule": "günlük",
+        "models": ["kural-tabanlı (SQL+threshold)"],
+        "log": "pattern-recognition.log",
+        "disc_like": "Tekrar Eden Pattern%",
+        "script": "pattern_recognition.sh",
+    },
+    {
+        "key": "reflection",
+        "name": "Yansıma (Reflection)",
+        "role": "Playbook başarı-oranı analizi",
+        "type": "cron",
+        "schedule": "haftalık",
+        "models": ["kural-tabanlı (SQL+threshold)"],
+        "log": "reflection.log",
+        "disc_like": "Playbook Başarı%",
+        "script": "reflection.sh",
+    },
+    {
+        "key": "predictive-agent",
+        "name": "Öngörü Ajanı",
+        "role": "Proaktif eşik/trend tahmini (disk/CPU/RAM)",
+        "type": "cron",
+        "schedule": "günlük",
+        "models": ["kural-tabanlı (linear regression)"],
+        "log": "predictive-agent.log",
+        "evsrc": "predictive-agent",
+        "script": "predictive_agent.sh",
+    },
+    {
+        "key": "self-improvement",
+        "name": "Öz-İyileştirme",
+        "role": "Kod-değişikliği önerisi üretimi",
+        "type": "cron",
+        "schedule": "haftalık",
+        "models": ["claude-sonnet-4-6"],
+        "log": "self-improvement.log",
+        "evsrc": "self-improvement-agent",
+        "script": "self_improvement.sh",
+    },
+    {
+        "key": "cross-source-consolidation",
+        "name": "Çapraz-Kaynak Birleştirme",
+        "role": "Farklı kaynaklardan öğrenmeleri embedding-kümeleme ile birleştir",
+        "type": "cron",
+        "schedule": "haftalık",
+        "models": ["bge-m3 (embedding)"],
+        "log": "cross-source-consolidation.log",
+        "script": "cross_source_consolidation.sh",
+    },
+    {
+        "key": "self-pentest",
+        "name": "Öz-Pentest",
+        "role": "Sahip olunan domain'lerde haftalık güvenlik taraması",
+        "type": "cron",
+        "schedule": "haftalık",
+        "models": ["kural-tabanlı"],
+        "log": "self-pentest.log",
+        "disc_like": "GUVENLIK:%",
+        "disc_types": ("bug",),
+        "script": "self-pentest.sh",
+    },
+    {
+        "key": "ci-fix-runall",
+        "name": "Otonom CI-Düzeltici",
+        "role": "9-repo CI-fail → Claude-fix denemesi (soft-gate #1230 shadow)",
+        "type": "cron",
+        "schedule": "günlük",
+        "models": ["claude CLI (ci_fixer)"],
+        "log": "ci-fix-runall.log",
+        "evsrc": "ci_fixer",
+        "script": "ci-fix-runall.sh",
     },
 ]
 _CRON_SCRIPTS = {a["key"]: a["script"] for a in _AGENT_MANIFEST if a.get("script")}
@@ -407,7 +504,12 @@ def _cron_success(spec: dict) -> tuple:
         return None, None
     if not rows:
         return None, None
-    ok = sum(1 for r in rows if r["result"] == "pass")
+    # #1334-sweep: bazı scriptler 'partial'ı BİLEREK "ran fine, reportable outcome" için kullanır
+    # (bkz spec['partial_is_success'] — memory-synthesize DRY_RUN, intent-liveness-audit bulgu-var).
+    # Diğer scriptlerde 'partial' gerçek kısmi-başarısızlık anlamına gelir (bkz meta_cognition/
+    # cross_source_consolidation/vb "N öneri, discovery yazılamadı" deseni) — orada saymamak doğru.
+    ok_results = {"pass", "partial"} if spec.get("partial_is_success") else {"pass"}
+    ok = sum(1 for r in rows if r["result"] in ok_results)
     rate = {"label": "Cron başarısı", "value": round(ok / len(rows), 3), "n": len(rows)}
     return rows[0]["timestamp"], rate
 
