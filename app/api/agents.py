@@ -7,6 +7,7 @@ import os
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -524,7 +525,7 @@ def _discoveries_for(
         return []
 
 
-def _pending_for(table: str, limit: int = 5) -> list[dict]:
+def _pending_for(table: str, limit: int = 5) -> list[dict[str, Any]]:
     """Onay-bekleyen öneri tablosundan (ör. self_improvement_pending) bulgu listesi. Read-only.
     table: manifest-sabiti (kullanıcı girdisi değil) — f-string SQL-interpolasyonu güvenli."""
     try:
