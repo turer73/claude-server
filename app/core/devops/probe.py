@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import shlex
 from datetime import UTC, datetime
 from typing import Any
@@ -14,6 +15,8 @@ from app.core.devops.models import (
     Alert,
     parse_vps_probe,
 )
+
+log = logging.getLogger("devops_agent")
 
 
 class ProbeMixin(_DevOpsAgentBase):
@@ -143,7 +146,9 @@ class ProbeMixin(_DevOpsAgentBase):
                 ),
             )
         except Exception:
-            pass
+            # #1334: bu satır önceden sessizdi -> meta-monitor "dead" alarmı atarken
+            # kök-neden görünmezdi (85dk-lik 07-14 kesintisi log-izsiz kaldı). Artık log'lu.
+            log.warning("vps_metrics_history insert failed", exc_info=True)
 
     async def _local_internet_up(self) -> bool:
         """Whether klipper itself has outbound internet right now.
