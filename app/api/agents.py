@@ -192,7 +192,10 @@ _AGENT_MANIFEST = [
         "schedule": "günlük",
         "models": ["kural-tabanlı (istatistik+heuristic)"],
         "log": "meta-cognition.log",
-        "evsrc": "meta-cognition-agent",
+        # Codex #328-P2: "meta-cognition-agent" (script'in kendi event-source'u) POST /api/v1/events
+        # route'u YOK — o çağrı hep 404. Bare job-adı yerine LIKE-substring hem bunu hem her-zaman-
+        # yazılan cron:meta-cognition fallback'ini yakalar (bkz _cron_card cron: fallback).
+        "evsrc": "meta-cognition",
         "script": "meta_cognition.sh",
     },
     {
@@ -236,7 +239,11 @@ _AGENT_MANIFEST = [
         "schedule": "haftalık",
         "models": ["claude-sonnet-4-6"],
         "log": "self-improvement.log",
-        "evsrc": "self-improvement-agent",
+        # Codex #328-P2: normal-başarı yolu self_improvement_pending'e yazar, event SADECE DB-yazma-
+        # hatasında fallback (ve o fallback da POST /api/v1/events'e gider — route yok, hep 404).
+        # pending_table birincil kaynak; evsrc yalnız cron:self-improvement fallback'i için tutulur.
+        "evsrc": "self-improvement",
+        "pending_table": "self_improvement_pending",
         "script": "self_improvement.sh",
     },
     {
@@ -247,6 +254,9 @@ _AGENT_MANIFEST = [
         "schedule": "haftalık",
         "models": ["bge-m3 (embedding)"],
         "log": "cross-source-consolidation.log",
+        # Codex #328-P2: ne evsrc ne disc_like vardı → hata-detayı hiç görünmüyordu. Script kendi
+        # event/discovery yazmıyor (unified-memory'e POST ediyor) — cron:job fallback tek kaynak.
+        "evsrc": "cross-source-consolidation",
         "script": "cross_source_consolidation.sh",
     },
     {
@@ -257,9 +267,18 @@ _AGENT_MANIFEST = [
         "schedule": "haftalık",
         "models": ["kural-tabanlı"],
         "log": "self-pentest.log",
-        "disc_like": "GUVENLIK:%",
+        # Codex #328-P2: gerçek domain-bulguları project=$domain (linux-ai-server DEĞİL) altında
+        # "self-pentest: ..." başlıklarıyla yazılıyor — 'GUVENLIK:%' yalnız localhost-bypass durumunu
+        # yakalar (nadir). İkisi de OR'lanır + any_project=True (project='linux-ai-server' sabit-
+        # filtresi domain-bulgularını hep gizliyordu).
+        "disc_like": ["GUVENLIK:%", "self-pentest:%"],
         "disc_types": ("bug",),
+        "disc_any_project": True,
         "script": "self-pentest.sh",
+        # Codex #328-P2 (2 sorun): (1) tam-tarama 51-path×domain + 30sn ara-bekleme > generic 600s-
+        # timeout, elle-tetikle sessizce öldürülür; (2) argümansız-full-scan tasarlanmamış manuel-
+        # tek-tık için. Görüntüle-only bırakıldı, script zaten haftalık cron'da çalışıyor.
+        "triggerable": False,
     },
     {
         "key": "ci-fix-runall",
@@ -271,9 +290,19 @@ _AGENT_MANIFEST = [
         "log": "ci-fix-runall.log",
         "evsrc": "ci_fixer",
         "script": "ci-fix-runall.sh",
+        # Codex #328-P2 (security, ciddi): generic /runtime/{key}/trigger yalnız require_write ister,
+        # ama script'in çağırdığı /api/v1/ci/run-all require_admin-korumalı — write-token bu kartla
+        # admin-gate'i bypass edip 9-repo attempt_fix tetikleyebilirdi. Ayrıca 600s generic-timeout,
+        # script'in izin verdiği 2700s'ten kısa (elle-tetiklenirse sessizce öldürülür). Görüntüle-only;
+        # script zaten günlük cron'da (+admin-gated /ci/run-all üzerinden) çalışıyor.
+        "triggerable": False,
     },
 ]
-_CRON_SCRIPTS = {a["key"]: a["script"] for a in _AGENT_MANIFEST if a.get("script")}
+# Codex #328-P2 (security): triggerable=False SUNUCU-TARAFINDA da uygulanmalı — sadece UI-buton
+# gizlemek yetmez, /runtime/{key}/trigger doğrudan çağrılabilir. ci-fix-runall (require_write ile
+# require_admin-korumalı /ci/run-all'ı bypass eder + 600s generic-timeout 2700s'e izin veren script'i
+# öldürür) ve self-pentest (10dk-timeout > gerçek çoklu-domain tarama süresi) bu yüzden burada dışlanır.
+_CRON_SCRIPTS = {a["key"]: a["script"] for a in _AGENT_MANIFEST if a.get("script") and a.get("triggerable", True)}
 
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
@@ -452,19 +481,32 @@ def _events_for(evsrc: str | None, limit: int = 5) -> list[dict]:
         return []
 
 
-def _discoveries_for(title_like: str, types: tuple[str, ...] = ("learning",), limit: int = 5) -> list[dict]:
+def _discoveries_for(
+    title_like: str | list[str],
+    types: tuple[str, ...] = ("learning",),
+    limit: int = 5,
+    any_project: bool = False,
+) -> list[dict]:
     """claude_memory.db discoveries'ten başlık-eşleşen son bulgular — bazı cron-ajanların
     (ad-advisor/data-analyst/seo-audit/seo-gsc) GERÇEK çıktısı burada, server.db.events'te
-    DEĞİL (_events_for onları hep 'Bulgu yok' gösteriyordu). Read-only."""
+    DEĞİL (_events_for onları hep 'Bulgu yok' gösteriyordu). Read-only.
+
+    title_like: tek pattern veya OR'lanacak pattern listesi (Codex #328-P2: self-pentest hem
+    'GUVENLIK:%' hem 'self-pentest:%' yazıyor, tek LIKE yetmiyordu).
+    any_project: True ise project filtresi düşer (self-pentest domain-başına $domain yazıyor,
+    'linux-ai-server' sabit-filtresi domain-bulgularını hep gizliyordu)."""
+    patterns = title_like if isinstance(title_like, list) else [title_like]
     try:
         con = get_conn(MEMORY_DB, readonly=True)
         try:
             placeholders = ",".join("?" for _ in types)
+            title_clause = " OR ".join("title LIKE ?" for _ in patterns)
+            project_clause = "" if any_project else "project='linux-ai-server' AND "
             rows = con.execute(
                 f"SELECT created_at, title, type FROM discoveries "
-                f"WHERE project='linux-ai-server' AND type IN ({placeholders}) AND title LIKE ? "
+                f"WHERE {project_clause}type IN ({placeholders}) AND ({title_clause}) "
                 f"ORDER BY id DESC LIMIT ?",
-                (*types, title_like, limit),
+                (*types, *patterns, limit),
             ).fetchall()
             return [
                 {
@@ -473,6 +515,34 @@ def _discoveries_for(title_like: str, types: tuple[str, ...] = ("learning",), li
                     "severity": "P2" if r["type"] == "bug" else "",
                     "status": r["type"],
                     "kind": "discovery",
+                }
+                for r in rows
+            ]
+        finally:
+            con.close()
+    except Exception:
+        return []
+
+
+def _pending_for(table: str, limit: int = 5) -> list[dict]:
+    """Onay-bekleyen öneri tablosundan (ör. self_improvement_pending) bulgu listesi. Read-only.
+    table: manifest-sabiti (kullanıcı girdisi değil) — f-string SQL-interpolasyonu güvenli."""
+    try:
+        con = get_conn(server_db_path(), readonly=True)
+        try:
+            rows = con.execute(
+                f"SELECT created_at, title, priority FROM {table} "  # noqa: S608 (table ∈ manifest sabiti)
+                f"WHERE status='pending' ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            sevmap = {"high": "P1", "medium": "P2"}
+            return [
+                {
+                    "time": r["created_at"],
+                    "title": r["title"],
+                    "severity": sevmap.get(r["priority"], ""),
+                    "status": "pending",
+                    "kind": "pending",
                 }
                 for r in rows
             ]
@@ -515,10 +585,20 @@ def _cron_success(spec: dict) -> tuple:
 
 
 def _cron_card(spec: dict) -> dict:
-    if spec.get("disc_like"):
-        findings = _discoveries_for(spec["disc_like"], types=spec.get("disc_types", ("learning",)))
+    if spec.get("pending_table"):
+        findings = _pending_for(spec["pending_table"])
+    elif spec.get("disc_like"):
+        findings = _discoveries_for(
+            spec["disc_like"], types=spec.get("disc_types", ("learning",)), any_project=spec.get("disc_any_project", False)
+        )
     else:
         findings = _events_for(spec.get("evsrc"))
+    # Codex #328-P2: disc_like/evsrc/pending_table yalnız script'in KENDİ yazdığı çıktıyı yakalar;
+    # klipper-cron-wrap.sh HER çalışmada (pass/partial/fail) source=cron:<job> event'i zaten yazıyor
+    # (satır 104) — birincil kaynak boşsa (ör. Memory-API-down → discovery hiç yazılmadı) bu her-zaman-
+    # var-olan cron-seviyesi kaydı fallback olarak göster, "Bulgu yok" sessizliği yerine hata-detayı.
+    if not findings:
+        findings = _events_for(f"cron:{spec.get('job') or spec['key']}")
     cron_last, success_rate = _cron_success(spec)
     last_run = cron_last or _cron_last_run(spec) or (findings[0]["time"] if findings else None)
     return {
@@ -535,7 +615,7 @@ def _cron_card(spec: dict) -> dict:
         "stats": {"Son olay": len(findings)},
         "success_rate": success_rate,
         "findings": findings,
-        "triggerable": True,
+        "triggerable": spec.get("triggerable", True),
     }
 
 

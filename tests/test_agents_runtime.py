@@ -16,10 +16,15 @@ def test_manifest_covers_decision_agents():
     # SEO/ads/data-analiz/research/memory ajanları manifeste dahil mi
     for k in ("research", "ad-advisor", "data-analyst", "seo-gsc", "memory-triage", "autonomous-daily-summary"):
         assert k in keys, f"{k} manifeste eksik"
-    # cron ajanları allowlist'li script'e sahip (manuel-tetikleme güvenliği)
+    # cron ajanları allowlist'li script'e sahip (manuel-tetikleme güvenliği) — triggerable=False
+    # olarak işaretlenenler İSTİSNA (Codex #328-P2: require_admin-korumalı/uzun-süren script'ler
+    # generic require_write trigger'ından kasıtlı dışlanır, bkz ci-fix-runall/self-pentest).
     for a in _AGENT_MANIFEST:
-        if a["type"] == "cron":
+        if a["type"] == "cron" and a.get("triggerable", True):
             assert a["key"] in _CRON_SCRIPTS
+    for a in _AGENT_MANIFEST:
+        if a.get("triggerable") is False:
+            assert a["key"] not in _CRON_SCRIPTS, f"{a['key']} triggerable=False ama _CRON_SCRIPTS'te — sunucu-taraflı gate delinmiş"
 
 
 def test_cron_card_no_log_no_events():
@@ -144,6 +149,101 @@ def test_discoveries_for_bad_db_no_crash(monkeypatch):
 
     monkeypatch.setattr(agents, "MEMORY_DB", "/nonexistent/testing.sqlite")
     assert agents._discoveries_for("%x%") == []
+
+
+def test_discoveries_for_list_patterns_and_any_project(tmp_path, monkeypatch):
+    # Codex #328-P2: self-pentest domain-bulguları project=$domain altında "self-pentest: ..."
+    # başlığıyla yazılır (project='linux-ai-server' sabit-filtresi bunları hep gizliyordu),
+    # localhost-bypass ise "GUVENLIK: ..." altında ayrı bir başlık deseni kullanır — ikisi OR'lanmalı.
+    import sqlite3
+
+    from app.api import agents
+
+    db = tmp_path / "mem.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, created_at TEXT)")
+    con.execute(
+        "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
+        ("petvet.panola.app", "bug", "self-pentest: eksik security header"),
+    )
+    con.execute(
+        "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
+        ("linux-ai-server", "bug", "GUVENLIK: sunucu-API auth-bypass (2 endpoint)"),
+    )
+    con.execute(
+        "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
+        ("petvet.panola.app", "learning", "self-pentest: eksik security header"),  # yanlış-type, eslesmemeli
+    )
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "MEMORY_DB", str(db))
+
+    findings = agents._discoveries_for(["GUVENLIK:%", "self-pentest:%"], types=("bug",), any_project=True)
+    assert len(findings) == 2
+    titles = {f["title"] for f in findings}
+    assert any("self-pentest" in t for t in titles)
+    assert any("GUVENLIK" in t for t in titles)
+
+    # any_project=False (varsayılan) domain-bulgusunu görmemeli
+    scoped = agents._discoveries_for(["GUVENLIK:%", "self-pentest:%"], types=("bug",))
+    assert len(scoped) == 1
+    assert "GUVENLIK" in scoped[0]["title"]
+
+
+def test_cron_card_pending_table_source(tmp_path, monkeypatch):
+    # Codex #328-P2: self-improvement'ın normal-başarı yolu self_improvement_pending'e yazar,
+    # event sadece DB-yazma-hatasında fallback — pending_table birincil kaynak olmalı.
+    import sqlite3
+
+    from app.api import agents
+
+    srv_db = tmp_path / "srv.db"
+    con = sqlite3.connect(srv_db)
+    con.execute("CREATE TABLE self_improvement_pending (id INTEGER PRIMARY KEY, title TEXT, priority TEXT, status TEXT, created_at TEXT)")
+    con.execute(
+        "INSERT INTO self_improvement_pending (title,priority,status,created_at) VALUES (?,?,?,datetime('now'))",
+        ("Kod değişikliği önerisi: X modülü", "high", "pending"),
+    )
+    con.execute("CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY, job TEXT, result TEXT, timestamp TEXT)")
+    con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, source TEXT, title TEXT, severity TEXT, timestamp TEXT)")
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(srv_db))
+
+    spec = next(a for a in _AGENT_MANIFEST if a["key"] == "self-improvement")
+    assert spec["pending_table"] == "self_improvement_pending"
+    card = agents._cron_card(spec)
+    assert len(card["findings"]) == 1
+    assert card["findings"][0]["severity"] == "P1"
+    assert card["findings"][0]["kind"] == "pending"
+
+
+def test_cron_card_falls_back_to_cron_wrapper_event_when_primary_empty(tmp_path, monkeypatch):
+    # Codex #328-P2: disc_like/evsrc/pending_table boşsa (ör. Memory-API-down → discovery hiç
+    # yazılmadı) klipper-cron-wrap.sh'nin HER-ZAMAN yazdığı cron:<job> event'i fallback olmalı,
+    # "Bulgu yok" sessizliği yerine hata-detayı görünmeli.
+    import sqlite3
+
+    from app.api import agents
+
+    srv_db = tmp_path / "srv.db"
+    con = sqlite3.connect(srv_db)
+    con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, source TEXT, title TEXT, severity TEXT, timestamp TEXT)")
+    con.execute(
+        "INSERT INTO events (source,title,severity,timestamp) "
+        "VALUES ('cron:pattern-recognition','cron pattern-recognition fail','critical',datetime('now'))"
+    )
+    con.execute("CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY, job TEXT, result TEXT, timestamp TEXT)")
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(srv_db))
+    monkeypatch.setattr(agents, "MEMORY_DB", "/nonexistent/testing.sqlite")  # discoveries hep boş donsun
+
+    spec = next(a for a in _AGENT_MANIFEST if a["key"] == "pattern-recognition")
+    card = agents._cron_card(spec)
+    assert len(card["findings"]) == 1
+    assert card["findings"][0]["kind"] == "event"
+    assert "fail" in card["findings"][0]["title"]
 
 
 def test_cron_card_uses_discoveries_when_disc_like_set(tmp_path, monkeypatch):

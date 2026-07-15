@@ -129,6 +129,15 @@ class TestTriggerAgent:
         resp = await client.post("/api/v1/agents/runtime/devops/trigger")
         assert resp.status_code in (401, 403)
 
+    async def test_trigger_rejects_triggerable_false_agents(self, client, auth_headers):
+        # Codex #328-P2 (security): ci-fix-runall require_admin-korumalı /ci/run-all'ı çağırır,
+        # self-pentest 600s generic-timeout'tan uzun sürer — ikisi de triggerable=False. _CRON_SCRIPTS
+        # bu anahtarları hiç içermez (bkz app/api/agents.py), yani ADMIN-token bile (auth_headers)
+        # generic trigger'dan onlara ulaşamaz — sadece UI-buton gizleme değil, sunucu-taraflı gate.
+        for key in ("ci-fix-runall", "self-pentest"):
+            resp = await client.post(f"/api/v1/agents/runtime/{key}/trigger", headers=auth_headers)
+            assert resp.status_code == 404, f"{key} tetiklenebiliyor — triggerable=False gate delinmiş"
+
 
 class TestSelfImprovement:
     async def test_pending_no_auth(self, client):
