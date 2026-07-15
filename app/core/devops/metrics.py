@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,6 +16,8 @@ from app.core.devops.models import (
     Alert,
 )
 from app.core.events import emit_event
+
+log = logging.getLogger("devops_agent")
 
 
 class MetricsMixin(_DevOpsAgentBase):
@@ -44,7 +47,9 @@ class MetricsMixin(_DevOpsAgentBase):
                 ),
             )
         except Exception:
-            pass
+            # #1334: bu satır önceden sessizdi -> meta-monitor "dead" alarmı atarken
+            # kök-neden görünmezdi (85dk-lik 07-14 kesintisi log-izsiz kaldı). Artık log'lu.
+            log.warning("metrics_history insert failed", exc_info=True)
 
     def _is_in_cpu_grace_window(self) -> bool:
         """CPU-grace penceresi 03:00-05:00 UTC (= 06:00-08:00 Europe/Istanbul; cron LOCAL koşar).

@@ -7,6 +7,7 @@ import paths (e.g. `from app.core.devops_agent import PLAYBOOKS`) working."""
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import deque
 from datetime import UTC, datetime
 from typing import Any
@@ -34,6 +35,8 @@ from app.core.devops.probe import ProbeMixin
 from app.core.devops.remediation import RemediationMixin
 from app.core.monitor_agent import MonitorAgent
 from app.core.shell_executor import ShellExecutor
+
+log = logging.getLogger("devops_agent")
 
 __all__ = [
     "DevOpsAgent",
@@ -179,7 +182,10 @@ class DevOpsAgent(
             try:
                 await self._tick()
             except Exception:
-                pass  # Never crash the daemon
+                # #1334: önceden sessizdi -> bir tick tümden patlarsa (ör. metrics_history
+                # VE vps_metrics_history aynı anda "dead" görünmesine yol açan 07-14 85dk'lık
+                # kesinti) hiçbir iz kalmıyordu. Never crash the daemon — ama artık görünür.
+                log.warning("devops_agent tick failed", exc_info=True)
             await asyncio.sleep(self._interval)
 
     async def _tick(self) -> None:
