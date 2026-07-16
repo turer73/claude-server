@@ -16,10 +16,15 @@ def test_manifest_covers_decision_agents():
     # SEO/ads/data-analiz/research/memory ajanları manifeste dahil mi
     for k in ("research", "ad-advisor", "data-analyst", "seo-gsc", "memory-triage", "autonomous-daily-summary"):
         assert k in keys, f"{k} manifeste eksik"
-    # cron ajanları allowlist'li script'e sahip (manuel-tetikleme güvenliği)
+    # cron ajanları allowlist'li script'e sahip (manuel-tetikleme güvenliği) — triggerable=False
+    # olarak işaretlenenler İSTİSNA (Codex #328-P2: require_admin-korumalı/uzun-süren script'ler
+    # generic require_write trigger'ından kasıtlı dışlanır, bkz ci-fix-runall/self-pentest).
     for a in _AGENT_MANIFEST:
-        if a["type"] == "cron":
+        if a["type"] == "cron" and a.get("triggerable", True):
             assert a["key"] in _CRON_SCRIPTS
+    for a in _AGENT_MANIFEST:
+        if a.get("triggerable") is False:
+            assert a["key"] not in _CRON_SCRIPTS, f"{a['key']} triggerable=False ama _CRON_SCRIPTS'te — sunucu-taraflı gate delinmiş"
 
 
 def test_cron_card_no_log_no_events():
@@ -64,17 +69,20 @@ def test_cron_success_uses_job_override_when_key_mismatches_outcomes(tmp_path, m
     db = tmp_path / "srv.db"
     con = sqlite3.connect(db)
     con.execute("CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY, job TEXT, result TEXT, timestamp TEXT)")
-    for r in ("pass", "pass", "fail"):
-        con.execute("INSERT INTO cron_outcomes (job,result,timestamp) VALUES ('memory-synth',?,datetime('now'))", (r,))
+    # Deterministik timestamp'ler (Codex #328-P2 r6: latest_ok artık rows[0]'a bakıyor — tied
+    # datetime('now') sıralamayı belirsizleştirip flaky yapabilirdi).
+    for r, ts in (("fail", "2026-06-01 00:00:00"), ("pass", "2026-06-08 00:00:00"), ("pass", "2026-06-15 00:00:00")):
+        con.execute("INSERT INTO cron_outcomes (job,result,timestamp) VALUES ('memory-synth',?,?)", (r, ts))
     con.commit()
     con.close()
     monkeypatch.setattr(agents, "server_db_path", lambda: str(db))
 
     spec = next(a for a in _AGENT_MANIFEST if a["key"] == "memory-synthesize")
     assert spec["job"] == "memory-synth"  # manifest-key != gercek job (bilinen ayrisma)
-    last, rate = agents._cron_success(spec)
+    last, rate, latest_ok = agents._cron_success(spec)
     assert rate is not None
     assert rate["n"] == 3
+    assert latest_ok is True  # en-son (2026-06-15) satır pass
     assert last is not None
 
 
@@ -96,7 +104,10 @@ def test_discoveries_for_filters_project_type_and_title(tmp_path, monkeypatch):
 
     db = tmp_path / "mem.db"
     con = sqlite3.connect(db)
-    con.execute("CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, created_at TEXT)")
+    con.execute(
+        "CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, "
+        "created_at TEXT, status TEXT DEFAULT 'active')"
+    )
     rows = [
         ("linux-ai-server", "learning", "Haftalık veri analizi (data-analyst) — 2026-W28"),
         ("linux-ai-server", "learning", "Teknik-SEO denetimi (seo-audit)"),  # farklı-ajan, eslesmemeli
@@ -122,7 +133,10 @@ def test_discoveries_for_multi_type(tmp_path, monkeypatch):
 
     db = tmp_path / "mem.db"
     con = sqlite3.connect(db)
-    con.execute("CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, created_at TEXT)")
+    con.execute(
+        "CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, "
+        "created_at TEXT, status TEXT DEFAULT 'active')"
+    )
     con.execute(
         "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
         ("linux-ai-server", "learning", "GSC fırsatı: sc-domain:x.com"),
@@ -146,6 +160,339 @@ def test_discoveries_for_bad_db_no_crash(monkeypatch):
     assert agents._discoveries_for("%x%") == []
 
 
+def test_discoveries_for_list_patterns_or_together(tmp_path, monkeypatch):
+    # Birden çok title_like pattern'i OR'lanmalı (tek çağrıda birden fazla başlık-deseni eşleştir).
+    import sqlite3
+
+    from app.api import agents
+
+    db = tmp_path / "mem.db"
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, "
+        "created_at TEXT, status TEXT DEFAULT 'active')"
+    )
+    con.execute(
+        "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
+        ("linux-ai-server", "bug", "GUVENLIK: sunucu-API auth-bypass (2 endpoint)"),
+    )
+    con.execute(
+        "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
+        ("linux-ai-server", "bug", "ALARM: disk kritik eşik"),
+    )
+    con.execute(
+        "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
+        ("linux-ai-server", "bug", "hiçbiriyle eşleşmeyen başlık"),
+    )
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "MEMORY_DB", str(db))
+
+    findings = agents._discoveries_for(["GUVENLIK:%", "ALARM:%"], types=("bug",))
+    assert len(findings) == 2
+    titles = {f["title"] for f in findings}
+    assert "GUVENLIK: sunucu-API auth-bypass (2 endpoint)" in titles
+    assert "ALARM: disk kritik eşik" in titles
+
+
+def test_discoveries_for_excludes_resolved_status(tmp_path, monkeypatch):
+    # Codex #328-P2 r4-P2: status filtresi YOKTU — bir pentest-bulgusu mevcut pentest API'siyle
+    # (app/api/security.py) resolved/completed işaretlense bile Ajanlar sekmesinde sonsuza dek
+    # 'aktif' P2 olarak görünmeye devam ederdi.
+    import sqlite3
+
+    from app.api import agents
+
+    db = tmp_path / "mem.db"
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, "
+        "created_at TEXT, status TEXT DEFAULT 'active')"
+    )
+    con.execute(
+        "INSERT INTO discoveries (project,type,title,created_at,status) VALUES (?,?,?,datetime('now'),?)",
+        ("linux-ai-server", "bug", "GUVENLIK: sunucu-API auth-bypass (2 endpoint)", "completed"),
+    )
+    con.execute(
+        "INSERT INTO discoveries (project,type,title,created_at,status) VALUES (?,?,?,datetime('now'),?)",
+        ("linux-ai-server", "bug", "GUVENLIK: hâlâ açık bir sorun", "active"),
+    )
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "MEMORY_DB", str(db))
+
+    findings = agents._discoveries_for("GUVENLIK:%", types=("bug",))
+    assert len(findings) == 1
+    assert "hâlâ açık" in findings[0]["title"]
+
+
+def test_cron_card_self_pentest_shows_summary_not_vulnerability_details(tmp_path, monkeypatch):
+    # Codex #328-P2 r1→r5: self-pentest için disc_like/whitelist-scope sırayla denendi, KÖK-SORUN
+    # kaldı — vulnerability-detayları (TLS/header/auth-bypass) dedicated pentest API'de
+    # verify_pentest_key arkasında, /agents/runtime yalnız require_auth ister. Fix: disc_like
+    # TAMAMEN kaldırıldı — kart artık discoveries'e HİÇ bakmıyor, yalnız cron:<job> wrapper-
+    # özetini (sayı, detay-YOK) gösteriyor.
+    import sqlite3
+
+    from app.api import agents
+
+    mem_db = tmp_path / "mem.db"
+    con = sqlite3.connect(mem_db)
+    con.execute(
+        "CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, "
+        "created_at TEXT, status TEXT DEFAULT 'active')"
+    )
+    con.execute(
+        "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
+        ("petvet.panola.app", "bug", "self-pentest: eksik security header"),
+    )
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "MEMORY_DB", str(mem_db))
+
+    srv_db = tmp_path / "srv.db"
+    con2 = sqlite3.connect(srv_db)
+    con2.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, source TEXT, title TEXT, severity TEXT, timestamp TEXT, detail TEXT)")
+    con2.execute(
+        "INSERT INTO events (source,title,severity,timestamp) "
+        "VALUES ('cron:self-pentest','self-pentest: 3/3 domain tarandı, 1 bulgu','warn',datetime('now'))"
+    )
+    con2.execute("CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY, job TEXT, result TEXT, timestamp TEXT)")
+    # Codex #328-P2 r6: latest_ok=False olmalı ki cron:<job> fallback'i tetiklensin (aksi halde
+    # events'te satır olsa bile en-son cron_outcomes sonucu bilinmiyorsa fallback gösterilmez).
+    con2.execute("INSERT INTO cron_outcomes (job,result,timestamp) VALUES ('self-pentest','partial',datetime('now'))")
+    con2.commit()
+    con2.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(srv_db))
+
+    spec = next(a for a in _AGENT_MANIFEST if a["key"] == "self-pentest")
+    assert "disc_like" not in spec  # vulnerability-detayına doğrudan erişim YOK
+    card = agents._cron_card(spec)
+    assert len(card["findings"]) == 1
+    assert card["findings"][0]["kind"] == "event"  # cron-özeti, discovery DEĞİL
+    assert "eksik security header" not in card["findings"][0]["title"]  # detay sızmadı
+    assert card["triggerable"] is False
+
+
+def test_cron_card_pending_table_source(tmp_path, monkeypatch):
+    # Codex #328-P2: self-improvement'ın normal-başarı yolu self_improvement_pending'e yazar,
+    # event sadece DB-yazma-hatasında fallback — pending_table birincil kaynak olmalı.
+    import sqlite3
+
+    from app.api import agents
+
+    srv_db = tmp_path / "srv.db"
+    con = sqlite3.connect(srv_db)
+    con.execute("CREATE TABLE self_improvement_pending (id INTEGER PRIMARY KEY, title TEXT, priority TEXT, status TEXT, created_at TEXT)")
+    con.execute(
+        "INSERT INTO self_improvement_pending (title,priority,status,created_at) VALUES (?,?,?,datetime('now'))",
+        ("Kod değişikliği önerisi: X modülü", "high", "pending"),
+    )
+    con.execute("CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY, job TEXT, result TEXT, timestamp TEXT)")
+    con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, source TEXT, title TEXT, severity TEXT, timestamp TEXT, detail TEXT)")
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(srv_db))
+
+    spec = next(a for a in _AGENT_MANIFEST if a["key"] == "self-improvement")
+    assert spec["pending_table"] == "self_improvement_pending"
+    card = agents._cron_card(spec)
+    assert len(card["findings"]) == 1
+    assert card["findings"][0]["severity"] == "P1"
+    assert card["findings"][0]["kind"] == "pending"
+
+
+def test_cron_card_falls_back_to_cron_wrapper_event_when_primary_empty(tmp_path, monkeypatch):
+    # Codex #328-P2: disc_like/evsrc/pending_table boşsa (ör. Memory-API-down → discovery hiç
+    # yazılmadı) klipper-cron-wrap.sh'nin HER-ZAMAN yazdığı cron:<job> event'i fallback olmalı,
+    # "Bulgu yok" sessizliği yerine hata-detayı görünmeli.
+    import sqlite3
+
+    from app.api import agents
+
+    srv_db = tmp_path / "srv.db"
+    con = sqlite3.connect(srv_db)
+    con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, source TEXT, title TEXT, severity TEXT, timestamp TEXT, detail TEXT)")
+    con.execute(
+        "INSERT INTO events (source,title,severity,timestamp) "
+        "VALUES ('cron:pattern-recognition','cron pattern-recognition fail','critical',datetime('now'))"
+    )
+    con.execute("CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY, job TEXT, result TEXT, timestamp TEXT)")
+    # Codex #328-P2 r6: latest_ok=False olmalı ki fallback tetiklensin.
+    con.execute("INSERT INTO cron_outcomes (job,result,timestamp) VALUES ('pattern-recognition','fail',datetime('now'))")
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(srv_db))
+    monkeypatch.setattr(agents, "MEMORY_DB", "/nonexistent/testing.sqlite")  # discoveries hep boş donsun
+
+    spec = next(a for a in _AGENT_MANIFEST if a["key"] == "pattern-recognition")
+    card = agents._cron_card(spec)
+    assert len(card["findings"]) == 1
+    assert card["findings"][0]["kind"] == "event"
+    assert "fail" in card["findings"][0]["title"]
+
+
+def test_cron_card_prioritizes_newer_cron_fail_over_stale_discovery(tmp_path, monkeypatch):
+    # Codex #328-P2 r3: r1'in fallback'i yalnız findings TAMAMEN BOŞKEN devreye giriyordu — eski
+    # bir discovery varken (ör. haftalar-önce yazılmış) son-run'ın TAZE fail'i stale-bulgunun
+    # arkasında gizli kalırdı. cron:<job> event'i findings[0]'dan YENİYSE öne alınmalı.
+    import sqlite3
+
+    from app.api import agents
+
+    mem_db = tmp_path / "mem.db"
+    con = sqlite3.connect(mem_db)
+    con.execute(
+        "CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, "
+        "created_at TEXT, status TEXT DEFAULT 'active')"
+    )
+    con.execute(
+        "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,?)",
+        ("linux-ai-server", "learning", "Tekrar Eden Pattern'ler — eski", "2026-06-01 00:00:00"),
+    )
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "MEMORY_DB", str(mem_db))
+
+    srv_db = tmp_path / "srv.db"
+    con2 = sqlite3.connect(srv_db)
+    con2.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, source TEXT, title TEXT, severity TEXT, timestamp TEXT, detail TEXT)")
+    con2.execute(
+        "INSERT INTO events (source,title,severity,timestamp) "
+        "VALUES ('cron:pattern-recognition','cron pattern-recognition fail','critical','2026-07-15 00:45:05')"
+    )
+    con2.execute("CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY, job TEXT, result TEXT, timestamp TEXT)")
+    # Codex #328-P2 r6: latest_ok=False olmalı ki fallback tetiklensin.
+    con2.execute("INSERT INTO cron_outcomes (job,result,timestamp) VALUES ('pattern-recognition','fail','2026-07-15 00:45:05')")
+    con2.commit()
+    con2.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(srv_db))
+
+    spec = next(a for a in _AGENT_MANIFEST if a["key"] == "pattern-recognition")
+    card = agents._cron_card(spec)
+    assert card["findings"][0]["kind"] == "event"  # taze fail öne alındı, eski discovery ARKADA
+    assert "fail" in card["findings"][0]["title"]
+    assert len(card["findings"]) == 2  # eski discovery de hâlâ listede, sadece sırası değişti
+
+
+def test_cron_card_hides_stale_fail_event_after_later_pass(tmp_path, monkeypatch):
+    # Codex #328-P2 r6: klipper-cron-wrap.sh yalnız RESULT!=pass'te events satırı yazar — bir job
+    # haftalar-önce fail edip SONRA pass'lamaya başlasa bile events'teki tek satır hâlâ o eski
+    # fail'e ait olur (yeni pass'lar hiç event yazmaz). cron_outcomes'un GERÇEK en-son sonucu pass
+    # ise (latest_ok=True) stale event fallback'i GÖSTERİLMEMELİ.
+    import sqlite3
+
+    from app.api import agents
+
+    srv_db = tmp_path / "srv.db"
+    con = sqlite3.connect(srv_db)
+    con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, source TEXT, title TEXT, severity TEXT, timestamp TEXT, detail TEXT)")
+    con.execute(
+        "INSERT INTO events (source,title,severity,timestamp) "
+        "VALUES ('cron:pattern-recognition','cron pattern-recognition fail','critical','2026-06-01 00:00:00')"
+    )
+    con.execute("CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY, job TEXT, result TEXT, timestamp TEXT)")
+    for r, ts in (("fail", "2026-06-01 00:00:00"), ("pass", "2026-06-08 00:00:00"), ("pass", "2026-06-15 00:00:00")):
+        con.execute("INSERT INTO cron_outcomes (job,result,timestamp) VALUES ('pattern-recognition',?,?)", (r, ts))
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(srv_db))
+    monkeypatch.setattr(agents, "MEMORY_DB", "/nonexistent/testing.sqlite")
+
+    spec = next(a for a in _AGENT_MANIFEST if a["key"] == "pattern-recognition")
+    card = agents._cron_card(spec)
+    assert card["findings"] == []  # stale fail-event GİZLENDİ, job artık sağlıklı
+    assert card["success_rate"]["value"] == round(2 / 3, 3)  # _cron_success 3-ondalık yuvarlıyor
+
+
+def test_cron_card_filters_stale_wrapper_event_from_primary_evsrc_path(tmp_path, monkeypatch):
+    # Codex #328-P2 r7: r6'nın latest_ok-gate'i yalnız FALLBACK-eklemeyi engelliyordu. evsrc bare-
+    # job-adına ayarlı kartlarda (cross-source-consolidation gibi) PRİMARY findings zaten substring-
+    # eşleşmesiyle stale wrapper-event'i içeriyordu — bu, cron_events fallback'ine hiç uğramadan
+    # doğrudan _events_for(evsrc) çağrısından geliyordu, r6'nın gate'i bunu kaçırıyordu.
+    import sqlite3
+
+    from app.api import agents
+
+    srv_db = tmp_path / "srv.db"
+    con = sqlite3.connect(srv_db)
+    con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, source TEXT, title TEXT, severity TEXT, timestamp TEXT, detail TEXT)")
+    con.execute(
+        "INSERT INTO events (source,title,severity,timestamp) "
+        "VALUES ('cron:cross-source-consolidation','cron cross-source-consolidation fail',"
+        "'critical','2026-06-01 00:00:00')"
+    )
+    con.execute("CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY, job TEXT, result TEXT, timestamp TEXT)")
+    for r, ts in (("fail", "2026-06-01 00:00:00"), ("pass", "2026-07-06 00:00:00")):
+        con.execute("INSERT INTO cron_outcomes (job,result,timestamp) VALUES ('cross-source-consolidation',?,?)", (r, ts))
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(srv_db))
+
+    spec = next(a for a in _AGENT_MANIFEST if a["key"] == "cross-source-consolidation")
+    card = agents._cron_card(spec)
+    assert card["findings"] == []  # stale fail PRİMARY-yoldan geldi ama filtrelendi
+    assert card["success_rate"]["value"] == 0.5
+
+
+def test_cron_card_keeps_current_run_event_for_partial_is_success(tmp_path, monkeypatch):
+    # Codex #328-P2 r7: partial_is_success kartlarında (memory-synthesize/intent-liveness-audit)
+    # latest_ok=True İKEN dahi en-son-run'ın KENDİ wrapper-event'i (timestamp==cron_last) o run'ın
+    # gerçek/güncel özeti — round-6 detail-fix'in amacı bunu göstermekti, r7'nin stale-filtresi
+    # bunu YANLIŞLIKLA silmemeli (yalnız STRICT-ESKİ event'ler atılmalı).
+    import sqlite3
+
+    from app.api import agents
+
+    srv_db = tmp_path / "srv.db"
+    con = sqlite3.connect(srv_db)
+    con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, source TEXT, title TEXT, severity TEXT, timestamp TEXT, detail TEXT)")
+    con.execute(
+        "INSERT INTO events (source,title,severity,timestamp,detail) VALUES (?,?,?,?,?)",
+        (
+            "cron:memory-synth",
+            "cron memory-synth partial",
+            "warning",
+            "2026-07-13 06:47:02",
+            "rc=0 memory-synth DRY_RUN: 5 küme önerisi (APPLY=1 ile uygula)",
+        ),
+    )
+    con.execute("CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY, job TEXT, result TEXT, timestamp TEXT)")
+    con.execute("INSERT INTO cron_outcomes (job,result,timestamp) VALUES ('memory-synth','partial','2026-07-13 06:47:02')")
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(srv_db))
+
+    spec = next(a for a in _AGENT_MANIFEST if a["key"] == "memory-synthesize")
+    card = agents._cron_card(spec)
+    assert len(card["findings"]) == 1  # güncel-run'ın kendi event'i KORUNDU
+    assert "5 küme önerisi" in card["findings"][0]["title"]
+    assert card["success_rate"]["value"] == 1.0  # partial_is_success → 100%
+
+
+def test_events_for_appends_detail_to_title(tmp_path, monkeypatch):
+    # Codex #328-P2 r6: klipper-cron-wrap.sh title'ı jenerik basar ("cron <job> <result>"), asıl
+    # bilgi (rc + OUTCOME-satırı) detail'de — bu kayboluyor, _events_for yalnız title okuyordu.
+    import sqlite3
+
+    from app.api import agents
+
+    srv_db = tmp_path / "srv.db"
+    con = sqlite3.connect(srv_db)
+    con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, source TEXT, title TEXT, severity TEXT, timestamp TEXT, detail TEXT)")
+    con.execute(
+        "INSERT INTO events (source,title,severity,timestamp,detail) VALUES (?,?,?,datetime('now'),?)",
+        ("cron:self-pentest", "cron self-pentest partial", "warning", "rc=0 self-pentest: 3/3 domain, 2 bulgu"),
+    )
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(srv_db))
+
+    findings = agents._events_for("cron:self-pentest")
+    assert len(findings) == 1
+    assert findings[0]["title"] == "cron self-pentest partial: rc=0 self-pentest: 3/3 domain, 2 bulgu"
+
+
 def test_cron_card_uses_discoveries_when_disc_like_set(tmp_path, monkeypatch):
     # code-review-bulgu: ad-advisor/data-analyst/seo-audit/seo-gsc'nin GERÇEK ciktisi
     # server.db.events'te DEGIL, discoveries'te -- _events_for onlari hep 'Bulgu yok'
@@ -154,12 +501,19 @@ def test_cron_card_uses_discoveries_when_disc_like_set(tmp_path, monkeypatch):
 
     from app.api import agents
 
+    # Codex #328-P2 r3: _cron_card cron:<job> event'ini findings[0]'dan yeniyse öne alabilir; r6:
+    # bu yalnız latest_ok=False iken olur (burada cron_outcomes'a hiç satır eklenmiyor → latest_ok
+    # None → fallback hiç tetiklenmez, discovery tek-başına kalır). Timestamp'ler yine de sabit
+    # (wall-clock-timing'e bağlı flaky-test riskinden genel-olarak kaçınmak için).
     mem_db = tmp_path / "mem.db"
     con = sqlite3.connect(mem_db)
-    con.execute("CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, created_at TEXT)")
     con.execute(
-        "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,datetime('now'))",
-        ("linux-ai-server", "learning", "Reklam fırsatları (ad-advisor)"),
+        "CREATE TABLE discoveries (id INTEGER PRIMARY KEY, project TEXT, type TEXT, title TEXT, "
+        "created_at TEXT, status TEXT DEFAULT 'active')"
+    )
+    con.execute(
+        "INSERT INTO discoveries (project,type,title,created_at) VALUES (?,?,?,?)",
+        ("linux-ai-server", "learning", "Reklam fırsatları (ad-advisor)", "2026-07-15 12:00:00"),
     )
     con.commit()
     con.close()
@@ -167,8 +521,10 @@ def test_cron_card_uses_discoveries_when_disc_like_set(tmp_path, monkeypatch):
 
     srv_db = tmp_path / "srv.db"
     con = sqlite3.connect(srv_db)
-    con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, source TEXT, title TEXT, severity TEXT, timestamp TEXT)")
-    con.execute("INSERT INTO events (source,title,severity,timestamp) VALUES ('cron:ad-advisor','irrelevant-alert','warn',datetime('now'))")
+    con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, source TEXT, title TEXT, severity TEXT, timestamp TEXT, detail TEXT)")
+    con.execute(
+        "INSERT INTO events (source,title,severity,timestamp) VALUES ('cron:ad-advisor','irrelevant-alert','warn','2026-07-15 06:00:00')"
+    )
     con.execute("CREATE TABLE cron_outcomes (id INTEGER PRIMARY KEY, job TEXT, result TEXT, timestamp TEXT)")
     con.commit()
     con.close()

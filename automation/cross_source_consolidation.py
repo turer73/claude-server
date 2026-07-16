@@ -25,6 +25,7 @@ import math
 import os
 import sqlite3
 import sys
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -58,8 +59,6 @@ def _envget(key: str) -> str:
 
 
 def _post_json(url: str, body: dict, headers: dict, timeout: int) -> dict:
-    import urllib.request
-
     data = json.dumps(body).encode()
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", **headers})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
