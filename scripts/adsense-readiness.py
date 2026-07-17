@@ -438,8 +438,10 @@ def main() -> int:
     # durum-değişimi → ayrı, yüksek-sinyal discovery (type=bug → SessionStart).
     # Codex P2: alert yazımı FAIL olursa o site için state'i İLERLETME (prev'de bırak)
     # → sonraki koşu değişimi yeniden algılar, alert sessizce kaybolmaz.
-    # alert-FAIL geri-alımında eski state string olarak yazılabilir → _save_state ikisini de düzleştirir.
-    save_state: dict[str, Any] = dict(sites)
+    # alert-FAIL geri-alımı ALAN-BAĞIMSIZ (Codex-P2 #329): state-alert fail → yalnız state, drop-alert
+    # fail → yalnız auto_ads geri alınır. Tüm-girdi-revert, aynı koşumda BAŞARILI olan diğer high-signal
+    # discovery'yi sonraki koşuda tekrar ettiriyordu (state↑ + auto_ads↓ çakışmasında ONAY-duplikasyonu).
+    save_state: dict[str, Any] = {d: dict(_norm_state_entry(info)) for d, info in sites.items()}
     for c in changes:
         kind = "ONAY" if c["kind"] == "good" else "REGRESYON"
         a = audits.get(c["domain"], {})
@@ -467,7 +469,9 @@ def main() -> int:
             dtype="bug",
         )
         if werr and c["domain"] in prev:
-            save_state[c["domain"]] = prev[c["domain"]]  # alert yazılamadı → eski state koru
+            # state-alert yazılamadı → YALNIZ state'i prev'e geri al (auto_ads'e dokunma) → sonraki
+            # koşu state-değişimini re-algılar; aynı koşumda başarılı auto-ads alarmı tekrarlanmaz.
+            save_state[c["domain"]]["state"] = _entry_state(prev[c["domain"]])
 
     # Codex-P2 (#329): auto-ads düşüşü (True→False), yalnız REGRESYON geçişiyle çakışmayanlar
     # (regresyon-notu auto-ads'i zaten kapsar; iyileşen/değişmeyen kapsamaz → düşüş kaybolmasın).
@@ -481,7 +485,9 @@ def main() -> int:
             dtype="bug",
         )
         if werr and domain in prev:
-            save_state[domain] = prev[domain]  # alert yazılamadı → eski (auto_ads=True) koru → sonraki koşu re-algılar
+            # drop-alert yazılamadı → YALNIZ auto_ads'i prev'e (True) geri al (state'e dokunma) →
+            # sonraki koşu düşüşü re-algılar; başarılı state/ONAY discovery'si tekrarlanmaz.
+            save_state[domain]["auto_ads"] = _norm_state_entry(prev[domain]).get("auto_ads")
     _save_state(save_state)
 
     ready = sum(1 for info in sites.values() if (info.get("state") if isinstance(info, dict) else info) == "READY")

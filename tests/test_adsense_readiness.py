@@ -227,3 +227,28 @@ def test_detect_state_changes_accepts_dict_prev():
     cur = {"a.com": {"state": "READY", "auto_ads": True}}
     changes = ar.detect_state_changes(prev, cur)
     assert changes == [{"domain": "a.com", "from": "NEEDS_ATTENTION", "to": "READY", "kind": "good"}]
+
+
+def test_main_field_independent_rollback_on_drop_alert_fail(monkeypatch):
+    # Codex-P2 re-review (#329): site AYNI koşumda state-iyileşir + auto_ads düşerse ve state-alert
+    # BAŞARILI / drop-alert BAŞARISIZ olursa → yalnız auto_ads geri alınmalı (state DEĞİL). Aksi halde
+    # başarılı ONAY sonraki koşuda tekrar eder. Alan-bağımsız rollback'i canlı main()-yolunda doğrula.
+    monkeypatch.setattr(ar, "_acquire_adsense_token", lambda: ("tok", ""))
+    monkeypatch.setattr(ar.gsc, "_envget", lambda k: "accounts/pub-1" if k == "ADSENSE_ACCOUNT" else "x")
+    monkeypatch.setattr(ar, "fetch_sites", lambda t, a: {"imp.com": {"state": "GETTING_READY", "auto_ads": False}})
+    monkeypatch.setattr(ar, "audit_site", lambda d, p: {"ads_txt": True, "snippet": True, "pages": 30, "home_chars": 3000})
+    monkeypatch.setattr(ar, "quality_note", lambda *a, **k: "")
+    # prev: bad-state + auto_ads AÇIK → cur'da state-iyileşme (good) + auto_ads düşüşü ÇAKIŞIR
+    monkeypatch.setattr(ar, "_load_state", lambda: {"imp.com": {"state": "NEEDS_ATTENTION", "auto_ads": True}})
+    saved = {}
+    monkeypatch.setattr(ar, "_save_state", lambda s: saved.update(s))
+
+    # ONAY/özet discovery BAŞARILI, yalnız auto-ads-KAPANDI discovery'si transient FAIL
+    def fake_write(title, details, dtype="learning"):
+        return "boom" if "auto-ads KAPANDI" in title else ""
+
+    monkeypatch.setattr(ar, "_write_discovery", fake_write)
+    ar.main()
+    # state CURRENT kalmalı (GETTING_READY) → başarılı ONAY tekrar ETMEZ;
+    # auto_ads prev'e (True) geri alınmalı → düşüş sonraki koşu re-algılanır.
+    assert saved["imp.com"] == {"state": "GETTING_READY", "auto_ads": True}
