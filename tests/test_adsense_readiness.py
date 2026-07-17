@@ -201,6 +201,26 @@ def test_detect_auto_ads_drops():
     assert ar.detect_auto_ads_drops(prev, cur) == ["drop.com"]
 
 
+def test_pending_auto_ads_drops_filters_only_regressions():
+    # Codex-P2 re-review (#329): düşüş REGRESYON'la çakışırsa bastır (regresyon-notu kapsar);
+    # İYİLEŞEN veya state-değişmeyen geçişte düşüş AYRI alarm almalı (yoksa kalıcı-görünmez).
+    prev = {
+        "reg.com": {"state": "GETTING_READY", "auto_ads": True},  # bad geçiş + düşüş → bastır
+        "imp.com": {"state": "NEEDS_ATTENTION", "auto_ads": True},  # good geçiş + düşüş → ALARM
+        "flat.com": {"state": "READY", "auto_ads": True},  # değişmez + düşüş → ALARM
+    }
+    cur = {
+        "reg.com": {"state": "NEEDS_ATTENTION", "auto_ads": False},
+        "imp.com": {"state": "GETTING_READY", "auto_ads": False},
+        "flat.com": {"state": "READY", "auto_ads": False},
+    }
+    changes = ar.detect_state_changes(prev, cur)
+    pending = ar.pending_auto_ads_drops(prev, cur, changes)
+    assert "reg.com" not in pending  # regresyon-notu zaten auto-ads'i kapsıyor
+    assert "imp.com" in pending  # ONAY-mesajı auto-ads'ten bahsetmez → ayrı alarm ŞART
+    assert "flat.com" in pending  # state değişmedi → ayrı alarm
+
+
 def test_detect_state_changes_accepts_dict_prev():
     # Yeni persist formatı: prev artık {domain: {state, auto_ads}} — state-değişimi hâlâ doğru.
     prev = {"a.com": {"state": "NEEDS_ATTENTION", "auto_ads": False}}

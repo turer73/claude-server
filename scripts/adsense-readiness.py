@@ -160,6 +160,14 @@ def detect_auto_ads_drops(prev: dict[str, Any], cur: dict[str, dict[str, Any]]) 
     return drops
 
 
+def pending_auto_ads_drops(prev: dict[str, Any], cur: dict[str, dict[str, Any]], changes: list[dict[str, str]]) -> list[str]:
+    """Ayrı auto-ads-düşüşü alarmı gerektiren domainler = düşüş var AMA REGRESYON (bad) geçişiyle
+    çakışmıyor. Regresyon-discovery'si auto-ads'i kendi notunda zaten kapsar; İYİLEŞEN (good) veya
+    state-değişmeyen geçiş kapsamaz → aksi halde düşüş kalıcı-görünmez olur (Codex-P2 re-review #329)."""
+    regressed = {c["domain"] for c in changes if c.get("kind") == "bad"}
+    return [d for d in detect_auto_ads_drops(prev, cur) if d not in regressed]
+
+
 # ── ağ / I/O ────────────────────────────────────────────────────────────
 
 
@@ -461,10 +469,9 @@ def main() -> int:
         if werr and c["domain"] in prev:
             save_state[c["domain"]] = prev[c["domain"]]  # alert yazılamadı → eski state koru
 
-    # Codex-P2 (#329): saf auto-ads düşüşü (state DEĞİŞMEDEN True→False). State-regresyonu zaten
-    # auto-ads'i kendi notunda yüzeye çıkarır → yalnız state'i DEĞİŞMEYEN domainler için ayrı alert.
-    changed_domains = {c["domain"] for c in changes}
-    ads_drops = [d for d in detect_auto_ads_drops(prev, sites) if d not in changed_domains]
+    # Codex-P2 (#329): auto-ads düşüşü (True→False), yalnız REGRESYON geçişiyle çakışmayanlar
+    # (regresyon-notu auto-ads'i zaten kapsar; iyileşen/değişmeyen kapsamaz → düşüş kaybolmasın).
+    ads_drops = pending_auto_ads_drops(prev, sites, changes)
     for domain in ads_drops:
         werr = _write_discovery(
             f"AdSense auto-ads KAPANDI: {domain}",
