@@ -201,24 +201,23 @@ def test_detect_auto_ads_drops():
     assert ar.detect_auto_ads_drops(prev, cur) == ["drop.com"]
 
 
-def test_pending_auto_ads_drops_filters_only_regressions():
-    # Codex-P2 re-review (#329): düşüş REGRESYON'la çakışırsa bastır (regresyon-notu kapsar);
-    # İYİLEŞEN veya state-değişmeyen geçişte düşüş AYRI alarm almalı (yoksa kalıcı-görünmez).
+def test_pending_auto_ads_drops_two_gates():
+    # Codex-P2 (#329): drop-alert İKİ kapıdan geçer — (1) PROBLEM-state gate, (2) regresyon dışlama.
     prev = {
-        "reg.com": {"state": "GETTING_READY", "auto_ads": True},  # bad geçiş + düşüş → bastır
-        "imp.com": {"state": "NEEDS_ATTENTION", "auto_ads": True},  # good geçiş + düşüş → ALARM
-        "flat.com": {"state": "READY", "auto_ads": True},  # değişmez + düşüş → ALARM
+        "reg.com": {"state": "GETTING_READY", "auto_ads": True},  # bad→NEEDS_ATTENTION + drop → regresyon-notu kapsar → HAYIR
+        "imp.com": {"state": "NEEDS_ATTENTION", "auto_ads": True},  # good→GETTING_READY + drop → non-problem → HAYIR
+        "ready.com": {"state": "READY", "auto_ads": True},  # READY (değişmez) + drop → non-problem → HAYIR
+        "flag.com": {"state": "NEEDS_ATTENTION", "auto_ads": True},  # problem (değişmez) + drop → ALARM
     }
     cur = {
         "reg.com": {"state": "NEEDS_ATTENTION", "auto_ads": False},
         "imp.com": {"state": "GETTING_READY", "auto_ads": False},
-        "flat.com": {"state": "READY", "auto_ads": False},
+        "ready.com": {"state": "READY", "auto_ads": False},
+        "flag.com": {"state": "NEEDS_ATTENTION", "auto_ads": False},
     }
     changes = ar.detect_state_changes(prev, cur)
-    pending = ar.pending_auto_ads_drops(prev, cur, changes)
-    assert "reg.com" not in pending  # regresyon-notu zaten auto-ads'i kapsıyor
-    assert "imp.com" in pending  # ONAY-mesajı auto-ads'ten bahsetmez → ayrı alarm ŞART
-    assert "flat.com" in pending  # state değişmedi → ayrı alarm
+    # yalnız problem-state + non-regresyon: flag.com
+    assert ar.pending_auto_ads_drops(prev, cur, changes) == ["flag.com"]
 
 
 def test_detect_state_changes_accepts_dict_prev():
@@ -229,21 +228,19 @@ def test_detect_state_changes_accepts_dict_prev():
     assert changes == [{"domain": "a.com", "from": "NEEDS_ATTENTION", "to": "READY", "kind": "good"}]
 
 
-def test_main_field_independent_rollback_on_drop_alert_fail(monkeypatch, capsys):
-    # Codex-P2 re-review (#329): site AYNI koşumda state-iyileşir + auto_ads düşerse ve state-alert
-    # BAŞARILI / drop-alert BAŞARISIZ olursa → yalnız auto_ads geri alınmalı (state DEĞİL). Aksi halde
-    # başarılı ONAY sonraki koşuda tekrar eder. Alan-bağımsız rollback'i canlı main()-yolunda doğrula.
+def test_main_drop_alert_fail_reverts_auto_ads_and_marks_partial(monkeypatch, capsys):
+    # Codex-P2 (#329): problem-state'te (değişmeyen) site sessizce auto-ads kaybeder; drop-alert
+    # transient-FAIL olursa → yalnız auto_ads prev'e (True) geri alınır (retry) + OUTCOME 'partial'
+    # (cron sessizce 'pass' sanmasın). Canlı main()-yolunu doğrula.
     monkeypatch.setattr(ar, "_acquire_adsense_token", lambda: ("tok", ""))
     monkeypatch.setattr(ar.gsc, "_envget", lambda k: "accounts/pub-1" if k == "ADSENSE_ACCOUNT" else "x")
-    monkeypatch.setattr(ar, "fetch_sites", lambda t, a: {"imp.com": {"state": "GETTING_READY", "auto_ads": False}})
+    monkeypatch.setattr(ar, "fetch_sites", lambda t, a: {"flag.com": {"state": "NEEDS_ATTENTION", "auto_ads": False}})
     monkeypatch.setattr(ar, "audit_site", lambda d, p: {"ads_txt": True, "snippet": True, "pages": 30, "home_chars": 3000})
     monkeypatch.setattr(ar, "quality_note", lambda *a, **k: "")
-    # prev: bad-state + auto_ads AÇIK → cur'da state-iyileşme (good) + auto_ads düşüşü ÇAKIŞIR
-    monkeypatch.setattr(ar, "_load_state", lambda: {"imp.com": {"state": "NEEDS_ATTENTION", "auto_ads": True}})
+    # prev: AYNI problem-state + auto_ads AÇIK → state değişmez, yalnız auto_ads düşer
+    monkeypatch.setattr(ar, "_load_state", lambda: {"flag.com": {"state": "NEEDS_ATTENTION", "auto_ads": True}})
     saved = {}
     monkeypatch.setattr(ar, "_save_state", lambda s: saved.update(s))
-
-    # ONAY/özet discovery BAŞARILI, yalnız auto-ads-KAPANDI discovery'si transient FAIL
     written = []
 
     def fake_write(title, details, dtype="learning"):
@@ -252,14 +249,12 @@ def test_main_field_independent_rollback_on_drop_alert_fail(monkeypatch, capsys)
 
     monkeypatch.setattr(ar, "_write_discovery", fake_write)
     ar.main()
-    # state CURRENT kalmalı (GETTING_READY) → başarılı ONAY tekrar ETMEZ;
-    # auto_ads prev'e (True) geri alınmalı → düşüş sonraki koşu re-algılanır.
-    assert saved["imp.com"] == {"state": "GETTING_READY", "auto_ads": True}
-    # Codex-P2 (#329): iyileşen-geçişte drop-mesajı "state sabit" DEMEMELİ, gerçek geçişi yazmalı.
+    # state değişmedi (NEEDS_ATTENTION); auto_ads drop-alert FAIL → auto_ads prev'e (True) geri → retry.
+    assert saved["flag.com"] == {"state": "NEEDS_ATTENTION", "auto_ads": True}
+    # drop-mesajı problem-durum bağlamını versin (gate garantisi: state sabit)
     drop_detail = next(d for t, d in written if "auto-ads KAPANDI" in t)
-    assert "NEEDS_ATTENTION→GETTING_READY" in drop_detail
-    assert "state sabit" not in drop_detail
-    # Codex-P2 (#329): alert-yazımı FAIL → OUTCOME 'partial' olmalı (cron sessizce 'pass' sanmasın).
+    assert "problem-durumda" in drop_detail
+    # alert-yazımı FAIL → OUTCOME 'partial'
     out = capsys.readouterr().out
     assert "OUTCOME: partial" in out
     assert "alert-yazımı FAIL" in out

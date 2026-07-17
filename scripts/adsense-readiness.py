@@ -161,11 +161,21 @@ def detect_auto_ads_drops(prev: dict[str, Any], cur: dict[str, dict[str, Any]]) 
 
 
 def pending_auto_ads_drops(prev: dict[str, Any], cur: dict[str, dict[str, Any]], changes: list[dict[str, str]]) -> list[str]:
-    """Ayrı auto-ads-düşüşü alarmı gerektiren domainler = düşüş var AMA REGRESYON (bad) geçişiyle
-    çakışmıyor. Regresyon-discovery'si auto-ads'i kendi notunda zaten kapsar; İYİLEŞEN (good) veya
-    state-değişmeyen geçiş kapsamaz → aksi halde düşüş kalıcı-görünmez olur (Codex-P2 re-review #329)."""
+    """Ayrı auto-ads-düşüşü alarmı gerektiren domainler. İKİ kapı (Codex-P2 #329):
+      1) PROBLEM-state gate: auto-ads-off yalnız NEEDS_ATTENTION/REQUIRES_REVIEW'da anlamlı-sinyal;
+         READY/GETTING_READY'de meşru config (manuel-reklam/opt-out) → alert DEĞİL (build_report ile tutarlı).
+      2) REGRESYON dışlama: bad-geçiş kendi notunda auto-ads'i zaten kapsar → çift-alarm yok.
+    NOT: good-geçiş rank ARTIRIR, problem-state rank-0'dır → good-geçiş asla problem-state'e inmez;
+    dolayısıyla hayatta-kalan düşüşlerin state'i DEĞİŞMEZ (mesajda 'state sabit' daima doğru)."""
     regressed = {c["domain"] for c in changes if c.get("kind") == "bad"}
-    return [d for d in detect_auto_ads_drops(prev, cur) if d not in regressed]
+    out: list[str] = []
+    for d in detect_auto_ads_drops(prev, cur):
+        if d in regressed:
+            continue
+        state = cur[d].get("state") if isinstance(cur.get(d), dict) else None
+        if state in _PROBLEM_STATES:
+            out.append(d)
+    return out
 
 
 # ── ağ / I/O ────────────────────────────────────────────────────────────
@@ -481,15 +491,12 @@ def main() -> int:
     # Codex-P2 (#329): auto-ads düşüşü (True→False), yalnız REGRESYON geçişiyle çakışmayanlar
     # (regresyon-notu auto-ads'i zaten kapsar; iyileşen/değişmeyen kapsamaz → düşüş kaybolmasın).
     ads_drops = pending_auto_ads_drops(prev, sites, changes)
-    change_by_domain = {c["domain"]: c for c in changes}
     for domain in ads_drops:
-        # Codex-P2 (#329): mesaj GERÇEK state-bağlamını versin. ads_drops REGRESYON'u dışlar ama
-        # İYİLEŞEN geçişi (good) tutar → o domainlerde "state sabit" YALAN olur; gerçek geçişi yaz.
-        ch = change_by_domain.get(domain)
-        state_ctx = f"state {ch['from']}→{ch['to']} (iyileşme)" if ch else f"state sabit: {_entry_state(sites.get(domain))}"
+        # Gate garantisi (bkz pending_auto_ads_drops): hayatta-kalan düşümler daima PROBLEM-state'te
+        # ve state-değişimsiz → "state sabit" doğru. Bir problem-durumdaki site sessizce auto-ads kaybetti.
         werr = _write_discovery(
             f"AdSense auto-ads KAPANDI: {domain}",
-            f"{domain} auto-ads açıkken kapandı ({state_ctx}). "
+            f"{domain} problem-durumda ({_entry_state(sites.get(domain))}) iken auto-ads açıkken kapandı. "
             "Google flaglerken kapatmış ya da konsolda değişmiş olabilir; kasıtlı-manuel-reklam "
             "değilse konsolda kontrol et.",
             dtype="bug",
