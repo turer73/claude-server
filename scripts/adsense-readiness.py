@@ -442,6 +442,9 @@ def main() -> int:
     # fail → yalnız auto_ads geri alınır. Tüm-girdi-revert, aynı koşumda BAŞARILI olan diğer high-signal
     # discovery'yi sonraki koşuda tekrar ettiriyordu (state↑ + auto_ads↓ çakışmasında ONAY-duplikasyonu).
     save_state: dict[str, Any] = {d: dict(_norm_state_entry(info)) for d, info in sites.items()}
+    # Codex-P2 (#329): high-signal alert-yazımı transient-fail olursa OUTCOME partial olmalı —
+    # retry-kuyruğu sessizce yeterli değil, cron o koşuyu 'sağlıklı' sanmasın (bkz #1334 sessiz-hata).
+    alert_fail = False
     for c in changes:
         kind = "ONAY" if c["kind"] == "good" else "REGRESYON"
         a = audits.get(c["domain"], {})
@@ -468,10 +471,12 @@ def main() -> int:
             f"AdSense site durumu değişti: {c['domain']} {c['from']} → {c['to']}. {detail_suffix}",
             dtype="bug",
         )
-        if werr and c["domain"] in prev:
-            # state-alert yazılamadı → YALNIZ state'i prev'e geri al (auto_ads'e dokunma) → sonraki
-            # koşu state-değişimini re-algılar; aynı koşumda başarılı auto-ads alarmı tekrarlanmaz.
-            save_state[c["domain"]]["state"] = _entry_state(prev[c["domain"]])
+        if werr:
+            alert_fail = True
+            if c["domain"] in prev:
+                # state-alert yazılamadı → YALNIZ state'i prev'e geri al (auto_ads'e dokunma) → sonraki
+                # koşu state-değişimini re-algılar; aynı koşumda başarılı auto-ads alarmı tekrarlanmaz.
+                save_state[c["domain"]]["state"] = _entry_state(prev[c["domain"]])
 
     # Codex-P2 (#329): auto-ads düşüşü (True→False), yalnız REGRESYON geçişiyle çakışmayanlar
     # (regresyon-notu auto-ads'i zaten kapsar; iyileşen/değişmeyen kapsamaz → düşüş kaybolmasın).
@@ -489,10 +494,12 @@ def main() -> int:
             "değilse konsolda kontrol et.",
             dtype="bug",
         )
-        if werr and domain in prev:
-            # drop-alert yazılamadı → YALNIZ auto_ads'i prev'e (True) geri al (state'e dokunma) →
-            # sonraki koşu düşüşü re-algılar; başarılı state/ONAY discovery'si tekrarlanmaz.
-            save_state[domain]["auto_ads"] = _norm_state_entry(prev[domain]).get("auto_ads")
+        if werr:
+            alert_fail = True
+            if domain in prev:
+                # drop-alert yazılamadı → YALNIZ auto_ads'i prev'e (True) geri al (state'e dokunma) →
+                # sonraki koşu düşüşü re-algılar; başarılı state/ONAY discovery'si tekrarlanmaz.
+                save_state[domain]["auto_ads"] = _norm_state_entry(prev[domain]).get("auto_ads")
     _save_state(save_state)
 
     ready = sum(1 for info in sites.values() if (info.get("state") if isinstance(info, dict) else info) == "READY")
@@ -502,8 +509,13 @@ def main() -> int:
     if ads_drops:
         parts.append(f"{len(ads_drops)} auto-ads-düşüşü")
     note = ", ".join(parts) if parts else "değişim yok"
-    if derr:
-        print(f"\nOUTCOME: partial | {len(sites)} site ({ready} READY), {note}, DISCOVERY-FAIL: {derr}")
+    if derr or alert_fail:
+        fails = []
+        if derr:
+            fails.append(f"özet-DISCOVERY-FAIL: {derr}")
+        if alert_fail:
+            fails.append("high-signal alert-yazımı FAIL (retry-kuyruğunda)")
+        print(f"\nOUTCOME: partial | {len(sites)} site ({ready} READY), {note}, {', '.join(fails)}")
     else:
         print(f"\nOUTCOME: pass | {len(sites)} site ({ready} READY), {note} → ortak-hafıza (mail yok)")
     return 0

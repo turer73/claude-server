@@ -229,7 +229,7 @@ def test_detect_state_changes_accepts_dict_prev():
     assert changes == [{"domain": "a.com", "from": "NEEDS_ATTENTION", "to": "READY", "kind": "good"}]
 
 
-def test_main_field_independent_rollback_on_drop_alert_fail(monkeypatch):
+def test_main_field_independent_rollback_on_drop_alert_fail(monkeypatch, capsys):
     # Codex-P2 re-review (#329): site AYNI koşumda state-iyileşir + auto_ads düşerse ve state-alert
     # BAŞARILI / drop-alert BAŞARISIZ olursa → yalnız auto_ads geri alınmalı (state DEĞİL). Aksi halde
     # başarılı ONAY sonraki koşuda tekrar eder. Alan-bağımsız rollback'i canlı main()-yolunda doğrula.
@@ -259,3 +259,7 @@ def test_main_field_independent_rollback_on_drop_alert_fail(monkeypatch):
     drop_detail = next(d for t, d in written if "auto-ads KAPANDI" in t)
     assert "NEEDS_ATTENTION→GETTING_READY" in drop_detail
     assert "state sabit" not in drop_detail
+    # Codex-P2 (#329): alert-yazımı FAIL → OUTCOME 'partial' olmalı (cron sessizce 'pass' sanmasın).
+    out = capsys.readouterr().out
+    assert "OUTCOME: partial" in out
+    assert "alert-yazımı FAIL" in out
