@@ -139,7 +139,7 @@ def test_fetch_sites_extracts_auto_ads(monkeypatch):
 
 
 def test_build_report_flags_auto_ads_off():
-    # auto-ads KAPALI olan site raporda vurgulanmalı, açık olan gürültü yapmamalı.
+    # auto-ads KAPALI yalnız PROBLEM-state'te vurgulanmalı, açık olan gürültü yapmamalı.
     sites = {
         "off.com": {"state": "NEEDS_ATTENTION", "auto_ads": False},
         "on.com": {"state": "GETTING_READY", "auto_ads": True},
@@ -149,3 +149,61 @@ def test_build_report_flags_auto_ads_off():
     on_line = next(ln for ln in report.splitlines() if ln.startswith("🔴 on.com"))
     assert "auto-ads KAPALI" in off_line
     assert "auto-ads KAPALI" not in on_line
+
+
+def test_build_report_no_auto_ads_warning_when_not_problem_state():
+    # Codex-P2 (#329): READY/GETTING_READY sitede auto-ads-off meşru config (manuel/opt-out) →
+    # YANLIŞ-ALARM yapma. Yalnız NEEDS_ATTENTION/REQUIRES_REVIEW'da uyar.
+    sites = {
+        "ready.com": {"state": "READY", "auto_ads": False},  # off ama sorun-değil
+        "getting.com": {"state": "GETTING_READY", "auto_ads": False},  # off ama sorun-değil
+        "flagged.com": {"state": "REQUIRES_REVIEW", "auto_ads": False},  # off + problem → uyar
+    }
+    report = ar.build_report(sites, audits={}, changes=[])
+    lines = {ln.split(" — ")[0].split()[-1]: ln for ln in report.splitlines() if " — durum:" in ln}
+    assert "auto-ads KAPALI" not in lines["ready.com"]
+    assert "auto-ads KAPALI" not in lines["getting.com"]
+    assert "auto-ads KAPALI" in lines["flagged.com"]
+
+
+def test_state_roundtrip_persists_auto_ads(tmp_path, monkeypatch):
+    # Codex-P2 (#329): auto_ads state-dosyasında persist edilmeli (koşumlar-arası karşılaştırma).
+    sf = tmp_path / "state.json"
+    monkeypatch.setattr(ar, "STATE_FILE", str(sf))
+    ar._save_state({"a.com": {"state": "GETTING_READY", "auto_ads": True}})
+    loaded = ar._load_state()
+    assert loaded == {"a.com": {"state": "GETTING_READY", "auto_ads": True}}
+
+
+def test_load_state_legacy_string_format(tmp_path, monkeypatch):
+    # Geriye-uyumluluk: eski {domain: "STATE"} formatı → auto_ads=None (bilinmiyor, düşüş-alarmı tetiklemez).
+    sf = tmp_path / "state.json"
+    sf.write_text('{"a.com": "READY", "b.com": "NEEDS_ATTENTION"}')
+    monkeypatch.setattr(ar, "STATE_FILE", str(sf))
+    loaded = ar._load_state()
+    assert loaded == {"a.com": {"state": "READY", "auto_ads": None}, "b.com": {"state": "NEEDS_ATTENTION", "auto_ads": None}}
+
+
+def test_detect_auto_ads_drops():
+    prev = {
+        "drop.com": {"state": "GETTING_READY", "auto_ads": True},  # True→False = düşüş
+        "stay.com": {"state": "READY", "auto_ads": True},  # değişmez
+        "legacy.com": "GETTING_READY",  # legacy: auto_ads bilinmiyor → alarm YOK
+        "off2on.com": {"state": "READY", "auto_ads": False},  # False→True = düşüş değil
+    }
+    cur = {
+        "drop.com": {"state": "GETTING_READY", "auto_ads": False},
+        "stay.com": {"state": "READY", "auto_ads": True},
+        "legacy.com": {"state": "GETTING_READY", "auto_ads": False},
+        "off2on.com": {"state": "READY", "auto_ads": True},
+        "new.com": {"state": "READY", "auto_ads": False},  # prev'de yok → alarm YOK
+    }
+    assert ar.detect_auto_ads_drops(prev, cur) == ["drop.com"]
+
+
+def test_detect_state_changes_accepts_dict_prev():
+    # Yeni persist formatı: prev artık {domain: {state, auto_ads}} — state-değişimi hâlâ doğru.
+    prev = {"a.com": {"state": "NEEDS_ATTENTION", "auto_ads": False}}
+    cur = {"a.com": {"state": "READY", "auto_ads": True}}
+    changes = ar.detect_state_changes(prev, cur)
+    assert changes == [{"domain": "a.com", "from": "NEEDS_ATTENTION", "to": "READY", "kind": "good"}]
