@@ -97,12 +97,12 @@ def test_readiness_checklist_missing_trust():
 def test_detect_state_changes():
     prev = {"a.com": "NEEDS_ATTENTION", "b.com": "READY", "c.com": "READY", "e.com": "NEEDS_ATTENTION", "f.com": "GETTING_READY"}
     cur = {
-        "a.com": {"state": "READY", "reason": ""},
-        "b.com": {"state": "READY", "reason": ""},
-        "c.com": {"state": "NEEDS_ATTENTION", "reason": "low-value-content"},
-        "d.com": {"state": "REQUIRES_REVIEW", "reason": ""},
-        "e.com": {"state": "GETTING_READY", "reason": ""},  # iyileşme (re-review) — eskiden yanlış 'bad'
-        "f.com": {"state": "NEEDS_ATTENTION", "reason": ""},  # kötüleşme
+        "a.com": {"state": "READY", "auto_ads": True},
+        "b.com": {"state": "READY", "auto_ads": True},
+        "c.com": {"state": "NEEDS_ATTENTION", "auto_ads": False},
+        "d.com": {"state": "REQUIRES_REVIEW", "auto_ads": False},
+        "e.com": {"state": "GETTING_READY", "auto_ads": True},  # iyileşme (re-review) — eskiden yanlış 'bad'
+        "f.com": {"state": "NEEDS_ATTENTION", "auto_ads": False},  # kötüleşme
     }
     changes = ar.detect_state_changes(prev, cur)
     by = {c["domain"]: c for c in changes}
@@ -116,4 +116,36 @@ def test_detect_state_changes():
 
 def test_detect_state_changes_empty_prev():
     # ilk koşu: önceki durum yok → değişim raporlanmaz (gürültü önle)
-    assert ar.detect_state_changes({}, {"a.com": {"state": "READY", "reason": ""}}) == []
+    assert ar.detect_state_changes({}, {"a.com": {"state": "READY", "auto_ads": True}}) == []
+
+
+def test_fetch_sites_extracts_auto_ads(monkeypatch):
+    # #1326: API v2 Site kaynağı reason döndürmez — tek ayırt-edici sinyal autoAdsEnabled.
+    # proto3 false'u atlar → alan YOKSA auto-ads KAPALI kabul edilmeli.
+    fake = {
+        "sites": [
+            {"domain": "on.com", "state": "GETTING_READY", "autoAdsEnabled": True},
+            {"domain": "off.com", "state": "NEEDS_ATTENTION"},  # autoAdsEnabled alanı YOK → False
+            {"domain": "x.com"},  # state bile yok → STATE_UNSPECIFIED, auto_ads False
+        ]
+    }
+    monkeypatch.setattr(ar, "_adsense_get", lambda token, path: fake)
+    sites = ar.fetch_sites("tok", "accounts/pub-1")
+    assert sites["on.com"] == {"state": "GETTING_READY", "auto_ads": True}
+    assert sites["off.com"] == {"state": "NEEDS_ATTENTION", "auto_ads": False}
+    assert sites["x.com"] == {"state": "STATE_UNSPECIFIED", "auto_ads": False}
+    # eski ölü alanlar sızmamalı
+    assert "reason" not in sites["off.com"]
+
+
+def test_build_report_flags_auto_ads_off():
+    # auto-ads KAPALI olan site raporda vurgulanmalı, açık olan gürültü yapmamalı.
+    sites = {
+        "off.com": {"state": "NEEDS_ATTENTION", "auto_ads": False},
+        "on.com": {"state": "GETTING_READY", "auto_ads": True},
+    }
+    report = ar.build_report(sites, audits={}, changes=[])
+    off_line = next(ln for ln in report.splitlines() if ln.startswith("🔴 off.com"))
+    on_line = next(ln for ln in report.splitlines() if ln.startswith("🔴 on.com"))
+    assert "auto-ads KAPALI" in off_line
+    assert "auto-ads KAPALI" not in on_line

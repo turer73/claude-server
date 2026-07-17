@@ -11,6 +11,10 @@
 DURUM DEĞİŞİMİ takibi (data/adsense-readiness-state.json): bir site NEEDS_ATTENTION→READY
 (onay!) veya yeni red → ayrı discovery (type=bug) → SessionStart'ta görünür.
 
+NEDEN yok (#1326): API v2 Site kaynağı düşürme-nedeni döndürmez (yalnız state +
+autoAdsEnabled). Kesin bayrak sadece konsolda. Watcher `state` dışında auto-ads sinyalini
+yakalar (kapalı = güçlü ipucu) ve regresyonda konsola yönlendirir.
+
 SINIR (dürüst): salt-okunur. İçerik ÜRETMEZ/yayınlamaz, yeniden-inceleme TETİKLEMEZ
 (AdSense API yok) — bunlar insan/editöryel iş. Ajan = takip + öneri + ilk-onay anını yakala.
 
@@ -113,7 +117,7 @@ def readiness_checklist(audit: dict[str, Any]) -> dict[str, Any]:
 _STATE_RANK: dict[str, int] = {"NEEDS_ATTENTION": 0, "REQUIRES_REVIEW": 0, "GETTING_READY": 1, "READY": 2}
 
 
-def detect_state_changes(prev: dict[str, str], cur: dict[str, dict[str, str]]) -> list[dict[str, str]]:
+def detect_state_changes(prev: dict[str, str], cur: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
     """Önceki↔şimdiki AdSense durumları → geçişler (saf). YÖN-DUYARLI: rank artışı (READY'e
     yaklaşma) = onay (good), rank düşüşü = regresyon (bad).
 
@@ -169,11 +173,16 @@ def _fetch(url: str, timeout: int = 12) -> tuple[int | None, str]:
         return None, ""
 
 
-def fetch_sites(token: str, account: str) -> dict[str, dict[str, str]]:
-    """AdSense hesabındaki siteler → {domain: {state, reason}}. Codex P2: nextPageToken ile
-    sayfalama (>50 site olan hesapta eksik çekmeyi önle). reason = API'den gelen durum-nedeni
-    (low-value-content vs ads.txt vs policy); API dönmezse boş string."""
-    sites: dict[str, dict[str, str]] = {}
+def fetch_sites(token: str, account: str) -> dict[str, dict[str, Any]]:
+    """AdSense hesabındaki siteler → {domain: {state, auto_ads}}. Codex P2: nextPageToken ile
+    sayfalama (>50 site olan hesapta eksik çekmeyi önle).
+
+    NOT (#1326): AdSense Management API v2 Site kaynağı düşürme-NEDENİ döndürmez — alanlar
+    yalnız name/reportingDimensionId/domain/state/autoAdsEnabled. Eski `reason`/`approvalState`
+    lookup ölüydü (asla dolmuyordu). Kesin bayrak (low-value-content/ads.txt/policy) yalnız
+    AdSense konsolunda. `state` dışında tek ayırt-edici makine-sinyali = autoAdsEnabled
+    (proto3 false'u atlar → alan yoksa auto-ads KAPALI)."""
+    sites: dict[str, dict[str, Any]] = {}
     page_token = ""
     for _ in range(20):  # güvenlik üst-sınırı (≤1000 site); sonsuz-döngü koruması
         path = f"{account}/sites?pageSize=50"
@@ -184,7 +193,7 @@ def fetch_sites(token: str, account: str) -> dict[str, dict[str, str]]:
             if s.get("domain"):
                 sites[s["domain"]] = {
                     "state": s.get("state", "STATE_UNSPECIFIED"),
-                    "reason": s.get("reason", "") or s.get("approvalState", "") or "",
+                    "auto_ads": bool(s.get("autoAdsEnabled", False)),
                 }
         page_token = data.get("nextPageToken", "")
         if not page_token:
@@ -283,7 +292,7 @@ def _load_state() -> dict[str, str]:
         return {}
 
 
-def _save_state(state: dict) -> None:
+def _save_state(state: dict[str, Any]) -> None:
     """Durum dosyasına yaz. {domain: dict} veya {domain: str} kabul eder; state string olarak kaydeder."""
     flat = {d: (info["state"] if isinstance(info, dict) else info) for d, info in state.items()}
     parent = os.path.dirname(STATE_FILE)
@@ -293,7 +302,7 @@ def _save_state(state: dict) -> None:
         json.dump(flat, fh)
 
 
-def build_report(sites: dict[str, dict[str, str]], audits: dict[str, dict[str, Any]], changes: list[dict[str, str]]) -> str:
+def build_report(sites: dict[str, dict[str, Any]], audits: dict[str, dict[str, Any]], changes: list[dict[str, str]]) -> str:
     out = ["📈 AdSense Hazırlık Denetçisi — monetizasyon durumu\n"]
     if changes:
         out.append("🔔 DURUM DEĞİŞİMİ:")
@@ -303,12 +312,13 @@ def build_report(sites: dict[str, dict[str, str]], audits: dict[str, dict[str, A
         out.append("")
     for domain, info in sites.items():
         state = info["state"] if isinstance(info, dict) else info
-        reason = info.get("reason", "") if isinstance(info, dict) else ""
+        auto_ads = info.get("auto_ads", False) if isinstance(info, dict) else False
         a = audits.get(domain, {})
         cl: dict[str, Any] = readiness_checklist(a) if a else {"gaps": ["denetlenemedi"], "score": 0, "total": 6}
         flag = "🟢" if state == "READY" else "🔴"
-        state_label = f"{state} ({reason})" if reason else state
-        out.append(f"{flag} {domain} — durum: {state_label} | hazırlık: {cl['score']}/{cl['total']}")
+        # auto-ads yalnız SORUN göstergesi olduğunda vurgula (kapalıysa) — normalde gürültü yapma.
+        ads_flag = "" if auto_ads else " | ⚠️ auto-ads KAPALI"
+        out.append(f"{flag} {domain} — durum: {state}{ads_flag} | hazırlık: {cl['score']}/{cl['total']}")
         ax = "✓" if a.get("ads_txt") else "✗"
         sn = "✓" if a.get("snippet") else "✗"
         out.append(f"   sayfa:{a.get('pages', '?')} anasayfa:{a.get('home_chars', '?')}c ads.txt:{ax} snippet:{sn}")
@@ -382,16 +392,19 @@ def main() -> int:
     # durum-değişimi → ayrı, yüksek-sinyal discovery (type=bug → SessionStart).
     # Codex P2: alert yazımı FAIL olursa o site için state'i İLERLETME (prev'de bırak)
     # → sonraki koşu değişimi yeniden algılar, alert sessizce kaybolmaz.
-    save_state = dict(sites)
+    # alert-FAIL geri-alımında eski state string olarak yazılabilir → _save_state ikisini de düzleştirir.
+    save_state: dict[str, Any] = dict(sites)
     for c in changes:
         kind = "ONAY" if c["kind"] == "good" else "REGRESYON"
         a = audits.get(c["domain"], {})
         info = sites.get(c["domain"], {})
-        reason = info.get("reason", "") if isinstance(info, dict) else ""
+        auto_ads = info.get("auto_ads", False) if isinstance(info, dict) else False
         if c["kind"] == "good":
             detail_suffix = "Reklam serve etmeye başladı olabilir — gelir izle."
         else:
-            reason_note = f" Konsol-neden: {reason}." if reason else ""
+            # API v2 düşürme-nedeni vermez (#1326) → kesin bayrak sadece konsolda.
+            # Elimizdeki tek makine-sinyali auto-ads: kapalıysa güçlü ipucu.
+            auto_note = "" if auto_ads else " auto-ads KAPALI (konsolda re-enable gerekebilir)."
             # (b) stale ads.txt FP'yi ayırt et: canlı HTTP check ile teyit
             if "ads_txt" in a:
                 if a["ads_txt"]:
@@ -400,7 +413,7 @@ def main() -> int:
                     ads_note = "ads.txt canlı-HTTP: SORUNLU — köke HTTP 200 + pub-ID DIRECT satırı gerekli"
             else:
                 ads_note = "ads.txt denetlenemedi"
-            detail_suffix = f"Reklam durdu/red — konsolda sebep kontrol et.{reason_note} {ads_note}"
+            detail_suffix = f"Reklam durdu/red — API neden-vermez, konsolda sebep kontrol et.{auto_note} {ads_note}"
         werr = _write_discovery(
             f"AdSense {kind}: {c['domain']} {c['from']}→{c['to']}",
             f"AdSense site durumu değişti: {c['domain']} {c['from']} → {c['to']}. {detail_suffix}",
