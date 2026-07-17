@@ -244,7 +244,10 @@ def test_main_field_independent_rollback_on_drop_alert_fail(monkeypatch):
     monkeypatch.setattr(ar, "_save_state", lambda s: saved.update(s))
 
     # ONAY/özet discovery BAŞARILI, yalnız auto-ads-KAPANDI discovery'si transient FAIL
+    written = []
+
     def fake_write(title, details, dtype="learning"):
+        written.append((title, details))
         return "boom" if "auto-ads KAPANDI" in title else ""
 
     monkeypatch.setattr(ar, "_write_discovery", fake_write)
@@ -252,3 +255,7 @@ def test_main_field_independent_rollback_on_drop_alert_fail(monkeypatch):
     # state CURRENT kalmalı (GETTING_READY) → başarılı ONAY tekrar ETMEZ;
     # auto_ads prev'e (True) geri alınmalı → düşüş sonraki koşu re-algılanır.
     assert saved["imp.com"] == {"state": "GETTING_READY", "auto_ads": True}
+    # Codex-P2 (#329): iyileşen-geçişte drop-mesajı "state sabit" DEMEMELİ, gerçek geçişi yazmalı.
+    drop_detail = next(d for t, d in written if "auto-ads KAPANDI" in t)
+    assert "NEEDS_ATTENTION→GETTING_READY" in drop_detail
+    assert "state sabit" not in drop_detail

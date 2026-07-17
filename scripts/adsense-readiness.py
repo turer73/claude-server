@@ -476,10 +476,15 @@ def main() -> int:
     # Codex-P2 (#329): auto-ads düşüşü (True→False), yalnız REGRESYON geçişiyle çakışmayanlar
     # (regresyon-notu auto-ads'i zaten kapsar; iyileşen/değişmeyen kapsamaz → düşüş kaybolmasın).
     ads_drops = pending_auto_ads_drops(prev, sites, changes)
+    change_by_domain = {c["domain"]: c for c in changes}
     for domain in ads_drops:
+        # Codex-P2 (#329): mesaj GERÇEK state-bağlamını versin. ads_drops REGRESYON'u dışlar ama
+        # İYİLEŞEN geçişi (good) tutar → o domainlerde "state sabit" YALAN olur; gerçek geçişi yaz.
+        ch = change_by_domain.get(domain)
+        state_ctx = f"state {ch['from']}→{ch['to']} (iyileşme)" if ch else f"state sabit: {_entry_state(sites.get(domain))}"
         werr = _write_discovery(
             f"AdSense auto-ads KAPANDI: {domain}",
-            f"{domain} auto-ads açıkken kapandı (state sabit: {_entry_state(sites.get(domain))}). "
+            f"{domain} auto-ads açıkken kapandı ({state_ctx}). "
             "Google flaglerken kapatmış ya da konsolda değişmiş olabilir; kasıtlı-manuel-reklam "
             "değilse konsolda kontrol et.",
             dtype="bug",
