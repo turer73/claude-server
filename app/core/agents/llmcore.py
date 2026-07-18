@@ -51,7 +51,11 @@ def _strip_leaked_special_tokens(text: str) -> str:
 
 # Task → (backend, model). Mevcut çağrı-yerlerindeki gerçek modeller (spekülasyon değil).
 _TASK_ROUTES: dict[str, tuple[str, str]] = {
-    "code-review": ("ollama", "qwen3-coder:30b"),  # code_reviewer._ask_coder (LLM_ROUTE_CODE_REVIEW ile claude'a override edilir)
+    # topic-5 karari (2026-07-19): qwen3-coder:30b SILINDI (0-cagri kanitli, .env override'i
+    # kalici — code_reviewer._ask_coder fiilen HER ZAMAN claude-haiku'ya gider). Fallback artik
+    # qwen2.5:7b (automation-lane resmi-rol, diskte mevcut) — override kaldirilirsa/bozulursa
+    # var-olmayan modele carpmasin diye savunma-derinligi, gercek-yol degil.
+    "code-review": ("ollama", "qwen2.5:7b"),
     "diagnosis": ("ollama", "qwen2.5:3b"),  # devops_agent._ask_diagnosis
     "research": ("ollama", "qwen2.5:3b"),  # research._ollama_generate
     "reasoning": ("ollama", "qwen3:30b-a3b-instruct-2507-q4_K_M"),  # MoE, thinking-siz (2026-07-12 TR-eval: 20/20 vs qwen2.5:7b 18/20)
@@ -227,10 +231,16 @@ class LLMCore:
                 out = await self._ollama_async(prompt, model, system, temperature, num_predict, timeout, prio, fmt)
             _ok = True
             return out
-        except Exception:
+        except Exception as e:
             if raise_on_error:
                 raise
-            logger.debug("LLMCore generate failed (task=%s)", task, exc_info=True)
+            # topic-5 karari (2026-07-19): DEBUG-seviyesi journalctl'de (INFO-default) hic
+            # gorunmuyordu — code-review %15-25 fail'in gercek istisna-tipi (TimeoutExpired mi,
+            # baska mi) hicbir zaman canli-loglanmamisti, yalniz latency-kumelenmesinden dolayli
+            # cikarim yapilabiliyordu. WARNING+tip-adi ile artik gorunur.
+            # Codex-P2 (PR#339): exception str'i (ozellikle subprocess.TimeoutExpired) TAM
+            # argv'yi (claude CLI '-p' prompt = kod-icerigi) tasir - %s ile e YAZMA, yalniz TIP.
+            logger.warning("LLMCore generate failed (task=%s, backend=%s, exc_type=%s)", task, backend, type(e).__name__)
             return ""
         finally:
             _record_llm_call(task, backend, model, (_t.monotonic() - _t0) * 1000, _ok)
@@ -277,10 +287,10 @@ class LLMCore:
                 out = self._ollama_sync(prompt, model, system, temperature, num_predict, timeout, prio, fmt)
             _ok = True
             return out
-        except Exception:
+        except Exception as e:
             if raise_on_error:
                 raise
-            logger.debug("LLMCore generate_sync failed (task=%s)", task, exc_info=True)
+            logger.warning("LLMCore generate_sync failed (task=%s, backend=%s, exc_type=%s)", task, backend, type(e).__name__)
             return ""
         finally:
             _record_llm_call(task, backend, model, (_t.monotonic() - _t0) * 1000, _ok)
