@@ -233,6 +233,10 @@ async def test_run_returns_report(client):
         return [{"id": f"doc-{q[:4]}", "title": q, "score": 0.85, "text": f"{q} içerik"}]
 
     with (
+        # P-B (topic-5 K2): aya/HI-yolu artık Layer-2(deepseek)-öncelikli — testte Layer-2'yi
+        # boş-döndür (key-yok senaryosu) ki gemma3-fallback determinist mock-yoldan aksın
+        # (aksi halde DEEPSEEK_API_KEY'li geliştirici-makinesinde test CANLI API'ye çıkardı).
+        patch("app.core.agents.llmcore.llm_core.generate_sync", return_value=""),
         patch("app.api.research._ollama_generate", side_effect=[plan, synth]),
         patch("app.api.research._qdrant_chunks", side_effect=fake_chunks),
     ):
@@ -274,10 +278,13 @@ async def test_run_validates_short_topic(client):
 
 
 def test_synth_llm_ollama_uses_aya():
-    with patch("app.api.research._ollama_generate", return_value="x") as gen:
+    with (
+        patch("app.core.agents.llmcore.llm_core.generate_sync", return_value=""),  # Layer-2 yok senaryosu
+        patch("app.api.research._ollama_generate", return_value="x") as gen,
+    ):
         research._synth_llm("ollama")("prompt")
     gen.assert_called_once()
-    assert gen.call_args.kwargs.get("model") == research.LLM_MODEL_HI  # aya:8b
+    assert gen.call_args.kwargs.get("model") == research.LLM_MODEL_HI  # gemma3-fallback
 
 
 def test_anthropic_generate_uses_claude_cli_subscription():
@@ -338,6 +345,7 @@ def test_synth_llm_sonnet_uses_sonnet_model():
 def test_synth_llm_sonnet_falls_back_to_aya_on_error():
     with (
         patch("app.api.research._anthropic_generate", side_effect=RuntimeError("api down")),
+        patch("app.core.agents.llmcore.llm_core.generate_sync", return_value=""),  # Layer-2 yok senaryosu
         patch("app.api.research._ollama_generate", return_value="aya-çıktı") as o,
     ):
         out = research._synth_llm("sonnet")("p")
@@ -349,6 +357,7 @@ def test_synth_llm_haiku_falls_back_to_aya_on_error():
     # Haiku patlarsa (anahtar-yok/API-hata) → aya:8b yerel fallback (araştırma düşmez)
     with (
         patch("app.api.research._anthropic_generate", side_effect=RuntimeError("no key")),
+        patch("app.core.agents.llmcore.llm_core.generate_sync", return_value=""),  # Layer-2 yok senaryosu
         patch("app.api.research._ollama_generate", return_value="aya-çıktı") as o,
     ):
         out = research._synth_llm("haiku")("p")

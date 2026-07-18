@@ -4,6 +4,8 @@ Dağınık Ollama/Claude çağrılarını TEK arayüzde toplar: ``generate(promp
 Task → (backend, model) routing tablosu (env-override'lı). Backend:
   - ``ollama``: yerel httpx-async ``/api/generate`` (ücretsiz, default)
   - ``claude``: ``research._anthropic_generate`` reuse (Max-abonelik OAuth/CLI — escalation)
+  - ``deepseek``: OpenAI-uyumlu chat-completions (topic-5 K2 Layer-2, 2026-07-19: V4-Flash
+    ~$0.14/M — TR-genel/research + ileride fallback-lane; DEEPSEEK_API_KEY .env'de)
 
 Action/Provider desenini TAMAMLAR (Provider=context, Action=yetenek, LLMCore=model-yönlendirme).
 FAIL-SILENT ("" döner) — ajan-döngüsünü asla bozmaz. Framework DEĞİL: tek-sahip server için
@@ -64,6 +66,10 @@ _TASK_ROUTES: dict[str, tuple[str, str]] = {
         "qwen3.5:9b",
     ),  # classifier.classify_note (DEFAULT_MODEL) — 5/5+5/5 mini-eval, 2507'yi classify-yükünden kurtarır (#100701/#100713)
     "rag": ("ollama", "qwen2.5:3b"),  # rag.ask (model çağrıcıdan; complete_sync)
+    # topic-5 K2 (2026-07-19): TR-yüksek-doğruluk research-yolu Layer-2'ye — gemma3'ün rolü.
+    # Çağrıcı (research._hi_generate) boş-dönüşte gemma3'e düşer; gemma3-emekliliği bu rotanın
+    # llm_calls ok-oranına bağlı (legacy-ad DEĞİL: deepseek-chat/reasoner 2026-07-24'te ölüyor).
+    "research-hi": ("deepseek", "deepseek-v4-flash"),
     "escalate": ("claude", "claude-haiku-4-5-20251001"),  # hızlı/ucuz Claude (Max-abonelik)
     "verify": ("claude", "claude-haiku-4-5-20251001"),  # #4 adversarial-verify: qwen-coder kendi FP'sini çürütemiyor → güçlü model
     "synthesis": ("claude", "claude-sonnet-4-6"),  # derin sentez
@@ -227,6 +233,8 @@ class LLMCore:
         try:
             if backend == "claude":
                 out = await self._claude(system or "", prompt, model)
+            elif backend == "deepseek":
+                out = await self._deepseek_async(prompt, model, system, temperature, num_predict, timeout)
             else:
                 out = await self._ollama_async(prompt, model, system, temperature, num_predict, timeout, prio, fmt)
             _ok = True
@@ -283,6 +291,8 @@ class LLMCore:
                 from app.api.research import _anthropic_generate
 
                 out = (_anthropic_generate(system or "", prompt, model) or "").strip()
+            elif backend == "deepseek":
+                out = self._deepseek_sync(prompt, model, system, temperature, num_predict, timeout)
             else:
                 out = self._ollama_sync(prompt, model, system, temperature, num_predict, timeout, prio, fmt)
             _ok = True
@@ -403,6 +413,59 @@ class LLMCore:
         from app.api.research import _anthropic_generate
 
         return (await asyncio.to_thread(_anthropic_generate, system, user, model) or "").strip()
+
+    # ── DeepSeek backend (topic-5 K2 Layer-2) ─────────────────────────────
+    # OpenAI-uyumlu chat-completions; API-cagrisi yerel-CPU yemedigi icin ollama-vanasindan
+    # MUAF (claude ile ayni sinif). Key yoksa istisna → generate'in fail-silent'i "" dondurur,
+    # cagrici lokal-fallback'ine duser (research._hi_generate deseni).
+
+    @staticmethod
+    def _deepseek_payload(prompt: str, model: str, system: str | None, temperature: float, num_predict: int | None) -> dict[str, Any]:
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        payload: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature, "stream": False}
+        if num_predict:
+            payload["max_tokens"] = num_predict
+        return payload
+
+    @staticmethod
+    def _deepseek_headers() -> dict[str, str]:
+        key = read_env_var("DEEPSEEK_API_KEY")
+        if not key:
+            raise RuntimeError("DEEPSEEK_API_KEY yok (.env) — deepseek backend kullanılamaz")
+        return {"Authorization": f"Bearer {key}"}
+
+    _DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
+
+    async def _deepseek_async(
+        self, prompt: str, model: str, system: str | None, temperature: float, num_predict: int | None, timeout: int
+    ) -> str:
+        headers = self._deepseek_headers()
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(
+                self._DEEPSEEK_URL, headers=headers, json=self._deepseek_payload(prompt, model, system, temperature, num_predict)
+            )
+        r.raise_for_status()
+        choices = (r.json() or {}).get("choices") or []
+        content = (choices[0].get("message") or {}).get("content", "") if choices else ""
+        return _strip_leaked_special_tokens(content or "")
+
+    def _deepseek_sync(self, prompt: str, model: str, system: str | None, temperature: float, num_predict: int | None, timeout: int) -> str:
+        import requests
+
+        headers = self._deepseek_headers()
+        r = requests.post(
+            self._DEEPSEEK_URL,
+            headers=headers,
+            json=self._deepseek_payload(prompt, model, system, temperature, num_predict),
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        choices = (r.json() or {}).get("choices") or []
+        content = (choices[0].get("message") or {}).get("content", "") if choices else ""
+        return _strip_leaked_special_tokens(content or "")
 
 
 # Modül-singleton — ajanlar import edip paylaşır (tek model/maliyet kontrol noktası).
