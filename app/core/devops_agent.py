@@ -148,6 +148,18 @@ class DevOpsAgent(
         self._vps_probe_fails = 0
         self._vps_fail_threshold = int(read_env_var("VPS_FAIL_THRESHOLD") or "2")
 
+        # disc#1352 P0-fix (çift-agent/çift-remediation): uvicorn --workers 2 → her worker
+        # kendi DevOpsAgent'ını başlatıyor (app/main.py create_app), her ikisi de aynı alarmı
+        # bağımsız görüp bağımsız remediation tetikliyordu (kanıt: 07-17 çift docker-restart,
+        # remediation-id 78-83 aynı-saniye çiftler). Varsayılan True — tek-process/test
+        # bağlamında (bu class flock'tan habersiz) davranış DEĞİŞMEZ; gerçek çok-worker
+        # ortamında app/main.py._acquire_remediation_leader_lock() sonucuna göre worker-2+
+        # False'a çekilir. Monitoring/alert/teşhis TÜM worker'larda AYNEN devam eder (zararsız,
+        # hatta dayanıklılık-artışı); yalnız _apply_remediation (TEK-NOKTA gate, RemediationMixin)
+        # gerçek-yürütmeyi lider-worker'a daraltır. Mimari-nötr STOPGAP — topic-4'ün nihai kararını
+        # (ayrı-systemd-unit vs kalıcı-leader-lock) önceden belirlemez, yalnız aktif-zararı durdurur.
+        self._is_remediation_leader = True
+
     def start(self) -> None:
         if self._running:
             return

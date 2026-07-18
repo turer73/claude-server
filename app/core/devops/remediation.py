@@ -44,20 +44,31 @@ class RemediationMixin(_DevOpsAgentBase):
         for step in playbook:
             await self._apply_remediation(alert, alert.source, step["desc"], step["cmd"])
 
-        # Send webhook event (n8n) — mode dahil
-        await self._send_webhook(alert)
-        # FAZ5-S2: verify -> fail ise escalate (yalnız mode=auto)
-        await self._verify_and_escalate(alert.source, alert)
+        # Codex-P2 (PR#334): non-leader'da _apply_remediation zaten hiçbir şey YÜRÜTMEDİ
+        # (bkz mode-gate). Yine de webhook+verify_and_escalate koşarsa: verify hâlâ-bozuk
+        # bulur (leader henüz fix'lememiş/fix'lemiş olsa da bu worker denemedi) → sahte
+        # 'Otonom remediation BAŞARISIZ' escalate'i + remediation_log'a çakışan verify_status
+        # satırı. Lider-değilse ikisi de atla (aynı-alert'i lider zaten doğru raporlar).
+        if self._is_remediation_leader:
+            # Send webhook event (n8n) — mode dahil
+            await self._send_webhook(alert)
+            # FAZ5-S2: verify -> fail ise escalate (yalnız mode=auto)
+            await self._verify_and_escalate(alert.source, alert)
 
     async def _apply_remediation(self, alert: Alert, source: str, action: str, command: str, timeout: int = 30) -> None:
         """Tek-nokta remediation adımı — TÜM yollar (playbook + servis + container)
         bunu kullanır (Codex P1: gate her yerde). mode-gate: 'auto' değilse YÜRÜTME
         YOK, sadece niyet kaydedilir (mevcut alert-notify escalate eder). in-memory
-        log + kalıcı ledger + alert.remediation."""
+        log + kalıcı ledger + alert.remediation.
+
+        disc#1352 P0-fix: 'auto' YETMEZ — bu worker remediation-lider de OLMALI (çok-worker
+        stopgap, bkz DevOpsAgent.__init__). Lider-olmayan worker'da monitoring/alert/teşhis
+        AYNEN devam eder, yalnız gerçek-yürütme atlanır (aksi halde her worker aynı alarmı
+        bağımsız yürütür — kanıt: 07-17 çift docker-restart)."""
         mode = self._remediation_mode
         executed = False
         success: bool | None = None
-        if mode == "auto":
+        if mode == "auto" and self._is_remediation_leader:
             # OPT-IN: gerçekten yürüt. Playbook'lar güvenlileştirildi (yıkıcı/geri-
             # alınamaz adımlar — prune --volumes / backup-silme — çıkarıldı); kalanlar
             # güvenli-reclaim + restart. FAZ5-S2: aksiyon sonrası _verify_and_escalate
@@ -72,6 +83,8 @@ class RemediationMixin(_DevOpsAgentBase):
             except Exception as e:
                 out = str(e)[:500]
                 success = False
+        elif mode == "auto":
+            out = "skipped: multi-worker gate (bu worker remediation-lider değil, disc#1352)"
         else:
             out = f"skipped: remediation_mode={mode} (otonom yürütme kapalı)"
         self._remediation_log.append(
@@ -319,8 +332,10 @@ class RemediationMixin(_DevOpsAgentBase):
         # mode-gate (Codex P1): notify/dry_run'da systemctl restart YÜRÜTÜLMEZ.
         # shlex.quote = savunma-derinliği (doğrulama geçse bile meta-karakter etkisiz).
         await self._apply_remediation(alert, source, f"Restart {service}", f"systemctl restart {shlex.quote(service)}", timeout=15)
-        await self._send_webhook(alert)
-        await self._verify_and_escalate(source, alert)
+        # Codex-P2 (PR#334): non-leader webhook/verify/escalate atlar — bkz _remediate() yorumu.
+        if self._is_remediation_leader:
+            await self._send_webhook(alert)
+            await self._verify_and_escalate(source, alert)
 
     async def _refuse_invalid_unit(self, source: str, alert: Alert, kind: str, name: str) -> None:
         """Geçersiz servis/konteyner adı → remediation REFUSED (yürütme yok), ama
@@ -369,8 +384,10 @@ class RemediationMixin(_DevOpsAgentBase):
         # mode-gate (Codex P1): notify/dry_run'da YÜRÜTÜLMEZ. restart: durmuş+unhealthy
         # ikisini de kapsar (Codex P2). shlex.quote = savunma-derinliği.
         await self._apply_remediation(alert, source, f"Restart {container}", f"docker restart {shlex.quote(container)}", timeout=15)
-        await self._send_webhook(alert)
-        await self._verify_and_escalate(source, alert)
+        # Codex-P2 (PR#334): non-leader webhook/verify/escalate atlar — bkz _remediate() yorumu.
+        if self._is_remediation_leader:
+            await self._send_webhook(alert)
+            await self._verify_and_escalate(source, alert)
 
     @property
     def remediation_history(self) -> list[dict[str, Any]]:
