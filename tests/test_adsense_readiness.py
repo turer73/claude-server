@@ -97,12 +97,12 @@ def test_readiness_checklist_missing_trust():
 def test_detect_state_changes():
     prev = {"a.com": "NEEDS_ATTENTION", "b.com": "READY", "c.com": "READY", "e.com": "NEEDS_ATTENTION", "f.com": "GETTING_READY"}
     cur = {
-        "a.com": {"state": "READY", "reason": ""},
-        "b.com": {"state": "READY", "reason": ""},
-        "c.com": {"state": "NEEDS_ATTENTION", "reason": "low-value-content"},
-        "d.com": {"state": "REQUIRES_REVIEW", "reason": ""},
-        "e.com": {"state": "GETTING_READY", "reason": ""},  # iyileşme (re-review) — eskiden yanlış 'bad'
-        "f.com": {"state": "NEEDS_ATTENTION", "reason": ""},  # kötüleşme
+        "a.com": {"state": "READY", "auto_ads": True},
+        "b.com": {"state": "READY", "auto_ads": True},
+        "c.com": {"state": "NEEDS_ATTENTION", "auto_ads": False},
+        "d.com": {"state": "REQUIRES_REVIEW", "auto_ads": False},
+        "e.com": {"state": "GETTING_READY", "auto_ads": True},  # iyileşme (re-review) — eskiden yanlış 'bad'
+        "f.com": {"state": "NEEDS_ATTENTION", "auto_ads": False},  # kötüleşme
     }
     changes = ar.detect_state_changes(prev, cur)
     by = {c["domain"]: c for c in changes}
@@ -116,4 +116,145 @@ def test_detect_state_changes():
 
 def test_detect_state_changes_empty_prev():
     # ilk koşu: önceki durum yok → değişim raporlanmaz (gürültü önle)
-    assert ar.detect_state_changes({}, {"a.com": {"state": "READY", "reason": ""}}) == []
+    assert ar.detect_state_changes({}, {"a.com": {"state": "READY", "auto_ads": True}}) == []
+
+
+def test_fetch_sites_extracts_auto_ads(monkeypatch):
+    # #1326: API v2 Site kaynağı reason döndürmez — tek ayırt-edici sinyal autoAdsEnabled.
+    # proto3 false'u atlar → alan YOKSA auto-ads KAPALI kabul edilmeli.
+    fake = {
+        "sites": [
+            {"domain": "on.com", "state": "GETTING_READY", "autoAdsEnabled": True},
+            {"domain": "off.com", "state": "NEEDS_ATTENTION"},  # autoAdsEnabled alanı YOK → False
+            {"domain": "x.com"},  # state bile yok → STATE_UNSPECIFIED, auto_ads False
+        ]
+    }
+    monkeypatch.setattr(ar, "_adsense_get", lambda token, path: fake)
+    sites = ar.fetch_sites("tok", "accounts/pub-1")
+    assert sites["on.com"] == {"state": "GETTING_READY", "auto_ads": True}
+    assert sites["off.com"] == {"state": "NEEDS_ATTENTION", "auto_ads": False}
+    assert sites["x.com"] == {"state": "STATE_UNSPECIFIED", "auto_ads": False}
+    # eski ölü alanlar sızmamalı
+    assert "reason" not in sites["off.com"]
+
+
+def test_build_report_flags_auto_ads_off():
+    # auto-ads KAPALI yalnız PROBLEM-state'te vurgulanmalı, açık olan gürültü yapmamalı.
+    sites = {
+        "off.com": {"state": "NEEDS_ATTENTION", "auto_ads": False},
+        "on.com": {"state": "GETTING_READY", "auto_ads": True},
+    }
+    report = ar.build_report(sites, audits={}, changes=[])
+    off_line = next(ln for ln in report.splitlines() if ln.startswith("🔴 off.com"))
+    on_line = next(ln for ln in report.splitlines() if ln.startswith("🔴 on.com"))
+    assert "auto-ads KAPALI" in off_line
+    assert "auto-ads KAPALI" not in on_line
+
+
+def test_build_report_no_auto_ads_warning_when_not_problem_state():
+    # Codex-P2 (#329): READY/GETTING_READY sitede auto-ads-off meşru config (manuel/opt-out) →
+    # YANLIŞ-ALARM yapma. Yalnız NEEDS_ATTENTION/REQUIRES_REVIEW'da uyar.
+    sites = {
+        "ready.com": {"state": "READY", "auto_ads": False},  # off ama sorun-değil
+        "getting.com": {"state": "GETTING_READY", "auto_ads": False},  # off ama sorun-değil
+        "flagged.com": {"state": "REQUIRES_REVIEW", "auto_ads": False},  # off + problem → uyar
+    }
+    report = ar.build_report(sites, audits={}, changes=[])
+    lines = {ln.split(" — ")[0].split()[-1]: ln for ln in report.splitlines() if " — durum:" in ln}
+    assert "auto-ads KAPALI" not in lines["ready.com"]
+    assert "auto-ads KAPALI" not in lines["getting.com"]
+    assert "auto-ads KAPALI" in lines["flagged.com"]
+
+
+def test_state_roundtrip_persists_auto_ads(tmp_path, monkeypatch):
+    # Codex-P2 (#329): auto_ads state-dosyasında persist edilmeli (koşumlar-arası karşılaştırma).
+    sf = tmp_path / "state.json"
+    monkeypatch.setattr(ar, "STATE_FILE", str(sf))
+    ar._save_state({"a.com": {"state": "GETTING_READY", "auto_ads": True}})
+    loaded = ar._load_state()
+    assert loaded == {"a.com": {"state": "GETTING_READY", "auto_ads": True}}
+
+
+def test_load_state_legacy_string_format(tmp_path, monkeypatch):
+    # Geriye-uyumluluk: eski {domain: "STATE"} formatı → auto_ads=None (bilinmiyor, düşüş-alarmı tetiklemez).
+    sf = tmp_path / "state.json"
+    sf.write_text('{"a.com": "READY", "b.com": "NEEDS_ATTENTION"}')
+    monkeypatch.setattr(ar, "STATE_FILE", str(sf))
+    loaded = ar._load_state()
+    assert loaded == {"a.com": {"state": "READY", "auto_ads": None}, "b.com": {"state": "NEEDS_ATTENTION", "auto_ads": None}}
+
+
+def test_detect_auto_ads_drops():
+    prev = {
+        "drop.com": {"state": "GETTING_READY", "auto_ads": True},  # True→False = düşüş
+        "stay.com": {"state": "READY", "auto_ads": True},  # değişmez
+        "legacy.com": "GETTING_READY",  # legacy: auto_ads bilinmiyor → alarm YOK
+        "off2on.com": {"state": "READY", "auto_ads": False},  # False→True = düşüş değil
+    }
+    cur = {
+        "drop.com": {"state": "GETTING_READY", "auto_ads": False},
+        "stay.com": {"state": "READY", "auto_ads": True},
+        "legacy.com": {"state": "GETTING_READY", "auto_ads": False},
+        "off2on.com": {"state": "READY", "auto_ads": True},
+        "new.com": {"state": "READY", "auto_ads": False},  # prev'de yok → alarm YOK
+    }
+    assert ar.detect_auto_ads_drops(prev, cur) == ["drop.com"]
+
+
+def test_pending_auto_ads_drops_two_gates():
+    # Codex-P2 (#329): drop-alert İKİ kapıdan geçer — (1) PROBLEM-state gate, (2) regresyon dışlama.
+    prev = {
+        "reg.com": {"state": "GETTING_READY", "auto_ads": True},  # bad→NEEDS_ATTENTION + drop → regresyon-notu kapsar → HAYIR
+        "imp.com": {"state": "NEEDS_ATTENTION", "auto_ads": True},  # good→GETTING_READY + drop → non-problem → HAYIR
+        "ready.com": {"state": "READY", "auto_ads": True},  # READY (değişmez) + drop → non-problem → HAYIR
+        "flag.com": {"state": "NEEDS_ATTENTION", "auto_ads": True},  # problem (değişmez) + drop → ALARM
+    }
+    cur = {
+        "reg.com": {"state": "NEEDS_ATTENTION", "auto_ads": False},
+        "imp.com": {"state": "GETTING_READY", "auto_ads": False},
+        "ready.com": {"state": "READY", "auto_ads": False},
+        "flag.com": {"state": "NEEDS_ATTENTION", "auto_ads": False},
+    }
+    changes = ar.detect_state_changes(prev, cur)
+    # yalnız problem-state + non-regresyon: flag.com
+    assert ar.pending_auto_ads_drops(prev, cur, changes) == ["flag.com"]
+
+
+def test_detect_state_changes_accepts_dict_prev():
+    # Yeni persist formatı: prev artık {domain: {state, auto_ads}} — state-değişimi hâlâ doğru.
+    prev = {"a.com": {"state": "NEEDS_ATTENTION", "auto_ads": False}}
+    cur = {"a.com": {"state": "READY", "auto_ads": True}}
+    changes = ar.detect_state_changes(prev, cur)
+    assert changes == [{"domain": "a.com", "from": "NEEDS_ATTENTION", "to": "READY", "kind": "good"}]
+
+
+def test_main_drop_alert_fail_reverts_auto_ads_and_marks_partial(monkeypatch, capsys):
+    # Codex-P2 (#329): problem-state'te (değişmeyen) site sessizce auto-ads kaybeder; drop-alert
+    # transient-FAIL olursa → yalnız auto_ads prev'e (True) geri alınır (retry) + OUTCOME 'partial'
+    # (cron sessizce 'pass' sanmasın). Canlı main()-yolunu doğrula.
+    monkeypatch.setattr(ar, "_acquire_adsense_token", lambda: ("tok", ""))
+    monkeypatch.setattr(ar.gsc, "_envget", lambda k: "accounts/pub-1" if k == "ADSENSE_ACCOUNT" else "x")
+    monkeypatch.setattr(ar, "fetch_sites", lambda t, a: {"flag.com": {"state": "NEEDS_ATTENTION", "auto_ads": False}})
+    monkeypatch.setattr(ar, "audit_site", lambda d, p: {"ads_txt": True, "snippet": True, "pages": 30, "home_chars": 3000})
+    monkeypatch.setattr(ar, "quality_note", lambda *a, **k: "")
+    # prev: AYNI problem-state + auto_ads AÇIK → state değişmez, yalnız auto_ads düşer
+    monkeypatch.setattr(ar, "_load_state", lambda: {"flag.com": {"state": "NEEDS_ATTENTION", "auto_ads": True}})
+    saved = {}
+    monkeypatch.setattr(ar, "_save_state", lambda s: saved.update(s))
+    written = []
+
+    def fake_write(title, details, dtype="learning"):
+        written.append((title, details))
+        return "boom" if "auto-ads KAPANDI" in title else ""
+
+    monkeypatch.setattr(ar, "_write_discovery", fake_write)
+    ar.main()
+    # state değişmedi (NEEDS_ATTENTION); auto_ads drop-alert FAIL → auto_ads prev'e (True) geri → retry.
+    assert saved["flag.com"] == {"state": "NEEDS_ATTENTION", "auto_ads": True}
+    # drop-mesajı problem-durum bağlamını versin (gate garantisi: state sabit)
+    drop_detail = next(d for t, d in written if "auto-ads KAPANDI" in t)
+    assert "problem-durumda" in drop_detail
+    # alert-yazımı FAIL → OUTCOME 'partial'
+    out = capsys.readouterr().out
+    assert "OUTCOME: partial" in out
+    assert "alert-yazımı FAIL" in out
