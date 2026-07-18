@@ -236,14 +236,12 @@ class ProbeMixin(_DevOpsAgentBase):
 
         # Auto-resolve VPS offline / WAN-down alerts: a successful probe proves both
         # the VPS *and* our own internet are up.
+        # Codex-P2 (PR#340 follow-up): DB-resolve KOŞULSUZ, in-memory varlığına bağlı DEĞİL —
+        # alert DB'ye yazıldıktan sonra healthy-probe'dan önce restart olursa _active_alerts
+        # boşalır; in-memory-bağlı resolve DB satırını sonsuza dek açık bırakırdı (stuck-open).
         for resolved in ("vps:offline", "klipper:wan-down"):
-            stale = self._active_alerts.pop(resolved, None)
-            if stale is not None:
-                # disc#1353a-devam: DB'ye yazılan alert çözülünce resolved-işareti de DB'ye —
-                # aksi halde alerts/history'de sonsuza dek "açık" görünürdü (yaşam-döngüsü tam).
-                stale.resolved = True
-                stale.resolved_at = now
-                asyncio.create_task(self._resolve_alert_db(stale))
+            self._active_alerts.pop(resolved, None)
+            asyncio.create_task(self._resolve_alert_db_by_source(resolved, now))
 
         # Per-container down/up alerts (exact name match against running set)
         running = set(probe.get("names", []))
@@ -262,11 +260,11 @@ class ProbeMixin(_DevOpsAgentBase):
                     )
                     self._active_alerts[source] = alert
                     asyncio.create_task(self._store_alert(alert))  # disc#1353a
-            elif source in self._active_alerts:
-                gone = self._active_alerts.pop(source)
-                gone.resolved = True
-                gone.resolved_at = now
-                asyncio.create_task(self._resolve_alert_db(gone))  # disc#1353a-devam
+            else:
+                # Codex-P2 (PR#340 follow-up): koşulsuz kaynak-bazlı DB-resolve (idempotent no-op
+                # açık-satır-yoksa) — restart-orphan stuck-open sınıfını kapatır.
+                self._active_alerts.pop(source, None)
+                asyncio.create_task(self._resolve_alert_db_by_source(source, now))
 
     @property
     def latest_vps(self) -> dict[str, Any]:
