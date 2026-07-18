@@ -293,6 +293,26 @@ async def test_playbooks_no_destructive_steps():
             assert "rm -rf" not in cmd, f"{key}: rm -rf yasak"
 
 
+def test_cpufreq_set_whitelisted():
+    """disc#1354: cpufreq-set shell-whitelist'te yoktu -> temperature_critical
+    playbook'u 07-13'ten beri her seferinde 'not in whitelist' ile fail ediyordu."""
+    from app.core.config import get_settings
+
+    assert "cpufreq-set" in get_settings().shell_whitelist
+
+
+def test_temperature_playbook_uses_sudo():
+    """disc#1354 devami: whitelist-ekleme TEK-BASINA yetmez — scaling_governor
+    root:root 0644 (klipperos servis-kullanicisi non-root yazamaz) + komut '|| true'
+    ile bitiyor (exit_code her zaman 0) -> sudo'suz whitelist-fix fiilen sessiz
+    no-op'a donusup remediation_log.success'u YALANLARDI (fake-success)."""
+    from app.core.devops_agent import PLAYBOOKS
+
+    cmd = PLAYBOOKS["temperature_critical"][0]["cmd"]
+    assert cmd.startswith("sudo cpufreq-set")
+    assert "sudo tee" in cmd
+
+
 # ── Store Metrics Tests ────────────────────────
 
 

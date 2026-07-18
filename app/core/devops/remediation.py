@@ -154,7 +154,10 @@ class RemediationMixin(_DevOpsAgentBase):
         if not _VALID_GOVERNOR.fullmatch(gov):  # defense-in-depth (saklarken de doğrulandı)
             return False, "skipped: invalid-governor"
         q = shlex.quote(gov)
-        cmd = f"cpufreq-set -g {q} 2>/dev/null || echo {q} | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true"
+        # disc#1354: scaling_governor root:root 0644, klipperos servis-kullanıcısı sudo'suz
+        # yazamaz — sudo NOPASSWD (ShellExecutor'da whitelist-muaf) olmadan bu komut fiilen
+        # no-op'tu (aşağıdaki re-read-doğrulama bunu YAKALIYORDU ama asıl rollback hiç olmuyordu).
+        cmd = f"sudo cpufreq-set -g {q} 2>/dev/null || echo {q} | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true"
         # Codex P2: '|| true' + olası whitelist-eksikliği başarısızlığı maskeler → komut
         # exit_code'una GÜVENME. Rollback'i governor'ı RE-READ ederek DOĞRULA; gerçekten
         # geri dönmediyse rolled_back=False (gerçekleşmeyen rollback'i 'oldu' RAPORLAMA).

@@ -178,6 +178,7 @@ class Settings(BaseSettings):
         "mv",
         "rm",
         "mkdir",
+        "cpufreq-set",  # disc#1354: temperature_critical playbook — dar/geri-alınabilir (governor-only)
     ]
     max_file_size_mb: int = 10
     max_terminal_sessions: int = 5

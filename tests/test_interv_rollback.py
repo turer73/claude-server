@@ -122,6 +122,27 @@ async def test_rollback_not_reported_when_governor_unchanged():
     assert agent._last_rollback.get("temperature") is None  # cooldown başlamadı
 
 
+async def test_rollback_command_uses_sudo():
+    # disc#1354: rollback'in kendi cpufreq-set/tee komutu da sudo'suzdu -> aynı
+    # fake-no-op riski (root:root 0644 scaling_governor, klipperos non-root).
+    agent = DevOpsAgent(db=None, interval=60)
+    agent._rollback_state["temperature"] = {"kind": "governor", "state": "schedutil", "command": "x"}
+    captured: list[str] = []
+
+    async def mock_exec(cmd, timeout=30):
+        captured.append(cmd)
+        if cmd.strip().startswith("cat "):
+            return {"stdout": "schedutil\n", "exit_code": 0}
+        return {"stdout": "ok", "exit_code": 0}
+
+    with patch.object(agent._executor, "execute", new_callable=AsyncMock, side_effect=mock_exec):
+        await agent._attempt_rollback("temperature")
+
+    write_cmd = next(c for c in captured if not c.strip().startswith("cat "))
+    assert write_cmd.startswith("sudo cpufreq-set")
+    assert "sudo tee" in write_cmd
+
+
 async def test_rollback_false_on_executor_exception():
     # cpufreq-set whitelist'te değilse executor RAISE -> rolled_back=False (Codex P2)
     agent = DevOpsAgent(db=None, interval=60)
