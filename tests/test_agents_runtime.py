@@ -644,6 +644,52 @@ def test_devops_card_includes_diagnosis_events(tmp_path, monkeypatch):
     assert diag["kind"] == "event"
 
 
+def test_ts_sort_key_normalizes_mixed_formats():
+    # Codex-P2 (PR#333): remediation ISO+tz 'T'-ayıraç ('2026-07-18T01:23:45+00:00') vs
+    # events SQLite boşluk-ayıraç ('2026-07-18 23:00:00') — ham string-sort'ta 'T'(0x54) >
+    # ' '(0x20) olduğundan saat-01'deki kayıt saat-23'tekinin ÖNÜNE geçer (kanıtlandı).
+    from app.api.agents import _ts_sort_key
+
+    early_remediation = "2026-07-18T01:23:45+00:00"
+    late_event = "2026-07-18 23:00:00"
+    assert _ts_sort_key(late_event) > _ts_sort_key(early_remediation)  # gerçek kronoloji
+    assert _ts_sort_key(None) < _ts_sort_key(early_remediation)  # None asla en-üste çıkmaz
+    assert _ts_sort_key("çöp-veri") < _ts_sort_key(early_remediation)  # parse-fail de aynı
+
+
+def test_devops_card_orders_mixed_timestamp_formats_chronologically(tmp_path, monkeypatch):
+    # Regresyon: aynı-gün içinde saat-01'deki remediation (ISO-T format) ile saat-23'teki
+    # diagnosis-event (SQLite-boşluk format) ham string-sort'ta YANLIŞ sıralanıyordu —
+    # eski remediation, yeni diagnosis'in önüne geçip [:8] kesiminde onu dışarı itebilirdi.
+    import sqlite3
+
+    from app.api import agents
+
+    db = tmp_path / "srv.db"
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE events (id INTEGER PRIMARY KEY, timestamp TEXT, type TEXT, source TEXT, severity TEXT, title TEXT, detail TEXT)"
+    )
+    con.execute(
+        "INSERT INTO events (timestamp,type,source,severity,title,detail) VALUES "
+        "('2026-07-18 23:00:00','alert','diagnosis:memory','warning','🔍 Teşhis (memory): gec-saat','')"
+    )
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(db))
+
+    class _EarlyRemediation:
+        timestamp = "2026-07-18T01:23:45+00:00"
+        alert_source = "service:x"
+        action = "restart"
+        success = True
+
+    card = _devops_card(_FakeDevOps([_EarlyRemediation()]))
+    titles = [f["title"] for f in card["findings"]]
+    # Kronolojik olarak saat-23 diagnosis daha yeni → ilk sırada olmalı
+    assert titles[0].startswith("🔍 Teşhis (memory)")
+
+
 class _FakeCRA:
     def status(self):
         return {
