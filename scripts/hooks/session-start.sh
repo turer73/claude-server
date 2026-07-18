@@ -67,6 +67,47 @@ fi
     fi
   fi
 
+  # ─── 📋 Son Ajan Bulguları / Yapılacaklar (Turgut 2026-07-18): "tüm ajanların
+  # bulguları... yeni bir sistem kurulup tüm bulgular listelenip oraya kaydedilmeli,
+  # her oturum başlangıcında öncelikli bakılmalı". Ajanlar (ad-advisor/adsense-
+  # readiness/agent-health-report/data-analyst/vb.) bulgularını zaten discoveries'e
+  # (type=learning) yazıyordu — ama SessionStart bunları hiç LİSTELEMİYORDU, yalnız
+  # "N yeni discovery" SAYISI görünüyordu (yukarıdaki 🆕 satırı). agent-health-report.py
+  # (ajanları-kontrol-eden-ajan) zaten stale/kronik-fail ajanları tespit edip haftalık
+  # raporunu buraya yazıyor — eksik olan GÖRÜNÜRLÜKTÜ, yeni bir tespit-mekanizması değil.
+  #
+  # RAPOR-AİLESİ DEDUP (awk): günlük "Sistem Durumu"/"Tekrar Eden Pattern'ler" ikilisi
+  # ham-kronolojik sıralamada 8-slotu ~4 günde doldurup haftalık raporları (Ajan Sağlığı
+  # gibi) tamamen dışarı itiyordu (canlı-testte yakalandı). Başlıktaki tarih/hafta-eki
+  # (' — 2026-07-18' / ' — 2026-W29') soyulup 'aile' çıkarılır; her aileden yalnız EN
+  # GÜNCEL örnek gösterilir → günlük+haftalık raporlar birbirini boğmadan yan yana durur.
+  # Proje-relevance önce (bugs deseniyle aynı), aile-içi en-yeni. read_count bump edilir
+  # (analitik/ileride kullanım için) ama SIRALAMAYI YÖNLENDİRMEZ (least-read-first, eski-
+  # hiç-gösterilmemiş bir kaydı bugünün raporunun önüne geçirirdi — "ne oldu ŞİMDİ" amacının
+  # tersi; feedback-memories'ten BİLEREK farklı).
+  LEARN_TOTAL=$(sqlite3 "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='learning' AND status='active';" 2>/dev/null)
+  if [ "${LEARN_TOTAL:-0}" -gt 0 ]; then
+    if [ -n "$PROJECT_PREFIX" ]; then
+      ORDERBY="CASE WHEN project LIKE '${PROJECT_PREFIX}%' THEN 0 ELSE 1 END, created_at DESC"
+    else
+      ORDERBY="created_at DESC"
+    fi
+    LEARN_IDS=$(sqlite3 "$DB" "SELECT id || char(9) || title FROM discoveries WHERE type='learning' AND status='active' ORDER BY $ORDERBY;" 2>/dev/null |
+      awk -F'\t' '{
+        fam = $2
+        sub(/ — [0-9]{4}-(W[0-9]{2}|[0-9]{2}-[0-9]{2})$/, "", fam)
+        if (!(fam in seen)) { seen[fam] = 1; print $1; n++ }
+        if (n >= 8) exit
+      }' | tr '\n' ',' | sed 's/,$//')
+    if [ -n "$LEARN_IDS" ]; then
+      N_SHOWN=$(echo "$LEARN_IDS" | tr ',' '\n' | wc -l)
+      echo "📋 Son Ajan Bulguları — ne oldu/ne yapılacak ($LEARN_TOTAL aktif, $N_SHOWN rapor-ailesi — /memory search ile tümü):"
+      sqlite3 "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title || ' — ' || substr(REPLACE(COALESCE(details,''),char(10),' '),1,90) FROM discoveries WHERE id IN ($LEARN_IDS) ORDER BY $ORDERBY;" 2>/dev/null
+      sqlite3 "$DB" "UPDATE discoveries SET read_count=COALESCE(read_count,0)+1, last_read_at=datetime('now') WHERE id IN ($LEARN_IDS);" 2>/dev/null
+      echo ""
+    fi
+  fi
+
   # Stats
   echo "Durum:"
   sqlite3 "$DB" "SELECT '  Hafiza: ' || COUNT(*) || ' kayit' FROM memories WHERE active=1;" 2>/dev/null
