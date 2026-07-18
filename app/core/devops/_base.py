@@ -51,6 +51,7 @@ class _DevOpsAgentBase:
     _diagnosed: set[str]
     _vps_probe_fails: int
     _vps_fail_threshold: int
+    _is_remediation_leader: bool
 
     # ── Cross-mixin method contracts (real impls live in sibling mixins) ─
     async def _attempt_rollback(self, source: str) -> tuple[bool, str]:

@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from io import TextIOWrapper
 from pathlib import Path
 
 import uvicorn
@@ -255,6 +256,34 @@ async def _ensure_admin_key(db) -> str | None:
     return None
 
 
+def _acquire_remediation_leader_lock(
+    lock_path: str = "/opt/linux-ai-server/data/hook-state/devops-remediation-leader.lock",
+) -> TextIOWrapper | None:
+    """disc#1352 P0-fix: uvicorn --workers N → her worker kendi DevOpsAgent'ını başlatır, hepsi
+    aynı alarmı bağımsız görüp bağımsız remediation tetikler (kanıt: 07-17 çift docker-restart,
+    remediation-id 78-83 aynı-saniye çiftler). Non-blocking flock (LOCK_EX|LOCK_NB): ilk-worker
+    kilidi alır ve PROCESS-ÖMRÜ boyunca tutar (dosya-tanıtıcı kasıtlı açık bırakılır — çağıran
+    onu app.state'te canlı tutmalı, aksi halde GC→close→unlock olur); diğer worker'lar hemen
+    fail olup non-leader kalır (OS lock zaten tutuluyorsa bekleMEZ, anında döner).
+
+    Mimari-nötr STOPGAP (topic-4 klipper+surer ortak-tasarımı: ayrı-systemd-unit vs kalıcı-
+    leader-lock — nihai karar orada). Bu yalnız aktif-zararı (çift-remediation) durdurur;
+    monitoring/alert/teşhis TÜM worker'larda ayrı-ayrı çalışmaya devam eder (zararsız/dayanıklı)."""
+    import fcntl
+    import os
+
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    fh = open(lock_path, "w")  # noqa: SIM115 — kasıtlı açık kalır, kilit process-ömrü boyunca tutulur
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return None
+    fh.write(str(os.getpid()))
+    fh.flush()
+    return fh
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     import os
@@ -274,6 +303,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     devops = DevOpsAgent(db=db, interval=30)
     app.state.devops_agent = devops
+    # disc#1352 P0-fix: çok-worker'da yalnız 1 worker gerçek-remediation yürütsün (bkz
+    # _acquire_remediation_leader_lock docstring). Kilit dosya-tanıtıcısını app.state'te tut —
+    # yerel değişken GC'lenirse dosya kapanır, flock serbest kalır (kilit sessizce kaybolur).
+    app.state.devops_leader_lock_fh = _acquire_remediation_leader_lock()
+    devops._is_remediation_leader = app.state.devops_leader_lock_fh is not None
+    if not devops._is_remediation_leader:
+        logger.info("devops-agent: bu worker remediation-lider DEĞİL (başka worker kilidi tutuyor, disc#1352)")
     devops.start()
 
     # Start Consciousness Stream daemon (Functionalism Faz 1)

@@ -1037,6 +1037,44 @@ async def test_remediate_auto_mode_executes(client, app):
     assert all(r["executed"] == 1 and r["mode"] == "auto" for r in rows)
 
 
+async def test_remediate_auto_mode_non_leader_does_not_execute(client, app):
+    """disc#1352 P0-fix: auto-mode + non-leader-worker → komut YÜRÜTÜLMEZ, monitoring/log
+    yine de devam eder (executed=0, skip-mesajı 'multi-worker gate'). Çok-worker'da çift
+    remediation'ı (07-17 kanıtlı çift docker-restart) önler."""
+    from app.core.devops_agent import DevOpsAgent
+
+    db = app.state.db
+    agent = DevOpsAgent(db=db, interval=60)
+    agent._remediation_mode = "auto"
+    agent._is_remediation_leader = False  # bu worker kilidi tutmuyor (başka worker lider)
+    agent._send_webhook = _noop_webhook
+    calls = []
+
+    async def fake_exec(cmd, timeout=30):
+        calls.append(cmd)
+        return {"stdout": "ok", "exit_code": 0}
+
+    agent._executor.execute = fake_exec
+    await agent._remediate(_crit_alert("disk"))
+
+    assert calls == []  # HİÇBİR komut çalışmadı (leader değil)
+    rows = await db.fetch_all("SELECT executed, mode, result FROM remediation_log WHERE alert_source='disk'")
+    assert len(rows) >= 1
+    assert all(r["executed"] == 0 and r["mode"] == "auto" for r in rows)
+    assert any("multi-worker gate" in (r["result"] or "") for r in rows)
+
+
+async def test_remediate_auto_mode_leader_default_true_backward_compat(client, app):
+    """Geriye-uyum: _is_remediation_leader varsayılan True — çok-worker-farkında OLMAYAN
+    tek-process/test bağlamında davranış DEĞİŞMEZ (mevcut test_remediate_auto_mode_executes
+    ile aynı sonuç, __init__'in default'unu doğrular)."""
+    from app.core.devops_agent import DevOpsAgent
+
+    db = app.state.db
+    agent = DevOpsAgent(db=db, interval=60)
+    assert agent._is_remediation_leader is True  # __init__ default
+
+
 async def test_remediate_service_notify_mode_does_not_execute(client, app):
     """Codex P1: servis/container remediation da gate'li — notify'da systemctl YOK."""
     from app.core.devops_agent import DevOpsAgent

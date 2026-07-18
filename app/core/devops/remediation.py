@@ -53,11 +53,16 @@ class RemediationMixin(_DevOpsAgentBase):
         """Tek-nokta remediation adımı — TÜM yollar (playbook + servis + container)
         bunu kullanır (Codex P1: gate her yerde). mode-gate: 'auto' değilse YÜRÜTME
         YOK, sadece niyet kaydedilir (mevcut alert-notify escalate eder). in-memory
-        log + kalıcı ledger + alert.remediation."""
+        log + kalıcı ledger + alert.remediation.
+
+        disc#1352 P0-fix: 'auto' YETMEZ — bu worker remediation-lider de OLMALI (çok-worker
+        stopgap, bkz DevOpsAgent.__init__). Lider-olmayan worker'da monitoring/alert/teşhis
+        AYNEN devam eder, yalnız gerçek-yürütme atlanır (aksi halde her worker aynı alarmı
+        bağımsız yürütür — kanıt: 07-17 çift docker-restart)."""
         mode = self._remediation_mode
         executed = False
         success: bool | None = None
-        if mode == "auto":
+        if mode == "auto" and self._is_remediation_leader:
             # OPT-IN: gerçekten yürüt. Playbook'lar güvenlileştirildi (yıkıcı/geri-
             # alınamaz adımlar — prune --volumes / backup-silme — çıkarıldı); kalanlar
             # güvenli-reclaim + restart. FAZ5-S2: aksiyon sonrası _verify_and_escalate
@@ -72,6 +77,8 @@ class RemediationMixin(_DevOpsAgentBase):
             except Exception as e:
                 out = str(e)[:500]
                 success = False
+        elif mode == "auto":
+            out = "skipped: multi-worker gate (bu worker remediation-lider değil, disc#1352)"
         else:
             out = f"skipped: remediation_mode={mode} (otonom yürütme kapalı)"
         self._remediation_log.append(
