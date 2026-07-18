@@ -97,12 +97,14 @@ async def vps_metrics_history(
 
 
 @router.get("/remediation/log")
-async def remediation_log(request: Request, _: None = Depends(require_auth)) -> dict[str, Any]:
-    """Get remediation action history."""
+async def remediation_log(request: Request, limit: int = 50, _: None = Depends(require_auth)) -> dict[str, Any]:
+    """Get remediation action history — kalıcı DB-ledger'dan (disc#1353c: in-memory deque
+    her restart'ta sıfırlanıyordu, gerçek geçmiş remediation_log tablosunda duruyordu)."""
     agent = _get_agent(request)
     if not agent:
         return {"remediations": []}
-    return {"remediations": agent.remediation_history}
+    rows, source = await agent.get_remediation_log(limit=max(1, min(limit, 500)))
+    return {"remediations": rows, "source": source}
 
 
 @router.get("/playbooks")

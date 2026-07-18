@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import shlex
 import time
 from datetime import UTC, datetime
@@ -19,6 +20,8 @@ from app.core.devops.models import (
 )
 from app.core.events import emit_event
 from app.core.provenance import provenance_json
+
+log = logging.getLogger("devops_agent")
 
 
 class RemediationMixin(_DevOpsAgentBase):
@@ -211,8 +214,10 @@ class RemediationMixin(_DevOpsAgentBase):
                     provenance,
                 ),
             )
-        except Exception:
-            pass
+        except Exception as e:
+            # disc#1353b: 07-18 DB-lock penceresinde remediation-kayıtları sessizce kayboldu
+            # (rem_today=0, n8n-down'a rağmen) — best-effort kalır ama artık GÖRÜNÜR.
+            log.warning("remediation_log insert failed (%s): %s", source, type(e).__name__)
 
     def _executable_playbook(self, source: str) -> list[dict[str, Any]] | None:
         """source -> ÇALIŞTIRILABİLİR playbook adımları (template doldurulmuş).
@@ -405,6 +410,19 @@ class RemediationMixin(_DevOpsAgentBase):
             }
             for r in reversed(self._remediation_log)
         ]
+
+    async def get_remediation_log(self, limit: int = 50) -> tuple[list[dict[str, Any]], str]:
+        """Kalıcı remediation-ledger okuma (disc#1353c). /api/v1/devops/remediation/log önceden
+        YALNIZ in-memory deque okuyordu — her servis-restart'ında geçmiş 'boş' görünüyordu
+        (kalıcı remediation_log tablosu varken; 83-satırlık gerçek-tarih görünmezdi). DB-önce;
+        okunamazsa in-memory'ye düş ve kaynağı DÜRÜSTÇE etiketle (sessiz-maskeleme yok)."""
+        if self._db:
+            try:
+                rows = await self._db.fetch_all("SELECT * FROM remediation_log ORDER BY id DESC LIMIT ?", (limit,))
+                return [dict(r) for r in rows], "db"
+            except Exception as e:
+                log.warning("remediation_log read failed: %s", type(e).__name__)
+        return self.remediation_history[:limit], "memory"
 
     @property
     def playbooks(self) -> dict[str, Any]:

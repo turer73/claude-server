@@ -51,9 +51,16 @@ class ProbeMixin(_DevOpsAgentBase):
                             timestamp=now,
                         )
                         self._active_alerts[source] = alert
+                        # disc#1353a: ilk-an kalıcılık+bildirim — service alert'leri alerts-tablosuna/
+                        # events-köprüsüne HİÇ yazılmıyordu; ilk "X down" anı ne alerts/history'de ne
+                        # Telegram-hattında görünüyordu (yalnız 30dk-sonraki escalation). Metrik-yolu
+                        # (metrics.py _detect:132) ile simetrik.
+                        asyncio.create_task(self._store_alert(alert))
                         await self._remediate_service(svc, alert)
-            except Exception:
-                pass
+            except Exception as e:
+                # disc#1353b: sessiz-yutma bug-maskeler (07-18 DB-lock 6-saat-körlük dersi).
+                # Yalnız tip-adı loglanır (PR#339 Codex-dersi: exception-str komut-metni taşıyabilir).
+                log.warning("service-probe %s failed: %s", svc, type(e).__name__)
 
         # Docker containers
         for container in self._critical_containers:
@@ -88,9 +95,12 @@ class ProbeMixin(_DevOpsAgentBase):
                             timestamp=now,
                         )
                         self._active_alerts[source] = alert
+                        # disc#1353a: service-yoluyla simetrik ilk-an kalıcılık.
+                        asyncio.create_task(self._store_alert(alert))
                         await self._remediate_container(container, alert)
-            except Exception:
-                pass
+            except Exception as e:
+                # disc#1353b: sessiz-yutma yerine tip-adı logu (payload'sız).
+                log.warning("container-probe %s failed: %s", container, type(e).__name__)
 
     async def _vps_ssh_probe(self) -> dict[str, Any] | None:
         """Run the fixed VPS metric probe over SSH via an isolated subprocess.
@@ -193,7 +203,7 @@ class ProbeMixin(_DevOpsAgentBase):
             if not await self._local_internet_up():
                 source = "klipper:wan-down"
                 if source not in self._active_alerts:
-                    self._active_alerts[source] = Alert(
+                    alert = Alert(
                         id=f"{source}-{self._check_count}",
                         severity="critical",
                         source=source,
@@ -202,10 +212,12 @@ class ProbeMixin(_DevOpsAgentBase):
                         threshold=1,
                         timestamp=now,
                     )
+                    self._active_alerts[source] = alert
+                    asyncio.create_task(self._store_alert(alert))  # disc#1353a
                 return
             source = "vps:offline"
             if source not in self._active_alerts:
-                self._active_alerts[source] = Alert(
+                alert = Alert(
                     id=f"{source}-{self._check_count}",
                     severity="critical",
                     source=source,
@@ -214,6 +226,8 @@ class ProbeMixin(_DevOpsAgentBase):
                     threshold=1,
                     timestamp=now,
                 )
+                self._active_alerts[source] = alert
+                asyncio.create_task(self._store_alert(alert))  # disc#1353a
             return
 
         self._vps_probe_fails = 0  # başarılı probe → ardışık-fail sayacı sıfır
@@ -223,7 +237,13 @@ class ProbeMixin(_DevOpsAgentBase):
         # Auto-resolve VPS offline / WAN-down alerts: a successful probe proves both
         # the VPS *and* our own internet are up.
         for resolved in ("vps:offline", "klipper:wan-down"):
-            self._active_alerts.pop(resolved, None)
+            stale = self._active_alerts.pop(resolved, None)
+            if stale is not None:
+                # disc#1353a-devam: DB'ye yazılan alert çözülünce resolved-işareti de DB'ye —
+                # aksi halde alerts/history'de sonsuza dek "açık" görünürdü (yaşam-döngüsü tam).
+                stale.resolved = True
+                stale.resolved_at = now
+                asyncio.create_task(self._resolve_alert_db(stale))
 
         # Per-container down/up alerts (exact name match against running set)
         running = set(probe.get("names", []))
@@ -231,7 +251,7 @@ class ProbeMixin(_DevOpsAgentBase):
             source = f"vps:{container}"
             if container not in running:
                 if source not in self._active_alerts:
-                    self._active_alerts[source] = Alert(
+                    alert = Alert(
                         id=f"{source}-{self._check_count}",
                         severity="warning",
                         source=source,
@@ -240,8 +260,13 @@ class ProbeMixin(_DevOpsAgentBase):
                         threshold=1,
                         timestamp=now,
                     )
+                    self._active_alerts[source] = alert
+                    asyncio.create_task(self._store_alert(alert))  # disc#1353a
             elif source in self._active_alerts:
-                del self._active_alerts[source]
+                gone = self._active_alerts.pop(source)
+                gone.resolved = True
+                gone.resolved_at = now
+                asyncio.create_task(self._resolve_alert_db(gone))  # disc#1353a-devam
 
     @property
     def latest_vps(self) -> dict[str, Any]:
