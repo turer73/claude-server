@@ -238,6 +238,17 @@ def _anthropic_generate(system: str, user: str, model: str = ANTHROPIC_MODEL) ->
     return str(data.get("result", "")).strip()
 
 
+def _hi_generate(prompt: str) -> str:
+    """TR-yüksek-doğruluk yolu (topic-5 K2, 2026-07-19): önce DeepSeek Layer-2 (research-hi
+    rotası, V4-Flash — TR-kalitesi gemma3-üstü, kuruş-maliyet); LLMCore fail-silent boş
+    dönerse (key yok / API-hata / ağ) gemma3 lokal-fallback. gemma3-emekliliği bu fallback'in
+    kullanım-izine bağlı (llm_calls research-hi ok-oranı 2-hafta izlenir, sonra klipper kaldırır)."""
+    from app.core.agents.llmcore import llm_core
+
+    out = llm_core.generate_sync(prompt, task="research-hi", timeout=60)
+    return out or _ollama_generate(prompt, model=LLM_MODEL_HI)
+
+
 # ── Araştırma-ajanı sentez-modeli (FAZ1) ──
 SYNTH_SYS = (
     "Sen kaynak-temelli araştırma sentez asistanısın. Verilen kaynaklara DAYANARAK, "
@@ -252,7 +263,7 @@ def _synth_llm(model: str) -> Callable[[str], str]:
     ollama → doğrudan gemma3:12b-it-qat. Plan adımı ayrı (hep hızlı qwen); bu YALNIZ sentez içindir."""
 
     def aya(prompt: str) -> str:
-        return _ollama_generate(prompt, model=LLM_MODEL_HI)
+        return _hi_generate(prompt)
 
     if model == "ollama":
         return aya
@@ -469,7 +480,7 @@ def research_ask(req: AskRequest):
         # structured format'i prompt icinden tutamiyor. Citation isteyen
         # kullanici /research-claude'a yonlendirilsin.
         prompt = f"{SYS_PROMPT}\n\n# Kaynaklar:\n{context}\n\n# Soru: {req.q}\n\n# Cevap:"
-        answer = _ollama_generate(prompt, model=LLM_MODEL_HI)
+        answer = _hi_generate(prompt)  # topic-5 K2: DeepSeek-öncelik, gemma3-fallback
     else:
         raise HTTPException(400, f"engine must be local|local-hi|claude|auto, got: {engine}")
     duration_synth = int((time.time() - t1) * 1000)
