@@ -760,6 +760,11 @@ async def runtime_agents(request: Request) -> dict:
     la = getattr(request.app.state, "learning_loop", None)
     if la is not None:
         agents.append(_agent_bus_card("learning", la))
+    # Turgut 2026-07-18 (sistem-denetim direktifi): consciousness-stream registry'de HİÇ yoktu —
+    # sistemin en-aktif sürekli-ajanı (5dk monolog, ~290 çağrı/gün) Ajanlar sekmesinde görünmüyordu.
+    cs = getattr(request.app.state, "consciousness_stream", None)
+    if cs is not None:
+        agents.append(await asyncio.to_thread(_consciousness_card, cs))
     for spec in _AGENT_MANIFEST:
         if spec["type"] == "ondemand" and spec.get("src") == "research":
             rdb = await asyncio.to_thread(_research_db)
@@ -780,6 +785,284 @@ async def bus_status(request: Request) -> dict:
     return {
         "bus": bus.get_status(),
         "recent_events": bus.recent_events(limit=20),
+    }
+
+
+# ── Sistem Denetimi (Turgut 2026-07-18: "tüm ajanlar ve sistemler izlensin") ──────────
+# Tasarım-ilkeleri (topic-3/4 ile tutarlı): (1) read-model — panel kendi veri tutmaz, kaynaklardan
+# türetir; (2) her kayıt "son-görülme + durum" BİRLİKTE döner ki "0 bulgu" ile "ölü" ayrışsın
+# (2026-07-18 kök-sorunu: dashboard "bulgu yok" gösterirken bunun sağlıklı-sessizlik mi çalışmama
+# mı olduğu ayırt edilemiyordu); (3) cömert-eşik/FP-önleme — uzak-cihazlar için kırmızı YOK
+# (sessizlik normal-sınıf), kırmızı yalnız hard-fail (daemon inactive, sistem erişilemez).
+
+# systemd birim-adları canlı-doğrulandı 2026-07-18 (systemctl list-units).
+_AUDIT_UNITS = [
+    ("linux-ai-server.service", "Ana FastAPI servisi"),
+    ("ollama.service", "Ollama (lokal LLM, Vulkan)"),
+    ("docker.service", "Docker engine"),
+    ("klipper-note-poller.service", "Not-kanalı poller daemon"),
+    ("klipper-telegram-poller.service", "Telegram long-poll worker"),
+]
+
+# automation/crontab'da klipper-cron-wrap'ten GEÇMEYEN doğrudan girdiler (2026-07-18 canlı-crontab):
+# cron_outcomes'a hiç düşmezler → görünürlük-boşluğu. Panelde "wrapper-dışı" olarak İŞARETLENİR
+# (gizlemek yerine boşluğu göster — denetim-panelinin amacı tam da bu).
+_UNWRAPPED_CRON = [
+    "health-check (*/10dk)",
+    "alert-check (*/5dk)",
+    "memory-archive-stale (günlük 02:30)",
+    "memory-triage.sh (günlük 03:15)",
+    "memory-triage-llm.py (günlük 03:30)",
+    "observation-week-end-reminder (tek-seferlik)",
+]
+
+
+def _iso_utc(ts: str | None) -> str | None:
+    """SQLite `datetime('now')` boşluk-ayıraçlı/tz'siz üretir — JS `new Date()` bunu tarayıcıya
+    göre LOKAL yorumlayabilir (3 saat kayma). UTC-işaretli ISO'ya çevir; parse-fail → olduğu-gibi."""
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(ts)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.isoformat()
+    except ValueError:
+        return ts
+
+
+def _consciousness_card(cs: Any) -> dict[str, Any]:
+    """Consciousness-stream kartı. DİKKAT: stream worker-lock'la TEK worker'da koşar — status.running
+    bu worker'da False olabilir (istek öbür worker'a düştüyse). thoughts tablosu worker-bağımsız
+    gerçek: son-düşünce tazeyse (≤20dk; monolog-döngüsü 5dk) stream FİİLEN canlı sayılır."""
+    st = cs.status
+    last_thought_ts: str | None = None
+    thoughts_today = 0
+    try:
+        con = get_conn(server_db_path(), readonly=True)
+        try:
+            row = con.execute("SELECT timestamp FROM thoughts ORDER BY id DESC LIMIT 1").fetchone()
+            last_thought_ts = row["timestamp"] if row else None
+            trow = con.execute("SELECT COUNT(*) AS n FROM thoughts WHERE timestamp >= datetime('now','-24 hours')").fetchone()
+            thoughts_today = trow["n"] if trow else 0
+        finally:
+            con.close()
+    except Exception:
+        pass
+    effective_running = bool(st.get("running"))
+    if not effective_running and last_thought_ts:
+        age = datetime.now(UTC) - _ts_sort_key(last_thought_ts)
+        effective_running = age.total_seconds() < 1200  # 20dk (monolog 5dk × 4 cömert-pay)
+    lt = st.get("last_thought") or {}
+    focus = lt.get("focus") if isinstance(lt, dict) else None
+    return {
+        "key": "consciousness",
+        "name": "Bilinç Akışı",
+        "role": "Sistem-algısı (15sn) · LLM iç-monolog (5dk)",
+        "type": "continuous",
+        "schedule": f"{st.get('interval', '?')}sn algı döngüsü",
+        "running": effective_running,
+        "models": ["qwen2.5:3b (monolog)"],
+        "last_run": _iso_utc(last_thought_ts),
+        "interval_s": st.get("interval"),
+        "current_task": (f"Odak: {focus}" if focus else f"Duygu: {st.get('emotion', 'unknown')}"),
+        "stats": {"Düşünce (24sa)": thoughts_today, "Toplam": st.get("thought_count", 0)},
+        "success_rate": None,
+        "findings": [],
+        "triggerable": False,
+    }
+
+
+def _systemd_snapshot() -> list[dict[str, Any]]:
+    """systemctl is-active ile daemon-durumları (tek subprocess, satır-başına-durum). Fail-soft:
+    komut patlarsa 'error' — SESSİZ-pass YOK (fail-safe-maskeler dersi)."""
+    units = [u for u, _ in _AUDIT_UNITS]
+    try:
+        out = subprocess.run(["systemctl", "is-active", *units], capture_output=True, text=True, timeout=10)
+        states = out.stdout.strip().splitlines()
+    except Exception as e:
+        return [{"unit": u, "desc": d, "state": "error", "detail": str(e)[:120]} for u, d in _AUDIT_UNITS]
+    result = []
+    for (unit, desc), state in zip(_AUDIT_UNITS, states + ["unknown"] * (len(units) - len(states))):
+        result.append({"unit": unit, "desc": desc, "state": state.strip()})
+    return result
+
+
+def _cron_jobs_sweep(limit_rows: int = 600) -> list[dict[str, Any]]:
+    """cron_outcomes'tan TÜM job'ların son-koşum + son-sonuç + son-20-oran özeti (job-bazında).
+    Manifest'ten bağımsız — wrapper'dan geçen HER cron otomatik kapsanır (kapsam-dışı kalma yok)."""
+    try:
+        con = get_conn(server_db_path(), readonly=True)
+        try:
+            rows = con.execute("SELECT job, result, timestamp FROM cron_outcomes ORDER BY id DESC LIMIT ?", (limit_rows,)).fetchall()
+        finally:
+            con.close()
+    except Exception:
+        return []
+    jobs: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        j = jobs.setdefault(r["job"], {"job": r["job"], "last_run": None, "last_result": None, "n": 0, "ok": 0, "_ts": None})
+        # Son-koşum TIMESTAMP'e göre seçilir, id-sırasına göre DEĞİL — id≈zaman varsayımı üretimde
+        # tutar ama sözleşme değil (test bunu yakaladı: farklı-sırayla insert edilen satırlar).
+        if j["_ts"] is None or _ts_sort_key(r["timestamp"]) > _ts_sort_key(j["_ts"]):
+            j["_ts"] = r["timestamp"]
+            j["last_run"] = _iso_utc(r["timestamp"])
+            j["last_result"] = r["result"]
+        if j["n"] < 20:
+            j["n"] += 1
+            # 'partial' job'a göre başarı VEYA gerçek-kısmi-fail olabilir (bkz _cron_success) —
+            # sweep jenerik olduğundan ayrı sayılır, orana katılmaz; panel son-sonucu ham gösterir.
+            if r["result"] == "pass":
+                j["ok"] += 1
+    out = []
+    for j in jobs.values():
+        j.pop("_ts", None)
+        j["ok_rate"] = round(j["ok"] / j["n"], 3) if j["n"] else None
+        out.append(j)
+    out.sort(key=lambda x: x["last_run"] or "", reverse=True)
+    return out
+
+
+def _devices_activity() -> list[dict[str, Any]]:
+    """Uzak-ajan/cihaz son-izi: devices + sessions/notes/tasks_log MAX(created_at) birleşimi.
+    Renk-eşiği CÖMERT (FP-önleme): <24sa aktif(yeşil), <72sa sessiz(sarı-normal), üstü uzun-sessiz
+    (gri) — kırmızı YOK (surer yalnız-oturumda-aktif, android seyrek; sessizlik ≠ arıza)."""
+    try:
+        con = get_conn(MEMORY_DB, readonly=True)
+        try:
+            devs = {
+                r["name"]: {"name": r["name"], "platform": r["platform"], "last_seen": r["last_seen"]}
+                for r in con.execute("SELECT name, platform, last_seen FROM devices").fetchall()
+            }
+            freshest: dict[str, str] = {}
+            for sql in (
+                "SELECT device_name AS d, MAX(created_at) AS ts FROM sessions GROUP BY device_name",
+                "SELECT from_device AS d, MAX(created_at) AS ts FROM notes GROUP BY from_device",
+                "SELECT device_name AS d, MAX(created_at) AS ts FROM tasks_log GROUP BY device_name",
+            ):
+                for r in con.execute(sql).fetchall():
+                    if r["d"] and r["ts"] and (r["d"] not in freshest or r["ts"] > freshest[r["d"]]):
+                        freshest[r["d"]] = r["ts"]
+        finally:
+            con.close()
+    except Exception:
+        return []
+    now = datetime.now(UTC)
+    out = []
+    # devices-tablosunda OLMAYAN ama iz-bırakan kimlikler de dahil (ör. 'surer' uzun süre kayıtsızdı
+    # — disc#1351; kayıt-eksikliği paneli KÖR bırakmasın).
+    for name in sorted(set(devs) | set(freshest)):
+        ts = freshest.get(name) or (devs.get(name, {}).get("last_seen"))
+        age_h = None
+        if ts:
+            age_h = round((now - _ts_sort_key(ts)).total_seconds() / 3600, 1)
+        if age_h is not None and age_h < 24:
+            status = "aktif"
+        elif age_h is not None and age_h < 72:
+            status = "sessiz"
+        else:
+            status = "uzun-sessiz"
+        out.append(
+            {
+                "name": name,
+                "platform": devs.get(name, {}).get("platform", "?"),
+                "registered": name in devs,
+                "last_activity": _iso_utc(ts),
+                "age_hours": age_h,
+                "status": status,
+            }
+        )
+    return out
+
+
+def _http_check(url: str, timeout: float = 2.0) -> tuple[bool, str]:
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 (statik localhost/tailscale URL)
+            return resp.status == 200, f"HTTP {resp.status}"
+    except Exception as e:
+        return False, str(e)[:80]
+
+
+def _systems_snapshot() -> list[dict[str, Any]]:
+    """Sistem-bileşenleri: ollama, qdrant, docker, VPS (son probe), eski-klipper. Statik hedefler,
+    kullanıcı-girdisi YOK. Her kontrol fail-soft ama hata GÖRÜNÜR (ok=false + detail)."""
+    systems: list[dict[str, Any]] = []
+    ok, det = _http_check("http://127.0.0.1:11434/api/version")
+    loaded = ""
+    if ok:
+        try:
+            import json as _json
+            import urllib.request
+
+            with urllib.request.urlopen("http://127.0.0.1:11434/api/ps", timeout=2) as resp:  # noqa: S310
+                models = _json.loads(resp.read()).get("models", [])
+                loaded = ", ".join(m.get("name", "?") for m in models) or "boş"
+        except Exception:
+            loaded = "?"
+    systems.append({"key": "ollama", "name": "Ollama (lokal LLM)", "ok": ok, "detail": f"yüklü: {loaded}" if ok else det})
+    ok, det = _http_check("http://127.0.0.1:6333/healthz")
+    systems.append({"key": "qdrant", "name": "Qdrant (vektör DB)", "ok": ok, "detail": "sağlıklı" if ok else det})
+    try:
+        out = subprocess.run(["docker", "ps", "--format", "{{.Names}}"], capture_output=True, text=True, timeout=8)
+        names = [line for line in out.stdout.strip().splitlines() if line]
+        docker_detail = f"{len(names)} çalışıyor" if out.returncode == 0 else (out.stderr.strip()[:80] or "hata")
+        systems.append({"key": "docker", "name": "Docker konteynerler", "ok": out.returncode == 0, "detail": docker_detail})
+    except Exception as e:
+        systems.append({"key": "docker", "name": "Docker konteynerler", "ok": False, "detail": str(e)[:80]})
+    try:
+        con = get_conn(server_db_path(), readonly=True)
+        try:
+            row = con.execute(
+                "SELECT timestamp, online, containers_up, containers_total FROM vps_metrics_history ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        finally:
+            con.close()
+        if row:
+            systems.append(
+                {
+                    "key": "vps",
+                    "name": "VPS (Contabo)",
+                    "ok": bool(row["online"]),
+                    "detail": f"{row['containers_up']}/{row['containers_total']} konteyner (probe: {_iso_utc(row['timestamp'])})",
+                    "last": _iso_utc(row["timestamp"]),
+                }
+            )
+        else:
+            systems.append({"key": "vps", "name": "VPS (Contabo)", "ok": False, "detail": "probe-verisi yok"})
+    except Exception as e:
+        systems.append({"key": "vps", "name": "VPS (Contabo)", "ok": False, "detail": str(e)[:80]})
+    try:
+        p = subprocess.run(["ping", "-c", "1", "-W", "1", "100.113.153.62"], capture_output=True, timeout=5)
+        up = p.returncode == 0
+        ek_detail = "erişilebilir" if up else "host yanıt vermiyor (disc#1357)"
+        systems.append({"key": "eski-klipper", "name": "Eski-klipper / NVIDIA-router", "ok": up, "detail": ek_detail})
+    except Exception as e:
+        systems.append({"key": "eski-klipper", "name": "Eski-klipper / NVIDIA-router", "ok": False, "detail": str(e)[:80]})
+    return systems
+
+
+@router.get("/system-audit", dependencies=[Depends(require_auth)])
+async def system_audit(request: Request) -> dict[str, Any]:
+    """Sistem-denetim panosu (read-model): daemon'lar + cron-sweep + uzak-cihaz son-izi + sistem-
+    bileşenleri + worker/lider durumu. DİKKAT: bu route catch-all /{name}'den ÖNCE tanımlı olmalı
+    (FastAPI kayıt-sırası önceliği — aksi halde /{name} 'system-audit'i ajan-adı sanır)."""
+    daemons, cron_jobs, devices, systems = await asyncio.gather(
+        asyncio.to_thread(_systemd_snapshot),
+        asyncio.to_thread(_cron_jobs_sweep),
+        asyncio.to_thread(_devices_activity),
+        asyncio.to_thread(_systems_snapshot),
+    )
+    lock_fd = getattr(request.app.state, "devops_leader_lock_fd", None)
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "daemons": daemons,
+        "cron_jobs": cron_jobs,
+        "cron_unwrapped": _UNWRAPPED_CRON,
+        "devices": devices,
+        "systems": systems,
+        "worker": {"remediation_leader_this_worker": lock_fd is not None},
     }
 
 
