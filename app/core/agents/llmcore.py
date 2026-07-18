@@ -238,7 +238,9 @@ class LLMCore:
             # gorunmuyordu — code-review %15-25 fail'in gercek istisna-tipi (TimeoutExpired mi,
             # baska mi) hicbir zaman canli-loglanmamisti, yalniz latency-kumelenmesinden dolayli
             # cikarim yapilabiliyordu. WARNING+tip-adi ile artik gorunur.
-            logger.warning("LLMCore generate failed (task=%s, backend=%s, exc=%s): %s", task, backend, type(e).__name__, e)
+            # Codex-P2 (PR#339): exception str'i (ozellikle subprocess.TimeoutExpired) TAM
+            # argv'yi (claude CLI '-p' prompt = kod-icerigi) tasir - %s ile e YAZMA, yalniz TIP.
+            logger.warning("LLMCore generate failed (task=%s, backend=%s, exc_type=%s)", task, backend, type(e).__name__)
             return ""
         finally:
             _record_llm_call(task, backend, model, (_t.monotonic() - _t0) * 1000, _ok)
@@ -288,7 +290,7 @@ class LLMCore:
         except Exception as e:
             if raise_on_error:
                 raise
-            logger.warning("LLMCore generate_sync failed (task=%s, backend=%s, exc=%s): %s", task, backend, type(e).__name__, e)
+            logger.warning("LLMCore generate_sync failed (task=%s, backend=%s, exc_type=%s)", task, backend, type(e).__name__)
             return ""
         finally:
             _record_llm_call(task, backend, model, (_t.monotonic() - _t0) * 1000, _ok)
