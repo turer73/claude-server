@@ -831,7 +831,7 @@ def _iso_utc(ts: str | None) -> str | None:
         return ts
 
 
-def _consciousness_card(cs) -> dict:
+def _consciousness_card(cs: Any) -> dict[str, Any]:
     """Consciousness-stream kartı. DİKKAT: stream worker-lock'la TEK worker'da koşar — status.running
     bu worker'da False olabilir (istek öbür worker'a düştüyse). thoughts tablosu worker-bağımsız
     gerçek: son-düşünce tazeyse (≤20dk; monolog-döngüsü 5dk) stream FİİLEN canlı sayılır."""
@@ -873,14 +873,12 @@ def _consciousness_card(cs) -> dict:
     }
 
 
-def _systemd_snapshot() -> list[dict]:
+def _systemd_snapshot() -> list[dict[str, Any]]:
     """systemctl is-active ile daemon-durumları (tek subprocess, satır-başına-durum). Fail-soft:
     komut patlarsa 'error' — SESSİZ-pass YOK (fail-safe-maskeler dersi)."""
     units = [u for u, _ in _AUDIT_UNITS]
     try:
-        out = subprocess.run(
-            ["systemctl", "is-active", *units], capture_output=True, text=True, timeout=10
-        )
+        out = subprocess.run(["systemctl", "is-active", *units], capture_output=True, text=True, timeout=10)
         states = out.stdout.strip().splitlines()
     except Exception as e:
         return [{"unit": u, "desc": d, "state": "error", "detail": str(e)[:120]} for u, d in _AUDIT_UNITS]
@@ -890,20 +888,18 @@ def _systemd_snapshot() -> list[dict]:
     return result
 
 
-def _cron_jobs_sweep(limit_rows: int = 600) -> list[dict]:
+def _cron_jobs_sweep(limit_rows: int = 600) -> list[dict[str, Any]]:
     """cron_outcomes'tan TÜM job'ların son-koşum + son-sonuç + son-20-oran özeti (job-bazında).
     Manifest'ten bağımsız — wrapper'dan geçen HER cron otomatik kapsanır (kapsam-dışı kalma yok)."""
     try:
         con = get_conn(server_db_path(), readonly=True)
         try:
-            rows = con.execute(
-                "SELECT job, result, timestamp FROM cron_outcomes ORDER BY id DESC LIMIT ?", (limit_rows,)
-            ).fetchall()
+            rows = con.execute("SELECT job, result, timestamp FROM cron_outcomes ORDER BY id DESC LIMIT ?", (limit_rows,)).fetchall()
         finally:
             con.close()
     except Exception:
         return []
-    jobs: dict[str, dict] = {}
+    jobs: dict[str, dict[str, Any]] = {}
     for r in rows:
         j = jobs.setdefault(r["job"], {"job": r["job"], "last_run": None, "last_result": None, "n": 0, "ok": 0, "_ts": None})
         # Son-koşum TIMESTAMP'e göre seçilir, id-sırasına göre DEĞİL — id≈zaman varsayımı üretimde
@@ -927,7 +923,7 @@ def _cron_jobs_sweep(limit_rows: int = 600) -> list[dict]:
     return out
 
 
-def _devices_activity() -> list[dict]:
+def _devices_activity() -> list[dict[str, Any]]:
     """Uzak-ajan/cihaz son-izi: devices + sessions/notes/tasks_log MAX(created_at) birleşimi.
     Renk-eşiği CÖMERT (FP-önleme): <24sa aktif(yeşil), <72sa sessiz(sarı-normal), üstü uzun-sessiz
     (gri) — kırmızı YOK (surer yalnız-oturumda-aktif, android seyrek; sessizlik ≠ arıza)."""
@@ -966,14 +962,16 @@ def _devices_activity() -> list[dict]:
             status = "sessiz"
         else:
             status = "uzun-sessiz"
-        out.append({
-            "name": name,
-            "platform": devs.get(name, {}).get("platform", "?"),
-            "registered": name in devs,
-            "last_activity": _iso_utc(ts),
-            "age_hours": age_h,
-            "status": status,
-        })
+        out.append(
+            {
+                "name": name,
+                "platform": devs.get(name, {}).get("platform", "?"),
+                "registered": name in devs,
+                "last_activity": _iso_utc(ts),
+                "age_hours": age_h,
+                "status": status,
+            }
+        )
     return out
 
 
@@ -987,10 +985,10 @@ def _http_check(url: str, timeout: float = 2.0) -> tuple[bool, str]:
         return False, str(e)[:80]
 
 
-def _systems_snapshot() -> list[dict]:
+def _systems_snapshot() -> list[dict[str, Any]]:
     """Sistem-bileşenleri: ollama, qdrant, docker, VPS (son probe), eski-klipper. Statik hedefler,
     kullanıcı-girdisi YOK. Her kontrol fail-soft ama hata GÖRÜNÜR (ok=false + detail)."""
-    systems: list[dict] = []
+    systems: list[dict[str, Any]] = []
     ok, det = _http_check("http://127.0.0.1:11434/api/version")
     loaded = ""
     if ok:
@@ -1022,13 +1020,15 @@ def _systems_snapshot() -> list[dict]:
         finally:
             con.close()
         if row:
-            systems.append({
-                "key": "vps",
-                "name": "VPS (Contabo)",
-                "ok": bool(row["online"]),
-                "detail": f"{row['containers_up']}/{row['containers_total']} konteyner (probe: {_iso_utc(row['timestamp'])})",
-                "last": _iso_utc(row["timestamp"]),
-            })
+            systems.append(
+                {
+                    "key": "vps",
+                    "name": "VPS (Contabo)",
+                    "ok": bool(row["online"]),
+                    "detail": f"{row['containers_up']}/{row['containers_total']} konteyner (probe: {_iso_utc(row['timestamp'])})",
+                    "last": _iso_utc(row["timestamp"]),
+                }
+            )
         else:
             systems.append({"key": "vps", "name": "VPS (Contabo)", "ok": False, "detail": "probe-verisi yok"})
     except Exception as e:
@@ -1044,7 +1044,7 @@ def _systems_snapshot() -> list[dict]:
 
 
 @router.get("/system-audit", dependencies=[Depends(require_auth)])
-async def system_audit(request: Request) -> dict:
+async def system_audit(request: Request) -> dict[str, Any]:
     """Sistem-denetim panosu (read-model): daemon'lar + cron-sweep + uzak-cihaz son-izi + sistem-
     bileşenleri + worker/lider durumu. DİKKAT: bu route catch-all /{name}'den ÖNCE tanımlı olmalı
     (FastAPI kayıt-sırası önceliği — aksi halde /{name} 'system-audit'i ajan-adı sanır)."""

@@ -215,9 +215,7 @@ def test_systems_snapshot_vps_from_last_probe_row(tmp_path, monkeypatch):
         "CREATE TABLE vps_metrics_history (id INTEGER PRIMARY KEY, timestamp TEXT, online INTEGER, "
         "cpu_usage REAL, memory_usage REAL, disk_usage REAL, containers_total INTEGER, containers_up INTEGER)"
     )
-    con.execute(
-        "INSERT INTO vps_metrics_history (timestamp,online,containers_total,containers_up) VALUES ('2026-07-18 19:00:00',1,21,21)"
-    )
+    con.execute("INSERT INTO vps_metrics_history (timestamp,online,containers_total,containers_up) VALUES ('2026-07-18 19:00:00',1,21,21)")
     con.commit()
     con.close()
     monkeypatch.setattr(agents, "server_db_path", lambda: str(db))
