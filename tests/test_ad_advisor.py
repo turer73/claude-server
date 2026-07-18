@@ -8,6 +8,7 @@ test deseniyle tutarlı)."""
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -172,6 +173,53 @@ def test_ad_copy_llm_empty_on_invalid_json(monkeypatch):
     monkeypatch.setattr(ad.gsc, "_envget", lambda k: "fake-key" if k == "INTERNAL_API_KEY" else "")
     monkeypatch.setattr(ad.gsc, "_post_json", lambda *a, **k: {"result": "bu JSON değil, düz metin"})
     assert ad._ad_copy_llm("sc-domain:panola.app", ["panola"]) == []
+
+
+def test_valid_ad_entry():
+    assert ad._valid_ad_entry({"keyword": "x", "headlines": ["a"], "descriptions": ["b"]})
+    assert not ad._valid_ad_entry("panola resmi")  # düz string — dict değil
+    assert not ad._valid_ad_entry({"keyword": "x", "headlines": "a", "descriptions": ["b"]})  # headlines liste değil
+    assert not ad._valid_ad_entry({"keyword": "x", "headlines": [1, 2], "descriptions": ["b"]})  # eleman string değil
+    assert not ad._valid_ad_entry({"headlines": ["a"], "descriptions": ["b"]})  # keyword eksik
+
+
+def test_ad_copy_llm_filters_malformed_entries(monkeypatch):
+    # Codex-P2 (PR#331): LLM 'geçerli JSON ama yanlış şekil' döndürebilir (ör. düz string
+    # listesi) — kontrolsüz geçerse _validate_rsa_limits'te AttributeError patlar ve main()'in
+    # geniş except'i GÜVENİLİR GSC-raporunu 'çekilemedi'ye çevirir. Malformed girdi filtrelenmeli,
+    # geçerli girdiler korunmalı (tüm liste atılmamalı).
+    monkeypatch.setattr(ad.gsc, "_envget", lambda k: "fake-key" if k == "INTERNAL_API_KEY" else "")
+    monkeypatch.setattr(
+        ad.gsc,
+        "_post_json",
+        lambda *a, **k: {
+            "result": json.dumps(
+                [
+                    {"keyword": "panola", "headlines": ["Geçerli"], "descriptions": ["D1"]},
+                    "panola resmi sitesi",  # malformed: düz string
+                    {"keyword": "kuafor", "headlines": [1, 2], "descriptions": ["D2"]},  # malformed: sayı-başlık
+                ]
+            )
+        },
+    )
+    ads = ad._ad_copy_llm("sc-domain:panola.app", ["panola"])
+    assert ads == [{"keyword": "panola", "headlines": ["Geçerli"], "descriptions": ["D1"]}]
+
+
+def test_ad_copy_llm_prompt_forbids_file_tools(monkeypatch):
+    # Codex-P2 (PR#331, güvenlik): GSC sorguları güvenilmez-dış-kaynaklı metin, read_only=True
+    # Read/Grep/Glob'u YASAKLAMAZ — açık dosya/araç-yasağı prompt'ta ZORUNLU (prompt-injection
+    # savunması, eski serbest-metin sürümünde vardı, JSON-yeniden-yazımda kazayla düşmüştü).
+    captured = {}
+
+    def fake_post(url, payload, headers, timeout):
+        captured.update(payload)
+        return {"result": "[]"}
+
+    monkeypatch.setattr(ad.gsc, "_envget", lambda k: "fake-key" if k == "INTERNAL_API_KEY" else "")
+    monkeypatch.setattr(ad.gsc, "_post_json", fake_post)
+    ad._ad_copy_llm("sc-domain:panola.app", ["panola"])
+    assert "dosya okuma" in captured["prompt"].lower() or "araç kullanma" in captured["prompt"].lower()
 
 
 def test_critic_review_parses_verdict(monkeypatch):
