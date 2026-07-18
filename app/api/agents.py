@@ -839,7 +839,10 @@ def _consciousness_card(cs: Any) -> dict[str, Any]:
     last_thought_ts: str | None = None
     thoughts_today = 0
     try:
-        con = get_conn(server_db_path(), readonly=True)
+        # thoughts tablosu MEMORY_DB'de (claude_memory.db) — consciousness.py:106-116 _ensure_thoughts_table
+        # sqlite3.connect(MEMORY_DB) kullanır. İlk sürüm yanlışlıkla server_db_path() sorguluyordu →
+        # "no such table" yutulup kart hep running=False/boş dönüyordu (canlı-doğrulamada yakalandı).
+        con = get_conn(MEMORY_DB, readonly=True)
         try:
             row = con.execute("SELECT timestamp FROM thoughts ORDER BY id DESC LIMIT 1").fetchone()
             last_thought_ts = row["timestamp"] if row else None
