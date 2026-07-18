@@ -258,6 +258,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
     <div class="nav-item" onclick="nav('alerts',this)"><span class="icon">&#9888;</span> Uyarilar</div>
     <div class="nav-item" onclick="nav('autonomous',this)"><span class="icon">&#8678;</span> Otonom Akis</div>
     <div class="nav-item" onclick="nav('agents',this)"><span class="icon">&#9881;</span> Ajanlar</div>
+    <div class="nav-item" onclick="nav('audit',this)"><span class="icon">&#128737;</span> Denetim</div>
     <div class="nav-item" onclick="nav('consciousness',this)"><span class="icon">&#10024;</span> Bilinc</div>
     <div class="nav-section">Yonetim</div>
     <div class="nav-item" onclick="nav('containers',this)"><span class="icon">&#9881;</span> Konteynerler</div>
@@ -630,6 +631,37 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; back
         <div id="agentsContent"><div class="loading"><div class="spinner"></div>Yukleniyor...</div></div>
       </div>
 
+      <!-- SISTEM DENETIMI -->
+      <div id="page-audit" class="page">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <p style="font-size:12px;color:var(--dim);margin:0">Sistem denetimi — tum ajanlar ve sistemler: son-gorulme + durum birlikte ("bulgu yok" ile "olu" ayrisir). Ajan kartlari icin Ajanlar sekmesi.</p>
+          <span style="display:flex;gap:8px;align-items:center">
+            <span id="auditGenerated" style="font-size:11px;color:var(--dim)"></span>
+            <button class="vault-btn" onclick="loadAudit()">Yenile</button>
+          </span>
+        </div>
+        <div class="row row-2">
+          <div class="card">
+            <div class="card-title">Sistemler</div>
+            <div id="auditSystems" style="font-size:12px"><div class="loading"><div class="spinner"></div></div></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Servisler (systemd)</div>
+            <div id="auditDaemons" style="font-size:12px"><div class="loading"><div class="spinner"></div></div></div>
+          </div>
+        </div>
+        <div class="row row-2">
+          <div class="card">
+            <div class="card-title">Uzak Ajanlar / Cihazlar</div>
+            <div id="auditDevices" style="font-size:12px"><div class="loading"><div class="spinner"></div></div></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Cron Isleri <span class="badge" id="auditCronCount">0</span></div>
+            <div id="auditCron" style="font-size:12px;max-height:420px;overflow-y:auto"><div class="loading"><div class="spinner"></div></div></div>
+          </div>
+        </div>
+      </div>
+
       <!-- CONSCIOUSNESS -->
       <div id="page-consciousness" class="page">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
@@ -823,6 +855,7 @@ function nav(page, el) {
   if (page==='services') { loadServices(); loadN8n(); }
   if (page==='operations') loadOperations();
   if (page==='agents') { loadAgents(); loadDiscussions(); }
+  if (page==='audit') loadAudit();
   if (page==='llm') loadLLM();
   if (page==='consciousness') loadConsciousness();
   if (page==='vps') setTimeout(() => { const i = document.getElementById('vpsCmd'); if (i) i.focus(); }, 50);
@@ -1234,6 +1267,47 @@ async function triggerAgent(key, btn) {
     toast('Tetikleme basarisiz', 'error');
     if (btn) { btn.disabled = false; btn.innerHTML = '&#9654; Tetikle'; }
   }
+}
+
+// ── Sistem Denetimi (Turgut 2026-07-18: tum ajanlar ve sistemler izlensin) ──
+function _auditDot(color) { return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:8px;flex:0 0 auto"></span>`; }
+function _auditRow(dotColor, name, right, sub) {
+  return `<div style="display:flex;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
+    ${_auditDot(dotColor)}<span style="flex:1;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}${sub ? ` <span style="color:var(--dim);font-size:10px">${sub}</span>` : ''}</span>
+    <span style="flex:0 0 auto;color:var(--dim);font-size:11px">${right}</span></div>`;
+}
+async function loadAudit() {
+  const d = await api('/agents/system-audit');
+  if (!d || !d.systems) {
+    for (const id of ['auditSystems','auditDaemons','auditDevices','auditCron']) document.getElementById(id).innerHTML = '<span style="color:var(--dim)">Erisim hatasi</span>';
+    return;
+  }
+  document.getElementById('auditGenerated').textContent = 'Guncellendi: ' + _agAgo(d.generated_at);
+  // Sistemler: ok=yesil, degil=kirmizi (hard-fail sinifi)
+  document.getElementById('auditSystems').innerHTML = d.systems.map(s =>
+    _auditRow(s.ok ? 'var(--green)' : 'var(--red)', esc(s.name), esc(s.detail || ''), null)
+  ).join('') + _auditRow(d.worker && d.worker.remediation_leader_this_worker ? 'var(--green)' : 'var(--yellow)',
+    'Remediation-lider (bu worker)', d.worker && d.worker.remediation_leader_this_worker ? 'lider' : 'non-leader (normal: tek worker lider)', null);
+  // Daemonlar: active=yesil, inactive/failed=kirmizi, error=sari
+  document.getElementById('auditDaemons').innerHTML = d.daemons.map(u =>
+    _auditRow(u.state === 'active' ? 'var(--green)' : (u.state === 'error' ? 'var(--yellow)' : 'var(--red)'),
+      esc(u.unit), esc(u.state), esc(u.desc))
+  ).join('');
+  // Uzak cihazlar: aktif=yesil, sessiz=sari (NORMAL-sinif), uzun-sessiz=gri — kirmizi YOK (comert-esik)
+  const devColor = { 'aktif': 'var(--green)', 'sessiz': 'var(--yellow)', 'uzun-sessiz': 'var(--dim)' };
+  document.getElementById('auditDevices').innerHTML = d.devices.map(v =>
+    _auditRow(devColor[v.status] || 'var(--dim)', esc(v.name),
+      (v.last_activity ? _agAgo(v.last_activity) : 'iz yok') + ' &middot; ' + esc(v.status),
+      esc(v.platform) + (v.registered ? '' : ' &middot; kayitsiz'))
+  ).join('');
+  // Cron isleri: son-sonuc pass=yesil, partial=sari, fail=kirmizi; oran + son-kosum birlikte
+  const rc = { pass: 'var(--green)', partial: 'var(--yellow)' };
+  document.getElementById('auditCronCount').textContent = d.cron_jobs.length;
+  document.getElementById('auditCron').innerHTML = d.cron_jobs.map(j =>
+    _auditRow(rc[j.last_result] || 'var(--red)', esc(j.job),
+      _agAgo(j.last_run) + ' &middot; ' + esc(j.last_result) + (j.ok_rate !== null ? ` &middot; ${Math.round(j.ok_rate * 100)}%/${j.n}` : ''), null)
+  ).join('') + `<div style="font-size:11px;color:var(--dim);margin-top:10px;text-transform:uppercase;letter-spacing:.05em">Wrapper-disi (izlenmiyor — gorunurluk boslugu)</div>` +
+    d.cron_unwrapped.map(n => _auditRow('var(--dim)', esc(n), 'cron_outcomes kaydi yok', null)).join('');
 }
 
 // ── Recent Alerts ───────────────────────
