@@ -6,7 +6,6 @@ import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from io import TextIOWrapper
 from pathlib import Path
 
 import uvicorn
@@ -256,32 +255,40 @@ async def _ensure_admin_key(db) -> str | None:
     return None
 
 
-def _acquire_remediation_leader_lock(
-    lock_path: str = "/opt/linux-ai-server/data/hook-state/devops-remediation-leader.lock",
-) -> TextIOWrapper | None:
+def _acquire_remediation_leader_lock(lock_path: str | None = None) -> int | None:
     """disc#1352 P0-fix: uvicorn --workers N → her worker kendi DevOpsAgent'ını başlatır, hepsi
     aynı alarmı bağımsız görüp bağımsız remediation tetikler (kanıt: 07-17 çift docker-restart,
     remediation-id 78-83 aynı-saniye çiftler). Non-blocking flock (LOCK_EX|LOCK_NB): ilk-worker
-    kilidi alır ve PROCESS-ÖMRÜ boyunca tutar (dosya-tanıtıcı kasıtlı açık bırakılır — çağıran
-    onu app.state'te canlı tutmalı, aksi halde GC→close→unlock olur); diğer worker'lar hemen
-    fail olup non-leader kalır (OS lock zaten tutuluyorsa bekleMEZ, anında döner).
+    kilidi alır ve PROCESS-ÖMRÜ boyunca tutar (fd kasıtlı açık bırakılır — çağıran onu
+    app.state'te canlı tutmalı, aksi halde GC→close→unlock olur); diğer worker'lar hemen fail
+    olup non-leader kalır (OS lock zaten tutuluyorsa bekleMEZ, anında döner).
 
-    Mimari-nötr STOPGAP (topic-4 klipper+surer ortak-tasarımı: ayrı-systemd-unit vs kalıcı-
-    leader-lock — nihai karar orada). Bu yalnız aktif-zararı (çift-remediation) durdurur;
-    monitoring/alert/teşhis TÜM worker'larda ayrı-ayrı çalışmaya devam eder (zararsız/dayanıklı)."""
+    Codex-P1 (PR#334): default-path tempfile.gettempdir() altında — consciousness.py'deki
+    KANITLANMIŞ aynı-problem deseniyle (_try_worker_lock) birebir. İlk denemem /opt/.../data/
+    hook-state altındaydı; scripts/install.sh'nin ProtectSystem=strict+ReadWritePaths
+    (/var/lib, /var/log, /var/AI-stump — /opt DAHİL DEĞİL) sertleştirmesinde os.makedirs/open
+    PermissionError fırlatıp lifespan'i (dolayısıyla TÜM app boot'unu) çökertirdi. /tmp,
+    systemd PrivateTmp ile servise-özel ve hem klipperos hem hardened-aiserver dağıtımında
+    yazılabilir — path-varsayımı yerine KANITLANMIŞ-yazılabilir konum kullanılır. AYRICA:
+    tüm makedirs+open+flock TEK try/except (BlockingIOError, OSError) içinde — herhangi bir
+    dosya-sistemi/izin hatası da (yalnız 'zaten kilitli' değil) sessizce None döner (fail-safe
+    degrade = bu worker'da remediation kapanır, ama app YİNE DE AÇILIR — çökme yerine
+    'notify-mode gibi davran')."""
     import fcntl
     import os
+    import tempfile
 
-    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
-    fh = open(lock_path, "w")  # noqa: SIM115 — kasıtlı açık kalır, kilit process-ömrü boyunca tutulur
+    path = lock_path or os.path.join(tempfile.gettempdir(), "devops-remediation-leader.lock")
+    fd: int | None = None
     try:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        fh.close()
+        fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.write(fd, str(os.getpid()).encode())
+        return fd
+    except (BlockingIOError, OSError):
+        if fd is not None:  # open başarılı ama flock/write başarısız — fd sızmasın
+            os.close(fd)
         return None
-    fh.write(str(os.getpid()))
-    fh.flush()
-    return fh
 
 
 @asynccontextmanager
@@ -304,12 +311,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     devops = DevOpsAgent(db=db, interval=30)
     app.state.devops_agent = devops
     # disc#1352 P0-fix: çok-worker'da yalnız 1 worker gerçek-remediation yürütsün (bkz
-    # _acquire_remediation_leader_lock docstring). Kilit dosya-tanıtıcısını app.state'te tut —
-    # yerel değişken GC'lenirse dosya kapanır, flock serbest kalır (kilit sessizce kaybolur).
-    app.state.devops_leader_lock_fh = _acquire_remediation_leader_lock()
-    devops._is_remediation_leader = app.state.devops_leader_lock_fh is not None
+    # _acquire_remediation_leader_lock docstring). Kilit fd'sini app.state'te tut — yerel
+    # değişken GC'lenirse (raw os.open fd'si GC'den bağımsız ama referans kaybı okunaksız kod
+    # olurdu) kilit-durumu izlenemez hâle gelir; process-ömrü boyunca canlı-referans şart.
+    app.state.devops_leader_lock_fd = _acquire_remediation_leader_lock()
+    devops._is_remediation_leader = app.state.devops_leader_lock_fd is not None
     if not devops._is_remediation_leader:
-        logger.info("devops-agent: bu worker remediation-lider DEĞİL (başka worker kilidi tutuyor, disc#1352)")
+        logger.info("devops-agent: bu worker remediation-lider DEĞİL (başka worker kilidi tutuyor veya kilit-yolu yazılamıyor, disc#1352)")
     devops.start()
 
     # Start Consciousness Stream daemon (Functionalism Faz 1)

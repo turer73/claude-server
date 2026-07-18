@@ -984,6 +984,10 @@ async def _noop_webhook(*a, **k):
     return None
 
 
+async def _fake_exec_ok(cmd, timeout=30):
+    return {"stdout": "ok", "exit_code": 0}
+
+
 async def test_remediation_default_mode_is_notify():
     """GÜVENLİ DEFAULT: config.remediation_mode == 'notify' (otonom exec kapalı)."""
     from app.core.config import Settings
@@ -1062,6 +1066,71 @@ async def test_remediate_auto_mode_non_leader_does_not_execute(client, app):
     assert len(rows) >= 1
     assert all(r["executed"] == 0 and r["mode"] == "auto" for r in rows)
     assert any("multi-worker gate" in (r["result"] or "") for r in rows)
+
+
+async def test_remediate_non_leader_skips_webhook_and_verify_escalate(client, app):
+    """Codex-P2 (PR#334): non-leader'da _apply_remediation zaten yürütmüyordu ama
+    _send_webhook + _verify_and_escalate YİNE DE koşuyordu → verify hiçbir-şey-yapılmamış
+    durumu 'bozuk' bulup sahte 'Otonom remediation BAŞARISIZ' escalate'i üretebiliyordu.
+    Non-leader'da ikisi de hiç ÇAĞRILMAMALI (leader zaten doğru raporlar, çift-webhook/
+    çift-escalate de disc#1352'nin aynı-sınıf zararı)."""
+    from app.core.devops_agent import DevOpsAgent
+
+    db = app.state.db
+    agent = DevOpsAgent(db=db, interval=60)
+    agent._remediation_mode = "auto"
+    agent._is_remediation_leader = False
+    webhook_calls = []
+    verify_calls = []
+
+    async def fake_webhook(alert):
+        webhook_calls.append(alert)
+
+    async def fake_verify(source, alert):
+        verify_calls.append((source, alert))
+
+    agent._send_webhook = fake_webhook
+    agent._verify_and_escalate = fake_verify
+    agent._executor.execute = _fake_exec_ok
+
+    await agent._remediate(_crit_alert("disk"))
+    assert webhook_calls == []
+    assert verify_calls == []
+
+    await agent._remediate_service("linux-ai-server", _crit_alert("service:linux-ai-server"))
+    assert webhook_calls == []
+    assert verify_calls == []
+
+    await agent._remediate_container("n8n", _crit_alert("docker:n8n"))
+    assert webhook_calls == []
+    assert verify_calls == []
+
+
+async def test_remediate_leader_still_calls_webhook_and_verify_escalate(client, app):
+    """Karşıt-regresyon: leader-worker'da (default True) webhook+verify YİNE koşmalı —
+    P2-fix'in kapsamı aşırıya kaçıp lider-davranışını da bozmamış olmalı."""
+    from app.core.devops_agent import DevOpsAgent
+
+    db = app.state.db
+    agent = DevOpsAgent(db=db, interval=60)
+    agent._remediation_mode = "auto"
+    assert agent._is_remediation_leader is True  # default
+    webhook_calls = []
+    verify_calls = []
+
+    async def fake_webhook(alert):
+        webhook_calls.append(alert)
+
+    async def fake_verify(source, alert):
+        verify_calls.append((source, alert))
+
+    agent._send_webhook = fake_webhook
+    agent._verify_and_escalate = fake_verify
+    agent._executor.execute = _fake_exec_ok
+
+    await agent._remediate(_crit_alert("disk"))
+    assert len(webhook_calls) == 1
+    assert len(verify_calls) == 1
 
 
 async def test_remediate_auto_mode_leader_default_true_backward_compat(client, app):
