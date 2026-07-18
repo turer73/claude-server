@@ -411,15 +411,35 @@ class RemediationMixin(_DevOpsAgentBase):
             for r in reversed(self._remediation_log)
         ]
 
+    @staticmethod
+    def _parse_ts(ts: str | None) -> datetime:
+        """Karışık timestamp-formatlarını (in-memory isoformat 'T'+tz vs DB datetime('now')
+        boşluk/tz'siz) karşılaştırılabilir UTC-datetime'a çevir; parse-fail → min (sona düşer)."""
+        if not ts:
+            return datetime.min.replace(tzinfo=UTC)
+        try:
+            dt = datetime.fromisoformat(ts)
+            return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+        except ValueError:
+            return datetime.min.replace(tzinfo=UTC)
+
     async def get_remediation_log(self, limit: int = 50) -> tuple[list[dict[str, Any]], str]:
         """Kalıcı remediation-ledger okuma (disc#1353c). /api/v1/devops/remediation/log önceden
-        YALNIZ in-memory deque okuyordu — her servis-restart'ında geçmiş 'boş' görünüyordu
-        (kalıcı remediation_log tablosu varken; 83-satırlık gerçek-tarih görünmezdi). DB-önce;
-        okunamazsa in-memory'ye düş ve kaynağı DÜRÜSTÇE etiketle (sessiz-maskeleme yok)."""
+        YALNIZ in-memory deque okuyordu — her servis-restart'ında geçmiş 'boş' görünüyordu.
+        Codex-P2 (PR#340 follow-up): SALT-DB de regresyondu — _persist_remediation_row transient-
+        lock'la düşerse kayıt yalnız in-memory'de kalır, salt-DB okuma onu GÖRÜNMEZ kılardı (eski
+        endpoint gösteriyordu). Çözüm: DB-satırları + en-yeni-DB-satırından SONRAKİ in-memory
+        kayıtlar birleştirilir (DB'ye yazılamayan taze-kuyruk kaybolmaz; restart zaten belleği
+        sıfırladığından tarihsel-çift oluşmaz). Kaynak dürüstçe etiketli: db | db+memory | memory."""
         if self._db:
             try:
                 rows = await self._db.fetch_all("SELECT * FROM remediation_log ORDER BY id DESC LIMIT ?", (limit,))
-                return [dict(r) for r in rows], "db"
+                db_rows = [dict(r) for r in rows]
+                newest_db = max((self._parse_ts(r.get("timestamp")) for r in db_rows), default=datetime.min.replace(tzinfo=UTC))
+                extra = [m for m in self.remediation_history if self._parse_ts(m.get("timestamp")) > newest_db]
+                if extra:
+                    return (extra + db_rows)[:limit], "db+memory"
+                return db_rows, "db"
             except Exception as e:
                 log.warning("remediation_log read failed: %s", type(e).__name__)
         return self.remediation_history[:limit], "memory"

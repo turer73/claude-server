@@ -78,3 +78,6 @@ class _DevOpsAgentBase:
 
     async def _resolve_alert_db(self, alert: Alert) -> None:
         raise NotImplementedError
+
+    async def _resolve_alert_db_by_source(self, source: str, resolved_at: str) -> None:
+        raise NotImplementedError

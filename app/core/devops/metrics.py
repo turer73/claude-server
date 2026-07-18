@@ -189,16 +189,24 @@ class MetricsMixin(_DevOpsAgentBase):
             log.warning("events bridge failed (%s): %s", alert.source, type(e).__name__)
 
     async def _resolve_alert_db(self, alert: Alert) -> None:
+        await self._resolve_alert_db_by_source(alert.source, alert.resolved_at or alert.timestamp)
+
+    async def _resolve_alert_db_by_source(self, source: str, resolved_at: str) -> None:
+        """DB'deki açık alert-satırlarını KAYNAK-bazlı kapat — in-memory Alert nesnesi gerekmeden.
+        Codex-P2 (PR#340 follow-up): alert DB'ye yazıldıktan sonra healthy-probe gelmeden restart
+        olursa _active_alerts boşalır; resolve-yolu in-memory nesneye bağlı kalırsa DB satırı
+        SONSUZA DEK resolved=0 kalır (stuck-open, kullanıcıdan gizli). Idempotent UPDATE
+        (açık satır yoksa no-op) — healthy-yoldan koşulsuz çağrılabilir."""
         if not self._db:
             return
         try:
             await self._db.execute(
                 "UPDATE alerts SET resolved = 1, resolved_at = ?, invalid_at = ? WHERE source = ? AND resolved = 0",
-                (alert.resolved_at, alert.resolved_at, alert.source),
+                (resolved_at, resolved_at, source),
             )
         except Exception as e:
             # disc#1353b: resolve-güncellemesi kaybolursa alert DB'de sonsuza dek açık görünür.
-            log.warning("alert resolve-update failed (%s): %s", alert.source, type(e).__name__)
+            log.warning("alert resolve-update failed (%s): %s", source, type(e).__name__)
 
     @property
     def active_alerts(self) -> list[dict[str, Any]]:

@@ -75,19 +75,39 @@ async def test_vps_recovery_resolves_alerts_in_db():
         patch.object(agent, "_vps_ssh_probe", new_callable=AsyncMock, return_value=sample),
         patch.object(agent, "_store_vps_metrics", new_callable=AsyncMock),
         patch.object(agent, "_store_alert", new_callable=AsyncMock),
-        patch.object(agent, "_resolve_alert_db", new_callable=AsyncMock) as resolve,
+        patch.object(agent, "_resolve_alert_db_by_source", new_callable=AsyncMock) as resolve,
     ):
         await agent._check_vps()
         await asyncio.sleep(0)
 
-    resolved_sources = {c.args[0].source for c in resolve.call_args_list}
+    resolved_sources = {c.args[0] for c in resolve.call_args_list}
     assert "vps:offline" in resolved_sources
     assert "vps:qdrant" in resolved_sources
     for c in resolve.call_args_list:
-        assert c.args[0].resolved is True
-        assert c.args[0].resolved_at is not None
+        assert c.args[1]  # resolved_at dolu
     assert "vps:offline" not in agent._active_alerts
     assert "vps:qdrant" not in agent._active_alerts
+
+
+async def test_vps_recovery_resolves_db_even_after_restart():
+    # Codex-P2 (PR#340 follow-up): alert DB'ye yazıldıktan sonra healthy-probe'dan ÖNCE restart
+    # olursa _active_alerts BOŞ başlar — resolve yine de DB'ye gitmeli (kaynak-bazlı, in-memory
+    # Alert nesnesine bağlı DEĞİL). Aksi halde DB satırı sonsuza dek resolved=0 (stuck-open).
+    agent = DevOpsAgent(db=None, interval=60)
+    agent._vps_containers = ["qdrant"]
+    assert not agent._active_alerts  # restart-sonrası temiz bellek
+
+    sample = {"cpu": 1.0, "mem": 2.0, "disk": 3.0, "containers_total": 1, "containers_up": 1, "names": ["qdrant"]}
+    with (
+        patch.object(agent, "_vps_ssh_probe", new_callable=AsyncMock, return_value=sample),
+        patch.object(agent, "_store_vps_metrics", new_callable=AsyncMock),
+        patch.object(agent, "_resolve_alert_db_by_source", new_callable=AsyncMock) as resolve,
+    ):
+        await agent._check_vps()
+        await asyncio.sleep(0)
+
+    resolved_sources = {c.args[0] for c in resolve.call_args_list}
+    assert {"vps:offline", "klipper:wan-down", "vps:qdrant"} <= resolved_sources  # koşulsuz idempotent-resolve
 
 
 class _FailingDB:
