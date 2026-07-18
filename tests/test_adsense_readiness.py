@@ -258,3 +258,39 @@ def test_main_drop_alert_fail_reverts_auto_ads_and_marks_partial(monkeypatch, ca
     out = capsys.readouterr().out
     assert "OUTCOME: partial" in out
     assert "alert-yazımı FAIL" in out
+
+
+def test_main_summary_title_has_week_tag(monkeypatch):
+    # Codex-P2 re-review (PR#331): skip_dedup TEK-BAŞINA yetmez — exact-title-fallback
+    # (discoveries.py) statik başlığı hâlâ UPDATE'e yutar. Başlık ISO-hafta-etiketli
+    # olmalı (ad-advisor.py deseniyle birebir) → gerçek yeni-kayıt her hafta garanti.
+    monkeypatch.setattr(ar, "_acquire_adsense_token", lambda: ("tok", ""))
+    monkeypatch.setattr(ar.gsc, "_envget", lambda k: "accounts/pub-1" if k == "ADSENSE_ACCOUNT" else "x")
+    monkeypatch.setattr(ar, "fetch_sites", lambda t, a: {"a.com": {"state": "READY", "auto_ads": True}})
+    monkeypatch.setattr(ar, "audit_site", lambda d, p: {"ads_txt": True, "snippet": True, "pages": 30, "home_chars": 3000})
+    monkeypatch.setattr(ar, "quality_note", lambda *a, **k: "")
+    monkeypatch.setattr(ar, "_load_state", lambda: {"a.com": {"state": "READY", "auto_ads": True}})
+    monkeypatch.setattr(ar, "_save_state", lambda s: None)
+    written = []
+    monkeypatch.setattr(ar, "_write_discovery", lambda title, details, dtype="learning": written.append(title) or "")
+    ar.main()
+    summary_title = next(t for t in written if t.startswith("AdSense hazırlık"))
+    assert " — " in summary_title
+    assert "-W" in summary_title.rsplit(" — ", 1)[-1]
+
+
+def test_write_discovery_sets_skip_dedup(monkeypatch):
+    # Bug-regresyon testi: skip_dedup=True olmadan haftalık 'AdSense hazırlık (N site)'
+    # özeti semantic-dedup'a yutuluyordu (discoveries#1145 06-22'den beri güncellenmedi,
+    # 06-29'dan bu yana her hafta OUTCOME:pass raporlanmasına rağmen 4+ hafta veri kaybı).
+    captured = {}
+
+    def fake_post(url, payload, headers, timeout):
+        captured.update(payload)
+        return {}
+
+    monkeypatch.setattr(ar.gsc, "_envget", lambda k: "fake-key" if k == "MEMORY_API_KEY" else "")
+    monkeypatch.setattr(ar.gsc, "_post_json", fake_post)
+    err = ar._write_discovery("başlık", "detay")
+    assert err == ""
+    assert captured["skip_dedup"] is True

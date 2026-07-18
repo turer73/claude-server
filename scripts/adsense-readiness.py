@@ -33,6 +33,7 @@ import re
 import sys
 import urllib.error
 import urllib.request
+from datetime import UTC, datetime
 from typing import Any
 
 # seo-gsc.py'yi yol-ile yükle (tire içerir) → OAuth client + _post_json + _envget reuse.
@@ -387,6 +388,17 @@ def build_report(sites: dict[str, dict[str, Any]], audits: dict[str, dict[str, A
 
 
 def _write_discovery(title: str, details: str, dtype: str = "learning") -> str:
+    """skip_dedup=True (Codex#176 dersi): haftalık-log'suz semantic-dedup ardışık haftalık
+    raporları NOOP/UPDATE'e yutar. Tespit: 'AdSense hazırlık (3 site)' başlığı yalnız
+    06-09/06-22'den kalma 2 kayıt — 06-29'dan bu yana HER hafta OUTCOME:pass raporlanmasına
+    rağmen özet-discovery'si sessizce kaybolmuş (regresyon-alert'leri {from}→{to} ile doğal-
+    benzersiz olduğundan etkilenmedi; yalnız rutin haftalık-özet kayboldu).
+
+    DİKKAT (Codex re-review, PR#331): skip_dedup TEK-BAŞINA yeterli DEĞİL — yalnız semantik-
+    dedup'ı atlar, discoveries.py'deki exact-title-fallback (aynı project+type+title aktif
+    kayıt → UPDATE) skip_dedup'tan BAĞIMSIZ çalışır. Başlık statik kalırsa (site-sayısı
+    değişmezse) bug AYNEN sürer. Gerçek fix = başlığı da unique yapmak (bkz main()'deki
+    ISO-hafta-etiketi çağrı-sitesi)."""
     mkey = gsc._envget("MEMORY_API_KEY")
     if not mkey:
         return "no MEMORY_API_KEY"
@@ -397,6 +409,7 @@ def _write_discovery(title: str, details: str, dtype: str = "learning") -> str:
                 "device_name": "klipper",
                 "project": "linux-ai-server",
                 "type": dtype,
+                "skip_dedup": True,  # haftalık-log; ardışık raporlar semantic/exact-dedup'la merge olmasın
                 "title": title,
                 "details": details[:3800],
                 "rationale": "adsense-readiness.py — AdSense durum+içerik denetçisi (salt-okunur, mail yok).",
@@ -444,7 +457,13 @@ def main() -> int:
     report = build_report(sites, audits, changes)
     print(report)
 
-    derr = _write_discovery(f"AdSense hazırlık ({len(sites)} site)", report)
+    # Codex-P2 (PR#331 re-review): skip_dedup=True TEK-BAŞINA yetmiyor — yalnız semantik-
+    # dedup'ı atlar, exact-title-fallback (discoveries.py:150-162) HÂLÂ aynı-başlıklı aktif
+    # kaydı UPDATE eder (site-sayısı değişmezse başlık statik kalır). ad-advisor.py'nin
+    # ISO-hafta-etiketi deseniyle birebir: başlık her hafta UNIQUE → gerçek yeni-kayıt garanti.
+    iso = datetime.now(UTC).isocalendar()
+    week_tag = f"{iso[0]}-W{iso[1]:02d}"
+    derr = _write_discovery(f"AdSense hazırlık ({len(sites)} site) — {week_tag}", report)
     # durum-değişimi → ayrı, yüksek-sinyal discovery (type=bug → SessionStart).
     # Codex P2: alert yazımı FAIL olursa o site için state'i İLERLETME (prev'de bırak)
     # → sonraki koşu değişimi yeniden algılar, alert sessizce kaybolmaz.

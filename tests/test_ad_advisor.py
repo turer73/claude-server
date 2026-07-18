@@ -1,12 +1,14 @@
 """scripts/ad-advisor.py — reklam-fırsat sınıflandırma mantığı (GSC'siz, saf fonksiyonlar).
 
-Auth/HTTP/_ad_copy_llm test edilmez (canlı GSC + /claude gerektirir); deterministik
-çekirdek (classify/_brand_token/build_strategy/build_report) test edilir.
-"""
+Deterministik çekirdek (classify/_brand_token/build_strategy/build_report/_extract_json/
+_validate_rsa_limits) saf-fonksiyon olarak test edilir. _ad_copy_llm/_critic_review'ın ağ-
+çağrısı monkeypatch ile mock'lanır (canlı GSC/Claude gerektirmez, adsense-readiness.py
+test deseniyle tutarlı)."""
 
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -81,6 +83,176 @@ def test_build_strategy_keywords_extracted():
 
 
 def test_build_report_no_opportunity():
-    results = [{"property": "sc-domain:x.com", "lines": [], "keywords": [], "copy": "", "n_rows": 10}]
+    results = [{"property": "sc-domain:x.com", "lines": [], "keywords": [], "ads": [], "n_rows": 10}]
     rep = ad.build_report(results)
     assert "belirgin reklam-fırsatı yok" in rep
+
+
+def test_extract_json_plain():
+    assert ad._extract_json('[{"a": 1}]') == [{"a": 1}]
+
+
+def test_extract_json_code_fence():
+    # LLM'ler talimata rağmen sık sık ```json ... ``` sarmalı döner
+    assert ad._extract_json('```json\n[{"a": 1}]\n```') == [{"a": 1}]
+
+
+def test_validate_rsa_limits_clean():
+    ads = [{"keyword": "panola", "headlines": ["Kısa Başlık"], "descriptions": ["Kısa açıklama."]}]
+    assert ad._validate_rsa_limits(ads) == []
+
+
+def test_validate_rsa_limits_headline_too_long():
+    long_h = "Bu Başlık Otuz Karakterden Kesinlikle Daha Uzun"
+    ads = [{"keyword": "panola", "headlines": [long_h], "descriptions": []}]
+    v = ad._validate_rsa_limits(ads)
+    assert len(v) == 1
+    assert "başlık" in v[0]
+    assert str(len(long_h)) in v[0]
+
+
+def test_validate_rsa_limits_description_too_long():
+    long_d = "Bu açıklama doksan karakterden kesinlikle daha uzun olacak şekilde özenle uzatılmış bir cümledir, evet."
+    ads = [{"keyword": "panola", "headlines": [], "descriptions": [long_d]}]
+    v = ad._validate_rsa_limits(ads)
+    assert len(v) == 1
+    assert "açıklama" in v[0]
+
+
+def test_build_report_renders_ads_violations_and_critic():
+    results = [
+        {
+            "property": "sc-domain:panola.app",
+            "lines": ["  🛡️ Marka-savunma:", "    • 'panola' — poz 4.0, 37 gösterim, CTR %2.7"],
+            "keywords": ["panola"],
+            "ads": [{"keyword": "panola", "headlines": ["Panola Resmi"], "descriptions": ["Kısa ve öz açıklama metni."]}],
+            "violations": [],
+            "critic": {"verdict": "APPROVED", "notes": ""},
+            "n_rows": 5,
+        }
+    ]
+    rep = ad.build_report(results)
+    assert "Panola Resmi" in rep
+    assert "ONAYLANDI" in rep
+
+
+def test_build_report_flags_violations_and_critic_rejection():
+    results = [
+        {
+            "property": "sc-domain:panola.app",
+            "lines": ["  🛡️ Marka-savunma:", "    • 'panola' — poz 4.0, 37 gösterim, CTR %2.7"],
+            "keywords": ["panola"],
+            "ads": [{"keyword": "panola", "headlines": ["Bu Başlık Otuz Karakterden Kesinlikle Daha Uzun"], "descriptions": []}],
+            "violations": ["'panola': başlık 47 karakter (>30) — '...'"],
+            "critic": {"verdict": "FLAGGED", "notes": "kanıtsız üstünlük iddiası"},
+            "n_rows": 5,
+        }
+    ]
+    rep = ad.build_report(results)
+    assert "MEKANİK karakter-limit ihlali" in rep
+    assert "BAYRAKLANDI" in rep
+    assert "kanıtsız üstünlük iddiası" in rep
+
+
+def test_critic_review_skipped_without_ads():
+    assert ad._critic_review("sc-domain:x.com", []) == {"verdict": "SKIPPED", "notes": ""}
+
+
+def test_ad_copy_llm_returns_parsed_ads(monkeypatch):
+    monkeypatch.setattr(ad.gsc, "_envget", lambda k: "fake-key" if k == "INTERNAL_API_KEY" else "")
+    monkeypatch.setattr(
+        ad.gsc,
+        "_post_json",
+        lambda *a, **k: {"result": '```json\n[{"keyword": "panola", "headlines": ["H1"], "descriptions": ["D1"]}]\n```'},
+    )
+    ads = ad._ad_copy_llm("sc-domain:panola.app", ["panola"])
+    assert ads == [{"keyword": "panola", "headlines": ["H1"], "descriptions": ["D1"]}]
+
+
+def test_ad_copy_llm_empty_on_invalid_json(monkeypatch):
+    monkeypatch.setattr(ad.gsc, "_envget", lambda k: "fake-key" if k == "INTERNAL_API_KEY" else "")
+    monkeypatch.setattr(ad.gsc, "_post_json", lambda *a, **k: {"result": "bu JSON değil, düz metin"})
+    assert ad._ad_copy_llm("sc-domain:panola.app", ["panola"]) == []
+
+
+def test_valid_ad_entry():
+    assert ad._valid_ad_entry({"keyword": "x", "headlines": ["a"], "descriptions": ["b"]})
+    assert not ad._valid_ad_entry("panola resmi")  # düz string — dict değil
+    assert not ad._valid_ad_entry({"keyword": "x", "headlines": "a", "descriptions": ["b"]})  # headlines liste değil
+    assert not ad._valid_ad_entry({"keyword": "x", "headlines": [1, 2], "descriptions": ["b"]})  # eleman string değil
+    assert not ad._valid_ad_entry({"headlines": ["a"], "descriptions": ["b"]})  # keyword eksik
+
+
+def test_ad_copy_llm_filters_malformed_entries(monkeypatch):
+    # Codex-P2 (PR#331): LLM 'geçerli JSON ama yanlış şekil' döndürebilir (ör. düz string
+    # listesi) — kontrolsüz geçerse _validate_rsa_limits'te AttributeError patlar ve main()'in
+    # geniş except'i GÜVENİLİR GSC-raporunu 'çekilemedi'ye çevirir. Malformed girdi filtrelenmeli,
+    # geçerli girdiler korunmalı (tüm liste atılmamalı).
+    monkeypatch.setattr(ad.gsc, "_envget", lambda k: "fake-key" if k == "INTERNAL_API_KEY" else "")
+    monkeypatch.setattr(
+        ad.gsc,
+        "_post_json",
+        lambda *a, **k: {
+            "result": json.dumps(
+                [
+                    {"keyword": "panola", "headlines": ["Geçerli"], "descriptions": ["D1"]},
+                    "panola resmi sitesi",  # malformed: düz string
+                    {"keyword": "kuafor", "headlines": [1, 2], "descriptions": ["D2"]},  # malformed: sayı-başlık
+                ]
+            )
+        },
+    )
+    ads = ad._ad_copy_llm("sc-domain:panola.app", ["panola"])
+    assert ads == [{"keyword": "panola", "headlines": ["Geçerli"], "descriptions": ["D1"]}]
+
+
+def test_ad_copy_llm_prompt_forbids_file_tools(monkeypatch):
+    # Codex-P2 (PR#331, güvenlik): GSC sorguları güvenilmez-dış-kaynaklı metin, read_only=True
+    # Read/Grep/Glob'u YASAKLAMAZ — açık dosya/araç-yasağı prompt'ta ZORUNLU (prompt-injection
+    # savunması, eski serbest-metin sürümünde vardı, JSON-yeniden-yazımda kazayla düşmüştü).
+    captured = {}
+
+    def fake_post(url, payload, headers, timeout):
+        captured.update(payload)
+        return {"result": "[]"}
+
+    monkeypatch.setattr(ad.gsc, "_envget", lambda k: "fake-key" if k == "INTERNAL_API_KEY" else "")
+    monkeypatch.setattr(ad.gsc, "_post_json", fake_post)
+    ad._ad_copy_llm("sc-domain:panola.app", ["panola"])
+    assert "dosya okuma" in captured["prompt"].lower() or "araç kullanma" in captured["prompt"].lower()
+
+
+def test_critic_review_parses_verdict(monkeypatch):
+    monkeypatch.setattr(ad.gsc, "_envget", lambda k: "fake-key" if k == "INTERNAL_API_KEY" else "")
+    monkeypatch.setattr(ad.gsc, "_post_json", lambda *a, **k: {"result": '{"verdict": "FLAGGED", "notes": "abartı var"}'})
+    v = ad._critic_review("sc-domain:panola.app", [{"keyword": "panola", "headlines": ["H1"], "descriptions": ["D1"]}])
+    assert v == {"verdict": "FLAGGED", "notes": "abartı var"}
+
+
+def test_critic_review_unverified_on_network_failure(monkeypatch):
+    monkeypatch.setattr(ad.gsc, "_envget", lambda k: "fake-key" if k == "INTERNAL_API_KEY" else "")
+
+    def boom(*a, **k):
+        raise TimeoutError("timeout")
+
+    monkeypatch.setattr(ad.gsc, "_post_json", boom)
+    v = ad._critic_review("sc-domain:panola.app", [{"keyword": "panola", "headlines": [], "descriptions": []}])
+    assert v["verdict"] == "UNVERIFIED"
+
+
+def test_write_discovery_sets_skip_dedup_and_week_tag(monkeypatch):
+    # Bug-regresyon testi: skip_dedup=True olmadan ardışık haftalık raporlar semantic-dedup'a
+    # yutuluyordu (discoveries#1144 06-22'den beri güncellenmedi, 3 hafta veri kaybı).
+    captured = {}
+
+    def fake_post(url, payload, headers, timeout):
+        captured.update(payload)
+        return {}
+
+    monkeypatch.setattr(ad.gsc, "_envget", lambda k: "fake-key" if k == "MEMORY_API_KEY" else "")
+    monkeypatch.setattr(ad.gsc, "_post_json", fake_post)
+    err = ad._write_discovery("rapor metni")
+    assert err == ""
+    assert captured["skip_dedup"] is True
+    assert captured["title"].startswith("Reklam fırsatları (ad-advisor) — ")
+    assert "-W" in captured["title"]
