@@ -373,7 +373,7 @@ def _devops_card(dv) -> dict:
     log = list(getattr(dv, "_remediation_log", []))
     total = len(log)
     succ = sum(1 for r in log if getattr(r, "success", False))
-    findings = [
+    remediation_findings = [
         {
             "time": getattr(r, "timestamp", None),
             "title": f"{getattr(r, 'alert_source', '?')} → {getattr(r, 'action', '?')}",
@@ -383,6 +383,15 @@ def _devops_card(dv) -> dict:
         }
         for r in log[-8:][::-1]
     ]
+    # Kullanıcı (2026-07-18): kart 'izleme·remediation·teşhis' diye etiketleniyor ama findings
+    # yalnız _remediation_log'dan geliyordu — DiagnosisMixin._diagnose_and_emit'in ürettiği
+    # 'diagnosis:{source}' event'leri (sustained-critical alert'te LLM kök-neden hipotezi)
+    # HİÇ görünmüyordu. Tarihsel-doğrulama: 17 gerçek teşhis-event var (06-21→07-13) ama
+    # dashboard'da sıfırı hiç yansımamış — 0-aktif-alarm dönemlerinde "0 bulgu" yanıltıcı
+    # görünüyordu (aslında "0 remediation", teşhis-geçmişi ayrı-görünmez). _events_for zaten
+    # diğer cron-ajan kartlarının kullandığı ortak yardımcı — aynı deseni burada da uygula.
+    diag_findings = _events_for("diagnosis:", limit=5)
+    findings = sorted((remediation_findings + diag_findings), key=lambda f: f.get("time") or "", reverse=True)[:8]
     active = st.get("active_alerts", 0)
     return {
         "key": "devops",

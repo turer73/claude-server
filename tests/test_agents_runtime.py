@@ -572,7 +572,19 @@ class _FakeDevOps:
         return {"running": True, "last_check": "2026-06-20T10:05:00", "check_count": 42, "active_alerts": 1, "interval_seconds": 30}
 
 
-def test_devops_card_success_rate_and_findings():
+def test_devops_card_success_rate_and_findings(tmp_path, monkeypatch):
+    import sqlite3
+
+    from app.api import agents
+
+    db = tmp_path / "srv.db"
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE events (id INTEGER PRIMARY KEY, timestamp TEXT, type TEXT, source TEXT, severity TEXT, title TEXT, detail TEXT)"
+    )
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(db))
     log = [_FakeRemediation("service:x", "restart", True), _FakeRemediation("docker:y", "restart", False)]
     card = _devops_card(_FakeDevOps(log))
     assert card["key"] == "devops"
@@ -584,10 +596,52 @@ def test_devops_card_success_rate_and_findings():
     assert card["findings"][0]["severity"] in ("P1", "P3")
 
 
-def test_devops_card_no_remediation_no_rate():
+def test_devops_card_no_remediation_no_rate(tmp_path, monkeypatch):
+    import sqlite3
+
+    from app.api import agents
+
+    db = tmp_path / "srv.db"
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE events (id INTEGER PRIMARY KEY, timestamp TEXT, type TEXT, source TEXT, severity TEXT, title TEXT, detail TEXT)"
+    )
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(db))
     card = _devops_card(_FakeDevOps([]))
     assert card["success_rate"] is None
     assert card["current_task"].startswith("Remediation: 1")  # aktif uyarı (status'ta 1)
+
+
+def test_devops_card_includes_diagnosis_events(tmp_path, monkeypatch):
+    # Regresyon: kart 'izleme·remediation·teşhis' diye etiketleniyor ama findings yalnız
+    # _remediation_log'dan geliyordu — DiagnosisMixin'in ürettiği 'diagnosis:{source}'
+    # event'leri (sustained-critical alert'te LLM kök-neden hipotezi) HİÇ görünmüyordu.
+    # Tarihsel-doğrulama: 17 gerçek teşhis-event vardı (06-21→07-13), dashboard'da sıfır
+    # yansıma. 0-remediation + 0-aktif-alarm dönemlerinde 'bulgu yok' yanıltıcıydı.
+    import sqlite3
+
+    from app.api import agents
+
+    db = tmp_path / "srv.db"
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE events (id INTEGER PRIMARY KEY, timestamp TEXT, type TEXT, source TEXT, severity TEXT, title TEXT, detail TEXT)"
+    )
+    con.execute(
+        "INSERT INTO events (timestamp,type,source,severity,title,detail) VALUES "
+        "('2026-07-13T06:47:12','alert','diagnosis:temperature','warning',"
+        "'🔍 Teşhis (temperature): cron yükü','Read-only LLM hipotezi.')"
+    )
+    con.commit()
+    con.close()
+    monkeypatch.setattr(agents, "server_db_path", lambda: str(db))
+    card = _devops_card(_FakeDevOps([]))  # 0 remediation, 0 findings eskiden
+    titles = [f["title"] for f in card["findings"]]
+    assert any("Teşhis (temperature)" in t for t in titles)
+    diag = next(f for f in card["findings"] if "Teşhis (temperature)" in f["title"])
+    assert diag["kind"] == "event"
 
 
 class _FakeCRA:
