@@ -88,7 +88,12 @@ PLAYBOOKS: dict[str, list[dict[str, str]]] = {
     "temperature_critical": [
         {
             "desc": "Set CPU governor to powersave",
-            "cmd": "cpufreq-set -g powersave 2>/dev/null || echo 'powersave' | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true",
+            # disc#1354: cpufreq-set whitelist'e eklendi AMA scaling_governor root:root 0644 —
+            # servis klipperos altında çalışıyor (root DEĞİL), sudo'suz yazma sessizce
+            # Permission-denied'a düşer + `|| true` exit_code'u 0'a maskeler (fake-success).
+            # sudo (ShellExecutor'da zaten whitelist-muaf, klipperos NOPASSWD) hem cpufreq-set
+            # hem sysfs-fallback için gerekli.
+            "cmd": "sudo cpufreq-set -g powersave 2>/dev/null || echo 'powersave' | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true",
         },
     ],
     "service_down": [
