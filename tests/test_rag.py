@@ -173,7 +173,7 @@ async def test_rag_ask_default_model(client):
 
 @pytest.mark.anyio
 async def test_rag_ask_custom_model(client):
-    """/ask with model=qwen3-coder:30b passes that model to Ollama."""
+    """/ask with model=qwen2.5:7b passes that model to Ollama."""
     embed_resp, search_resp, scroll_resp, ollama_resp = _make_ask_mocks()
     captured = {}
 
@@ -188,10 +188,10 @@ async def test_rag_ask_custom_model(client):
         return ollama_resp
 
     with patch("app.api.rag.requests.post", side_effect=fake_post):
-        resp = await client.post("/api/v1/rag/ask", json={"q": "code review", "model": "qwen3-coder:30b"})
+        resp = await client.post("/api/v1/rag/ask", json={"q": "code review", "model": "qwen2.5:7b"})
     assert resp.status_code == 200
-    assert resp.json()["model"] == "qwen3-coder:30b"
-    assert captured.get("model") == "qwen3-coder:30b"
+    assert resp.json()["model"] == "qwen2.5:7b"
+    assert captured.get("model") == "qwen2.5:7b"
 
 
 @pytest.mark.anyio
