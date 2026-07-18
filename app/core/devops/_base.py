@@ -71,3 +71,10 @@ class _DevOpsAgentBase:
 
     async def _remediate_container(self, container: str, alert: Alert) -> None:
         raise NotImplementedError
+
+    # disc#1353a: probe-mixin de alert-kalıcılık/çözüm yazıyor (impl: MetricsMixin)
+    async def _store_alert(self, alert: Alert) -> None:
+        raise NotImplementedError
+
+    async def _resolve_alert_db(self, alert: Alert) -> None:
+        raise NotImplementedError

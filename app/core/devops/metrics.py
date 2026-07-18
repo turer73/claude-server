@@ -165,8 +165,10 @@ class MetricsMixin(_DevOpsAgentBase):
                 "INSERT INTO alerts (timestamp, severity, source, message, resolved, valid_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (alert.timestamp, alert.severity, alert.source, alert.message, False, alert.timestamp),
             )
-        except Exception:
-            pass
+        except Exception as e:
+            # disc#1353b: 07-18'de 6-saatlik DB-lock penceresinde alert-kayıtları SESSİZCE
+            # kayboldu (n8n-down görünmedi) — yutma yerine tip-adı logu (payload'sız).
+            log.warning("alerts insert failed (%s): %s", alert.source, type(e).__name__)
         # LIVESYS Faz 3.2 alerts-bridge: aynı threshold-alert'i merkezi events'e de
         # yaz (TEK-writer noktası, scatter yok). alerts-INSERT KALIR (active_alerts/
         # retention bağımlı). severity "warning"->warn _normalize_severity ile.
@@ -182,8 +184,9 @@ class MetricsMixin(_DevOpsAgentBase):
                 severity=alert.severity,
                 detail=None,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            # disc#1353b: events-köprüsü kopunca Telegram-hattı sessiz kalıyordu — logla.
+            log.warning("events bridge failed (%s): %s", alert.source, type(e).__name__)
 
     async def _resolve_alert_db(self, alert: Alert) -> None:
         if not self._db:
@@ -193,8 +196,9 @@ class MetricsMixin(_DevOpsAgentBase):
                 "UPDATE alerts SET resolved = 1, resolved_at = ?, invalid_at = ? WHERE source = ? AND resolved = 0",
                 (alert.resolved_at, alert.resolved_at, alert.source),
             )
-        except Exception:
-            pass
+        except Exception as e:
+            # disc#1353b: resolve-güncellemesi kaybolursa alert DB'de sonsuza dek açık görünür.
+            log.warning("alert resolve-update failed (%s): %s", alert.source, type(e).__name__)
 
     @property
     def active_alerts(self) -> list[dict[str, Any]]:
