@@ -368,12 +368,29 @@ def _codereview_db() -> dict:
         return {"counts": {}, "counts_14d": {}, "findings": []}
 
 
+def _ts_sort_key(ts: str | None) -> datetime:
+    """Sıralama-anahtarı: karışık timestamp formatlarını (Codex-P2 PR#333) karşılaştırılabilir
+    datetime'a çevir. remediation-kayıtları `datetime.now(UTC).isoformat()` üretir ('T'-ayıraç,
+    tz-suffix'li: '2026-07-18T01:23:45+00:00'); events.timestamp SQLite `datetime('now')`
+    varsayılanı üretir (boşluk-ayıraç, tz'siz: '2026-07-18 23:00:00'). Ham lexicographic
+    string-sort YANLIŞ sonuç verir çünkü 'T'(0x54) > ' '(0x20) — aynı-gün içinde saat-01'deki
+    bir remediation, saat-23'teki bir diagnosis'in ÖNÜNE geçer (kanıtlandı: canlı-test).
+    Parse-fail → datetime.min (sona düşer, çöp-veri asla yanlışlıkla en-üste çıkmaz)."""
+    if not ts:
+        return datetime.min.replace(tzinfo=UTC)
+    try:
+        dt = datetime.fromisoformat(ts)
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+    except ValueError:
+        return datetime.min.replace(tzinfo=UTC)
+
+
 def _devops_card(dv) -> dict:
     st = dv.status
     log = list(getattr(dv, "_remediation_log", []))
     total = len(log)
     succ = sum(1 for r in log if getattr(r, "success", False))
-    findings = [
+    remediation_findings = [
         {
             "time": getattr(r, "timestamp", None),
             "title": f"{getattr(r, 'alert_source', '?')} → {getattr(r, 'action', '?')}",
@@ -383,6 +400,15 @@ def _devops_card(dv) -> dict:
         }
         for r in log[-8:][::-1]
     ]
+    # Kullanıcı (2026-07-18): kart 'izleme·remediation·teşhis' diye etiketleniyor ama findings
+    # yalnız _remediation_log'dan geliyordu — DiagnosisMixin._diagnose_and_emit'in ürettiği
+    # 'diagnosis:{source}' event'leri (sustained-critical alert'te LLM kök-neden hipotezi)
+    # HİÇ görünmüyordu. Tarihsel-doğrulama: 17 gerçek teşhis-event var (06-21→07-13) ama
+    # dashboard'da sıfırı hiç yansımamış — 0-aktif-alarm dönemlerinde "0 bulgu" yanıltıcı
+    # görünüyordu (aslında "0 remediation", teşhis-geçmişi ayrı-görünmez). _events_for zaten
+    # diğer cron-ajan kartlarının kullandığı ortak yardımcı — aynı deseni burada da uygula.
+    diag_findings = _events_for("diagnosis:", limit=5)
+    findings = sorted((remediation_findings + diag_findings), key=lambda f: _ts_sort_key(f.get("time")), reverse=True)[:8]
     active = st.get("active_alerts", 0)
     return {
         "key": "devops",
@@ -715,7 +741,11 @@ async def runtime_agents(request: Request) -> dict:
     agents = []
     dv = getattr(request.app.state, "devops_agent", None)
     if dv is not None:
-        agents.append(_devops_card(dv))
+        # Codex-P2 (PR#333): _devops_card artık _events_for ile SQLite sorguluyor (eskiden
+        # saf in-memory'ydi, sync-çağrı zararsızdı) — server.db kilitliyse/yavaşsa event-loop'u
+        # saniyelerce bloklar (bkz bugünkü WAL-lock incident'i). Diğer DB-dokunan kartlarla
+        # (cron/research) TUTARLI: to_thread'e taşı.
+        agents.append(await asyncio.to_thread(_devops_card, dv))
     cra = getattr(request.app.state, "code_review_agent", None)
     if cra is not None:
         crdb = await asyncio.to_thread(_codereview_db)
