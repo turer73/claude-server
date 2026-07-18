@@ -258,3 +258,20 @@ def test_main_drop_alert_fail_reverts_auto_ads_and_marks_partial(monkeypatch, ca
     out = capsys.readouterr().out
     assert "OUTCOME: partial" in out
     assert "alert-yazımı FAIL" in out
+
+
+def test_write_discovery_sets_skip_dedup(monkeypatch):
+    # Bug-regresyon testi: skip_dedup=True olmadan haftalık 'AdSense hazırlık (N site)'
+    # özeti semantic-dedup'a yutuluyordu (discoveries#1145 06-22'den beri güncellenmedi,
+    # 06-29'dan bu yana her hafta OUTCOME:pass raporlanmasına rağmen 4+ hafta veri kaybı).
+    captured = {}
+
+    def fake_post(url, payload, headers, timeout):
+        captured.update(payload)
+        return {}
+
+    monkeypatch.setattr(ar.gsc, "_envget", lambda k: "fake-key" if k == "MEMORY_API_KEY" else "")
+    monkeypatch.setattr(ar.gsc, "_post_json", fake_post)
+    err = ar._write_discovery("başlık", "detay")
+    assert err == ""
+    assert captured["skip_dedup"] is True

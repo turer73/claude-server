@@ -387,6 +387,11 @@ def build_report(sites: dict[str, dict[str, Any]], audits: dict[str, dict[str, A
 
 
 def _write_discovery(title: str, details: str, dtype: str = "learning") -> str:
+    """skip_dedup=True (Codex#176 dersi): haftalık-log'suz semantic-dedup ardışık haftalık
+    raporları NOOP/UPDATE'e yutar. Tespit: 'AdSense hazırlık (3 site)' başlığı yalnız
+    06-09/06-22'den kalma 2 kayıt — 06-29'dan bu yana HER hafta OUTCOME:pass raporlanmasına
+    rağmen özet-discovery'si sessizce kaybolmuş (regresyon-alert'leri {from}→{to} ile doğal-
+    benzersiz olduğundan etkilenmedi; yalnız rutin haftalık-özet kayboldu)."""
     mkey = gsc._envget("MEMORY_API_KEY")
     if not mkey:
         return "no MEMORY_API_KEY"
@@ -397,6 +402,7 @@ def _write_discovery(title: str, details: str, dtype: str = "learning") -> str:
                 "device_name": "klipper",
                 "project": "linux-ai-server",
                 "type": dtype,
+                "skip_dedup": True,  # haftalık-log; ardışık raporlar semantic/exact-dedup'la merge olmasın
                 "title": title,
                 "details": details[:3800],
                 "rationale": "adsense-readiness.py — AdSense durum+içerik denetçisi (salt-okunur, mail yok).",
