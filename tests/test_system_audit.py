@@ -132,7 +132,9 @@ def test_consciousness_card_effective_running_from_thoughts(tmp_path, monkeypatc
     con.execute("INSERT INTO thoughts (timestamp) VALUES (datetime('now','-5 minutes'))")
     con.commit()
     con.close()
-    monkeypatch.setattr(agents, "server_db_path", lambda: str(db))
+    # thoughts MEMORY_DB'de yaşar (consciousness.py) — server_db_path DEĞİL. İlk sürüm yanlış DB'yi
+    # sorguluyordu; bu test base'de (yanlış-DB kodu) FAIL eder → repro-gate doğrulayıcısı.
+    monkeypatch.setattr(agents, "MEMORY_DB", str(db))
 
     card = _consciousness_card(_FakeConsciousness())
     assert card["key"] == "consciousness"
@@ -150,7 +152,7 @@ def test_consciousness_card_stale_thoughts_honest_stopped(tmp_path, monkeypatch)
     con.execute("INSERT INTO thoughts (timestamp) VALUES (datetime('now','-3 hours'))")
     con.commit()
     con.close()
-    monkeypatch.setattr(agents, "server_db_path", lambda: str(db))
+    monkeypatch.setattr(agents, "MEMORY_DB", str(db))
 
     card = _consciousness_card(_FakeConsciousness())
     assert card["running"] is False  # bayat düşünce → dürüst 'Durdu' (uydurma-canlılık yok)
