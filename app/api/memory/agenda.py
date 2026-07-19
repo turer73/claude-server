@@ -129,7 +129,7 @@ def _safe_claims(db: sqlite3.Connection) -> list[dict[str, Any]]:
             dict(r)
             for r in db.execute(
                 "SELECT id,task_key,device,repo,branch,note,datetime(created_at) as created_at "
-                "FROM active_claims WHERE active=1 "
+                "FROM active_claims WHERE active=1 AND expires_at >= datetime('now') "
                 "ORDER BY created_at DESC LIMIT 10"
             ).fetchall()
         ]
@@ -154,6 +154,9 @@ def _device_health(db: sqlite3.Connection) -> list[dict[str, Any]]:
                 UNION ALL
                 SELECT device_name, MAX(julianday(created_at))
                 FROM tasks_log WHERE NULLIF(device_name, '') IS NOT NULL GROUP BY device_name
+                UNION ALL
+                SELECT device_name, MAX(julianday(created_at))
+                FROM discoveries WHERE NULLIF(device_name, '') IS NOT NULL GROUP BY device_name
             ),
             freshest(name, activity_jd) AS (
                 SELECT name, MAX(activity_jd) FROM activity GROUP BY name

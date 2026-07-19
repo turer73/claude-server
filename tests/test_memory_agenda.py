@@ -140,12 +140,17 @@ async def test_agenda_device_health_uses_freshest_activity(client, memory_db):  
         "INSERT INTO devices (name,platform,last_seen) VALUES (?,?,?)",
         [
             ("active-via-note", "linux", "2000-01-01 00:00:00"),
+            ("active-via-discovery", "linux", "2000-01-01 00:00:00"),
             ("never-seen", "android", None),
         ],
     )
     con.execute(
         "INSERT INTO tasks_log (device_name,project,task,status) VALUES (?,?,?,?)",
         ("unregistered-worker", "linux-ai-server", "recent task", "completed"),
+    )
+    con.execute(
+        "INSERT INTO discoveries (project,type,title,status,device_name) VALUES (?,?,?,?,?)",
+        ("linux-ai-server", "fix", "recent discovery", "active", "active-via-discovery"),
     )
     con.commit()
     con.close()
@@ -161,6 +166,8 @@ async def test_agenda_device_health_uses_freshest_activity(client, memory_db):  
     devices = {d["name"]: d for d in r.json()["ajan_saglik"]["devices"]}
     assert devices["active-via-note"]["silent"] == 0
     assert devices["active-via-note"]["last_seen"] != "2000-01-01 00:00:00"
+    assert devices["active-via-discovery"]["silent"] == 0
+    assert devices["active-via-discovery"]["last_seen"] != "2000-01-01 00:00:00"
     assert devices["never-seen"]["silent"] == 1
     assert devices["unregistered-worker"]["platform"] == "?"
     assert devices["unregistered-worker"]["silent"] == 0
