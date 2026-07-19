@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sqlite3
 import tempfile
+import threading
 
 import pytest
 
@@ -455,14 +457,133 @@ class TestDbReaders:
                 "source_data": '{"test":1}',
                 "is_deep": 0,
             }
-            stream._store_thought(thought)
+            thought_id = stream._store_thought(thought)
             thoughts = stream.get_recent_thoughts(limit=10)
+            assert thought_id == thoughts[0]["id"]
             assert len(thoughts) == 1
             assert thoughts[0]["focus"] == "idle"
             assert thoughts[0]["emotion"] == "calm"
             assert thoughts[0]["content"] == "her sey sakin"
         finally:
             os.unlink(db_path)
+
+    async def test_run_loop_stores_in_worker_and_publishes_on_main_loop(self, tmp_path, monkeypatch):
+        """Regression: DB work stays in a thread; both bus events run on and are awaited by the main loop."""
+        from app.core import consciousness as consciousness_module
+        from app.core.agent_bus import AgentBus
+
+        db_path = tmp_path / "thoughts.db"
+        monkeypatch.setattr(consciousness_module, "MEMORY_DB", str(db_path))
+        _ensure_thoughts_table()
+
+        stream = ConsciousnessStream(interval=0)
+        shallow = {
+            "timestamp": "2026-01-01T00:00:00",
+            "focus": "idle",
+            "emotion": "calm",
+            "content": "normal thought",
+            "source_data": "{}",
+            "is_deep": 0,
+        }
+        deep = {
+            "timestamp": "2026-01-01T00:01:00",
+            "focus": "introspection",
+            "emotion": "calm",
+            "content": "deep thought",
+            "source_data": "{}",
+            "is_deep": 1,
+        }
+        monkeypatch.setattr(stream, "_think", lambda: shallow)
+        monkeypatch.setattr(stream, "_think_deep", lambda: deep)
+
+        main_loop = asyncio.get_running_loop()
+        main_thread = threading.get_ident()
+        store_threads: list[int] = []
+        order: list[str] = []
+        original_store = stream._store_thought
+
+        def recording_store(thought):
+            store_threads.append(threading.get_ident())
+            order.append(f"store:{'deep' if thought.get('is_deep') else 'new'}")
+            return original_store(thought)
+
+        monkeypatch.setattr(stream, "_store_thought", recording_store)
+
+        bus = AgentBus()
+        monkeypatch.setattr(consciousness_module, "get_bus", lambda: bus)
+        received = []
+
+        async def capture(event):
+            await asyncio.sleep(0)
+            received.append((event, asyncio.get_running_loop(), threading.get_ident()))
+            order.append(f"publish:{'deep' if event.type == 'thought:deep' else 'new'}")
+            if len(received) == 2:
+                stream._running = False
+
+        bus.subscribe("thought:new", capture)
+        bus.subscribe("thought:deep", capture)
+        stream._llm_timer = consciousness_module.LLM_INTERVAL
+        stream._running = True
+
+        await asyncio.wait_for(stream._run_loop(), timeout=2)
+
+        assert [item[0].type for item in received] == ["thought:new", "thought:deep"]
+        assert [item[0].payload["thought_id"] for item in received] == [1, 2]
+        assert all(loop is main_loop and thread_id == main_thread for _, loop, thread_id in received)
+        assert store_threads
+        assert all(thread_id != main_thread for thread_id in store_threads)
+        assert order == ["store:new", "publish:new", "store:deep", "publish:deep"]
+
+    async def test_worker_lock_is_owned_by_the_stream_instance(self, tmp_path, monkeypatch):
+        from app.core import consciousness as consciousness_module
+
+        monkeypatch.setattr(consciousness_module, "MEMORY_DB", str(tmp_path / "thoughts.db"))
+        _ensure_thoughts_table()
+        lock_results = iter([101, None])
+        released: list[int | None] = []
+        monkeypatch.setattr(consciousness_module, "_try_worker_lock", lambda: next(lock_results))
+        monkeypatch.setattr(consciousness_module, "_release_worker_lock", released.append)
+
+        first = ConsciousnessStream(interval=999)
+        second = ConsciousnessStream(interval=999)
+        forever = asyncio.Event()
+
+        async def wait_forever():
+            await forever.wait()
+
+        monkeypatch.setattr(first, "_run_loop", wait_forever)
+        first.start()
+        second.start()
+
+        assert first.status["running"] is True
+        assert second.status["running"] is False
+        await second.stop()
+        assert released == []
+
+        await first.stop()
+        assert released == [101]
+
+    async def test_external_cohort_lock_mode_skips_legacy_lock(self, tmp_path, monkeypatch):
+        from app.core import consciousness as consciousness_module
+
+        monkeypatch.setattr(consciousness_module, "MEMORY_DB", str(tmp_path / "thoughts.db"))
+        _ensure_thoughts_table()
+        monkeypatch.setattr(
+            consciousness_module,
+            "_try_worker_lock",
+            lambda: (_ for _ in ()).throw(AssertionError("legacy lock must not be acquired")),
+        )
+        stream = ConsciousnessStream(interval=999, manage_worker_lock=False)
+        forever = asyncio.Event()
+
+        async def wait_forever():
+            await forever.wait()
+
+        monkeypatch.setattr(stream, "_run_loop", wait_forever)
+        stream.start()
+
+        assert stream.status["running"] is True
+        await stream.stop()
 
     def test_get_self_model_structure(self, monkeypatch):
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:

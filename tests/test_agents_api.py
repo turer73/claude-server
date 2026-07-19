@@ -28,6 +28,7 @@ class TestBusStatus:
         data = resp.json()
         assert "bus" in data
         assert "recent_events" in data
+        assert data["worker"]["continuous_agents_role"] == "unknown"
 
     async def test_bus_status_no_auth(self, client):
         resp = await client.get("/api/v1/agents/bus")
@@ -51,6 +52,23 @@ class TestRuntimeAgents:
         assert resp.status_code == 200
         data = resp.json()
         assert "agents" in data
+
+    async def test_runtime_reports_local_continuous_agent_role(self, app, client, auth_headers):
+        app.state.continuous_agents_role = "standby"
+        resp = await client.get("/api/v1/agents/runtime", headers=auth_headers)
+
+        assert resp.status_code == 200
+        assert resp.json()["worker"]["continuous_agents_role"] == "standby"
+        assert isinstance(resp.json()["worker"]["pid"], int)
+
+    async def test_runtime_sanitizes_continuous_agent_error(self, app, client, auth_headers):
+        app.state.continuous_agents_lock_error = "lock failed\n" + ("x" * 300)
+
+        resp = await client.get("/api/v1/agents/runtime", headers=auth_headers)
+
+        error = resp.json()["worker"]["continuous_agents_error"]
+        assert "\n" not in error
+        assert len(error) == 240
 
     async def test_runtime_no_auth(self, client):
         resp = await client.get("/api/v1/agents/runtime")
@@ -128,6 +146,93 @@ class TestTriggerAgent:
     async def test_trigger_no_auth(self, client):
         resp = await client.post("/api/v1/agents/runtime/devops/trigger")
         assert resp.status_code in (401, 403)
+
+    async def test_code_review_trigger_queues_from_standby_worker(self, app, client, auth_headers):
+        calls = []
+
+        class FakeCodeReview:
+            def status(self) -> dict:
+                return {"enabled": True, "running": False}
+
+            def request_manual_run(self) -> str:
+                calls.append("request")
+                return "queued"
+
+        app.state.code_review_agent = FakeCodeReview()
+        app.state.continuous_agents_role = "standby"
+
+        resp = await client.post("/api/v1/agents/runtime/code-review/trigger", headers=auth_headers)
+
+        assert resp.status_code == 200
+        assert resp.json()["queued"] is True
+        assert calls == ["request"]
+
+    async def test_code_review_trigger_persists_request(self, app, client, auth_headers):
+        completed = []
+
+        class FakeCodeReview:
+            def status(self) -> dict:
+                return {"enabled": True, "running": True}
+
+            def request_manual_run(self) -> str:
+                completed.append(True)
+                return "queued"
+
+        app.state.code_review_agent = FakeCodeReview()
+        app.state.continuous_agents_role = "leader"
+        app.state.continuous_agents_started = True
+
+        resp = await client.post("/api/v1/agents/runtime/code-review/trigger", headers=auth_headers)
+
+        assert resp.status_code == 200
+        assert completed == [True]
+
+    async def test_code_review_trigger_rejects_disabled_agent(self, app, client, auth_headers):
+        class FakeCodeReview:
+            def status(self) -> dict:
+                return {"enabled": False, "running": False}
+
+        app.state.code_review_agent = FakeCodeReview()
+        app.state.continuous_agents_role = "leader"
+        app.state.continuous_agents_started = True
+
+        resp = await client.post("/api/v1/agents/runtime/code-review/trigger", headers=auth_headers)
+
+        assert resp.status_code == 409
+        assert "disabled" in resp.json()["detail"]
+
+    async def test_code_review_trigger_coalesces_manual_requests(self, app, client, auth_headers):
+        class FakeCodeReview:
+            def status(self) -> dict:
+                return {"enabled": True, "running": True}
+
+            def request_manual_run(self) -> str:
+                return "already_queued"
+
+        app.state.code_review_agent = FakeCodeReview()
+        app.state.continuous_agents_role = "leader"
+        app.state.continuous_agents_started = True
+
+        resp = await client.post("/api/v1/agents/runtime/code-review/trigger", headers=auth_headers)
+
+        assert resp.status_code == 200
+        assert resp.json()["queued"] is False
+        assert resp.json()["coalesced"] is True
+
+    async def test_code_review_trigger_reports_persistence_failure(self, app, client, auth_headers):
+        class FakeCodeReview:
+            def status(self) -> dict:
+                return {"enabled": True, "running": False}
+
+            def request_manual_run(self) -> str:
+                return "error"
+
+        app.state.code_review_agent = FakeCodeReview()
+
+        resp = await client.post("/api/v1/agents/runtime/code-review/trigger", headers=auth_headers)
+
+        assert resp.status_code == 503
+        assert resp.headers["retry-after"] == "5"
 
     async def test_trigger_rejects_triggerable_false_agents(self, client, auth_headers):
         # Codex #328-P2 (security): ci-fix-runall require_admin-korumalı /ci/run-all'ı çağırır,

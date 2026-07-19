@@ -213,8 +213,12 @@ class LearningLoop:
             except asyncio.CancelledError:
                 pass
             self._task = None
-        for t in list(self._score_after_tasks):
+        score_after_tasks = list(self._score_after_tasks)
+        for t in score_after_tasks:
             t.cancel()
+        if score_after_tasks:
+            await asyncio.gather(*score_after_tasks, return_exceptions=True)
+        self._score_after_tasks.clear()
         bus = get_bus()
         bus.unsubscribe("critic:score", self._on_score)
         log.info("learning loop stopped")

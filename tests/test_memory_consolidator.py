@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import tempfile
+from contextlib import closing
 
 import pytest
 
@@ -12,6 +13,8 @@ from app.core.memory_consolidator import (
     _ensure_tables,
     _find_patterns,
     _get_top_memories,
+    _store_critic_memory,
+    _store_thought_memory,
     _upsert_edge,
     _upsert_node,
 )
@@ -23,6 +26,13 @@ def memory_db(monkeypatch):
         db_path = f.name
     monkeypatch.setattr("app.core.memory_consolidator._MEMORY_DB", db_path)
     _ensure_tables()
+    with closing(sqlite3.connect(db_path)) as con:
+        con.execute(
+            """CREATE TABLE thoughts (
+                   id INTEGER PRIMARY KEY, timestamp TEXT, focus TEXT,
+                   emotion TEXT, content TEXT, is_deep INTEGER DEFAULT 0)"""
+        )
+        con.commit()
     yield db_path
     os.unlink(db_path)
 
@@ -34,6 +44,7 @@ class TestDbOperations:
         con.close()
         assert "memory_nodes" in tables
         assert "memory_edges" in tables
+        assert "agent_event_receipts" in tables
         assert "prompt_versions" in tables
 
     def test_upsert_node_creates(self, memory_db):
@@ -140,6 +151,74 @@ class TestDbOperations:
         patterns = _find_patterns()
         assert patterns == []
 
+    def test_schema_migration_failure_propagates(self, monkeypatch):
+        monkeypatch.setattr("app.core.memory_consolidator._MEMORY_DB", "/nonexistent/dir/nope.db")
+
+        with pytest.raises(sqlite3.Error):
+            _ensure_tables()
+
+    def test_upsert_closes_connection_after_sqlite_error(self, monkeypatch):
+        from app.core import memory_consolidator as module
+
+        closed = False
+
+        class BrokenConnection:
+            def execute(self, *_args, **_kwargs):
+                raise sqlite3.OperationalError("locked")
+
+            def close(self):
+                nonlocal closed
+                closed = True
+
+        monkeypatch.setattr(module.sqlite3, "connect", lambda *_args, **_kwargs: BrokenConnection())
+
+        module._upsert_node("focus", "focus:x", "x")
+
+        assert closed is True
+
+    def test_thought_transaction_rolls_back_partial_writes(self, monkeypatch, memory_db):
+        from app.core import memory_consolidator as module
+
+        original = module._upsert_node_in_connection
+        calls = 0
+
+        def fail_on_second_node(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise sqlite3.OperationalError("simulated mid-transaction failure")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(module, "_upsert_node_in_connection", fail_on_second_node)
+
+        with pytest.raises(sqlite3.OperationalError, match="mid-transaction"):
+            _store_thought_memory(7, "debug", "focused", "working", "idle", "calm")
+
+        with closing(sqlite3.connect(memory_db)) as con:
+            node_count = con.execute("SELECT COUNT(*) FROM memory_nodes").fetchone()[0]
+            edge_count = con.execute("SELECT COUNT(*) FROM memory_edges").fetchone()[0]
+            receipt_count = con.execute("SELECT COUNT(*) FROM agent_event_receipts").fetchone()[0]
+        assert node_count == 0
+        assert edge_count == 0
+        assert receipt_count == 0
+
+    def test_durable_receipts_make_restart_replay_idempotent(self, memory_db):
+        assert _store_thought_memory(21, "debug", "focused", "working", "idle", "calm") is True
+        assert _store_thought_memory(21, "debug", "focused", "working", "idle", "calm") is False
+        assert _store_critic_memory(21, 8, 1.2, '{"score":8}', "debug", "focused") is True
+        assert _store_critic_memory(21, 8, 1.2, '{"score":8}', "debug", "focused") is False
+
+        with closing(sqlite3.connect(memory_db)) as con:
+            focus = con.execute("SELECT count FROM memory_nodes WHERE key='focus:debug'").fetchone()
+            score = con.execute("SELECT count FROM memory_nodes WHERE key='score:21'").fetchone()
+            observed = con.execute("SELECT count FROM memory_edges WHERE relation='critic_observed'").fetchone()
+            receipts = con.execute("SELECT event_type FROM agent_event_receipts ORDER BY event_type").fetchall()
+
+        assert focus == (1,)
+        assert score == (1,)
+        assert observed == (1,)
+        assert receipts == [("critic:score",), ("thought",)]
+
 
 @pytest.fixture
 def consolidator(memory_db):
@@ -167,6 +246,34 @@ class TestMemoryConsolidatorClass:
         consolidator.start()
         consolidator.start()
         await consolidator.stop()
+
+    def test_start_fails_before_spawning_when_timeline_restore_fails(self, consolidator, monkeypatch):
+        from app.core import memory_consolidator as module
+
+        def fail_restore():
+            raise sqlite3.OperationalError("locked")
+
+        monkeypatch.setattr(module, "_get_last_processed_thought_state", fail_restore)
+
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            consolidator.start()
+
+        assert consolidator._running is False
+        assert consolidator._task is None
+
+    @pytest.mark.anyio
+    async def test_start_restores_durable_timeline_head(self, consolidator, memory_db):
+        with closing(sqlite3.connect(memory_db)) as con:
+            con.execute("INSERT INTO thoughts (id, timestamp, focus, emotion, content) VALUES (31, '2026-01-01', 'debug', 'focused', 'x')")
+            con.commit()
+        assert _store_thought_memory(31, "debug", "focused", "x", None, None) is True
+
+        consolidator.start()
+        try:
+            assert consolidator._last_thought_id == 31
+            assert consolidator._last_state == {"focus": "debug", "emotion": "focused"}
+        finally:
+            await consolidator.stop()
 
     @pytest.mark.anyio
     async def test_last_run_set_by_loop(self, consolidator):
@@ -221,12 +328,35 @@ class TestMemoryConsolidatorClass:
         assert consolidator._last_state.get("focus") == "debug"
 
     @pytest.mark.anyio
+    async def test_on_thought_does_not_advance_state_when_transaction_fails(self, consolidator, monkeypatch):
+        from app.core import memory_consolidator as module
+        from app.core.agent_bus import Event
+
+        def fail_store(*_args, **_kwargs):
+            raise sqlite3.OperationalError("locked")
+
+        monkeypatch.setattr(module, "_store_thought_memory", fail_store)
+        event = Event(
+            type="thought:new",
+            source="consciousness",
+            payload={
+                "thought_id": 9,
+                "thought": {"focus": "debug", "emotion": "focused", "content": "retry me"},
+            },
+        )
+
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            await consolidator._process_thought(event)
+
+        assert consolidator._last_state == {}
+
+    @pytest.mark.anyio
     async def test_on_thought_builds_transition_edge(self, consolidator, memory_db):
         # Race-fix davranis-korumasi: farkli-focus'lu ardisik thought'lar prev->new transition
         # edge'i uretmeli (atomik read-modify-write prev'i dogru yakalar).
         from app.core.agent_bus import Event
 
-        for i, foc in enumerate(["debug", "idle"]):
+        for i, foc in enumerate(["debug", "idle"], start=1):
             await consolidator._on_thought(
                 Event(
                     type="thought:new", source="t", payload={"thought_id": i, "thought": {"focus": foc, "emotion": "calm", "content": "x"}}
@@ -254,14 +384,44 @@ class TestMemoryConsolidatorClass:
                     Event(
                         type="thought:new",
                         source="t",
-                        payload={"thought_id": i, "thought": {"focus": foc, "emotion": f"e{i}", "content": "x"}},
+                        payload={"thought_id": i + 1, "thought": {"focus": foc, "emotion": f"e{i}", "content": "x"}},
                     )
                 )
                 for i, foc in enumerate(focuses)
             ]
         )
         assert set(consolidator._last_state.keys()) == {"focus", "emotion"}
-        assert consolidator._last_state["focus"] in focuses
+        assert consolidator._last_state == {"focus": "f19", "emotion": "e19"}
+        assert consolidator._last_thought_id == 20
+
+    @pytest.mark.anyio
+    async def test_out_of_order_thought_does_not_move_timeline_backwards(self, consolidator, memory_db):
+        from app.core.agent_bus import Event
+
+        async def deliver(thought_id: int, focus: str) -> None:
+            await consolidator._on_thought(
+                Event(
+                    type="thought:new",
+                    source="test",
+                    payload={
+                        "thought_id": thought_id,
+                        "thought": {"focus": focus, "emotion": "calm", "content": focus},
+                    },
+                )
+            )
+
+        await deliver(2, "newer")
+        await deliver(1, "older-recovery")
+        await deliver(3, "next")
+
+        with closing(sqlite3.connect(memory_db)) as con:
+            transitions = con.execute("SELECT source_key, target_key FROM memory_edges WHERE relation='transition' ORDER BY id").fetchall()
+            old_content = con.execute("SELECT value FROM memory_nodes WHERE key='thought:1'").fetchone()
+
+        assert transitions == [("newer", "next")]
+        assert old_content == ("older-recovery",)
+        assert consolidator._last_state["focus"] == "next"
+        assert consolidator._last_thought_id == 3
 
     @pytest.mark.anyio
     async def test_on_critic_score(self, consolidator, monkeypatch):
@@ -283,6 +443,40 @@ class TestMemoryConsolidatorClass:
             },
         )
         await consolidator._on_critic_score(event)
+
+    @pytest.mark.anyio
+    async def test_on_critic_score_retries_transient_sqlite_failure(self, consolidator, monkeypatch):
+        from app.core import memory_consolidator as module
+        from app.core.agent_bus import Event
+
+        attempts = 0
+
+        def flaky_store(*_args, **_kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 6:
+                raise sqlite3.OperationalError("locked")
+
+        async def no_sleep(_delay):
+            return None
+
+        monkeypatch.setattr(module, "_store_critic_memory", flaky_store)
+        monkeypatch.setattr(module.asyncio, "sleep", no_sleep)
+        event = Event(
+            type="critic:score",
+            source="critic",
+            payload={
+                "thought_id": 10,
+                "score": 8,
+                "thought_focus": "debug",
+                "thought_emotion": "focused",
+                "is_repetitive": False,
+            },
+        )
+
+        await consolidator._on_critic_score(event)
+
+        assert attempts == 6
 
     @pytest.mark.anyio
     async def test_on_critic_score_low_score(self, consolidator):

@@ -7,6 +7,7 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -291,6 +292,169 @@ def _acquire_remediation_leader_lock(lock_path: str | None = None) -> int | None
         return None
 
 
+_CONTINUOUS_AGENT_RETRY_SECONDS = 5.0
+_CONTINUOUS_AGENT_START_ORDER = (
+    "memory_consolidator",
+    "learning_loop",
+    "critic_agent",
+    "code_review_agent",
+    "consciousness_stream",
+)
+_CONTINUOUS_AGENT_STOP_ORDER = (
+    "consciousness_stream",
+    "code_review_agent",
+    "critic_agent",
+    "learning_loop",
+    "memory_consolidator",
+)
+
+
+def _set_continuous_agent_role(app: FastAPI, leader_lock: Any, role: str) -> None:
+    app.state.continuous_agents_lock_role = role
+    app.state.continuous_agents_role = (
+        "starting" if role == "leader" and not getattr(app.state, "continuous_agents_started", False) else role
+    )
+    app.state.continuous_agents_lock_fd = leader_lock.fd
+    app.state.continuous_agents_lock_error = leader_lock.error
+
+
+async def _start_continuous_agent_cohort(app: FastAPI) -> bool:
+    """Start all process-local AgentBus peers together, consumers before publisher."""
+    if getattr(app.state, "continuous_agents_started", False):
+        return True
+
+    attempted: list[Any] = []
+    app.state.continuous_agents_rollback_clean = True
+    try:
+        for attr in _CONTINUOUS_AGENT_START_ORDER:
+            agent = getattr(app.state, attr)
+            attempted.append(agent)
+            agent.start()
+    except Exception as exc:
+        logger.exception("continuous-agent cohort startup failed; this worker stays fail-closed")
+        for agent in reversed(attempted):
+            try:
+                await agent.stop()
+            except Exception:
+                app.state.continuous_agents_rollback_clean = False
+                logger.exception("continuous-agent rollback stop failed: %s", type(agent).__name__)
+        app.state.continuous_agents_started = False
+        app.state.continuous_agents_role = "lock_error"
+        app.state.continuous_agents_lock_error = f"agent startup failed: {type(exc).__name__}: {exc}"
+        return False
+
+    app.state.continuous_agents_started = True
+    app.state.continuous_agents_rollback_clean = True
+    app.state.continuous_agents_role = "leader"
+    app.state.continuous_agents_lock_error = None
+    logger.info("continuous-agent cohort started in leader worker")
+    return True
+
+
+async def _stop_continuous_agent(app: FastAPI, attr: str) -> None:
+    agent = getattr(app.state, attr, None)
+    if agent is None:
+        return
+    try:
+        await agent.stop()
+    except Exception:
+        logger.exception("continuous-agent stop failed: %s", attr)
+
+
+async def _stop_continuous_agent_cohort(app: FastAPI) -> None:
+    """Stop every cohort member; one broken stop must not strand the others."""
+    for attr in _CONTINUOUS_AGENT_STOP_ORDER:
+        await _stop_continuous_agent(app, attr)
+    app.state.continuous_agents_started = False
+
+
+def _terminate_worker_for_cohort_failure() -> None:
+    """Fail-stop a worker whose partially-started cohort could not be cleaned up."""
+    import os
+    import signal
+
+    try:
+        os.kill(os.getpid(), signal.SIGTERM)
+    except Exception:
+        # A live process retaining the cohort fd after failed startup would block
+        # every standby indefinitely.  If graceful termination cannot be
+        # requested, exit immediately so the kernel still releases the lock.
+        logger.critical("failed to signal unsafe continuous-agent worker; exiting immediately", exc_info=True)
+        os._exit(1)
+
+
+async def _continuous_agent_leadership_retry(app: FastAPI) -> None:
+    """Let a standby worker take over promptly if the elected worker exits."""
+    leader_lock = app.state.continuous_agents_leader_lock
+    previous_role = app.state.continuous_agents_role
+    while True:
+        await asyncio.sleep(_CONTINUOUS_AGENT_RETRY_SECONDS)
+        role = leader_lock.try_acquire()
+        _set_continuous_agent_role(app, leader_lock, role)
+        worker_role = app.state.continuous_agents_role
+        if worker_role != previous_role:
+            logger.info("continuous-agent worker role changed: %s -> %s", previous_role, worker_role)
+            previous_role = worker_role
+        if role == "leader":
+            if await _start_continuous_agent_cohort(app):
+                app.state.continuous_agents_retry_task = None
+                return
+            logger.critical(
+                "continuous-agent takeover startup failed (rollback_clean=%s); retaining leadership until worker exit",
+                app.state.continuous_agents_rollback_clean,
+            )
+            app.state.continuous_agents_retry_task = None
+            _terminate_worker_for_cohort_failure()
+            return
+
+
+async def _initialize_continuous_agent_cohort(app: FastAPI, leader_lock: Any) -> None:
+    app.state.continuous_agents_leader_lock = leader_lock
+    app.state.continuous_agents_started = False
+    app.state.continuous_agents_retry_task = None
+
+    role = leader_lock.try_acquire()
+    _set_continuous_agent_role(app, leader_lock, role)
+    if role == "leader":
+        if await _start_continuous_agent_cohort(app):
+            return
+        raise RuntimeError(
+            "continuous-agent startup failed; retaining leadership until worker exit "
+            f"(rollback_clean={app.state.continuous_agents_rollback_clean})"
+        )
+
+    if role == "standby":
+        logger.info("continuous-agent cohort standby; another worker owns %s", leader_lock.path)
+    else:
+        logger.error("continuous-agent cohort unavailable; retrying fail-closed: %s", app.state.continuous_agents_lock_error)
+    app.state.continuous_agents_retry_task = asyncio.create_task(_continuous_agent_leadership_retry(app))
+
+
+async def _shutdown_continuous_agent_cohort(app: FastAPI, bus: Any, bridge_handler: Any) -> None:
+    retry_task = getattr(app.state, "continuous_agents_retry_task", None)
+    if retry_task is not None:
+        retry_task.cancel()
+        await asyncio.gather(retry_task, return_exceptions=True)
+        app.state.continuous_agents_retry_task = None
+
+    # Quiesce the sole thought publisher before cancelling delivery retries;
+    # then stop the consumers in their normal reverse dependency order.
+    await _stop_continuous_agent(app, "consciousness_stream")
+    try:
+        await bus.stop()
+    except Exception:
+        logger.exception("agent-bus retry shutdown failed")
+    for attr in _CONTINUOUS_AGENT_STOP_ORDER[1:]:
+        await _stop_continuous_agent(app, attr)
+    app.state.continuous_agents_started = False
+    bus.unsubscribe("*", bridge_handler)
+    # Keep a successfully-acquired fd open until process exit. A cancelled
+    # asyncio.to_thread call can leave its worker thread running briefly; early
+    # unlock would let another process overlap that in-flight work. This makes
+    # one lifespan per Uvicorn worker process an explicit deployment invariant;
+    # embedded same-process lifespan restarts are intentionally unsupported.
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     import os
@@ -320,15 +484,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("devops-agent: bu worker remediation-lider DEĞİL (başka worker kilidi tutuyor veya kilit-yolu yazılamıyor, disc#1352)")
     devops.start()
 
-    # Start Consciousness Stream daemon (Functionalism Faz 1)
+    # Build the process-local AgentBus cohort. Only one worker starts the whole
+    # group so publishers and consumers share the same in-memory bus.
     from app.core.consciousness import ConsciousnessStream
 
-    consciousness = ConsciousnessStream(interval=15, devops_agent=devops)
+    consciousness = ConsciousnessStream(interval=15, devops_agent=devops, manage_worker_lock=False)
     app.state.consciousness_stream = consciousness
-    consciousness.start()
-    logger.info("consciousness stream started (interval=15s)")
 
-    # Start multi-agent bus system (critic, consolidator, learning loop)
     from app.core.agent_bus import get_bus
 
     bus = get_bus()
@@ -338,20 +500,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     critic = CriticAgent(interval=60)
     app.state.critic_agent = critic
-    critic.start()
 
     from app.core.memory_consolidator import MemoryConsolidator
 
     consolidator = MemoryConsolidator(interval=600)
     app.state.memory_consolidator = consolidator
-    consolidator.start()
 
     from app.core.learning_loop import LearningLoop
 
     learning = LearningLoop(interval=3600)
     app.state.learning_loop = learning
-    learning.start()
-    logger.info("multi-agent bus system started (critic=60s, consolidator=600s, learning=3600s)")
 
     # AgentBus ↔ events spine bridge (çift yönlü)
     from app.core.event_spine_bridge import bridge_handler
@@ -366,7 +524,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     code_reviewer = CodeReviewAgent(interval=300)
     app.state.code_review_agent = code_reviewer
-    code_reviewer.start()
+
+    from app.core.continuous_agent_leader import ContinuousAgentLeaderLock
+
+    await _initialize_continuous_agent_cohort(app, ContinuousAgentLeaderLock())
 
     # Boot-config-log (#3 silent-fail verify): runtime aktif-olu gate tespiti.
     # T1 static-lint PR-zamani yakalar; bu runtime backstop T1'i kacirani yakalar
@@ -411,40 +572,34 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         pass
 
-    yield
-
-    # Klipper telemetry: graceful shutdown event.
-    # API kapanirken kendi /tasks endpoint'ine POST atilir -- script retry loop
-    # 10s boyunca dener; sonuc cogu zaman GIVEUP olur ama log dosyasinda kanit kalir.
     try:
-        import subprocess
+        yield
+    finally:
+        # Klipper telemetry: graceful shutdown event.
+        # API kapanirken kendi /tasks endpoint'ine POST atilir -- script retry loop
+        # 10s boyunca dener; sonuc cogu zaman GIVEUP olur ama log dosyasinda kanit kalir.
+        try:
+            import subprocess
 
-        subprocess.Popen(
-            ["/opt/linux-ai-server/scripts/klipper-event.sh", "service-stop", "graceful"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-            start_new_session=True,
-        )
-    except Exception:
-        pass
+            subprocess.Popen(
+                ["/opt/linux-ai-server/scripts/klipper-event.sh", "service-stop", "graceful"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                start_new_session=True,
+            )
+        except Exception:
+            pass
 
-    # Stop multi-agent bus agents
-    critic = getattr(app.state, "critic_agent", None)
-    if critic:
-        await critic.stop()
-    consolidator = getattr(app.state, "memory_consolidator", None)
-    if consolidator:
-        await consolidator.stop()
-    learning = getattr(app.state, "learning_loop", None)
-    if learning:
-        await learning.stop()
-
-    # Graceful shutdown
-    await devops.stop()
-    await consciousness.stop()
-    await code_reviewer.stop()
-    await db.close()
+        await _shutdown_continuous_agent_cohort(app, bus, bridge_handler)
+        try:
+            await devops.stop()
+        except Exception:
+            logger.exception("devops-agent stop failed")
+        try:
+            await db.close()
+        except Exception:
+            logger.exception("database close failed")
 
 
 def create_app() -> FastAPI:

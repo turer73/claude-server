@@ -41,6 +41,7 @@ fi
 
 # Create directories
 mkdir -p /opt/linux-ai-server
+mkdir -p /opt/linux-ai-server/data
 mkdir -p /var/lib/linux-ai-server
 mkdir -p /var/log/linux-ai-server
 mkdir -p /var/AI-stump/agents
@@ -129,7 +130,9 @@ EnvironmentFile=-/etc/linux-ai-server/env
 # Security hardening
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/var/lib/linux-ai-server /var/log/linux-ai-server /var/AI-stump
+# Runtime DBs, code-review queue and heartbeat live under this narrow data
+# subtree; application/source files under /opt remain read-only.
+ReadWritePaths=/opt/linux-ai-server/data /var/lib/linux-ai-server /var/log/linux-ai-server /var/AI-stump
 PrivateTmp=yes
 # admin-key #1304: PrivateTmp=yes → /tmp izole-tmpfs (operatör erişemez). app/main.py bu
 # DEPLOY-ZAMANI-CONFIG-FACT'i okur (INVOCATION_ID gibi güvenilmez-runtime-heuristic DEĞİL,

@@ -15,6 +15,8 @@ import asyncio
 import logging
 import os
 import sqlite3
+from collections import deque
+from contextlib import closing
 from datetime import UTC, datetime
 from typing import Any
 
@@ -27,21 +29,78 @@ _CRITIC_DB_PATH = os.environ.get("MEMORY_DB", "/opt/linux-ai-server/data/claude_
 _FOCUS_BOREDOM_THRESHOLD = 5
 _EMOTION_STUCK_THRESHOLD = 4
 _CONTENT_REPEAT_THRESHOLD = 0.65
+_MAX_TRACKED_THOUGHT_IDS = 1000
+_MEMORY_RECEIPT_CONSUMER = "memory_consolidator"
 
 
-def _get_recent_thoughts(limit: int = 10, skip_id: int = 0) -> list[dict[str, Any]]:
+def _get_recent_thoughts(limit: int = 10, exclude_id: int = 0) -> list[dict[str, Any]]:
+    """Return newest thoughts for scoring context, excluding the subject."""
     try:
-        con = sqlite3.connect(_CRITIC_DB_PATH, timeout=5)
-        con.row_factory = sqlite3.Row
-        rows = con.execute(
-            "SELECT id, timestamp, focus, emotion, content FROM thoughts WHERE id != ? ORDER BY id DESC LIMIT ?",
-            (skip_id, limit),
-        ).fetchall()
-        con.close()
+        with closing(sqlite3.connect(_CRITIC_DB_PATH, timeout=5)) as con:
+            con.row_factory = sqlite3.Row
+            thought_columns = {row[1] for row in con.execute("PRAGMA table_info(thoughts)").fetchall()}
+            deep_column = ", is_deep" if "is_deep" in thought_columns else ""
+            rows = con.execute(
+                f"SELECT id, timestamp, focus, emotion, content{deep_column} FROM thoughts WHERE id != ? ORDER BY id DESC LIMIT ?",
+                (exclude_id, limit),
+            ).fetchall()
         return [dict(r) for r in rows]
     except sqlite3.Error as e:
         log.warning("critic: cannot read thoughts: %s", e)
         return []
+
+
+def _get_pending_thoughts(limit: int = 5, after_id: int = 0) -> list[dict[str, Any]]:
+    """Return a chronological recovery batch after a forward-only cursor.
+
+    A fresh worker intentionally starts with only the latest bounded window;
+    subsequent reads are a true ``id > cursor`` scan and cannot skip rows.
+    """
+    try:
+        with closing(sqlite3.connect(_CRITIC_DB_PATH, timeout=5)) as con:
+            con.row_factory = sqlite3.Row
+            thought_columns = {row[1] for row in con.execute("PRAGMA table_info(thoughts)").fetchall()}
+            deep_column = ", is_deep" if "is_deep" in thought_columns else ""
+            projection = f"id, timestamp, focus, emotion, content{deep_column}"
+            if after_id > 0:
+                rows = con.execute(
+                    f"SELECT {projection} FROM thoughts WHERE id > ? ORDER BY id ASC LIMIT ?",
+                    (after_id, limit),
+                ).fetchall()
+            else:
+                rows = con.execute(
+                    f"SELECT * FROM (SELECT {projection} FROM thoughts ORDER BY id DESC LIMIT ?) ORDER BY id ASC",
+                    (limit,),
+                ).fetchall()
+        return [dict(r) for r in rows]
+    except sqlite3.Error as e:
+        log.warning("critic: cannot read pending thoughts: %s", e)
+        return []
+
+
+def _memory_receipts(thought_id: int) -> set[str]:
+    if thought_id <= 0:
+        return set()
+    try:
+        with closing(sqlite3.connect(_CRITIC_DB_PATH, timeout=5)) as con:
+            rows = con.execute(
+                """SELECT event_type FROM agent_event_receipts
+                   WHERE consumer=? AND event_id=? AND event_type IN ('thought', 'critic:score')""",
+                (_MEMORY_RECEIPT_CONSUMER, thought_id),
+            ).fetchall()
+        return {str(row[0]) for row in rows}
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).lower():
+            return set()
+        raise
+
+
+def _is_critic_score_recorded(thought_id: int) -> bool:
+    return "critic:score" in _memory_receipts(thought_id)
+
+
+def _is_recovery_complete(thought_id: int) -> bool:
+    return {"thought", "critic:score"}.issubset(_memory_receipts(thought_id))
 
 
 def _count_recent(attr: str, value: str, thoughts: list[dict[str, Any]]) -> int:
@@ -79,7 +138,7 @@ def _check_content_repetition(content: str, recent: list[dict[str, Any]]) -> boo
 
 
 def _score_thought(thought: dict[str, Any], skip_id: int = 0) -> dict[str, Any]:
-    recent = _get_recent_thoughts(limit=10, skip_id=skip_id)
+    recent = _get_recent_thoughts(limit=10, exclude_id=skip_id)
     content = thought.get("content", "")
     focus = thought.get("focus", "idle")
     emotion = thought.get("emotion", "calm")
@@ -132,7 +191,10 @@ class CriticAgent:
         self._score_history: list[dict[str, Any]] = []
         self._avg_score = 7.0
         self._last_thought_ts: str | None = None
-        self._last_scored_id: int = 0
+        self._poll_cursor_id = 0
+        self._scored_thought_ids: set[int] = set()
+        self._scored_thought_order: deque[int] = deque()
+        self._thought_lock = asyncio.Lock()
 
     @property
     def status(self) -> dict[str, Any]:
@@ -194,24 +256,24 @@ class CriticAgent:
             _CONTENT_REPEAT_THRESHOLD = thresholds["content_repeat_threshold"]
 
     async def _on_thought(self, event: Event) -> None:
+        async with self._thought_lock:
+            await self._score_event(event)
+
+    async def _score_event(self, event: Event) -> None:
         thought = event.payload.get("thought", {})
         if not thought:
             return
-        thought_id = event.payload.get("thought_id", 0)
-        if thought_id and thought_id <= self._last_scored_id:
+        try:
+            thought_id = int(event.payload.get("thought_id", 0) or 0)
+        except (TypeError, ValueError):
+            thought_id = 0
+        if thought_id > 0 and thought_id in self._scored_thought_ids:
+            return
+        if thought_id > 0 and await asyncio.to_thread(_is_critic_score_recorded, thought_id):
+            self._mark_thought_scored(thought_id)
             return
         result = await asyncio.to_thread(_score_thought, thought, skip_id=thought_id)
-        self._last_score = result
-        self._last_thought_ts = thought.get("timestamp") or datetime.now(UTC).isoformat()
-        self._last_scored_id = thought_id
-        self._score_history.append(result)
-        if len(self._score_history) > 100:
-            self._score_history.pop(0)
-        self._avg_score = sum(s["score"] for s in self._score_history) / max(len(self._score_history), 1)
-
         bus = get_bus()
-        bus.agent_status("critic", last_score=result["score"], avg_score=round(self._avg_score, 1))
-
         await bus.publish(
             Event(
                 type="critic:score",
@@ -230,23 +292,56 @@ class CriticAgent:
             )
         )
 
+        self._last_score = result
+        self._last_thought_ts = thought.get("timestamp") or datetime.now(UTC).isoformat()
+        self._score_history.append(result)
+        if len(self._score_history) > 100:
+            self._score_history.pop(0)
+        self._avg_score = sum(s["score"] for s in self._score_history) / max(len(self._score_history), 1)
+        self._mark_thought_scored(thought_id)
+        bus.agent_status("critic", last_score=result["score"], avg_score=round(self._avg_score, 1))
+
+    def _mark_thought_scored(self, thought_id: int) -> None:
+        if thought_id <= 0 or thought_id in self._scored_thought_ids:
+            return
+        self._scored_thought_ids.add(thought_id)
+        self._scored_thought_order.append(thought_id)
+        while len(self._scored_thought_order) > _MAX_TRACKED_THOUGHT_IDS:
+            self._scored_thought_ids.discard(self._scored_thought_order.popleft())
+
+    async def _recover_pending_thoughts(self) -> bool:
+        pending = await asyncio.to_thread(_get_pending_thoughts, limit=5, after_id=self._poll_cursor_id)
+        if not pending:
+            return False
+
+        for thought in pending:
+            try:
+                thought_id = int(thought.get("id", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if thought_id <= self._poll_cursor_id:
+                continue
+            if await asyncio.to_thread(_is_recovery_complete, thought_id):
+                self._mark_thought_scored(thought_id)
+                self._poll_cursor_id = thought_id
+                continue
+            event_type = "thought:deep" if thought.get("is_deep") else "thought:new"
+            await get_bus().publish(Event(type=event_type, source="critic:loop", payload={"thought_id": thought_id, "thought": thought}))
+            # AgentBus isolates handler exceptions. Advance only after this
+            # critic instance has actually acknowledged/scored the row.
+            if thought_id not in self._scored_thought_ids:
+                log.warning("critic recovery row not yet acknowledged: thought_id=%s", thought_id)
+                return False
+            if not await asyncio.to_thread(_is_recovery_complete, thought_id):
+                log.warning("critic recovery row not durably complete: thought_id=%s", thought_id)
+                return False
+            self._poll_cursor_id = thought_id
+        return True
+
     async def _run_loop(self) -> None:
         while self._running:
             try:
-                recent = await asyncio.to_thread(_get_recent_thoughts, limit=5, skip_id=self._last_scored_id)
-                if not recent:
-                    await asyncio.sleep(self._interval)
-                    continue
-                for t in recent:
-                    tid = t.get("id", 0)
-                    if tid and tid <= self._last_scored_id:
-                        continue
-                    # BUS'a publish et (dogrudan self-call DEGIL): boylece thought:new'e
-                    # abone TUM ajanlar (critic._on_thought + memory_consolidator._on_thought)
-                    # alir. Onceki self-call, consolidator'i thought-akisindan tamamen dislyor
-                    # ve temporal-graph/transition-edge'lerini olu birakiyordu. publish hata-
-                    # izole (gather+return_exceptions) ve eszamanli -> critic-loop'u yavaslatmaz.
-                    await get_bus().publish(Event(type="thought:new", source="critic:loop", payload={"thought_id": tid, "thought": t}))
+                await self._recover_pending_thoughts()
             except asyncio.CancelledError:
                 break
             except Exception as e:

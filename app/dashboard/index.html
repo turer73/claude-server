@@ -1206,12 +1206,15 @@ function _agCard(a) {
       <span style="flex:0 0 auto;color:var(--dim);font-size:10px">${_agAgo(f.time)}</span></div>`).join('')
     : '<div style="font-size:12px;color:var(--dim);padding:6px 0">Bulgu yok</div>';
   // Durum: sürekli → Aktif/Durdu noktası; cron/ondemand → schedule chip
+  const cohortStandby = a.enabled !== false && a.cohort_role === 'standby' && !a.local_running;
   const statusChip = a.type === 'continuous'
-    ? `<span style="color:${a.running ? 'var(--green)' : 'var(--red)'};font-size:12px">${a.running ? '&#9679; Aktif' : '&#9675; Durdu'}</span>`
+    ? (cohortStandby
+      ? '<span style="color:var(--dim);font-size:12px">&#9676; Diger workerda</span>'
+      : `<span style="color:${a.running ? 'var(--green)' : 'var(--red)'};font-size:12px">${a.running ? '&#9679; Aktif' : '&#9675; Durdu'}</span>`)
     : `<span class="badge">${esc(a.schedule || '')}</span>`;
   const trigBtn = (a.triggerable !== false)
     ? `<button class="vault-btn" style="font-size:11px;padding:4px 10px" onclick="triggerAgent('${esc(a.key)}', this)">&#9654; Tetikle</button>`
-    : `<span style="font-size:10px;color:var(--dim)">API'den</span>`;
+    : `<span style="font-size:10px;color:var(--dim)">${a.enabled === false ? 'Devre disi' : "API'den"}</span>`;
   return `<div class="card" style="margin-bottom:14px">
     <div class="card-title"><span>${esc(a.name)} <span class="badge">${esc(a.role)}</span></span>
       <span style="display:flex;gap:10px;align-items:center">${trigBtn}${statusChip}</span></div>

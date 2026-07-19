@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sqlite3
 import tempfile
+import threading
 
 import pytest
 
@@ -113,17 +115,21 @@ class TestGetRecentThoughts:
         try:
             monkeypatch.setattr("app.core.critic_agent._CRITIC_DB_PATH", db_path)
             con = sqlite3.connect(db_path)
-            con.execute("CREATE TABLE thoughts (id INTEGER PRIMARY KEY, timestamp TEXT, focus TEXT, emotion TEXT, content TEXT)")
             con.execute(
-                "INSERT INTO thoughts (id, timestamp, focus, emotion, content) VALUES (1, '2026-01-01', 'debug', 'calm', 'test thought')"
+                "CREATE TABLE thoughts (id INTEGER PRIMARY KEY, timestamp TEXT, focus TEXT, emotion TEXT, content TEXT, is_deep INTEGER)"
+            )
+            con.execute(
+                "INSERT INTO thoughts (id, timestamp, focus, emotion, content, is_deep) "
+                "VALUES (1, '2026-01-01', 'debug', 'calm', 'test thought', 1)"
             )
             con.commit()
             con.close()
             from app.core.critic_agent import _get_recent_thoughts
 
-            result = _get_recent_thoughts(limit=10, skip_id=0)
+            result = _get_recent_thoughts(limit=10, exclude_id=0)
             assert len(result) == 1
             assert result[0]["focus"] == "debug"
+            assert result[0]["is_deep"] == 1
         finally:
             try:
                 os.unlink(db_path)
@@ -143,9 +149,35 @@ class TestGetRecentThoughts:
             con.close()
             from app.core.critic_agent import _get_recent_thoughts
 
-            result = _get_recent_thoughts(limit=10, skip_id=1)
+            result = _get_recent_thoughts(limit=10, exclude_id=1)
             assert len(result) == 1
             assert result[0]["id"] == 2
+        finally:
+            try:
+                os.unlink(db_path)
+            except PermissionError:
+                pass
+
+    def test_pending_thoughts_are_chronological_and_cursor_based(self, monkeypatch):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            monkeypatch.setattr("app.core.critic_agent._CRITIC_DB_PATH", db_path)
+            con = sqlite3.connect(db_path)
+            con.execute("CREATE TABLE thoughts (id INTEGER PRIMARY KEY, timestamp TEXT, focus TEXT, emotion TEXT, content TEXT)")
+            con.executemany(
+                "INSERT INTO thoughts (id, timestamp, focus, emotion, content) VALUES (?, '2026-01-01', 'f', 'calm', 'x')",
+                [(i,) for i in range(1, 6)],
+            )
+            con.commit()
+            con.close()
+            from app.core.critic_agent import _get_pending_thoughts
+
+            initial = _get_pending_thoughts(limit=3, after_id=0)
+            following = _get_pending_thoughts(limit=3, after_id=3)
+
+            assert [row["id"] for row in initial] == [3, 4, 5]
+            assert [row["id"] for row in following] == [4, 5]
         finally:
             try:
                 os.unlink(db_path)
@@ -256,6 +288,161 @@ class TestCriticAgentClass:
         event = Event(type="thought:new", source="test", payload={})
         await critic_agent._on_thought(event)
         assert critic_agent._last_score is None
+
+    @pytest.mark.anyio
+    async def test_concurrent_delivery_scores_same_thought_once(self, monkeypatch, critic_agent):
+        from app.core import critic_agent as critic_module
+        from app.core.agent_bus import AgentBus, Event
+
+        score_started = threading.Event()
+        release_score = threading.Event()
+        score_calls = 0
+
+        def fake_score(_thought, *, skip_id=0):
+            nonlocal score_calls
+            score_calls += 1
+            score_started.set()
+            release_score.wait(timeout=1)
+            return {
+                "score": 7,
+                "is_repetitive": False,
+                "boredom_issues": [],
+                "completeness_note": "",
+                "actionability_note": "",
+                "consistency_note": "",
+            }
+
+        monkeypatch.setattr(critic_module, "_score_thought", fake_score)
+        monkeypatch.setattr(critic_module, "_is_critic_score_recorded", lambda _thought_id: False)
+        monkeypatch.setattr(critic_module, "get_bus", AgentBus)
+        event = Event(
+            type="thought:new",
+            source="consciousness",
+            payload={
+                "thought_id": 7,
+                "thought": {"timestamp": "2026-07-19T00:00:00+00:00", "focus": "idle", "emotion": "calm", "content": "x"},
+            },
+        )
+
+        first = asyncio.create_task(critic_agent._on_thought(event))
+        assert await asyncio.to_thread(score_started.wait, 1)
+        second = asyncio.create_task(critic_agent._on_thought(event))
+        await asyncio.sleep(0.05)
+        assert score_calls == 1
+
+        release_score.set()
+        await asyncio.gather(first, second)
+        assert score_calls == 1
+
+    @pytest.mark.anyio
+    async def test_out_of_order_delivery_scores_older_unseen_thought(self, monkeypatch, critic_agent):
+        from app.core import critic_agent as critic_module
+        from app.core.agent_bus import AgentBus, Event
+
+        scored_ids: list[int] = []
+
+        def fake_score(_thought, *, skip_id=0):
+            scored_ids.append(skip_id)
+            return {
+                "score": 7,
+                "is_repetitive": False,
+                "boredom_issues": [],
+                "completeness_note": "",
+                "actionability_note": "",
+                "consistency_note": "",
+            }
+
+        monkeypatch.setattr(critic_module, "_score_thought", fake_score)
+        monkeypatch.setattr(critic_module, "_is_critic_score_recorded", lambda _thought_id: False)
+        monkeypatch.setattr(critic_module, "get_bus", AgentBus)
+
+        def event(thought_id: int) -> Event:
+            return Event(
+                type="thought:new",
+                source="test",
+                payload={"thought_id": thought_id, "thought": {"focus": "f", "emotion": "calm", "content": "x"}},
+            )
+
+        await critic_agent._on_thought(event(2))
+        await critic_agent._on_thought(event(1))
+        await critic_agent._on_thought(event(2))
+
+        assert scored_ids == [2, 1]
+
+    @pytest.mark.anyio
+    async def test_recovery_scores_every_row_in_forward_order(self, monkeypatch, critic_agent):
+        from app.core import critic_agent as critic_module
+        from app.core.agent_bus import AgentBus
+
+        bus = AgentBus()
+        bus.subscribe("thought:new", critic_agent._on_thought)
+        bus.subscribe("thought:deep", critic_agent._on_thought)
+        monkeypatch.setattr(critic_module, "get_bus", lambda: bus)
+        monkeypatch.setattr(
+            critic_module,
+            "_is_recovery_complete",
+            lambda thought_id: thought_id in critic_agent._scored_thought_ids,
+        )
+        monkeypatch.setattr(critic_module, "_is_critic_score_recorded", lambda _thought_id: False)
+        monkeypatch.setattr(
+            critic_module,
+            "_get_pending_thoughts",
+            lambda **_kwargs: [
+                {"id": 7, "focus": "a", "emotion": "calm", "content": "one"},
+                {"id": 8, "focus": "b", "emotion": "calm", "content": "two", "is_deep": 1},
+                {"id": 9, "focus": "c", "emotion": "calm", "content": "three"},
+            ],
+        )
+        scored_ids: list[int] = []
+
+        def fake_score(_thought, *, skip_id=0):
+            scored_ids.append(skip_id)
+            return {
+                "score": 7,
+                "is_repetitive": False,
+                "boredom_issues": [],
+                "completeness_note": "",
+                "actionability_note": "",
+                "consistency_note": "",
+            }
+
+        monkeypatch.setattr(critic_module, "_score_thought", fake_score)
+
+        assert await critic_agent._recover_pending_thoughts() is True
+        assert scored_ids == [7, 8, 9]
+        assert critic_agent._poll_cursor_id == 9
+        await bus.stop()
+
+    @pytest.mark.anyio
+    async def test_durable_score_receipt_suppresses_restart_replay(self, tmp_path, monkeypatch, critic_agent):
+        from app.core import critic_agent as critic_module
+        from app.core.agent_bus import Event
+
+        db_path = tmp_path / "receipts.db"
+        con = sqlite3.connect(db_path)
+        con.execute(
+            """CREATE TABLE agent_event_receipts (
+                   consumer TEXT, event_type TEXT, event_id INTEGER,
+                   PRIMARY KEY (consumer, event_type, event_id))"""
+        )
+        con.execute(
+            "INSERT INTO agent_event_receipts (consumer, event_type, event_id) VALUES (?, 'critic:score', 12)",
+            (critic_module._MEMORY_RECEIPT_CONSUMER,),
+        )
+        con.commit()
+        con.close()
+        monkeypatch.setattr(critic_module, "_CRITIC_DB_PATH", str(db_path))
+
+        await critic_agent._on_thought(
+            Event(
+                type="thought:new",
+                source="critic:loop",
+                payload={"thought_id": 12, "thought": {"focus": "f", "emotion": "calm", "content": "x"}},
+            )
+        )
+
+        assert critic_agent._scored_thought_ids == {12}
+        assert critic_agent._score_history == []
 
     @pytest.mark.anyio
     async def test_on_threshold_adjusted(self, critic_agent):

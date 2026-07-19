@@ -36,7 +36,6 @@ except ImportError:
 log = logging.getLogger("consciousness")
 
 _WORKER_LOCK_PATH = os.path.join(tempfile.gettempdir(), "consciousness-worker.lock")
-_worker_lock_fd: int | None = None
 
 _SYSTEM_DATA_DIR = "/var/lib/linux-ai-server"
 _LEGACY_DATA_DIR = "/opt/linux-ai-server/data"
@@ -57,32 +56,29 @@ LLM_INTERVAL = 300
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 
 
-def _try_worker_lock() -> bool:
-    """Cross-process lock: only one uvicorn worker starts the stream loop."""
-    global _worker_lock_fd
+def _try_worker_lock() -> int | None:
+    """Return an instance-owned lock fd, or ``None`` when it is unavailable."""
     if not _HAS_FCNTL:
-        return True
+        return -1
+    fd: int | None = None
     try:
-        _worker_lock_fd = os.open(_WORKER_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o644)
-        fcntl.flock(_worker_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return True
+        fd = os.open(_WORKER_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fd
     except (BlockingIOError, OSError):
-        if _worker_lock_fd is not None:
-            os.close(_worker_lock_fd)
-            _worker_lock_fd = None
-        return False
+        if fd is not None:
+            os.close(fd)
+        return None
 
 
-def _release_worker_lock() -> None:
-    """Release the cross-process lock so another worker/stream can acquire it."""
-    global _worker_lock_fd
-    if _worker_lock_fd is not None:
+def _release_worker_lock(fd: int | None) -> None:
+    """Release an instance-owned cross-process lock."""
+    if fd is not None and fd >= 0:
         try:
-            fcntl.flock(_worker_lock_fd, fcntl.LOCK_UN)
-            os.close(_worker_lock_fd)
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
         except (OSError, ValueError):
             pass
-        _worker_lock_fd = None
 
 
 # ── thoughts table schema ─────────────────────────────────────────────
@@ -603,7 +599,7 @@ Bu durum hakkinda ne dusunuyorum? (1-2 cumle, ic monolog olarak)"""
 class ConsciousnessStream:
     """Background loop: read state → think → store thought. Wired like DevOpsAgent."""
 
-    def __init__(self, interval: int = FAST_INTERVAL, devops_agent: Any = None):
+    def __init__(self, interval: int = FAST_INTERVAL, devops_agent: Any = None, *, manage_worker_lock: bool = True):
         self._interval = interval
         self._running = False
         self._task: asyncio.Task[None] | None = None
@@ -614,6 +610,8 @@ class ConsciousnessStream:
         self._llm_timer = 0
         self._recent_thoughts: list[dict[str, Any]] = []
         self._devops_agent = devops_agent
+        self._manage_worker_lock = manage_worker_lock
+        self._worker_lock_fd: int | None = None
         self._last_concern_emit: dict[str, float] = {}
         self._concern_cooldown = 1800
         _ensure_thoughts_table()
@@ -632,7 +630,9 @@ class ConsciousnessStream:
     def start(self) -> None:
         if self._running:
             return
-        if not _try_worker_lock():
+        if self._manage_worker_lock:
+            self._worker_lock_fd = _try_worker_lock()
+        if self._manage_worker_lock and self._worker_lock_fd is None:
             log.info("another worker holds the lock — consciousness stream not started on this worker")
             return
         self._running = True
@@ -649,7 +649,9 @@ class ConsciousnessStream:
             except asyncio.CancelledError:
                 pass
             self._task = None
-        _release_worker_lock()
+        if self._manage_worker_lock and self._worker_lock_fd is not None:
+            _release_worker_lock(self._worker_lock_fd)
+            self._worker_lock_fd = None
         log.info("consciousness stream stopped")
 
     @property
@@ -660,7 +662,9 @@ class ConsciousnessStream:
         while self._running:
             try:
                 thought = await asyncio.to_thread(self._think)
-                await asyncio.to_thread(self._store_thought, thought)
+                thought_id = await asyncio.to_thread(self._store_thought, thought)
+                if thought_id is not None:
+                    await self._publish_thought(thought, thought_id)
                 self._last_thought = thought
                 self._thought_count += 1
                 self._recent_thoughts.append(thought)
@@ -673,7 +677,9 @@ class ConsciousnessStream:
                 if self._llm_timer >= LLM_INTERVAL:
                     deep = await asyncio.to_thread(self._think_deep)
                     if deep:
-                        await asyncio.to_thread(self._store_thought, deep)
+                        deep_id = await asyncio.to_thread(self._store_thought, deep)
+                        if deep_id is not None:
+                            await self._publish_thought(deep, deep_id)
                         self._recent_thoughts.append(deep)
                         if len(self._recent_thoughts) > 30:
                             self._recent_thoughts.pop(0)
@@ -824,8 +830,14 @@ class ConsciousnessStream:
             "is_deep": 1,
         }
 
-    def _store_thought(self, thought: dict[str, Any]) -> None:
-        thought_id = 0
+    def _store_thought(self, thought: dict[str, Any]) -> int | None:
+        """Persist one thought synchronously and return its database id.
+
+        This method runs in ``asyncio.to_thread`` and must remain limited to
+        synchronous database work. AgentBus publication belongs to the owning
+        asyncio loop in ``_publish_thought``.
+        """
+        con: sqlite3.Connection | None = None
         try:
             con = sqlite3.connect(MEMORY_DB, timeout=10)
             cur = con.execute(
@@ -840,11 +852,16 @@ class ConsciousnessStream:
                 ),
             )
             con.commit()
-            thought_id = cur.lastrowid or 0
-            con.close()
+            return int(cur.lastrowid or 0)
         except sqlite3.Error as e:
             log.warning("store thought failed: %s", e)
-            return
+            return None
+        finally:
+            if con is not None:
+                con.close()
+
+    async def _publish_thought(self, thought: dict[str, Any], thought_id: int) -> None:
+        """Publish a persisted thought from the stream's asyncio loop."""
         try:
             bus = get_bus()
             event_type = "thought:deep" if thought.get("is_deep") else "thought:new"
@@ -862,9 +879,7 @@ class ConsciousnessStream:
                     },
                 },
             )
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.run_coroutine_threadsafe(bus.publish(ev), loop)
+            await bus.publish(ev)
         except Exception as e:
             log.warning("agent bus publish failed: %s", e)
 
