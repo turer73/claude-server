@@ -13,6 +13,7 @@ from fastapi.responses import PlainTextResponse
 
 from app.api import memory as _pkg
 from app.api.memory import _TOKEN_BUDGET, _ensure_read_by, _ensure_status, _unread_pred, get_db, public_router
+from app.api.memory.agenda import _agenda_query
 
 
 @public_router.get("/onboard/{device_name}")
@@ -278,6 +279,7 @@ def _session_context_query(device_name: str):
             "unread_notes": unread_notes,
             "projects": projects,
             "stale": {"never_read": never_read, "stale_60_days": stale_60},
+            "agenda": _agenda_query(device=device_name),
             "token_budget": _TOKEN_BUDGET,
         }
     finally:
