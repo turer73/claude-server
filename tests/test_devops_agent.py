@@ -655,7 +655,9 @@ async def test_resolve_alert_db(tmp_path, monkeypatch):
     await db.initialize()
     agent = DevOpsAgent(db=db, interval=60)
 
-    # Store then resolve
+    # Store then resolve. Codex-P2 (PR#342): resolve artık ZAMAN-SINIRLI (datetime(timestamp) <=
+    # healthy_at) — gerçekçi ISO timestamp gerekir (eski placeholder "now"/"later": SQLite
+    # datetime("now")=şimdi, datetime("later")=NULL → sınır tutmaz). fire-time < resolve-time.
     alert = Alert(
         id="cpu-1",
         severity="critical",
@@ -663,9 +665,9 @@ async def test_resolve_alert_db(tmp_path, monkeypatch):
         message="CPU high",
         value=95,
         threshold=85,
-        timestamp="now",
+        timestamp="2026-07-19T10:00:00+00:00",
         resolved=True,
-        resolved_at="later",
+        resolved_at="2026-07-19T10:05:00+00:00",
     )
     await agent._store_alert(alert)
     await agent._resolve_alert_db(alert)

@@ -24,6 +24,30 @@ from app.core.provenance import provenance_json
 log = logging.getLogger("devops_agent")
 
 
+_MIN_UTC = datetime.min.replace(tzinfo=UTC)
+
+
+def _remediation_timestamp_key(row: dict[str, Any]) -> tuple[datetime, int]:
+    """Return a UTC-aware sort key for SQLite and ISO remediation timestamps."""
+    try:
+        row_id = int(row.get("id") or 0)
+    except (TypeError, ValueError):
+        row_id = 0
+    value = row.get("timestamp")
+    if not isinstance(value, str) or not value.strip():
+        return _MIN_UTC, row_id
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except (TypeError, ValueError):
+        return _MIN_UTC, row_id
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC), row_id
+
+
 class RemediationMixin(_DevOpsAgentBase):
     """DevOpsAgent remediation mixin — split from monolithic devops_agent.py."""
 
@@ -90,20 +114,21 @@ class RemediationMixin(_DevOpsAgentBase):
             out = "skipped: multi-worker gate (bu worker remediation-lider değil, disc#1352)"
         else:
             out = f"skipped: remediation_mode={mode} (otonom yürütme kapalı)"
-        self._remediation_log.append(
-            RemediationRecord(
-                timestamp=datetime.now(UTC).isoformat(),
-                alert_source=source,
-                action=action,
-                command=command,
-                result=out,
-                success=bool(success),
-            )
+        record = RemediationRecord(
+            timestamp=datetime.now(UTC).isoformat(),
+            alert_source=source,
+            action=action,
+            command=command,
+            result=out,
+            success=bool(success),
         )
+        self._remediation_log.append(record)
         # executed -> verify_status NULL (S2 verify-edecek); değilse 'skipped'
         # (notify/dry_run satırları verify-UPDATE'inden ayrışsın). INTERV: her satıra
         # provenance (tetik-kökeni) iliştir — sonradan denetlenebilir.
-        await self._persist_remediation_row(
+        # Codex-P2 (PR#342): persist SONUCUNU bayrakla — get_remediation_log yalnız DB'ye
+        # yazılamayan (persisted=False) kayıtları merge eder (aynı-saniye çift-görünüm fix).
+        record.persisted = await self._persist_remediation_row(
             source,
             alert.severity,
             mode,
@@ -114,6 +139,7 @@ class RemediationMixin(_DevOpsAgentBase):
             success,
             verify_status=None if executed else "skipped",
             provenance=provenance_json(alert, mode, detected_at=getattr(alert, "timestamp", None) or None),
+            occurred_at=record.timestamp,
         )
         alert.remediation = f"[{mode}] {action}"
 
@@ -191,17 +217,21 @@ class RemediationMixin(_DevOpsAgentBase):
         success: bool | None,
         verify_status: str | None = None,
         provenance: str | None = None,
-    ) -> None:
+        occurred_at: str | None = None,
+    ) -> bool:
         """Kalıcı remediation ledger (server.db.remediation_log). Best-effort:
-        DB yoksa/yazamazsa sessizce geç (remediation akışını bozma)."""
+        DB yoksa/yazamazsa sessizce geç (remediation akışını bozma). Dönüş: DB'ye
+        YAZILDI mı (Codex-P2 PR#342: get_remediation_log persisted-bayrağı buradan).
+        occurred_at açıkça yazılır; SQLite'ın whole-second default'u DB+memory sırasını bozmasın."""
         if not self._db:
-            return
+            return False
         try:
             await self._db.execute(
                 "INSERT INTO remediation_log "
-                "(alert_source, severity, mode, action, command, executed, result, success, verify_status, provenance) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(timestamp, alert_source, severity, mode, action, command, executed, result, success, verify_status, provenance) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
+                    occurred_at or datetime.now(UTC).isoformat(),
                     source,
                     severity,
                     mode,
@@ -214,10 +244,12 @@ class RemediationMixin(_DevOpsAgentBase):
                     provenance,
                 ),
             )
+            return True
         except Exception as e:
             # disc#1353b: 07-18 DB-lock penceresinde remediation-kayıtları sessizce kayboldu
             # (rem_today=0, n8n-down'a rağmen) — best-effort kalır ama artık GÖRÜNÜR.
             log.warning("remediation_log insert failed (%s): %s", source, type(e).__name__)
+            return False
 
     def _executable_playbook(self, source: str) -> list[dict[str, Any]] | None:
         """source -> ÇALIŞTIRILABİLİR playbook adımları (template doldurulmuş).
@@ -350,17 +382,18 @@ class RemediationMixin(_DevOpsAgentBase):
         SESSİZ DEĞİL: ledger'a refused satırı + webhook (görünürlük korunur).
         Ad config'ten gelir; geçersiz ad = config bozuk/oynanmış → incelenmeli."""
         msg = f"refused: gecersiz {kind} adi ({name[:60]!r}) — komut-enjeksiyonu riski, yurutme yok"
-        self._remediation_log.append(
-            RemediationRecord(
-                timestamp=datetime.now(UTC).isoformat(),
-                alert_source=source,
-                action=f"Restart {kind} REFUSED",
-                command="(yurutulmedi)",
-                result=msg,
-                success=False,
-            )
+        record = RemediationRecord(
+            timestamp=datetime.now(UTC).isoformat(),
+            alert_source=source,
+            action=f"Restart {kind} REFUSED",
+            command="(yurutulmedi)",
+            result=msg,
+            success=False,
         )
-        await self._persist_remediation_row(
+        self._remediation_log.append(record)
+        # Codex-P2 (PR#343 r2): bu yol da persisted-bayrağını işaretlemeli — aksi halde başarıyla
+        # persist edilen refused-satırı default persisted=False ile db+memory ÇİFT görünürdü.
+        record.persisted = await self._persist_remediation_row(
             source,
             alert.severity,
             self._remediation_mode,
@@ -371,6 +404,7 @@ class RemediationMixin(_DevOpsAgentBase):
             False,
             verify_status="refused",
             provenance=provenance_json(alert, self._remediation_mode, detected_at=getattr(alert, "timestamp", None) or None),
+            occurred_at=record.timestamp,
         )
         alert.remediation = f"[refused] {msg}"
         await self._send_webhook(alert)
@@ -411,34 +445,46 @@ class RemediationMixin(_DevOpsAgentBase):
             for r in reversed(self._remediation_log)
         ]
 
-    @staticmethod
-    def _parse_ts(ts: str | None) -> datetime:
-        """Karışık timestamp-formatlarını (in-memory isoformat 'T'+tz vs DB datetime('now')
-        boşluk/tz'siz) karşılaştırılabilir UTC-datetime'a çevir; parse-fail → min (sona düşer)."""
-        if not ts:
-            return datetime.min.replace(tzinfo=UTC)
-        try:
-            dt = datetime.fromisoformat(ts)
-            return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
-        except ValueError:
-            return datetime.min.replace(tzinfo=UTC)
+    def _unpersisted_records(self) -> list[dict[str, Any]]:
+        """DB'ye YAZILAMAYAN (persisted=False) in-memory kayıtlar, en-yeni-önce dict listesi."""
+        return [
+            {
+                "timestamp": r.timestamp,
+                "alert_source": r.alert_source,
+                "action": r.action,
+                "command": r.command,
+                "result": r.result,
+                "success": r.success,
+            }
+            for r in reversed(self._remediation_log)
+            if not r.persisted
+        ]
 
     async def get_remediation_log(self, limit: int = 50) -> tuple[list[dict[str, Any]], str]:
         """Kalıcı remediation-ledger okuma (disc#1353c). /api/v1/devops/remediation/log önceden
         YALNIZ in-memory deque okuyordu — her servis-restart'ında geçmiş 'boş' görünüyordu.
         Codex-P2 (PR#340 follow-up): SALT-DB de regresyondu — _persist_remediation_row transient-
-        lock'la düşerse kayıt yalnız in-memory'de kalır, salt-DB okuma onu GÖRÜNMEZ kılardı (eski
-        endpoint gösteriyordu). Çözüm: DB-satırları + en-yeni-DB-satırından SONRAKİ in-memory
-        kayıtlar birleştirilir (DB'ye yazılamayan taze-kuyruk kaybolmaz; restart zaten belleği
-        sıfırladığından tarihsel-çift oluşmaz). Kaynak dürüstçe etiketli: db | db+memory | memory."""
+        lock'la düşerse kayıt yalnız in-memory'de kalır, salt-DB okuma onu GÖRÜNMEZ kılardı.
+        Codex-P2 (PR#342): merge ARTIK timestamp-karşılaştırması DEĞİL, persisted-BAYRAĞI ile —
+        başarıyla-persist edilen kayıt (DB'de zaten var) mikrosaniye-ISO vs whole-second
+        datetime('now') farkıyla aynı-saniyede ÇİFT görünüyordu. Yalnız persisted=False (gerçekten
+        kayıp) kayıtlar merge edilir. DB'ye exact event-timestamp yazılır; birleşik sonuç limitten
+        ÖNCE UTC zamanına göre sıralanır. Kaynak dürüstçe etiketli: db | db+memory | memory."""
         if self._db:
             try:
-                rows = await self._db.fetch_all("SELECT * FROM remediation_log ORDER BY id DESC LIMIT ?", (limit,))
+                # occurred_at olay-zamanıdır; eşzamanlı/gecikmiş INSERT'lerde id sırası olay
+                # sırası olmayabilir. Legacy SQLite "YYYY-MM-DD HH..." ve yeni UTC ISO
+                # "YYYY-MM-DDTHH...+00:00" biçimlerini aynı leksikografik forma getirip
+                # mikro-saniyeyi koruyarak LIMIT'ten ÖNCE sırala.
+                rows = await self._db.fetch_all(
+                    "SELECT * FROM remediation_log ORDER BY replace(timestamp, ' ', 'T') DESC, id DESC LIMIT ?",
+                    (limit,),
+                )
                 db_rows = [dict(r) for r in rows]
-                newest_db = max((self._parse_ts(r.get("timestamp")) for r in db_rows), default=datetime.min.replace(tzinfo=UTC))
-                extra = [m for m in self.remediation_history if self._parse_ts(m.get("timestamp")) > newest_db]
+                extra = self._unpersisted_records()
                 if extra:
-                    return (extra + db_rows)[:limit], "db+memory"
+                    merged = sorted(extra + db_rows, key=_remediation_timestamp_key, reverse=True)
+                    return merged[:limit], "db+memory"
                 return db_rows, "db"
             except Exception as e:
                 log.warning("remediation_log read failed: %s", type(e).__name__)
