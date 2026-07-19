@@ -183,6 +183,33 @@ async def test_agenda_total_never_read_counts_only_active(client, memory_db):  #
     assert r.json()["kontrol_edilecekler"]["total_never_read"] == 1
 
 
+async def test_agenda_ranks_legacy_null_importance_as_neutral(client, memory_db):  # noqa: F811
+    con = sqlite3.connect(memory_db)
+    con.execute("ALTER TABLE discoveries ADD COLUMN importance INTEGER")
+    con.executemany(
+        "INSERT INTO discoveries (project,type,title,status,importance) VALUES (?,?,?,?,?)",
+        [
+            ("linux-ai-server", "bug", "legacy neutral bug", "active", None),
+            ("linux-ai-server", "bug", "explicit low bug", "active", 1),
+            ("linux-ai-server", "fix", "legacy neutral fix", "active", None),
+            ("linux-ai-server", "fix", "explicit low fix", "active", 1),
+        ],
+    )
+    con.commit()
+    con.close()
+
+    r = await client.get("/api/v1/memory/agenda", headers=_hdr())
+    assert r.status_code == 200
+    body = r.json()
+    recent_titles = [d["title"] for d in body["ne_oldu"]["discoveries"]]
+    bug_titles = [d["title"] for d in body["yapilacaklar"]["active_bugs"]]
+    discovery_titles = [d["title"] for d in body["yapilacaklar"]["open_discoveries"]]
+    assert recent_titles.index("legacy neutral bug") < recent_titles.index("explicit low bug")
+    assert recent_titles.index("legacy neutral fix") < recent_titles.index("explicit low fix")
+    assert bug_titles.index("legacy neutral bug") < bug_titles.index("explicit low bug")
+    assert discovery_titles.index("legacy neutral fix") < discovery_titles.index("explicit low fix")
+
+
 def test_safe_claims_does_not_hide_programming_errors():
     from app.api.memory.agenda import _safe_claims
 

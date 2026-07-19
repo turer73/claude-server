@@ -44,7 +44,7 @@ def _agenda_query(device: str | None = None) -> dict[str, Any]:
                 for r in db.execute(
                     "SELECT id,project,type,title,status,device_name,importance,date(created_at) as date "
                     "FROM discoveries WHERE created_at > datetime('now','-48 hours') "
-                    "ORDER BY importance DESC,created_at DESC LIMIT 15"
+                    "ORDER BY COALESCE(importance,5) DESC,created_at DESC LIMIT 15"
                 ).fetchall()
             ],
             "tasks": [
@@ -69,7 +69,7 @@ def _agenda_query(device: str | None = None) -> dict[str, Any]:
                 for r in db.execute(
                     "SELECT id,project,type,title,device_name,importance,date(created_at) as date "
                     "FROM discoveries WHERE type='bug' AND status='active' "
-                    "ORDER BY importance DESC,created_at DESC LIMIT 10"
+                    "ORDER BY COALESCE(importance,5) DESC,created_at DESC LIMIT 10"
                 ).fetchall()
             ],
             "open_discoveries": [
@@ -77,7 +77,7 @@ def _agenda_query(device: str | None = None) -> dict[str, Any]:
                 for r in db.execute(
                     "SELECT id,project,type,title,device_name,importance,date(created_at) as date "
                     "FROM discoveries WHERE status='active' AND type!='bug' "
-                    "ORDER BY importance DESC,created_at DESC LIMIT 15"
+                    "ORDER BY COALESCE(importance,5) DESC,created_at DESC LIMIT 15"
                 ).fetchall()
             ],
             "pending_tasks": [
