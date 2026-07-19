@@ -279,7 +279,7 @@ def _session_context_query(device_name: str):
             "unread_notes": unread_notes,
             "projects": projects,
             "stale": {"never_read": never_read, "stale_60_days": stale_60},
-            "agenda": _agenda_query(),
+            "agenda": _agenda_query(device=device_name),
             "token_budget": _TOKEN_BUDGET,
         }
     finally:

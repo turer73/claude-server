@@ -4,8 +4,9 @@ import asyncio
 import sqlite3
 from typing import Any
 
-from app.api.memory import _ensure_thread_fields, get_db, router
+from app.api.memory import _ensure_status, _ensure_thread_fields, get_db, router
 from app.api.memory import signal_quality as sq
+from app.api.memory.claims import _ensure_claims
 
 
 @router.get("/agenda")
@@ -13,14 +14,30 @@ async def get_agenda() -> dict[str, Any]:
     return await asyncio.to_thread(_agenda_query)
 
 
-def _agenda_query() -> dict[str, Any]:
+def _agenda_query(device: str | None = None) -> dict[str, Any]:
     db = get_db()
     try:
-        # discoveries.importance / notes.msg_type lazy-migrated kolonlar (discoveries.py'deki
-        # ensure_signal_columns cagrisiyla ayni sozlesme) — bu iki sorgu-grubunun onkosulu.
+        # discoveries.importance / notes.msg_type+status / active_claims lazy-migrated
+        # onkosullar (discoveries.py/claims.py'deki ensure cagrilariyla ayni sozlesme).
         sq.ensure_signal_columns(db)
         _ensure_thread_fields(db)
+        _ensure_status(db)
+        _ensure_claims(db)
         s: dict[str, Any] = {}
+        if device:
+            notes_sql = (
+                "SELECT id,from_device,title,substr(content,1,150) as content,msg_type,date(created_at) as date "
+                "FROM notes WHERE COALESCE(status,'active')='active' AND (to_device=? OR to_device IS NULL) "
+                "ORDER BY created_at DESC LIMIT 5"
+            )
+            notes_rows = db.execute(notes_sql, (device,)).fetchall()
+        else:
+            notes_sql = (
+                "SELECT id,from_device,title,substr(content,1,150) as content,msg_type,date(created_at) as date "
+                "FROM notes WHERE COALESCE(status,'active')='active' "
+                "ORDER BY created_at DESC LIMIT 5"
+            )
+            notes_rows = db.execute(notes_sql).fetchall()
         s["ne_oldu"] = {
             "discoveries": [
                 dict(r)
@@ -44,14 +61,7 @@ def _agenda_query() -> dict[str, Any]:
                     "SELECT id,session_num,date,device_name,substr(summary,1,100) as summary FROM sessions ORDER BY id DESC LIMIT 5"
                 ).fetchall()
             ],
-            "notes": [
-                dict(r)
-                for r in db.execute(
-                    "SELECT id,from_device,title,substr(content,1,150) as content,msg_type,date(created_at) as date "
-                    "FROM notes WHERE COALESCE(status,'active')='active' "
-                    "ORDER BY created_at DESC LIMIT 5"
-                ).fetchall()
-            ],
+            "notes": [dict(r) for r in notes_rows],
         }
         s["yapilacaklar"] = {
             "active_bugs": [
@@ -124,7 +134,7 @@ def _safe_claims(db: sqlite3.Connection) -> list[dict[str, Any]]:
             dict(r)
             for r in db.execute(
                 "SELECT id,task_key,device,repo,branch,note,datetime(created_at) as created_at "
-                "FROM claims WHERE status='active' "
+                "FROM active_claims WHERE active=1 "
                 "ORDER BY created_at DESC LIMIT 10"
             ).fetchall()
         ]
