@@ -191,18 +191,25 @@ class MetricsMixin(_DevOpsAgentBase):
     async def _resolve_alert_db(self, alert: Alert) -> None:
         await self._resolve_alert_db_by_source(alert.source, alert.resolved_at or alert.timestamp)
 
-    async def _resolve_alert_db_by_source(self, source: str, resolved_at: str) -> None:
+    async def _resolve_alert_db_by_source(self, source: str, healthy_at: str) -> None:
         """DB'deki açık alert-satırlarını KAYNAK-bazlı kapat — in-memory Alert nesnesi gerekmeden.
         Codex-P2 (PR#340 follow-up): alert DB'ye yazıldıktan sonra healthy-probe gelmeden restart
         olursa _active_alerts boşalır; resolve-yolu in-memory nesneye bağlı kalırsa DB satırı
         SONSUZA DEK resolved=0 kalır (stuck-open, kullanıcıdan gizli). Idempotent UPDATE
-        (açık satır yoksa no-op) — healthy-yoldan koşulsuz çağrılabilir."""
+        (açık satır yoksa no-op) — healthy-yoldan koşulsuz çağrılabilir.
+
+        Codex-P2 (PR#342): ZAMAN-SINIRI şart. Bu resolve her healthy-probe'da (aktif-alert yokken
+        bile) kuyruğa girdiğinden, DB-lock/çok-worker penceresinde GECİKMİŞ bir healthy-task,
+        SONRAKİ bir outage'ın yeni resolved=0 satırını yanlışlıkla kapatıp gizleyebilirdi. Yalnız
+        healthy-örnekleme-anından ÖNCE (veya eşit) görülmüş alert'ler kapatılır — sonraki outage
+        (timestamp > healthy_at) dokunulmaz. datetime() ile format-agnostik (ISO-T vs boşluk)."""
         if not self._db:
             return
         try:
             await self._db.execute(
-                "UPDATE alerts SET resolved = 1, resolved_at = ?, invalid_at = ? WHERE source = ? AND resolved = 0",
-                (resolved_at, resolved_at, source),
+                "UPDATE alerts SET resolved = 1, resolved_at = ?, invalid_at = ? "
+                "WHERE source = ? AND resolved = 0 AND datetime(timestamp) <= datetime(?)",
+                (healthy_at, healthy_at, source, healthy_at),
             )
         except Exception as e:
             # disc#1353b: resolve-güncellemesi kaybolursa alert DB'de sonsuza dek açık görünür.
