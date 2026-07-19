@@ -108,16 +108,9 @@ def _agenda_query(device: str | None = None) -> dict[str, Any]:
                     "ORDER BY days_old DESC LIMIT 10"
                 ).fetchall()
             ],
-            "total_never_read": db.execute("SELECT COUNT(*) FROM discoveries WHERE read_count=0").fetchone()[0],
+            "total_never_read": db.execute("SELECT COUNT(*) FROM discoveries WHERE read_count=0 AND status='active'").fetchone()[0],
         }
-        dl = [
-            dict(r)
-            for r in db.execute(
-                "SELECT name,platform,last_seen,"
-                "CASE WHEN last_seen < datetime('now','-1 day') THEN 1 ELSE 0 END as silent "
-                "FROM devices ORDER BY name"
-            ).fetchall()
-        ]
+        dl = _device_health(db)
         s["ajan_saglik"] = {
             "devices": dl,
             "silent_devices": [d for d in dl if d["silent"]],
@@ -131,6 +124,7 @@ def _agenda_query(device: str | None = None) -> dict[str, Any]:
 def _safe_claims(db: sqlite3.Connection) -> list[dict[str, Any]]:
     try:
         _expire_stale(db)
+        db.commit()
         return [
             dict(r)
             for r in db.execute(
@@ -139,5 +133,52 @@ def _safe_claims(db: sqlite3.Connection) -> list[dict[str, Any]]:
                 "ORDER BY created_at DESC LIMIT 10"
             ).fetchall()
         ]
-    except Exception:
-        return []
+    except sqlite3.OperationalError as exc:
+        if "no such table: active_claims" in str(exc):
+            return []
+        raise
+
+
+def _device_health(db: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Use the freshest registered or observed activity for every device identity."""
+    return [
+        dict(r)
+        for r in db.execute(
+            """
+            WITH activity(name, activity_jd) AS (
+                SELECT device_name, MAX(julianday(created_at))
+                FROM sessions WHERE NULLIF(device_name, '') IS NOT NULL GROUP BY device_name
+                UNION ALL
+                SELECT from_device, MAX(julianday(created_at))
+                FROM notes WHERE NULLIF(from_device, '') IS NOT NULL GROUP BY from_device
+                UNION ALL
+                SELECT device_name, MAX(julianday(created_at))
+                FROM tasks_log WHERE NULLIF(device_name, '') IS NOT NULL GROUP BY device_name
+            ),
+            freshest(name, activity_jd) AS (
+                SELECT name, MAX(activity_jd) FROM activity GROUP BY name
+            ),
+            all_devices(name, platform, registered_jd) AS (
+                SELECT name, platform, julianday(last_seen) FROM devices
+                UNION ALL
+                SELECT f.name, '?', NULL
+                FROM freshest f LEFT JOIN devices d ON d.name=f.name
+                WHERE d.name IS NULL
+            ),
+            resolved(name, platform, last_jd) AS (
+                SELECT d.name, d.platform,
+                       CASE
+                           WHEN d.registered_jd IS NULL OR f.activity_jd > d.registered_jd THEN f.activity_jd
+                           ELSE d.registered_jd
+                       END
+                FROM all_devices d LEFT JOIN freshest f ON f.name=d.name
+            )
+            SELECT name, platform, datetime(last_jd) AS last_seen,
+                   CASE
+                       WHEN last_jd IS NULL OR last_jd < julianday('now','-1 day') THEN 1
+                       ELSE 0
+                   END AS silent
+            FROM resolved ORDER BY name
+            """
+        ).fetchall()
+    ]

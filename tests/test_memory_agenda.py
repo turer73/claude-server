@@ -132,3 +132,63 @@ async def test_session_context_agenda_notes_device_scoped(client, memory_db):  #
     note_titles = {n["title"] for n in r.json()["agenda"]["ne_oldu"]["notes"]}
     assert "klipper icin" in note_titles
     assert "sadece surer icin" not in note_titles
+
+
+async def test_agenda_device_health_uses_freshest_activity(client, memory_db):  # noqa: F811
+    con = sqlite3.connect(memory_db)
+    con.executemany(
+        "INSERT INTO devices (name,platform,last_seen) VALUES (?,?,?)",
+        [
+            ("active-via-note", "linux", "2000-01-01 00:00:00"),
+            ("never-seen", "android", None),
+        ],
+    )
+    con.execute(
+        "INSERT INTO tasks_log (device_name,project,task,status) VALUES (?,?,?,?)",
+        ("unregistered-worker", "linux-ai-server", "recent task", "completed"),
+    )
+    con.commit()
+    con.close()
+    r = await client.post(
+        "/api/v1/memory/notes",
+        json={"from_device": "active-via-note", "title": "recent activity", "content": "alive"},
+        headers=_hdr(),
+    )
+    assert r.status_code == 200
+
+    r = await client.get("/api/v1/memory/agenda", headers=_hdr())
+    assert r.status_code == 200
+    devices = {d["name"]: d for d in r.json()["ajan_saglik"]["devices"]}
+    assert devices["active-via-note"]["silent"] == 0
+    assert devices["active-via-note"]["last_seen"] != "2000-01-01 00:00:00"
+    assert devices["never-seen"]["silent"] == 1
+    assert devices["unregistered-worker"]["platform"] == "?"
+    assert devices["unregistered-worker"]["silent"] == 0
+
+
+async def test_agenda_total_never_read_counts_only_active(client, memory_db):  # noqa: F811
+    con = sqlite3.connect(memory_db)
+    con.executemany(
+        "INSERT INTO discoveries (project,type,title,status,read_count) VALUES (?,?,?,?,?)",
+        [
+            ("linux-ai-server", "bug", "active unread", "active", 0),
+            ("linux-ai-server", "fix", "completed unread", "completed", 0),
+        ],
+    )
+    con.commit()
+    con.close()
+
+    r = await client.get("/api/v1/memory/agenda", headers=_hdr())
+    assert r.status_code == 200
+    assert r.json()["kontrol_edilecekler"]["total_never_read"] == 1
+
+
+def test_safe_claims_does_not_hide_programming_errors():
+    from app.api.memory.agenda import _safe_claims
+
+    class BrokenConnection:
+        def execute(self, _sql):
+            raise sqlite3.ProgrammingError("bad cursor")
+
+    with pytest.raises(sqlite3.ProgrammingError, match="bad cursor"):
+        _safe_claims(BrokenConnection())  # type: ignore[arg-type]

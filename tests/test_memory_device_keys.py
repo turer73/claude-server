@@ -185,6 +185,9 @@ async def test_device_key_default_deny_allowlist(client, memory_db):  # noqa: F8
     # agenda: ayni sinif (discoveries/tasks unscoped-global + devices.hostname) — allowlist-DISI
     assert (await client.get("/api/v1/memory/agenda", headers={"X-Memory-Key": dev_key})).status_code == 403
     assert (await client.get("/api/v1/memory/agenda", headers={"X-Memory-Key": TEST_MEMORY_KEY})).status_code == 200
+    # session-context public_router altinda master-only; device-key global agenda'yi
+    # dolayli okuyamaz (otomatik review'deki auth-bypass iddiasi icin regresyon kilidi).
+    assert (await client.get("/api/v1/memory/onboard/surer/session-context", headers={"X-Memory-Key": dev_key})).status_code == 401
     # allowlist-ICI route device-key ile calisir
     assert (await client.get("/api/v1/memory/notes", headers={"X-Memory-Key": dev_key})).status_code == 200
 
