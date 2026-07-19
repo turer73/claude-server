@@ -55,6 +55,10 @@ class RemediationRecord:
     command: str
     result: str
     success: bool
+    # Codex-P2 (PR#342): kalıcı-DB'ye YAZILDI mı. get_remediation_log yalnız persisted=False
+    # (DB-yazımı transient-lock'la düşmüş / henüz-yazılmamış) kayıtları merge eder — başarıyla
+    # persist edilenler DB'de zaten var, aynı-saniye mikrosaniye-farkıyla ÇİFT görünmesin.
+    persisted: bool = False
 
 
 # ── Playbooks ──────────────────────────────────────────────

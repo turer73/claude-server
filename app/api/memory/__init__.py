@@ -176,6 +176,9 @@ DEVICE_KEY_ROUTE_ALLOWLIST: frozenset = frozenset(
         ("POST", "/api/v1/memory/discussions/{topic_id}/positions"),
         ("GET", "/api/v1/memory/discussions/{topic_id}/positions"),
         ("POST", "/api/v1/memory/discussions/{topic_id}/synthesize"),
+        # agenda BILEREK burada YOK: ic sorgular discoveries/tasks unscoped-global +
+        # devices.hostname donduruyor — Codex#302-4tur P0'in kapattigi delik (device-key
+        # TUM cihazlarin gecmisini/hostname'ini gorebiliyordu). master/admin/otonom-only.
     }
 )
 
@@ -734,6 +737,7 @@ class SpawnFailureRetryResponse(BaseModel):
 # ── Domain router submodule'leri (Faz 3) ──
 # Import = handler'ların router'a kaydı + app.api.memory.* re-export'u.
 # Kernel (DB_PATH/keys/verify_key/get_db/router'lar/helpers/models) yukarıda kalır.
+from app.api.memory import agenda as agenda  # noqa: E402, F401
 from app.api.memory import claims as claims  # noqa: E402, F401
 from app.api.memory import dashboard as dashboard  # noqa: E402, F401
 from app.api.memory import devices as devices  # noqa: E402, F401
