@@ -20,6 +20,22 @@ from app.core.events import emit_event
 log = logging.getLogger("devops_agent")
 
 
+def _parse_utc_timestamp(value: Any) -> datetime | None:
+    """Parse the timestamp formats written by this service without losing microseconds."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
 class MetricsMixin(_DevOpsAgentBase):
     """DevOpsAgent metrics mixin — split from monolithic devops_agent.py."""
 
@@ -202,15 +218,49 @@ class MetricsMixin(_DevOpsAgentBase):
         bile) kuyruğa girdiğinden, DB-lock/çok-worker penceresinde GECİKMİŞ bir healthy-task,
         SONRAKİ bir outage'ın yeni resolved=0 satırını yanlışlıkla kapatıp gizleyebilirdi. Yalnız
         healthy-örnekleme-anından ÖNCE (veya eşit) görülmüş alert'ler kapatılır — sonraki outage
-        (timestamp > healthy_at) dokunulmaz. datetime() ile format-agnostik (ISO-T vs boşluk)."""
+        (timestamp > healthy_at) dokunulmaz.
+
+        Codex-P2 (PR#343 r2): SQLite datetime() saniye-altını kırpıyor, julianday() ise
+        mikro-saniyeleri güvenilir biçimde ayıramıyor. Aday satırlar Python'da UTC-aware ve tam
+        mikro-saniye hassasiyetiyle seçilir; UPDATE yalnız seçilmiş id'lere uygulanır. SELECT'ten
+        sonra eklenen yeni outage bu nedenle yanlışlıkla kapanamaz."""
         if not self._db:
             return
+        healthy_time = _parse_utc_timestamp(healthy_at)
+        if healthy_time is None:
+            log.warning("alert resolve-update skipped (%s): invalid healthy timestamp", source)
+            return
         try:
-            await self._db.execute(
-                "UPDATE alerts SET resolved = 1, resolved_at = ?, invalid_at = ? "
-                "WHERE source = ? AND resolved = 0 AND datetime(timestamp) <= datetime(?)",
-                (healthy_at, healthy_at, source, healthy_at),
+            rows = await self._db.fetch_all(
+                "SELECT id, timestamp FROM alerts WHERE source = ? AND resolved = 0",
+                (source,),
             )
+            eligible_ids: list[int] = []
+            invalid_timestamps = 0
+            for row in rows:
+                alert_time = _parse_utc_timestamp(row.get("timestamp"))
+                row_id = row.get("id")
+                if alert_time is None or not isinstance(row_id, int):
+                    invalid_timestamps += 1
+                    continue
+                if alert_time <= healthy_time:
+                    eligible_ids.append(row_id)
+
+            if invalid_timestamps:
+                log.warning(
+                    "alert resolve-update skipped invalid rows (%s): %d",
+                    source,
+                    invalid_timestamps,
+                )
+
+            # Stay below SQLite's parameter limit even if legacy stuck-open rows accumulated.
+            for offset in range(0, len(eligible_ids), 400):
+                batch = eligible_ids[offset : offset + 400]
+                placeholders = ", ".join("?" for _ in batch)
+                await self._db.execute(
+                    f"UPDATE alerts SET resolved = 1, resolved_at = ?, invalid_at = ? WHERE resolved = 0 AND id IN ({placeholders})",
+                    (healthy_at, healthy_at, *batch),
+                )
         except Exception as e:
             # disc#1353b: resolve-güncellemesi kaybolursa alert DB'de sonsuza dek açık görünür.
             log.warning("alert resolve-update failed (%s): %s", source, type(e).__name__)
