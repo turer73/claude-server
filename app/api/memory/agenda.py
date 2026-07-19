@@ -6,7 +6,7 @@ from typing import Any
 
 from app.api.memory import _ensure_status, _ensure_thread_fields, get_db, router
 from app.api.memory import signal_quality as sq
-from app.api.memory.claims import _ensure_claims
+from app.api.memory.claims import _ensure_claims, _expire_stale
 
 
 @router.get("/agenda")
@@ -130,6 +130,7 @@ def _agenda_query(device: str | None = None) -> dict[str, Any]:
 
 def _safe_claims(db: sqlite3.Connection) -> list[dict[str, Any]]:
     try:
+        _expire_stale(db)
         return [
             dict(r)
             for r in db.execute(

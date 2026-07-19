@@ -71,6 +71,27 @@ async def test_agenda_claims_table_missing_is_safe(client, memory_db):  # noqa: 
     assert r.json()["yapilacaklar"]["open_claims"] == []
 
 
+async def test_agenda_excludes_expired_claims(client, memory_db):  # noqa: F811
+    # Codex#344-P2 (round-2): list_claims _expire_stale cagirir, agenda cagirmiyordu —
+    # suresi-gecmis-ama-henuz-supurulmemis kilit 'acik' gorunup ajanlari gereksiz-yere
+    # is-kacinmaya iterdi.
+    r = await client.post(
+        "/api/v1/memory/claims",
+        json={"task_key": "linux-ai-server:expired-claim", "device": "klipper", "repo": "claude-server", "ttl_hours": 1},
+        headers=_hdr(),
+    )
+    assert r.status_code == 200
+    con = sqlite3.connect(memory_db)
+    con.execute("UPDATE active_claims SET expires_at=datetime('now','-1 hour') WHERE task_key='linux-ai-server:expired-claim'")
+    con.commit()
+    con.close()
+
+    r = await client.get("/api/v1/memory/agenda", headers=_hdr())
+    assert r.status_code == 200
+    open_claims = r.json()["yapilacaklar"]["open_claims"]
+    assert not any(c["task_key"] == "linux-ai-server:expired-claim" for c in open_claims)
+
+
 async def test_agenda_surfaces_active_claims(client, memory_db):  # noqa: F811
     # Codex#344-P2: eski sorgu 'claims'/'status' (yanlis tablo/kolon) her zaman []
     # donduruyordu — gercek tablo active_claims/active. /claims ile gercek claim ac,
