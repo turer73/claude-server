@@ -459,7 +459,8 @@ def _codereview_card(cra, crdb: dict) -> dict:
         "role": "Kod incelemesi · öğrenme · web-research (read-only)",
         "type": "continuous",
         "schedule": "5dk döngü",
-        "running": bool(st.get("enabled")),
+        "enabled": bool(st.get("enabled")),
+        "running": bool(st.get("running", st.get("enabled"))),
         "models": [f"{st.get('model')} (tarama)", f"{st.get('verify_model', '?')} (kontrol/sentez)"],
         "last_run": st.get("last_run"),
         "interval_s": st.get("interval_s"),
@@ -731,7 +732,29 @@ def _agent_bus_card(kind: str, agent) -> dict:
         "stats": st.get("stats", {}),
         "success_rate": st.get("success_rate"),
         "findings": st.get("findings", []),
+        "triggerable": False,
     }
+
+
+def _with_cohort_worker(card: dict[str, Any], role: str, *, local_running: bool | None = None) -> dict[str, Any]:
+    card["local_running"] = bool(card.get("running")) if local_running is None else local_running
+    card["cohort_role"] = role
+    if card.get("key") == "code-review":
+        # Manual requests are persisted to a shared file and consumed by the
+        # leader, so any HTTP worker can safely expose the button.
+        card["triggerable"] = bool(card.get("enabled", True))
+    return card
+
+
+def _continuous_worker_info(request: Request, **extra: Any) -> dict[str, Any]:
+    error = getattr(request.app.state, "continuous_agents_lock_error", None)
+    worker = {
+        "continuous_agents_role": getattr(request.app.state, "continuous_agents_role", "unknown"),
+        "continuous_agents_error": str(error).replace("\n", " ")[:240] if error else None,
+        "pid": os.getpid(),
+    }
+    worker.update(extra)
+    return worker
 
 
 @router.get("/runtime", dependencies=[Depends(require_auth)])
@@ -739,6 +762,7 @@ async def runtime_agents(request: Request) -> dict:
     """TÜM karar-ajanlarını tek yerde topla: sürekli(inmem) + on-demand(research) + cron.
     Her biri: last-run, iş, bulgu, model, başarı oranı, schedule, tetiklenebilir-mi."""
     agents = []
+    cohort_role = getattr(request.app.state, "continuous_agents_role", "unknown")
     dv = getattr(request.app.state, "devops_agent", None)
     if dv is not None:
         # Codex-P2 (PR#333): _devops_card artık _events_for ile SQLite sorguluyor (eskiden
@@ -749,29 +773,39 @@ async def runtime_agents(request: Request) -> dict:
     cra = getattr(request.app.state, "code_review_agent", None)
     if cra is not None:
         crdb = await asyncio.to_thread(_codereview_db)
-        agents.append(_codereview_card(cra, crdb))
+        agents.append(_with_cohort_worker(_codereview_card(cra, crdb), cohort_role))
     # Multi-agent bus agents
     ca = getattr(request.app.state, "critic_agent", None)
     if ca is not None:
-        agents.append(_agent_bus_card("critic", ca))
+        agents.append(_with_cohort_worker(_agent_bus_card("critic", ca), cohort_role))
     ma = getattr(request.app.state, "memory_consolidator", None)
     if ma is not None:
-        agents.append(_agent_bus_card("consolidator", ma))
+        agents.append(_with_cohort_worker(_agent_bus_card("consolidator", ma), cohort_role))
     la = getattr(request.app.state, "learning_loop", None)
     if la is not None:
-        agents.append(_agent_bus_card("learning", la))
+        agents.append(_with_cohort_worker(_agent_bus_card("learning", la), cohort_role))
     # Turgut 2026-07-18 (sistem-denetim direktifi): consciousness-stream registry'de HİÇ yoktu —
     # sistemin en-aktif sürekli-ajanı (5dk monolog, ~290 çağrı/gün) Ajanlar sekmesinde görünmüyordu.
     cs = getattr(request.app.state, "consciousness_stream", None)
     if cs is not None:
-        agents.append(await asyncio.to_thread(_consciousness_card, cs))
+        consciousness_card = await asyncio.to_thread(_consciousness_card, cs)
+        agents.append(
+            _with_cohort_worker(
+                consciousness_card,
+                cohort_role,
+                local_running=bool(cs.status.get("running")),
+            )
+        )
     for spec in _AGENT_MANIFEST:
         if spec["type"] == "ondemand" and spec.get("src") == "research":
             rdb = await asyncio.to_thread(_research_db)
             agents.append(_research_card(spec, rdb))
         elif spec["type"] == "cron":
             agents.append(await asyncio.to_thread(_cron_card, spec))
-    return {"agents": agents}
+    return {
+        "agents": agents,
+        "worker": _continuous_worker_info(request),
+    }
 
 
 @router.get("/bus", dependencies=[Depends(require_auth)])
@@ -785,6 +819,7 @@ async def bus_status(request: Request) -> dict:
     return {
         "bus": bus.get_status(),
         "recent_events": bus.recent_events(limit=20),
+        "worker": _continuous_worker_info(request),
     }
 
 
@@ -1065,7 +1100,7 @@ async def system_audit(request: Request) -> dict[str, Any]:
         "cron_unwrapped": _UNWRAPPED_CRON,
         "devices": devices,
         "systems": systems,
-        "worker": {"remediation_leader_this_worker": lock_fd is not None},
+        "worker": _continuous_worker_info(request, remediation_leader_this_worker=lock_fd is not None),
     }
 
 
@@ -1084,17 +1119,20 @@ async def trigger_agent(key: str, request: Request) -> dict:
         if cra is None:
             raise HTTPException(404, "code-review agent aktif değil")
 
-        async def _run_review():
-            # idle-gate'i atla: kuyruk + zorla sweep (elle 'şimdi incele'). last_run damgala
-            # (sweep _tick dışında çağrıldığı için; dashboard manuel-koşuyu yansıtsın).
-            from datetime import UTC, datetime
-
-            cra.last_run = datetime.now(UTC).isoformat()
-            await cra._drain_queue()
-            await cra._sweep()
-
-        asyncio.create_task(_run_review())
-        return {"triggered": "code-review", "task": "kuyruk + sweep incelemesi"}
+        status = cra.status()
+        if not status.get("enabled"):
+            raise HTTPException(409, "code-review agent is disabled")
+        result = await asyncio.to_thread(cra.request_manual_run)
+        if result == "disabled":
+            raise HTTPException(409, "code-review agent is disabled")
+        if result == "error":
+            raise HTTPException(503, "code-review request could not be persisted", headers={"Retry-After": "5"})
+        return {
+            "triggered": "code-review",
+            "task": "kuyruk + sweep incelemesi",
+            "queued": result == "queued",
+            "coalesced": result == "already_queued",
+        }
     if key in _CRON_SCRIPTS:
         # Cron-ajanı: allowlist'li script'i arka-planda çalıştır (manifest dışı key buraya gelmez).
         path = os.path.join(_AUTOMATION, _CRON_SCRIPTS[key])

@@ -1,6 +1,9 @@
 """Read-only kod-mühendisi ajanı testleri. LLM mock'lu; tmp-DB (prod kirletilmez)."""
 
+import asyncio
+import os
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -413,7 +416,7 @@ async def test_agent_drain_queue(tmp_db, tmp_path, monkeypatch):
     monkeypatch.setattr(cra.cr, "ROOT", tmp_path)
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "main.py").write_text("x = 1\n")
-    agent = cra.CodeReviewAgent()
+    agent = cra.CodeReviewAgent(state_dir=tmp_path)
     qf = tmp_path / "queue.txt"
     agent._queue = qf
     qf.write_text("app/main.py\napp/main.py\n")  # dup → uniq
@@ -452,7 +455,7 @@ async def test_agent_drain_heartbeat_clean(tmp_db, tmp_path, monkeypatch):
     monkeypatch.setattr(cra.cr, "ROOT", tmp_path)
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "main.py").write_text("x = 1\n")
-    agent = cra.CodeReviewAgent()
+    agent = cra.CodeReviewAgent(state_dir=tmp_path)
     qf = tmp_path / "queue.txt"
     agent._queue = qf
     qf.write_text("app/main.py\n")
@@ -481,7 +484,7 @@ async def test_drain_isolates_review_one_failure(tmp_db, tmp_path, monkeypatch):
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "a.py").write_text("x = 1\n")
     (tmp_path / "app" / "b.py").write_text("y = 2\n")
-    agent = cra.CodeReviewAgent()
+    agent = cra.CodeReviewAgent(state_dir=tmp_path)
     qf = tmp_path / "queue.txt"
     agent._queue = qf
     qf.write_text("app/a.py\napp/b.py\n")
@@ -514,7 +517,7 @@ async def test_sweep_isolates_review_one_failure(tmp_db, tmp_path, monkeypatch):
 
     monkeypatch.setattr(cra.cr, "_ENABLED", True)
     monkeypatch.setattr(cra.cr, "ROOT", tmp_path)
-    agent = cra.CodeReviewAgent()
+    agent = cra.CodeReviewAgent(state_dir=tmp_path)
     agent._sweep_files = [Path("a.py"), Path("b.py")]
     agent._pos = 0
     agent._k = 2
@@ -621,3 +624,194 @@ def test_heartbeat_survives_route_failure(tmp_path, monkeypatch):
     assert d["model"] is None  # route-hatası → model boş ama heartbeat YAZILDI
     assert d["files"] == 2
     assert d["clean"] is True
+
+
+async def test_agent_start_is_idempotent_and_status_tracks_task(tmp_path, monkeypatch):
+    from app.core import code_review_agent as cra
+
+    monkeypatch.setattr(cra.cr, "_ENABLED", True)
+    monkeypatch.setattr(cra.cr, "ROOT", tmp_path)
+    agent = cra.CodeReviewAgent()
+    stopped = asyncio.Event()
+
+    async def wait_forever():
+        await stopped.wait()
+
+    monkeypatch.setattr(agent, "_run_loop", wait_forever)
+    agent.start()
+    first_task = agent._task
+    agent.start()
+
+    assert agent._task is first_task
+    assert agent.status()["running"] is True
+
+    await agent.stop()
+    assert agent._task is None
+    assert agent.status()["running"] is False
+
+
+async def test_manual_review_waits_for_periodic_tick(tmp_path, monkeypatch):
+    from app.core import code_review_agent as cra
+
+    monkeypatch.setattr(cra.cr, "_ENABLED", True)
+    monkeypatch.setattr(cra.cr, "ROOT", tmp_path)
+    agent = cra.CodeReviewAgent()
+    tick_entered = asyncio.Event()
+    release_tick = asyncio.Event()
+    manual_calls: list[str] = []
+
+    async def blocked_tick():
+        tick_entered.set()
+        await release_tick.wait()
+
+    async def drain():
+        manual_calls.append("drain")
+
+    async def sweep():
+        manual_calls.append("sweep")
+
+    monkeypatch.setattr(agent, "_run_tick", blocked_tick)
+    monkeypatch.setattr(agent, "_drain_queue", drain)
+    monkeypatch.setattr(agent, "_sweep", sweep)
+
+    periodic = asyncio.create_task(agent._tick())
+    await tick_entered.wait()
+    manual = asyncio.create_task(agent.run_now())
+    await asyncio.sleep(0)
+    assert manual_calls == []
+
+    release_tick.set()
+    await asyncio.gather(periodic, manual)
+    assert manual_calls == ["drain", "sweep"]
+
+
+async def test_manual_request_is_durable_coalesced_and_consumed(tmp_path, monkeypatch):
+    from app.core import code_review_agent as cra
+
+    monkeypatch.setattr(cra.cr, "_ENABLED", True)
+    monkeypatch.setattr(cra.cr, "ROOT", tmp_path)
+    agent = cra.CodeReviewAgent(state_dir=tmp_path)
+    periodic_wait = asyncio.Event()
+    manual_entered = asyncio.Event()
+    manual_wait = asyncio.Event()
+
+    async def periodic_loop():
+        await periodic_wait.wait()
+
+    async def manual_run():
+        manual_entered.set()
+        await manual_wait.wait()
+
+    monkeypatch.setattr(agent, "_run_loop", periodic_loop)
+    monkeypatch.setattr(agent, "run_now", manual_run)
+    agent._manual_poll_interval = 0
+    agent.start()
+
+    assert agent.request_manual_run() == "queued"
+    assert agent.request_manual_run() == "already_queued"
+    await manual_entered.wait()
+    assert agent.status()["manual_review_pending"] is True
+
+    manual_wait.set()
+    for _ in range(100):
+        if not agent._manual_request.exists() and not agent._manual_running_request.exists():
+            break
+        await asyncio.sleep(0.01)
+    assert agent._manual_request.exists() is False
+    assert agent._manual_running_request.exists() is False
+
+    await agent.stop()
+    assert agent._task is None
+    assert agent._manual_task is None
+    assert agent.status()["manual_review_pending"] is False
+
+
+async def test_manual_request_survives_leader_cancellation(tmp_path, monkeypatch):
+    from app.core import code_review_agent as cra
+
+    monkeypatch.setattr(cra.cr, "_ENABLED", True)
+    monkeypatch.setattr(cra.cr, "ROOT", tmp_path)
+    agent = cra.CodeReviewAgent(state_dir=tmp_path)
+    entered = asyncio.Event()
+    wait_forever = asyncio.Event()
+
+    async def periodic_loop():
+        await wait_forever.wait()
+
+    async def manual_run():
+        entered.set()
+        await wait_forever.wait()
+
+    monkeypatch.setattr(agent, "_run_loop", periodic_loop)
+    monkeypatch.setattr(agent, "run_now", manual_run)
+    agent._manual_poll_interval = 0
+    agent.start()
+    assert agent.request_manual_run() == "queued"
+    await entered.wait()
+
+    await agent.stop()
+
+    assert agent._manual_running_request.exists() is True
+    assert agent.status()["manual_review_pending"] is True
+
+
+def test_request_arriving_after_claim_survives_previous_completion(tmp_path, monkeypatch):
+    from app.core import code_review_agent as cra
+
+    monkeypatch.setattr(cra.cr, "_ENABLED", True)
+    monkeypatch.setattr(cra.cr, "ROOT", tmp_path)
+    agent = cra.CodeReviewAgent(state_dir=tmp_path)
+
+    assert agent.request_manual_run() == "queued"
+    assert agent._claim_manual_request() is True
+    assert agent._manual_running_request.exists() is True
+    assert agent._manual_request.exists() is False
+
+    # This request arrives after the prior run was claimed/completed but before
+    # its running marker is acknowledged. It must represent a new run.
+    assert agent.request_manual_run() == "queued"
+    agent._complete_manual_request()
+
+    assert agent._manual_running_request.exists() is False
+    assert agent._manual_request.exists() is True
+
+
+def test_manual_request_rejects_disabled_agent(tmp_path, monkeypatch):
+    from app.core import code_review_agent as cra
+
+    monkeypatch.setattr(cra.cr, "_ENABLED", False)
+    monkeypatch.setattr(cra.cr, "ROOT", tmp_path)
+    agent = cra.CodeReviewAgent(state_dir=tmp_path)
+
+    assert agent.request_manual_run() == "disabled"
+
+
+def test_manual_request_defaults_to_systemd_writable_state_dir(monkeypatch):
+    from app.core import code_review_agent as cra
+
+    monkeypatch.setattr(cra, "read_env_var", lambda _key: None)
+    agent = cra.CodeReviewAgent()
+
+    assert agent._manual_request.parent == Path("/var/lib/linux-ai-server")
+    assert agent._manual_running_request.parent == Path("/var/lib/linux-ai-server")
+
+
+def test_post_publication_fd_error_does_not_delete_newer_request(tmp_path, monkeypatch):
+    from app.core import code_review_agent as cra
+
+    monkeypatch.setattr(cra.cr, "_ENABLED", True)
+    agent = cra.CodeReviewAgent(state_dir=tmp_path)
+
+    def fail_after_leader_claim(fd, _inheritable):
+        # Simulate Linux allowing the leader to rename A's open marker, then B
+        # publishing a new marker before A observes a metadata/close error.
+        os.close(fd)
+        os.replace(agent._manual_request, agent._manual_running_request)
+        agent._manual_request.touch()
+        raise OSError("simulated post-publication fd error")
+
+    monkeypatch.setattr(cra.os, "set_inheritable", fail_after_leader_claim)
+
+    assert agent.request_manual_run() == "queued"
+    assert agent._manual_running_request.exists() is True
+    assert agent._manual_request.exists() is True

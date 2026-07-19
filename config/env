@@ -3,3 +3,4 @@
 # Hassas degerler (JWT_SECRET, API key) burada degil, servis restart ile set edilmeli.
 
 DB_PATH=/var/lib/linux-ai-server/server.db
+MEMORY_DB=/opt/linux-ai-server/data/claude_memory.db

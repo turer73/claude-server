@@ -8,6 +8,7 @@ from app.api.agents import (
     _devops_card,
     _research_card,
     _sev_from_details,
+    _with_cohort_worker,
 )
 
 
@@ -702,6 +703,36 @@ class _FakeCRA:
             "total_findings": 9,
             "last_run": "2026-06-20T09:00:00",
         }
+
+
+def test_codereview_card_uses_actual_running_not_enabled():
+    class _StoppedCRA(_FakeCRA):
+        def status(self):
+            status = super().status()
+            status["enabled"] = True
+            status["running"] = False
+            return status
+
+    card = _codereview_card(_StoppedCRA(), {"counts": {}, "counts_14d": {}, "findings": []})
+    assert card["running"] is False
+
+
+def test_code_review_standby_card_can_queue_for_leader():
+    card = {"key": "code-review", "enabled": True, "running": False}
+
+    enriched = _with_cohort_worker(card, "standby")
+
+    assert enriched["local_running"] is False
+    assert enriched["cohort_role"] == "standby"
+    assert enriched["triggerable"] is True
+
+
+def test_disabled_code_review_leader_card_is_not_triggerable():
+    card = {"key": "code-review", "enabled": False, "running": False}
+
+    enriched = _with_cohort_worker(card, "leader")
+
+    assert enriched["triggerable"] is False
 
 
 def test_codereview_card_signal_rate_14d_window():

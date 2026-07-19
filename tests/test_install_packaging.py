@@ -15,6 +15,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INSTALL_SH = (REPO_ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
+CONFIG_ENV = (REPO_ROOT / "config" / "env").read_text(encoding="utf-8")
 
 # automation/-altı fail-closed runtime-bağımlılıkları: (dosya, +x-gerekli-mi)
 FAIL_CLOSED_DEPS = [
@@ -59,3 +60,18 @@ def test_lib_default_matches_install_target():
     assert default_path == "/opt/linux-ai-server/automation/spawn-write-guard.sh", default_path
     # installer aynı dizine koyuyor mu (dosya-adı + hedef-dizin eşleşmesi)
     assert "/opt/linux-ai-server/automation/" in INSTALL_SH
+
+
+def test_hardened_service_allows_only_opt_runtime_data_to_be_written():
+    """Code-review queue/heartbeat and legacy runtime DBs must survive ProtectSystem=strict."""
+    assert "mkdir -p /opt/linux-ai-server/data" in INSTALL_SH
+    read_write_line = re.search(r"^ReadWritePaths=(.+)$", INSTALL_SH, re.MULTILINE)
+    assert read_write_line is not None
+    writable_paths = read_write_line.group(1).split()
+    assert "/opt/linux-ai-server/data" in writable_paths
+    assert "/opt/linux-ai-server" not in writable_paths
+
+
+def test_installed_agents_share_one_memory_database():
+    """Consciousness, Critic and MemoryConsolidator all honor this EnvironmentFile value."""
+    assert re.search(r"^MEMORY_DB=/opt/linux-ai-server/data/claude_memory\.db$", CONFIG_ENV, re.MULTILINE)
