@@ -257,6 +257,59 @@ def test_run_watchdog_heartbeat_stall_emits_and_dedups(tmp_path: Path, monkeypat
     assert rows[0]["source"] == "watchdog:heartbeat:code-review"
 
 
+def test_run_watchdog_periodic_marker_stays_suppressed_past_old_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """disc bombardman-2026-07-23 (274 mesaj/4gün) regresyon-testi: last-code-review commit-
+    tetikli periyodik marker, günlerce sessiz kalması NORMAL (commit yoksa review de yok).
+    Eski davranış: WATCHDOG_DEDUP_WINDOW (15dk) aşılınca SAME stall için yeniden emit ediyordu
+    -> sonsuz Telegram flood. Fix: periyodik marker'larda source heartbeat-ts'i taşır + pencere
+    sonsuz -> önceki-emit ne kadar eski olursa olsun (900s penceresi çoktan geçmiş olsa bile)
+    SUPPRESS kalmalı, ts değişmeden asla yeniden emit ETMEMELİ."""
+    db_path = _events_db(tmp_path)
+    monkeypatch.setenv("DB_PATH", db_path)
+    hb = tmp_path / "hb"
+    hb.mkdir()
+    (hb / "last-code-review.json").write_text('{"ts": "2000-01-01T00:00:00+00:00"}', encoding="utf-8")
+    monkeypatch.setattr(aw, "snapshot_processes", lambda *a, **k: [])
+    s1 = aw.run_watchdog(hook_state_dir=str(hb))
+    assert s1["emitted"] == 1
+    # onceki emit'i eski-pencerenin (900s) cok disina it -- eski kodda bu tur tekrar EMIT ederdi.
+    con = sqlite3.connect(db_path)
+    con.execute("UPDATE events SET timestamp = datetime('now', '-1 day') WHERE type='agent-health'")
+    con.commit()
+    con.close()
+    s2 = aw.run_watchdog(hook_state_dir=str(hb))
+    assert s2["emitted"] == 0  # eski-davranista burada tekrar EMIT olurdu (age > 900s)
+    assert s2["suppressed"] == 1
+
+    con = sqlite3.connect(db_path)
+    n = con.execute("SELECT COUNT(*) FROM events WHERE type='agent-health'").fetchone()[0]
+    con.close()
+    assert n == 1  # 2. tur events'e yeni satir yazmadi
+
+
+def test_run_watchdog_periodic_marker_refreshed_ts_emits_again(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Heartbeat yeni bir commit ile tazelenince (farkli ts) -- onceki-alarm coktan suppress
+    olsa bile -- YENI ts icin TEK bir taze alarm gelmeli (resolved-then-renotify semantigi)."""
+    db_path = _events_db(tmp_path)
+    monkeypatch.setenv("DB_PATH", db_path)
+    hb = tmp_path / "hb"
+    hb.mkdir()
+    (hb / "last-code-review.json").write_text('{"ts": "2000-01-01T00:00:00+00:00"}', encoding="utf-8")
+    monkeypatch.setattr(aw, "snapshot_processes", lambda *a, **k: [])
+    s1 = aw.run_watchdog(hook_state_dir=str(hb))
+    assert s1["emitted"] == 1
+    (hb / "last-code-review.json").write_text('{"ts": "2000-01-02T00:00:00+00:00"}', encoding="utf-8")
+    s2 = aw.run_watchdog(hook_state_dir=str(hb))
+    assert s2["emitted"] == 1  # farkli ts -> yeni-olay, novel
+
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+    rows = con.execute("SELECT source FROM events WHERE type='agent-health' ORDER BY id").fetchall()
+    con.close()
+    assert len(rows) == 2
+    assert rows[0]["source"] != rows[1]["source"]
+
+
 def test_heartbeat_stall_skips_non_dict_json(tmp_path):
     """hook-state'te heartbeat-OLMAYAN json (ör. pending-notes.json=LIST) stall-taramayı ÇÖKERTMEMELI
     (klipper: cron-wire canlı tetikledi; data.get('ts') AttributeError tüm-taramayı düşürüyordu)."""

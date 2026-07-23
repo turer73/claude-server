@@ -99,6 +99,7 @@ class HeartbeatStall:
     agent: str
     age_minutes: float
     path: str
+    heartbeat_ts: float = 0.0
 
 
 @dataclass
@@ -195,7 +196,7 @@ def check_heartbeat_stalls(
         # daemon'lar default max_age (klipper #100224 FP-fix).
         threshold = HEARTBEAT_MAX_AGE_OVERRIDES.get(hb.stem, max_age_minutes)
         if age_min >= threshold:
-            stalls.append(HeartbeatStall(agent=hb.stem, age_minutes=age_min, path=str(hb)))
+            stalls.append(HeartbeatStall(agent=hb.stem, age_minutes=age_min, path=str(hb), heartbeat_ts=ts))
     return stalls
 
 
@@ -389,14 +390,26 @@ def run_watchdog(hook_state_dir: str | Path = "data/hook-state") -> dict[str, in
     try:
         for st in check_heartbeat_stalls(hook_state_dir):
             summary["stalls"] += 1
+            # klipper #100224-devam (bombardıman 2026-07-20/23, 274 mesaj/4gün): periyodik
+            # marker'lar (last-code-review vb.) commit-tetikli — sessiz-kalma süresi SINIRSIZ
+            # normal olabilir (bu repoya gün(ler)ce commit gelmeyebilir). Eski davranış: eşik
+            # aşılınca WATCHDOG_DEDUP_WINDOW (15dk) ile SONSUZA dek yeniden-alarm veriyordu (yeni
+            # event-id, throttle onu farklı-olay sanıyordu). Fix: periyodik marker'larda source'a
+            # heartbeat'in KENDİ ts'i gömülür (aynı ts = aynı olay) + pencere sonsuz -> tek-alarm,
+            # sonraki turlarda SUPPRESS; ts değişince (yeni commit -> yeni heartbeat) tekrar novel.
+            # Always-on daemon'lar (override-dışı) eski davranışta kalır (gerçek-stall periyodik
+            # re-surface etmeli).
+            is_periodic_marker = st.agent in HEARTBEAT_MAX_AGE_OVERRIDES
+            source = f"watchdog:heartbeat:{st.agent}:{int(st.heartbeat_ts)}" if is_periodic_marker else f"watchdog:heartbeat:{st.agent}"
+            window = float("inf") if is_periodic_marker else WATCHDOG_DEDUP_WINDOW_SECONDS
             res = emit_throttled(
                 type="agent-health",
-                source=f"watchdog:heartbeat:{st.agent}",
+                source=source,
                 title=f"ajan heartbeat-stall: {st.agent} ({st.age_minutes:.0f}dk)",
                 severity="warn",
                 detail=f"{st.path} {st.age_minutes:.0f}dk bayat (esik {HEARTBEAT_MAX_AGE_MINUTES:.0f}dk)",
                 payload={"agent": st.agent, "age_minutes": round(st.age_minutes, 1)},
-                window_seconds=WATCHDOG_DEDUP_WINDOW_SECONDS,
+                window_seconds=window,
             )
             if res.emitted:
                 summary["emitted"] += 1
