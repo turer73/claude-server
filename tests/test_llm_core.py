@@ -24,7 +24,7 @@ def test_route_table_known_tasks(monkeypatch):
     core = LLMCore()
     assert core.route("code-review") == ("ollama", "qwen2.5:7b")
     assert core.route("diagnosis") == ("ollama", "qwen2.5:3b")
-    assert core.route("reasoning") == ("ollama", "qwen3:30b-a3b-instruct-2507-q4_K_M")
+    assert core.route("reasoning") == ("ollama", "qwen3:30b-a3b-instruct-2507-q3_K_M")
     assert core.route("classify") == ("ollama", "qwen3.5:9b")
     assert core.route("escalate")[0] == "claude"
     assert core.route("synthesis") == ("claude", "claude-sonnet-4-6")
@@ -437,14 +437,14 @@ async def test_ollama_async_strips_leaked_tokens(monkeypatch):
 def test_keep_alive_for_known_models():
     # Turgut karari #100701/#100713: 2507+qwen3.5:9b resident (classify 9b'ye tasindi, ikisi
     # RAM'e birlikte sigar), gemma3 on-demand (kisa); digerleri Ollama-varsayilani.
-    assert lc._keep_alive_for("qwen3:30b-a3b-instruct-2507-q4_K_M") == "30m"
+    assert lc._keep_alive_for("qwen3:30b-a3b-instruct-2507-q3_K_M") == "30m"
     assert lc._keep_alive_for("qwen3.5:9b") == "20m"
     assert lc._keep_alive_for("gemma3:12b-it-qat") == "10s"
     assert lc._keep_alive_for("qwen2.5:3b") is None
 
 
 def test_payload_includes_keep_alive_for_managed_models():
-    p = LLMCore._payload("p", "qwen3:30b-a3b-instruct-2507-q4_K_M", None, 0.1, None)
+    p = LLMCore._payload("p", "qwen3:30b-a3b-instruct-2507-q3_K_M", None, 0.1, None)
     assert p["keep_alive"] == "30m"
     p2 = LLMCore._payload("p", "qwen2.5:3b", None, 0.1, None)
     assert "keep_alive" not in p2

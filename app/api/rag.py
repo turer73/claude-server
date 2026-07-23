@@ -22,11 +22,11 @@ QDRANT_URL = "http://localhost:6333"
 OLLAMA_URL = "http://localhost:11434"
 COLLECTION = "klipper-memory"
 EMBED_MODEL = "bge-m3"
-LLM_MODEL = "qwen3:30b-a3b-instruct-2507-q4_K_M"
+LLM_MODEL = "qwen3:30b-a3b-instruct-2507-q3_K_M"
 ALLOWED_LLM_MODELS = {
     "qwen2.5:3b",
     "qwen2.5:7b",
-    "qwen3:30b-a3b-instruct-2507-q4_K_M",
+    "qwen3:30b-a3b-instruct-2507-q3_K_M",
     "gemma3:12b-it-qat",
 }  # qwen3-coder:30b silindi (topic-5, 2026-07-19)
 METRICS_DB = os.environ.get("RAG_METRICS_DB", "/opt/linux-ai-server/data/rag_metrics.db")

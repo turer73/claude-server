@@ -60,7 +60,7 @@ _TASK_ROUTES: dict[str, tuple[str, str]] = {
     "code-review": ("ollama", "qwen2.5:7b"),
     "diagnosis": ("ollama", "qwen2.5:3b"),  # devops_agent._ask_diagnosis
     "research": ("ollama", "qwen2.5:3b"),  # research._ollama_generate
-    "reasoning": ("ollama", "qwen3:30b-a3b-instruct-2507-q4_K_M"),  # MoE, thinking-siz (2026-07-12 TR-eval: 20/20 vs qwen2.5:7b 18/20)
+    "reasoning": ("ollama", "qwen3:30b-a3b-instruct-2507-q3_K_M"),  # MoE, thinking-siz (2026-07-12 TR-eval: 20/20 vs qwen2.5:7b 18/20)
     "classify": (
         "ollama",
         "qwen3.5:9b",
@@ -82,7 +82,7 @@ _TASK_ROUTES: dict[str, tuple[str, str]] = {
 # TR-hi (research, düşük-frekans) → hâlâ on-demand (kısa keep_alive). Diğer modeller Ollama
 # varsayılanını (5dk) kullanır (None → payload'a eklenmez).
 _MODEL_KEEP_ALIVE: dict[str, str] = {
-    "qwen3:30b-a3b-instruct-2507-q4_K_M": "30m",
+    "qwen3:30b-a3b-instruct-2507-q3_K_M": "30m",
     "qwen3.5:9b": "20m",  # classify sık-çağrılır (her not) — sıcak-tutmaya değer, 2507'den kısa (küçük/ucuz-reload)
     "gemma3:12b-it-qat": "10s",
 }
