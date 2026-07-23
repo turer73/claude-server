@@ -38,7 +38,7 @@ def _gate_on() -> bool:
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 EMBED_MODEL = "bge-m3"
-SIGNAL_LLM_MODEL = os.environ.get("SIGNAL_LLM_MODEL", "qwen2.5:7b")
+SIGNAL_LLM_MODEL = os.environ.get("SIGNAL_LLM_MODEL", "qwen3.5:9b")
 DISCO_COLLECTION = "discoveries"
 VECTOR_SIZE = 1024  # bge-m3
 DEDUP_COSINE_THRESHOLD = 0.90
@@ -112,11 +112,15 @@ def embed_safe(text: str) -> list[float] | None:
 
 
 def _ollama_json_safe(prompt: str, *, op: str) -> dict[str, Any] | None:
-    """qwen2.5'ten JSON cevap iste (format=json). Fail/parse-hatası → None."""
+    """SIGNAL_LLM_MODEL'den JSON cevap iste (format=json). Fail/parse-hatası → None.
+
+    think:False ZORUNLU (qwen3.5 ailesi hibrit-thinking — think atlanırsa "response" boş
+    kalır, "thinking" alanına düşer; bu çağrı LLMCore'un koşulsuz think:false korumasının
+    DIŞINDA, doğrudan Ollama'ya gidiyor)."""
     try:
         r = requests.post(
             f"{OLLAMA_URL}/api/generate",
-            json={"model": SIGNAL_LLM_MODEL, "prompt": prompt, "stream": False, "format": "json"},
+            json={"model": SIGNAL_LLM_MODEL, "prompt": prompt, "stream": False, "format": "json", "think": False},
             timeout=60,
         )
         if r.status_code != 200:

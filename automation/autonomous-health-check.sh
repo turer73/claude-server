@@ -41,8 +41,9 @@ check() {
 # 1. Ollama API
 check "ollama-api"       "curl -fsS --max-time 5 http://127.0.0.1:11434/api/tags"
 
-# 2. Ollama classifier (1 hizli test)
-check "ollama-classifier" 'R=$(curl -fsS --max-time 15 http://127.0.0.1:11434/api/generate -d "{\"model\":\"qwen2.5:7b\",\"prompt\":\"Classify (one word: ACK|ACTIONABLE|DISCUSSION|URGENT):\\n\\nTitle: KVKK breach\\n\\nLabel:\",\"stream\":false,\"options\":{\"num_predict\":5}}" | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"response\",\"\").upper())") && echo "$R" | grep -qE "URGENT|ACTIONABLE|DISCUSSION|ACK"'
+# 2. Ollama classifier (1 hizli test) — think:false SART (qwen3.5 hibrit-thinking, atlanirsa
+# "response" bos kalir/thinking'e duser ve bu healthcheck hep FAIL verir).
+check "ollama-classifier" 'R=$(curl -fsS --max-time 15 http://127.0.0.1:11434/api/generate -d "{\"model\":\"qwen3.5:9b\",\"prompt\":\"Classify (one word: ACK|ACTIONABLE|DISCUSSION|URGENT):\\n\\nTitle: KVKK breach\\n\\nLabel:\",\"stream\":false,\"think\":false,\"options\":{\"num_predict\":5}}" | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"response\",\"\").upper())") && echo "$R" | grep -qE "URGENT|ACTIONABLE|DISCUSSION|ACK"'
 
 # 3. Memory API health
 check "memory-api"       "curl -fsS --max-time 5 http://127.0.0.1:8420/health | grep -q healthy"

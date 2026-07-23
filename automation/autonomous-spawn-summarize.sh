@@ -17,7 +17,7 @@ set -euo pipefail
 
 LOG_FILE="${HOOK_LOG_DIR:-/opt/linux-ai-server/data/hook-logs}/autonomous-spawn-summarize.log"
 OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
-OLLAMA_MODEL="${OLLAMA_SUMMARIZER_MODEL:-qwen2.5:7b}"
+OLLAMA_MODEL="${OLLAMA_SUMMARIZER_MODEL:-qwen3.5:9b}"
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 log() { printf '[%s] %s\n' "$(ts)" "$*" >> "$LOG_FILE"; }
@@ -92,6 +92,7 @@ print(json.dumps({
     'model': '$OLLAMA_MODEL',
     'prompt': '''$PROMPT''',
     'stream': False,
+    'think': False,
     'options': {'temperature': 0.2, 'num_predict': 150}
 }))
 ")" 2>/dev/null)
@@ -120,7 +121,7 @@ SLUG="autonomous-spawn-${NOTE_ID}-${DATE_SLUG}"
 
 NOTE_ID_VAR="$NOTE_ID" SLUG_VAR="$SLUG" SUMMARY_VAR="$SUMMARY" \
 TURNS_VAR="$TURNS" DURATION_VAR="$DURATION_MS" COST_VAR="$COST" \
-SUBTYPE_VAR="$SUBTYPE" \
+SUBTYPE_VAR="$SUBTYPE" OLLAMA_MODEL_VAR="$OLLAMA_MODEL" \
 python3 <<'PY'
 import json, os, urllib.request
 KEY = [l.split('=',1)[1].strip() for l in open(os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')).read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
@@ -140,7 +141,7 @@ body = json.dumps({
     'description': f"Autonomous spawn 3-line summary — note #{os.environ['NOTE_ID_VAR']}",
     'content': content,
     'source_device': 'klipper-autonomous',
-    'rationale': 'Ollama qwen2.5:7b summarizer — Claude spawn output compression for dashboard observability'
+    'rationale': f"Ollama {os.environ['OLLAMA_MODEL_VAR']} summarizer — Claude spawn output compression for dashboard observability"
 }, ensure_ascii=False).encode('utf-8')
 req = urllib.request.Request('http://127.0.0.1:8420/api/v1/memory/memories',
     data=body, method='POST',

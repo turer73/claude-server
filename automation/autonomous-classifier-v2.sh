@@ -16,7 +16,7 @@
 set -euo pipefail
 
 OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
-OLLAMA_MODEL="${OLLAMA_CLASSIFIER_MODEL:-qwen2.5:7b}"
+OLLAMA_MODEL="${OLLAMA_CLASSIFIER_MODEL:-qwen3.5:9b}"
 
 if [ $# -lt 3 ]; then
     echo "usage: $0 <NOTE_ID> <TITLE> <CONTENT>" >&2
@@ -83,6 +83,7 @@ print(json.dumps({
     'model': '$OLLAMA_MODEL',
     'prompt': prompt,
     'stream': False,
+    'think': False,
     'options': {'temperature': 0.1, 'num_predict': 30}
 }))
 ")" 2>/dev/null)
