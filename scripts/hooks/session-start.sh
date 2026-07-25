@@ -52,6 +52,22 @@ fi
     echo ""
   fi
 
+  # ─── 📋 Gündem Panosu — /agenda tek-kaynak read-model (topic-3/P-D, PR#344) ──
+  # agenda-endpoint'i tüketen tek-bakış özeti: cross-project yapılacaklar + kontrol-edilecekler.
+  # Hook'un kendi ad-hoc SQL bloklarını (aşağıda) TAMAMLAR, tek-kaynak read-model'i yüzeye çıkarır.
+  # FAIL-SAFE: servis down / key yok / jq yok / boş yanıt → sessizce atla (oturum-start bozulmaz).
+  if [ -n "${MEMORY_API_KEY:-}" ] && command -v jq >/dev/null 2>&1; then
+    AGENDA=$(curl -fsS --max-time 5 -H "X-Memory-Key: $MEMORY_API_KEY" "$HOOK_API/agenda" 2>/dev/null)
+    if [ -n "$AGENDA" ]; then
+      echo "$AGENDA" | jq -r '
+        "📋 Gündem Panosu (tek-kaynak /agenda):",
+        "  Yapılacaklar: \(.yapilacaklar.active_bugs|length) aktif bug · \(.yapilacaklar.open_discoveries|length) açık keşif · \(.yapilacaklar.pending_tasks|length) bekleyen görev · \(.yapilacaklar.open_claims|length) açık CLAIM",
+        "  ⚠️ Kontrol: \(.kontrol_edilecekler.total_never_read) okunmamış-aktif · \(.kontrol_edilecekler.never_read_important|length) önemli-hiç-okunmamış(imp≥7) · \(.kontrol_edilecekler.stale_active_30d|length) stale-30g │ Ajan: \(.ajan_saglik.active_device_count) aktif/\(.ajan_saglik.silent_devices|length) sessiz"
+      ' 2>/dev/null
+      echo ""
+    fi
+  fi
+
   # ─── 🆕 Son oturumdan beri yeni sinyaller (watermark-delta, LSA Faz-2) ──
   # Watermark = bu cihazın SON kaydedilen oturumunun created_at'i. "Sen yokken ne oldu" deltası.
   # FAIL-SAFE: hata → atla. SRV_DB aşağıda da kullanılıyor (burada tanımla).
