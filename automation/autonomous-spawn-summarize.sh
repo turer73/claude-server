@@ -36,10 +36,12 @@ if [ ! -r "$SPAWN_LOG" ]; then
 fi
 
 # Spawn log'tan result + metadata cek
-META=$(python3 -c "
-import json, sys
+# #1389 fix: SPAWN_LOG env-var+heredoc ile geçirilir (python -c string-interpolation DEĞİL) —
+# path'te tek-tırnak/özel-karakter olursa eski hal Python-kodu enjekte edebiliyordu.
+META=$(SPAWN_LOG_VAR="$SPAWN_LOG" python3 <<'PY'
+import json, os, sys
 try:
-    for line in open('$SPAWN_LOG'):
+    for line in open(os.environ['SPAWN_LOG_VAR']):
         line = line.strip()
         if line.startswith('{'):
             d = json.loads(line)
@@ -53,7 +55,8 @@ try:
             break
 except Exception as e:
     sys.stderr.write(f'parse err: {e}\n')
-")
+PY
+)
 
 SUBTYPE=$(printf '%s' "$META" | grep '^SUBTYPE=' | cut -d= -f2-)
 TURNS=$(printf '%s' "$META" | grep '^TURNS=' | cut -d= -f2-)
@@ -123,8 +126,14 @@ NOTE_ID_VAR="$NOTE_ID" SLUG_VAR="$SLUG" SUMMARY_VAR="$SUMMARY" \
 TURNS_VAR="$TURNS" DURATION_VAR="$DURATION_MS" COST_VAR="$COST" \
 SUBTYPE_VAR="$SUBTYPE" OLLAMA_MODEL_VAR="$OLLAMA_MODEL" \
 python3 <<'PY'
-import json, os, urllib.request
-KEY = [l.split('=',1)[1].strip() for l in open(os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')).read().splitlines() if l.startswith('MEMORY_API_KEY=')][0]
+import json, os, sys, urllib.request
+# #1390 fix: [0] IndexError'a düşerdi (MEMORY_API_KEY .env'de yoksa boş liste) — next()+default
+# ile fail-safe (Tier-3 best-effort script: key yoksa memory-yazımı atla, script'i çökertme).
+_env_path = os.environ.get('HOOK_ENV_FILE', '/opt/linux-ai-server/.env')
+KEY = next((l.split('=', 1)[1].strip() for l in open(_env_path).read().splitlines() if l.startswith('MEMORY_API_KEY=')), '')
+if not KEY:
+    sys.stderr.write(f'MEMORY_API_KEY bulunamadi ({_env_path}) — memory-yazimi atlandi\n')
+    sys.exit(0)
 content = f"""## Autonomous Spawn Ozeti — Note #{os.environ['NOTE_ID_VAR']}
 
 {os.environ['SUMMARY_VAR']}
