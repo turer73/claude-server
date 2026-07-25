@@ -62,6 +62,13 @@ _SIGNAL_COLUMNS = {
     "supersedes_id": "INTEGER",  # bu kayıt hangi (çözülmüş) kaydın regression'ı
     "importance": "INTEGER",  # 1-10 (decay-scoring), default 5
     "last_accessed": "TEXT",  # son okuma (recency bump)
+    # F1 fingerprint-dedup (topic-4 kararı): tekrar-eden bulgu (host+kaynak+tür) TEK kanonik
+    # kayıtta toplanır; flap'te resolve→refire yeni-satır AÇMAZ, occurrence_count artar +
+    # aynı satır active↔resolved döner. Böylece Gündem-Panosuna spam yerine tek-satır akar.
+    "fingerprint": "TEXT",  # host+kaynak+tür kimliği (AUTO-alert'te = kaynak string'i)
+    "occurrence_count": "INTEGER DEFAULT 1",  # kaç kez tetiklendi (reopen dahil)
+    "first_seen": "TEXT",  # ilk tetiklenme (default=created_at)
+    "last_seen": "TEXT",  # son tetiklenme (her occurrence'da güncellenir)
 }
 
 
@@ -82,6 +89,10 @@ def ensure_signal_columns(db: sqlite3.Connection) -> None:
         if added:
             # valid_at backfill yalnız yeni-eklendiğinde (idempotent; sonraki çağrılar no-op).
             db.execute("UPDATE discoveries SET valid_at = created_at WHERE valid_at IS NULL")
+            # F1: first_seen/last_seen backfill = created_at (occurrence_count DEFAULT 1 ile
+            # eski satırlar zaten 1'e set olur; fingerprint NULL kalır → create yolu title ile eşler).
+            db.execute("UPDATE discoveries SET first_seen = created_at WHERE first_seen IS NULL")
+            db.execute("UPDATE discoveries SET last_seen = created_at WHERE last_seen IS NULL")
         db.commit()
     except Exception as e:  # noqa: BLE001 — migration asla yazma yolunu patlatmamalı
         _degraded("ensure_signal_columns", repr(e))
