@@ -22,6 +22,11 @@ from app.api.memory import (
 from app.api.memory import signal_quality as sq
 from app.core.privacy import redact
 
+# F1 fingerprint-dedup (topic-4): çözülmüş bir fingerprint bu pencere içinde tekrar tetiklenirse
+# AYNI kanonik kayıt reopen edilir (occurrence_count++); daha eski = yeni-satır (uzun-sessiz
+# sonrası regression taze-inceleme hak eder). Flap-collapse'ın amacı bu pencerede toplamaktır.
+_FINGERPRINT_REOPEN_DAYS = 30
+
 
 @router.get("/discoveries")
 async def list_discoveries(
@@ -115,6 +120,59 @@ async def create_discovery(data: DiscoveryCreate, forced_origin: str = Depends(d
         if recent_dup:
             return {"id": recent_dup[0], "status": "duplicate_skipped_5min", "secrets_redacted": redacted_labels}
 
+        # ── F1 fingerprint-dedup (topic-4 kararı) ─────────────────────────────────────────
+        # SADECE fingerprint verildiğinde (AUTO-alert/devops üretici yolu). None → tüm bu blok
+        # atlanır, mevcut davranış AYNEN korunur (güvenli-varsayılan). Aynı fingerprint'li kayıt
+        # varsa yeni-satır AÇMAZ: aktif → occurrence_count++/last_seen; resolved (pencere-içi) →
+        # reopen. Semantik-dedup'tan ÖNCE: flapping-alarm embed maliyeti de doğurmaz.
+        # Kritik bölüm senkron sqlite (await yok) → atomik, iptal-penceresi yok.
+        if data.fingerprint:
+            row = db.execute(
+                "SELECT id, status FROM discoveries WHERE project=? AND fingerprint=? ORDER BY id DESC LIMIT 1",
+                (data.project, data.fingerprint),
+            ).fetchone()
+            if row is None:
+                # Migration-öncesi kayıtlar fingerprint=NULL — aynı kimliği (project+type+title,
+                # AUTO-alert'te title=fingerprint'i belirler) title ile yakala, fingerprint'i backfill et.
+                row = db.execute(
+                    "SELECT id, status FROM discoveries "
+                    "WHERE project=? AND type=? AND title=? AND fingerprint IS NULL "
+                    "ORDER BY id DESC LIMIT 1",
+                    (data.project, data.type, data.title),
+                ).fetchone()
+            if row is not None:
+                fid, fstatus = row[0], row[1]
+                if fstatus == "active":
+                    db.execute(
+                        "UPDATE discoveries SET occurrence_count=COALESCE(occurrence_count,1)+1, "
+                        "last_seen=datetime('now'), fingerprint=?, "
+                        "details=COALESCE(?, details), device_name=?, rationale=COALESCE(?, rationale) "
+                        "WHERE id=?",
+                        (data.fingerprint, details_clean, data.device_name, data.rationale, fid),
+                    )
+                    db.commit()
+                    return {"id": fid, "status": "occurrence_incremented", "secrets_redacted": redacted_labels}
+                # resolved/completed/superseded/obsolete: pencere-içiyse AYNI kaydı reopen et.
+                # Pencere = son AKTİVİTE (last_seen en doğru sinyal; yoksa invalid_at/valid_at/created_at'e düş).
+                # Aktif-flapping fingerprint (taze last_seen) toplanmaya devam eder; uzun-sessiz sonrası
+                # regression (last_seen > pencere) taze-satır alır.
+                reopen = db.execute(
+                    "SELECT 1 FROM discoveries WHERE id=? AND COALESCE(last_seen, invalid_at, valid_at, created_at) > datetime('now', ?)",
+                    (fid, f"-{_FINGERPRINT_REOPEN_DAYS} days"),
+                ).fetchone()
+                if reopen:
+                    db.execute(
+                        "UPDATE discoveries SET status='active', resolved=0, invalid_at=NULL, "
+                        "occurrence_count=COALESCE(occurrence_count,1)+1, last_seen=datetime('now'), "
+                        "fingerprint=?, details=COALESCE(?, details), device_name=?, "
+                        "rationale=COALESCE(rationale,'')||' [reopen: fingerprint tekrar tetiklendi]' "
+                        "WHERE id=?",
+                        (data.fingerprint, details_clean, data.device_name, fid),
+                    )
+                    db.commit()
+                    return {"id": fid, "status": "reopened_fingerprint", "secrets_redacted": redacted_labels}
+                # pencereden eski → aşağıdaki normal-create yolu YENİ kanonik satır açar.
+
         # Semantik-dedup (fail-safe → ADD). NOOP/UPDATE erken-döner; SUPERSEDE eskiyi geçersizler.
         # Codex#176: recurring-log (haftalık rapor) skip_dedup=True ile atlar (ardışık raporlar
         # cosine≥0.90 → yanlış-merge/geçmiş-kaybı önlenir; exact-title yine korur).
@@ -177,8 +235,9 @@ async def create_discovery(data: DiscoveryCreate, forced_origin: str = Depends(d
                 )
             cur = db.execute(
                 "INSERT INTO discoveries "
-                "(session_id, device_name, project, type, title, details, status, rationale, valid_at, importance, supersedes_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)",
+                "(session_id, device_name, project, type, title, details, status, rationale, valid_at, importance, supersedes_id, "
+                "fingerprint, occurrence_count, first_seen, last_seen) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, 1, datetime('now'), datetime('now'))",
                 (
                     data.session_id,
                     data.device_name,
@@ -190,6 +249,7 @@ async def create_discovery(data: DiscoveryCreate, forced_origin: str = Depends(d
                     data.rationale,
                     importance,
                     superseded_id,
+                    data.fingerprint,
                 ),
             )
             db.commit()  # eski-superseded + halef-INSERT tek-commit (atomik)

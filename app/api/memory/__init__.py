@@ -580,6 +580,9 @@ class DiscoveryCreate(BaseModel):
     # ATLAMALI — ardışık raporlar cosine≥0.90 (0.972 ölçüldü) → dedup onları MERGE eder, hafta-unique
     # başlık yetmez, geçmiş kaybolur. skip_dedup=True → semantic-dedup atla (exact-title yine korur).
     skip_dedup: bool = False
+    # F1 fingerprint-dedup (topic-4): set edilirse tekrar-eden bulgu TEK kanonik kayıtta toplanır
+    # (occurrence_count++/last_seen, resolved→reopen). None (varsayılan) → mevcut davranış AYNEN korunur.
+    fingerprint: str | None = None
 
     @field_validator("type")
     @classmethod

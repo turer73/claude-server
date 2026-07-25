@@ -85,12 +85,13 @@ save_discovery() {
     local src="$1" title="$2" detail="$3" ts="$4"
     [ -z "$MEMORY_API_KEY" ] && return 1
     local body http
-    body=$(TITLE="AUTO-alert: ${src}" DET="${title} | ${detail} (${ts})" python3 -c '
+    body=$(TITLE="AUTO-alert: ${src}" DET="${title} | ${detail} (${ts})" FP="${src}" python3 -c '
 import json, os
 print(json.dumps({
     "device_name": "klipper", "project": "linux-ai-server", "type": "bug",
     "title": os.environ["TITLE"][:120], "details": os.environ["DET"][:1000],
     "rationale": "notify-cron otomatik hata-hafızası (critical event).",
+    "fingerprint": os.environ["FP"][:200],
 }))' 2>/dev/null) || return 1
     http=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 -X POST "${API_BASE}/api/v1/memory/discoveries" \
         -H "Content-Type: application/json" -H "X-Memory-Key: ${MEMORY_API_KEY}" \
