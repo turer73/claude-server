@@ -87,18 +87,24 @@ $RESULT
 
 --- 3-LINE SUMMARY ---"
 
-RESPONSE=$(curl -sS --max-time 25 "$OLLAMA_URL/api/generate" \
-    -H "Content-Type: application/json" \
-    -d "$(python3 -c "
-import json
+# #1440 fix: PROMPT/MODEL env-var+heredoc ile geçirilir (python -c string-interpolation DEĞİL) —
+# eski hal $RESULT (spawn-log result field) icerigini triple-quoted Python string'e ham gomuyordu;
+# result icinde `'''+payload+'''` gecerse Python-kodu enjekte edilebilirdi.
+BODY=$(PROMPT_VAR="$PROMPT" MODEL_VAR="$OLLAMA_MODEL" python3 <<'PY'
+import json, os
 print(json.dumps({
-    'model': '$OLLAMA_MODEL',
-    'prompt': '''$PROMPT''',
+    'model': os.environ['MODEL_VAR'],
+    'prompt': os.environ['PROMPT_VAR'],
     'stream': False,
     'think': False,
     'options': {'temperature': 0.2, 'num_predict': 150}
 }))
-")" 2>/dev/null)
+PY
+)
+
+RESPONSE=$(curl -sS --max-time 25 "$OLLAMA_URL/api/generate" \
+    -H "Content-Type: application/json" \
+    -d "$BODY" 2>/dev/null)
 
 SUMMARY=$(printf '%s' "$RESPONSE" | python3 -c "
 import json, sys
