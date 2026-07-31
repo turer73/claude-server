@@ -94,7 +94,7 @@ def test_write_state_no_key():
 
 def test_synthesize(monkeypatch):
     assert ss.synthesize("veri", "") == ""  # key yok → boş
-    monkeypatch.setattr(ss, "_post_json", lambda *a, **k: {"result": "  yaşayan anlatı  "})
+    monkeypatch.setattr(ss, "_post_json", lambda *a, **k: {"ok": True, "result": "  yaşayan anlatı  "})
     assert ss.synthesize("veri", "ikey") == "yaşayan anlatı"  # trim'li result
 
     def boom(*a, **k):

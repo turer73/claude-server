@@ -20,6 +20,11 @@ import os
 import subprocess
 import sys
 import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo-root (app.core.claude_run icin)
+
+from app.core.claude_run import claude_result  # noqa: E402 (sys.path'ten sonra olmak ZORUNDA)
 
 API_BASE = os.environ.get("API_BASE", "http://localhost:8420")
 ENV_FILE = os.environ.get("NOTIFY_ENV_FILE", "/opt/linux-ai-server/.env")
@@ -118,9 +123,11 @@ def run() -> dict:
         )
     except Exception as e:
         return {"ok": False, "error": str(e)[:200]}
-    report = (out.get("result") or "").strip()
+    # ok-guard: 429/limit yanıtı BOŞ-OLMAYAN result döner -> guard olmadan
+    # rate-limit metni haftalık analiz diye discovery'e yazılıyordu (#1449).
+    report = claude_result(out)
     if not report:
-        return {"ok": False, "error": "boş analiz"}
+        return {"ok": False, "error": "boş/başarısız analiz"}
 
     # 1) Discovery'e yaz (SessionStart görünürlüğü). type="learning" (analitik içgörü;
     # geçerli tipler: bug/fix/learning/config/workaround/architecture/plan — "note" YOK).

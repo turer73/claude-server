@@ -30,7 +30,12 @@ import subprocess
 import sys
 import urllib.request
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo-root (app.core.claude_run icin)
+
+from app.core.claude_run import claude_result  # noqa: E402 (sys.path'ten sonra olmak ZORUNDA)
 
 API_BASE = os.environ.get("API_BASE", "http://localhost:8420")
 CLAUDE_TIMEOUT = int(os.environ.get("EDITOR_CLAUDE_TIMEOUT", "240"))
@@ -167,7 +172,9 @@ def _claude(prompt: str) -> str:
         {"X-API-Key": ikey},
         CLAUDE_TIMEOUT,
     )
-    return (out.get("result") or "").strip()
+    # ok-guard: 429/limit yanıtı BOŞ-OLMAYAN result döner -> guard olmadan
+    # hata metni üretilmiş içerik sanılıyordu.
+    return claude_result(out)
 
 
 def suggest_topics(site: dict[str, str]) -> str:

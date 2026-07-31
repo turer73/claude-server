@@ -23,6 +23,7 @@ import sys
 import urllib.request
 from datetime import UTC, datetime
 
+from app.core.claude_run import claude_result
 from app.db.data_layer import get_conn
 
 ENV_FILE = os.environ.get("NOTIFY_ENV_FILE", "/opt/linux-ai-server/.env")
@@ -171,7 +172,10 @@ def synthesize(summary: str, ikey: str) -> str:
             {"X-API-Key": ikey},
             180,
         )
-        return (out.get("result") or "").strip()
+        # ok-guard: 429/limit yanıtı BOŞ-OLMAYAN result döner -> guard olmadan
+        # rate-limit metni sistem-durumu anlatısı diye kaydediliyordu (#1469).
+        synth = claude_result(out)
+        return synth or "(Sonnet sentez başarısız: ok=false veya boş yanıt)"
     except Exception as e:
         return f"(Sonnet sentez başarısız: {str(e)[:80]})"
 

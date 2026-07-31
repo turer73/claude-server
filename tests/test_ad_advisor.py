@@ -163,7 +163,7 @@ def test_ad_copy_llm_returns_parsed_ads(monkeypatch):
     monkeypatch.setattr(
         ad.gsc,
         "_post_json",
-        lambda *a, **k: {"result": '```json\n[{"keyword": "panola", "headlines": ["H1"], "descriptions": ["D1"]}]\n```'},
+        lambda *a, **k: {"ok": True, "result": '```json\n[{"keyword": "panola", "headlines": ["H1"], "descriptions": ["D1"]}]\n```'},
     )
     ads = ad._ad_copy_llm("sc-domain:panola.app", ["panola"])
     assert ads == [{"keyword": "panola", "headlines": ["H1"], "descriptions": ["D1"]}]
@@ -171,7 +171,7 @@ def test_ad_copy_llm_returns_parsed_ads(monkeypatch):
 
 def test_ad_copy_llm_empty_on_invalid_json(monkeypatch):
     monkeypatch.setattr(ad.gsc, "_envget", lambda k: "fake-key" if k == "INTERNAL_API_KEY" else "")
-    monkeypatch.setattr(ad.gsc, "_post_json", lambda *a, **k: {"result": "bu JSON değil, düz metin"})
+    monkeypatch.setattr(ad.gsc, "_post_json", lambda *a, **k: {"ok": True, "result": "bu JSON değil, düz metin"})
     assert ad._ad_copy_llm("sc-domain:panola.app", ["panola"]) == []
 
 
@@ -193,13 +193,14 @@ def test_ad_copy_llm_filters_malformed_entries(monkeypatch):
         ad.gsc,
         "_post_json",
         lambda *a, **k: {
+            "ok": True,
             "result": json.dumps(
                 [
                     {"keyword": "panola", "headlines": ["Geçerli"], "descriptions": ["D1"]},
                     "panola resmi sitesi",  # malformed: düz string
                     {"keyword": "kuafor", "headlines": [1, 2], "descriptions": ["D2"]},  # malformed: sayı-başlık
                 ]
-            )
+            ),
         },
     )
     ads = ad._ad_copy_llm("sc-domain:panola.app", ["panola"])
@@ -214,7 +215,7 @@ def test_ad_copy_llm_prompt_forbids_file_tools(monkeypatch):
 
     def fake_post(url, payload, headers, timeout):
         captured.update(payload)
-        return {"result": "[]"}
+        return {"ok": True, "result": "[]"}
 
     monkeypatch.setattr(ad.gsc, "_envget", lambda k: "fake-key" if k == "INTERNAL_API_KEY" else "")
     monkeypatch.setattr(ad.gsc, "_post_json", fake_post)
@@ -224,7 +225,7 @@ def test_ad_copy_llm_prompt_forbids_file_tools(monkeypatch):
 
 def test_critic_review_parses_verdict(monkeypatch):
     monkeypatch.setattr(ad.gsc, "_envget", lambda k: "fake-key" if k == "INTERNAL_API_KEY" else "")
-    monkeypatch.setattr(ad.gsc, "_post_json", lambda *a, **k: {"result": '{"verdict": "FLAGGED", "notes": "abartı var"}'})
+    monkeypatch.setattr(ad.gsc, "_post_json", lambda *a, **k: {"ok": True, "result": '{"verdict": "FLAGGED", "notes": "abartı var"}'})
     v = ad._critic_review("sc-domain:panola.app", [{"keyword": "panola", "headlines": ["H1"], "descriptions": ["D1"]}])
     assert v == {"verdict": "FLAGGED", "notes": "abartı var"}
 
