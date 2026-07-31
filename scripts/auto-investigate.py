@@ -19,6 +19,11 @@ import re
 import sys
 import time
 import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo-root (app.core.claude_run icin)
+
+from app.core.claude_run import claude_result  # noqa: E402 (sys.path'ten sonra olmak ZORUNDA)
 
 API_BASE = os.environ.get("API_BASE", "http://localhost:8420")
 ENV_FILE = os.environ.get("NOTIFY_ENV_FILE", "/opt/linux-ai-server/.env")
@@ -108,9 +113,11 @@ def investigate(source: str, recur: str) -> dict:
         )
     except Exception as e:
         return {"ok": False, "error": str(e)[:200]}
-    finding = (run.get("result") or "").strip()
+    # ok-guard: 429/limit yanıtı BOŞ-OLMAYAN result döner -> guard olmadan hata metni
+    # "teşhis" diye FIX-PENDING discovery'e yazılıyordu (#1425/#1426 böyle bozuldu).
+    finding = claude_result(run)
     if not finding:
-        return {"ok": False, "error": "boş inceleme"}
+        return {"ok": False, "error": "boş/başarısız inceleme"}
     # Teşhisi KALICI hale getir — "teşhis edip bırakma" yerine 3 katman:
     #   (1) discovery FIX-PENDING + status=active: teşhis≠çözüm. Biri yanlışlıkla 'completed'
     #       yapsa bile sonraki recurrence regression-active üretir → SessionStart'ta kalır.

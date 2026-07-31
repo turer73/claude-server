@@ -150,3 +150,8 @@
 # ENFORCE=0): claim varsa success (goruneburlik), yoksa sadece log. 1 hafta gozlem -> ENFORCE
 # karari Turgut'a. (klipper 2026-07-11)
 */5 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh claim-gate /opt/linux-ai-server/venv/bin/python3 /opt/linux-ai-server/automation/claim-gate-poller.py
+# G6 enforcement-ladder haftalık değerlendirme (Pazartesi 06:00) — RECOMMEND-ONLY: gate promote/
+# demote önerisi üretir + not atar; branch-protection'a DOKUNMAZ, aktüasyon insan-tetikli. (PR#286)
+# NOT: 2026-07-06'da bir kez çalışmış sonra düşmüş — canlı-crontab'a elle eklenmiş ama bu dosyaya
+# İŞLENMEMİŞTİ, install-cron ezdi (drift). Buraya alındı ki tek-kaynak burası olsun. (2026-07-31)
+0 6 * * 1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh gate-ladder-eval /opt/linux-ai-server/automation/gate-ladder-eval.sh

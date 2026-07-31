@@ -68,7 +68,7 @@ def test_run_writes_discovery_and_returns_ok(monkeypatch):
     def _fake_post(url, body, headers, timeout):
         calls.append(url)
         if url.endswith("/claude/run"):
-            return {"result": "BULGULAR: cpu ortalama %12. ÖNERİ: yok. GENEL: iyi."}
+            return {"ok": True, "result": "BULGULAR: cpu ortalama %12. ÖNERİ: yok. GENEL: iyi."}
         if url.endswith("/memory/discoveries"):
             disc_body.update(body)
         return {"ok": True}
@@ -93,7 +93,7 @@ def test_discovery_failure_is_visible_not_silent(monkeypatch, capsys):
 
     def _fake_post(url, body, headers, timeout):
         if url.endswith("/claude/run"):
-            return {"result": "rapor"}
+            return {"ok": True, "result": "rapor"}
         raise RuntimeError("422 geçersiz tip")  # discovery POST patlar
 
     monkeypatch.setattr(da, "_post_json", _fake_post)
@@ -108,10 +108,33 @@ def test_discovery_failure_is_visible_not_silent(monkeypatch, capsys):
 def test_run_empty_report_is_failure(monkeypatch):
     keys = {"INTERNAL_API_KEY": "ik", "MEMORY_API_KEY": "mk"}
     monkeypatch.setattr(da, "_envget", lambda k: keys.get(k, ""))
-    monkeypatch.setattr(da, "_post_json", lambda *a, **k: {"result": "   "})
+    monkeypatch.setattr(da, "_post_json", lambda *a, **k: {"ok": True, "result": "   "})
     res = da.run()
     assert res["ok"] is False
     assert "boş" in res["error"]
+
+
+def test_rate_limited_yanit_discovery_yazmaz(monkeypatch):
+    """REGRESYON (2026-07-31): haftalık-limit 429'unda CLI is_error=true + BOŞ-OLMAYAN
+    result döner. ok-guard yokken bu metin gerçek analiz sanılıp discovery'e yazılıyordu
+    (#1449 ve 16 kardeşi). Burada kanıtlanan: /claude/run dışında HİÇBİR POST atılmamalı."""
+    keys = {"INTERNAL_API_KEY": "ik", "MEMORY_API_KEY": "mk"}
+    monkeypatch.setattr(da, "_envget", lambda k: keys.get(k, ""))
+    posted: list[str] = []
+
+    def _fake_post(url, body, headers, timeout):
+        posted.append(url)
+        if url.endswith("/claude/run"):
+            # Canlı 429 shape'i: ok=False ama result DOLU (bug'ın şartı buydu).
+            return {"ok": False, "result": "You've hit your weekly limit · resets Jul 31, 7pm"}
+        return {"ok": True}
+
+    monkeypatch.setattr(da, "_post_json", _fake_post)
+    res = da.run()
+
+    assert res["ok"] is False, "429 yanıtı başarı sayıldı"
+    assert not any("discoveries" in u for u in posted), f"limit metni discovery'e yazıldı: {posted}"
+    assert not any("memory" in u for u in posted), f"limit metni hafızaya yazıldı: {posted}"
 
 
 def test_claude_run_request_is_read_only(monkeypatch):
@@ -123,7 +146,7 @@ def test_claude_run_request_is_read_only(monkeypatch):
     def _fake_post(url, body, headers, timeout):
         if url.endswith("/claude/run"):
             captured.update(body)
-            return {"result": "rapor"}
+            return {"ok": True, "result": "rapor"}
         return {}
 
     monkeypatch.setattr(da, "_post_json", _fake_post)

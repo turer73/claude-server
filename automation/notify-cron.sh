@@ -63,8 +63,8 @@ suggest_action() {
     local src="$1" base name
     base="${src%%:*}"; name="${src#*:}"
     case "$base" in
-        memory) echo "🔧 Öneri: \`docker system prune -f\` (volume hariç) + \`pip cache purge\`. ⚠️ Risk: durmuş container/unused-image silinir (çalışanlar etkilenmez). 🔍 Bak: free -h; docker ps --size; ps aux --sort=-%mem | head" ;;
-        disk)   echo "🔧 Öneri: docker prune + büyük-log truncate. ⚠️ Risk: unused-image silinir + >50M log'lar 10M'a kırpılır (eski-log-kaybı). 🔍 Bak: df -h; du -sh /var/log/* /opt/linux-ai-server/data/* 2>/dev/null | sort -h | tail" ;;
+        memory) echo "🔧 Öneri: \`docker image prune -f\` (SADECE imaj) + \`pip cache purge\`. ⚠️ Risk: unused-image silinir. ❌ \`docker system prune\` ÖNERME: kullanılmayan AĞLARI da siler; container çalışmaya devam eder ama IP/port publish'ini kaybeder → healthcheck YEŞİL ama host'tan erişilemez (2026-07-25 ve 07-30'da iki kez yaşandı). 🔍 Bak: free -h; docker ps --size; ps aux --sort=-%mem | head" ;;
+        disk)   echo "🔧 Öneri: \`docker image prune -f\` + büyük-log truncate. ⚠️ Risk: unused-image silinir + >50M log'lar 10M'a kırpılır (eski-log-kaybı). ❌ \`docker system prune\` ÖNERME (ağ-silme tuzağı — memory-önerisindeki nota bak). 🔍 Bak: df -h; du -sh /var/log/* /opt/linux-ai-server/data/* 2>/dev/null | sort -h | tail" ;;
         cpu)    echo "🔧 Öneri: yük-yapan süreci incele/sınırla. ⚠️ Risk: yok (sadece-inceleme, otomatik-aksiyon yok). 🔍 Bak: ps aux --sort=-%cpu | head; uptime" ;;
         temperature) echo "🔧 Öneri: yükü azalt / governor powersave. ⚠️ Risk: powersave = CPU yavaşlar (performans düşer). 🔍 Bak: sensors; cat /proc/linux_ai" ;;
         service) echo "🔧 Öneri: \`sudo systemctl restart ${name}\`. ⚠️ Risk: ${name} kısa kesinti (restart sırasında). 🔍 Bak: journalctl -u ${name} -n 50 --no-pager" ;;

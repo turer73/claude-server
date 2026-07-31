@@ -34,7 +34,12 @@ import sys
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo-root (app.core.claude_run icin)
+
+from app.core.claude_run import claude_result  # noqa: E402 (sys.path'ten sonra olmak ZORUNDA)
 
 # seo-gsc.py'yi yol-ile yükle (tire içerir) → OAuth client + _post_json + _envget reuse.
 _GSC_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seo-gsc.py")
@@ -323,7 +328,9 @@ def quality_note(domain: str, home_html: str, content_sample: str = "", content_
             {"X-API-Key": ikey},
             CLAUDE_TIMEOUT,
         )
-        return (out.get("result") or "").strip()[:400]
+        # ok-guard: 429/limit yanıtı BOŞ-OLMAYAN result döner -> guard olmadan
+        # rate-limit metni içerik-denetimi verdict'i sanılıyordu (#1455).
+        return claude_result(out)[:400]
     except Exception:  # noqa: BLE001
         return ""
 

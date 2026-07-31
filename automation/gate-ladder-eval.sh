@@ -26,9 +26,9 @@ esac
 # Tablolar yoksa bootstrap (idempotent) — eval tek-başına ayağa kalkabilir.
 # gate_telemetry (G2) DE gerekli: production_stats onu okur; fresh-DB'de yoksa 'no such table'.
 COVERAGE_DB="$DB" bash "$SELF_DIR/../scripts/migrate-gate-telemetry.sh" >/dev/null 2>>"$LOG_FILE" || {
-    log "gate_telemetry migration FAIL"; exit 2; }
+    echo "OUTCOME: fail | gate_telemetry migration FAIL"; log "gate_telemetry migration FAIL"; exit 2; }
 COVERAGE_DB="$DB" bash "$SELF_DIR/../scripts/migrate-gate-ladder.sh" >/dev/null 2>>"$LOG_FILE" || {
-    log "gate_ladder migration FAIL"; exit 2; }
+    echo "OUTCOME: fail | gate_ladder migration FAIL"; log "gate_ladder migration FAIL"; exit 2; }
 
 # Öneri-raporunu üret (python-çekirdek gate_ladder'ı da günceller: last_eval + history).
 # PYTHONIOENCODING: rapor emoji+Türkçe içerir; CI-locale ASCII ise print UnicodeEncodeError verir.
@@ -43,7 +43,7 @@ stats = production_stats(conn, days)
 unc = {g: s.unclassified for g, s in stats.items()}
 print(format_report(recs, unc))
 conn.close()
-" 2>>"$LOG_FILE") || { log "eval FAIL"; exit 2; }
+" 2>>"$LOG_FILE") || { echo "OUTCOME: fail | eval çekirdeği hata verdi"; log "eval FAIL"; exit 2; }
 
 printf '%s\n' "$REPORT" | tee -a "$LOG_FILE"
 
@@ -74,4 +74,9 @@ PY
 fi
 
 log "eval bitti"
+
+# OUTCOME marker (cron-wrap sözleşmesi, tools/lint-cron-outcome.sh zorunlu kılar): öneri-sayısı
+# raporun son satırındaki "# N aktüasyon-önerisi"nden okunur. 0 öneri = sağlıklı hold durumu.
+RECS=$(printf '%s' "$REPORT" | grep -oE '^# [0-9]+ aktüasyon-önerisi' | grep -oE '[0-9]+' | tail -1)
+echo "OUTCOME: pass | gate-ladder-eval: ${RECS:-0} aktüasyon-önerisi (recommend-only)"
 exit 0

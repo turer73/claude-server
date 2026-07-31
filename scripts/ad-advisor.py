@@ -34,7 +34,12 @@ import re
 import sys
 import urllib.parse
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo-root (app.core.claude_run icin)
+
+from app.core.claude_run import claude_result  # noqa: E402 (sys.path'ten sonra olmak ZORUNDA)
 
 # seo-gsc.py'yi yol-ile yükle (tire içerir → normal import edilemez). Auth+_api+_envget+
 # _post_json yeniden kullanılır — GSC client'ı tek-kaynak (seo-gsc), drift yok.
@@ -195,7 +200,7 @@ def _ad_copy_llm(prop: str, keywords: list[str]) -> list[dict[str, Any]]:
             {"X-API-Key": ikey},
             CLAUDE_TIMEOUT,
         )
-        ads = _extract_json((out.get("result") or "").strip())
+        ads = _extract_json(claude_result(out))  # ok-guard: 429 metni JSON değil, zaten [] döner
         if not isinstance(ads, list):
             return []
         return [a for a in ads if _valid_ad_entry(a)]
@@ -251,7 +256,7 @@ def _critic_review(prop: str, ads: list[dict[str, Any]]) -> dict[str, Any]:
             {"X-API-Key": ikey},
             CLAUDE_TIMEOUT,
         )
-        verdict = _extract_json((out.get("result") or "").strip())
+        verdict = _extract_json(claude_result(out))  # ok-guard -> UNVERIFIED'a düşer
         if isinstance(verdict, dict) and verdict.get("verdict") in ("APPROVED", "FLAGGED"):
             return verdict
         return {"verdict": "UNVERIFIED", "notes": "critic yanıtı ayrıştırılamadı"}
