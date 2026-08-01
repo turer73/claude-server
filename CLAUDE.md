@@ -7,7 +7,9 @@
 - **Kernel:** 7.0.0-22-generic (canli, reboot 2026-06-11) + 3 ozel modul (proc_linux_ai, nf_linux_ai, usb_linux_ai) — **DKMS-yonetimli**, kernel-upgrade'de otomatik rebuild
 - **CPU:** AMD Ryzen 7 8845HS w/ Radeon 780M, 8 cekirdek / 16 thread
 - **RAM:** 28GB (27946896 kB)
-- **Disk:** 98GB SSD (LVM), 28GB kullanildi
+- **Disk:** 2 NVMe (LVM, tum mountlar UUID-tabanli — slot degisimi guvenli)
+  - **nvme0n1 — Lexar NM790 2TB** (`ubuntu-vg-1`, 1.18T bos): EFI + /boot + `/` (300G, %20) + `/var/lib/ollama` (400G, 36G). PCIe slot 00:02.4 — **link 2.5GT/s x4'e dusuk kilitli (Gen1, ~809 MB/s; olmasi gereken 16GT/s ~7GB/s)**, yuk altinda yukselmiyor, acik konu. Suc diskte: her iki M.2 yuvasinda da spec'te egitemedi (slot 00:01.2'de x2, 00:02.4'te Gen1), ayni yuvada Crucial 16GT/s x4 yapiyor. Kapasite 2026-08-01'de dogrulandi (1.18T uzak-bolge, 4819 seyrek etiket + 16GiB surekli yaz/oku, 0 hata) — **sahte kapasite DEGIL**. Kalan supheli: firmware `GT6fb0b8` (bilinen NM790 revizyonlariyla eslesmiyor) + `power_on_hours` kalici degil (uptime donuyor). Lexar sitesinde NM790 firmware'i yok; guncelleme yolu Windows/DiskMaster
+  - **nvme1n1 — Crucial P3 1TB** (`vg-storage`, 31G bos): `/var/lib/docker` (400G) + `/datasets` (400G) + `/var/log` (100G). PCIe slot 00:01.2 — 16GT/s x4 saglikli (3.6 GB/s)
 - **Ag:** LAN 192.168.1.113 | Tailscale 100.84.251.49 (klipper-2 olarak kayitli)
 - **Python:** 3.14 (venv: /opt/linux-ai-server/venv)
 - **Kullanici:** klipperos (sudo NOPASSWD)
@@ -115,6 +117,7 @@ D1: kuafor-db, petvet-db
 Oturum basinda hook DB durumunu otomatik yukler. Her oturum sonunda /memory save ile oturumu kaydet.
 
 ## Log Dizinleri (amac ayrimi)
+- `/var/log/` — **ayri LV** (`vg-storage/lv-log`, 98G, nvme1n1 uzerinde; 2026-08-01'de root'tan tasindi). Eski icerik mount altinda gizli duruyor (471M, rollback).
 - `/var/log/linux-ai-server/` — Cron job stdout/stderr (klipper-cron-wrap.sh per-job log). Append, rotate yok.
 - `/opt/linux-ai-server/logs/` — Test runner gunluk rotated log (`test-runner-YYYYMMDD.log`) + fail snapshots (`test-fail-*`) + artifact dirs (`e2e/`)
 - `/opt/linux-ai-server/data/` — Database files (server.db, claude_memory.db, coverage.db) + autonomous spawn logs (`hook-logs/`) + lock/hook state (`hook-state/`)
