@@ -60,8 +60,9 @@ def test_gather_state_longitudinal(dbs):
     assert any(j == "liveness-check" and c == 4 for j, c in st["cron_recurring_fail"])  # tekrar-fail trend
     assert any(src == "temperature" and r == 1 for src, c, r in st["alerts_fired"])  # kendi-iyileşen (resolved=1)
     assert st["code_review_findings"][0][0] == 1  # commit-bulgu sayıldı
-    assert any("ValueError" in t and c == 2 for t, c in st["exceptions_by_fp"])  # gap-2 exception fingerprint-gruplu
-    assert "ValueError @ app/api/x.py:foo" in ss.render_data(st)  # render'da görünür
+    # gap-2: gruplama fingerprint = events.source (title DEĞİL; title grup içinde değişebilir)
+    assert any(fp == "exception:ValueError:app/api/x.py:foo" and c == 2 for fp, c in st["exceptions_by_fp"])
+    assert "exception:ValueError:app/api/x.py:foo" in ss.render_data(st)  # render'da görünür
 
 
 def test_render_data_no_crash_empty(monkeypatch, tmp_path):
