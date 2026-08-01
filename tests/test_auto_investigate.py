@@ -64,12 +64,43 @@ def test_investigate_calls_claude_then_discovery(ai, monkeypatch):
 
 
 def test_rate_limited_skips(ai, monkeypatch):
-    ai._mark("cron:x")  # az önce işaretlendi -> rate-limited
+    assert ai._try_mark("cron:x") is True  # az önce işaretlendi -> sonrası rate-limited
     called = []
     monkeypatch.setattr(ai, "_post_json", lambda *a, **k: called.append(1) or {})
     res = ai.investigate("cron:x", "3")
     assert res["skipped"] == "rate-limited"
     assert called == []  # claude çağrılmaz
+
+
+def test_try_mark_is_atomic_second_call_loses(ai):
+    """TOCTOU: hakkı SADECE ilk çağrı alır; ikinci çağrı damgayı görüp eler."""
+    assert ai._try_mark("cron:race") is True
+    assert ai._try_mark("cron:race") is False
+    assert ai._try_mark("cron:race") is False  # dosya var-dalında da yarış yok
+
+
+def test_try_mark_rearms_after_interval(ai, monkeypatch):
+    """Aralık dolunca yeniden hak verilir (damga kalıcı kilit değil)."""
+    assert ai._try_mark("cron:rearm") is True
+    assert ai._try_mark("cron:rearm") is False
+    monkeypatch.setattr(ai, "MIN_INTERVAL", 0)
+    assert ai._try_mark("cron:rearm") is True
+
+
+def test_try_mark_skips_while_another_process_holds_lock(ai):
+    """Eş-zamanlı tetikleme kilidi tutuyorsa beklemeden atlanır."""
+    import fcntl
+    import os
+
+    os.makedirs(ai.STATE_DIR, exist_ok=True)
+    path = os.path.join(ai.STATE_DIR, "investigate-cron_lock")
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # "diğer process"
+        assert ai._try_mark("cron:lock") is False
+    finally:
+        os.close(fd)
+    assert ai._try_mark("cron:lock") is True  # kilit bırakılınca hak geri gelir
 
 
 def test_no_internal_key_skips(ai, monkeypatch):

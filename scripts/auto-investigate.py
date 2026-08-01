@@ -13,6 +13,7 @@ Kullanım: auto-investigate.py <source> <recur_count>
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -55,23 +56,43 @@ def _post_json(url: str, body: dict, headers: dict, timeout: int) -> dict:
         return json.loads(resp.read().decode() or "{}")
 
 
-def _rate_limited(source: str) -> bool:
-    """Per-source rate-limit: son inceleme MIN_INTERVAL içinde ise atla."""
+def _try_mark(source: str) -> bool:
+    """Per-source rate-limit: hak varsa damgayi ATOMIK alip True doner.
+
+    "Kontrol et sonra isaretle" iki ayri adim oldugu surece paralel iki
+    tetikleme ayni anda gecer (TOCTOU). O_EXCL tek basina yetmez: dosya bir
+    kez olustuktan sonra her cagri "zaten var" dalina duser ve mtime-okumasi
+    ile guncelleme arasindaki yaris geri gelir. Bu yuzden damga dosya
+    ICERIGINDE tutulur ve tum oku-karsilastir-yaz dizisi flock ile korunur;
+    kilidi alamayan cagri bekleme yapmadan atlar (best-effort tetikleyici).
+    """
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", source)
     path = os.path.join(STATE_DIR, f"investigate-{safe}")
     try:
-        last = os.path.getmtime(path)
-        if (time.time() - last) < MIN_INTERVAL:
-            return True
+        os.makedirs(STATE_DIR, exist_ok=True)
+        fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
     except OSError:
-        pass
-    return False
-
-
-def _mark(source: str) -> None:
-    safe = re.sub(r"[^A-Za-z0-9._-]", "_", source)
-    os.makedirs(STATE_DIR, exist_ok=True)
-    open(os.path.join(STATE_DIR, f"investigate-{safe}"), "w").close()
+        return False  # state yazilamiyorsa incelemeyi baslatma (fail-closed)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return False  # es-zamanli tetikleme kilidi tutuyor -> tek calisan yeter
+        try:
+            last = float(os.read(fd, 64).decode(errors="ignore").strip())
+        except ValueError:
+            last = 0.0  # yeni/bozuk damga -> hak var
+        now = time.time()
+        # Negatif gecen-sure = saat geriye gitti (NTP adimi). Kalici kilide
+        # donusmesin diye hak verilir; yalniz [0, MIN_INTERVAL) araligi eler.
+        if 0 <= now - last < MIN_INTERVAL:
+            return False
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.truncate(fd, 0)
+        os.write(fd, repr(now).encode())  # tam hassasiyet: yuvarlama ileri-tarihli damga uretmesin
+        return True
+    finally:
+        os.close(fd)  # flock fd kapaninca birakilir
 
 
 def _prompt(source: str, recur: str) -> str:
@@ -95,7 +116,7 @@ def _prompt(source: str, recur: str) -> str:
 
 def investigate(source: str, recur: str) -> dict:
     """Tek kaynak için: rate-limit -> /claude read_only -> bulgu discovery'e. Best-effort."""
-    if _rate_limited(source):
+    if not _try_mark(source):
         return {"ok": False, "skipped": "rate-limited"}
     ikey = _envget("INTERNAL_API_KEY")
     mkey = _envget("MEMORY_API_KEY")
@@ -103,7 +124,7 @@ def investigate(source: str, recur: str) -> dict:
     # harcama). Her ikisi de şart (claude-çağrısı = ikey, bulgu-kaydı = mkey).
     if not ikey or not mkey:
         return {"ok": False, "skipped": "no INTERNAL_API_KEY/MEMORY_API_KEY"}
-    _mark(source)  # önce işaretle (eş-zamanlı 2. tetikleme tekrar başlatmasın)
+    # atomik isaretleme _try_mark icinde yapildi
     try:
         run = _post_json(
             f"{API_BASE}/api/v1/claude/run",

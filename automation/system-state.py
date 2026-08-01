@@ -78,7 +78,7 @@ def gather_state(days: int) -> dict:
     # Unhandled exception (gap-2 producer): fingerprint-gruplu — recurring server-bug trendi
     st["exceptions_by_fp"] = _q(
         SRV_DB,
-        "SELECT title, COUNT(*) c FROM events WHERE type='exception' AND timestamp > datetime('now',?) "
+        "SELECT source, COUNT(*) c FROM events WHERE type='exception' AND timestamp > datetime('now',?) "
         "GROUP BY source ORDER BY c DESC LIMIT 8",
         (w,),
     )
