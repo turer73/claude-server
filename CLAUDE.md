@@ -128,23 +128,26 @@ Siparis/uretim/stok/CRM. React 19, Supabase.
 Bu sunucu. FastAPI, kernel modulleri.
 GitHub: github.com/turer73/claude-server
 
-## VPS (Contabo) — 20 konteyner (audit: 2026-06-01, surer doğrulanmış)
-Dokploy v0.29.2 + Traefik v3.1 (root reverse proxy 80/443). /api/v1/vps/exec (SSH) ile yonetim.
+## VPS (Contabo)
 
-**Klipper-first hedefi: 5 servis tasinmis** (n8n + grafana + prometheus + cadvisor + uptime-kuma). Dashy VPS'te kaldi (asagi bkz).
+Dokploy + Traefik (root reverse proxy 80/443). Yonetim `/api/v1/vps/exec` (SSH) uzerinden.
 
-**VPS'te kalan production (public domain gerekligi):**
-- panola.app: caddy + gotrue + postgres + postgrest (4 container)
-- bilge-english: app(Next.js) + auth + postgres + postgrest + realtime (5 container)
-- bilge-arena: postgrest + realtime (2 container, data layer)
-- plausible analytics: app + postgres + clickhouse (3 container)
-- csp-collector (csp.3d-labx.com), social-media-server (media.3d-labx.com)
-- dokploy stack: dokploy + postgres + redis + traefik (4 container)
-- node-exporter (VPS-side host metrics)
+**Konteyner envanteri ve sayisi buraya yazilmaz** — bayatlar ve bunu kimse fark etmez. Canli cek:
 
-**Bilincli VPS-only bırakılan:** dashy (~858MB, internal dashboard, ROI sifir).
+```
+curl -s -X POST http://127.0.0.1:8420/api/v1/vps/exec \
+  -H "X-Memory-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '{"command":"docker ps --format \"{{.Names}}\t{{.Status}}\" | sort"}'
+```
 
-**Detay/migration plani:** memory `architecture-vps-klipper-migration-2026-05-26`
+> **Bayatlamanin kaniti (2026-08-02):** bu bolum "20 konteyner (audit 2026-06-01)" diyordu; kendi alt-listesi 22'ye topluyordu; canli sayim da 22 ama **uyeler farkliydi**. `coturn` ve `livekit` eklenmis (dokumanda hic yoktu), `bilge-english-postgrest` ve `bilge-english-realtime` ise **yok** — durmus da degil, hic mevcut degil (`docker ps -a` = 22, exited 0). Iki ayda uc ayri sapma birikmis ve hicbiri fark edilmemisti.
+
+**KARARLAR** (olculemez — kaynagi yalniz bu dosya):
+- **Klipper-first:** gozlem/otomasyon stack'i (n8n, grafana, prometheus, cadvisor, uptime-kuma) VPS'ten klipper'a tasindi.
+- **VPS'te kalanlarin gerekcesi:** public domain zorunlulugu. panola.app, bilge-english, bilge-arena (data layer), plausible analytics, csp-collector (csp.3d-labx.com), social-media-server (media.3d-labx.com), dokploy stack'in kendisi ve VPS-side node-exporter bu yuzden orada.
+- **Dashy bilerek VPS-only** — internal dashboard, tasima ROI'si sifir. Tekrar onerilmesin.
+
+**Detay/migrasyon plani:** hafiza kaydi `architecture-vps-klipper-migration-2026-05-26`
 
 ## Cloudflare
 Hesap: REDACTED_EMAIL
