@@ -45,38 +45,54 @@
 - **DB:** 4 SQLite — server.db (ana, alerts/audit_log/metrics + vps_metrics_history), claude_memory.db (hafiza/sessions/tasks_log), coverage.db (test trend + CI/test sonuclari, gunluk run-all-tests.sh), rag_metrics.db (RAG). (ci_tests.db 2026-06-01'de retire edildi — otomasyon hic yazmamisti, olu kod; arsiv data/ci_tests.db.gz)
 - **Auth:** JWT + API Key
 - **Systemd:** linux-ai-server.service
-- **Endpoint sayisi:** 161 (OpenAPI'den, 2026-06-12)
 
 ## Proje Yapisi
-- app/api/ — 37 route dosyasi (admin, agents, ai, auth, backup, ci, classifier, claude_code, csp, deploy, dev, devops, digest, files, kernel, llm, logs, memory, monitoring, n8n, network, projects, prometheus, rag, research, shell, social, ssh, system, tasks, telegram_bot, validation, vps, webhooks, webops, ws_status)
-- app/core/ — Is mantigi (shell_executor, terminal_manager, ai_inference, task_queue, devops_agent)
-- app/auth/ — JWT + API key
-- app/mcp/ — MCP server (Claude entegrasyonu)
-- app/ws/ — WebSocket (terminal, monitor, logs)
-- app/dashboard/ — Super Dashboard v2 (xterm.js terminal)
-- app/claude_ui/ — Claude Code web chat
-- kernel/ — 3 ozel C kernel modulu (proc, netfilter, usb)
-- automation/ — Cron scriptleri
-- tests/ — 94 dosya / 1128 test (pytest, asyncio_mode=auto; sayim 2026-06-12)
+
+Dizin **sayilari ve dosya listeleri buraya yazilmaz** (`ls app/api/*.py | wc -l`, `find tests -name '*.py' | wc -l` uretir). Yalnizca her dizinin NE ISE YARADIGI yazar — o uretilemez:
+
+- `app/api/` — HTTP route'lari (dosya basina bir alan: memory, shell, vps, kernel, rag, ...)
+- `app/core/` — Is mantigi (shell_executor, terminal_manager, ai_inference, task_queue, devops_agent)
+- `app/auth/` — JWT + API key
+- `app/mcp/` — MCP server (Claude entegrasyonu)
+- `app/ws/` — WebSocket (terminal, monitor, logs)
+- `app/dashboard/` — Super Dashboard v2 (xterm.js terminal)
+- `app/claude_ui/` — Claude Code web chat
+- `kernel/` — 3 ozel C kernel modulu (proc, netfilter, usb)
+- `automation/` — Cron scriptleri
+- `tests/` — pytest, `asyncio_mode=auto`
 
 ## API Endpointleri
-- /dashboard — Super Dashboard v2
-- /claude — Claude Code chat arayuzu
-- /api/v1/shell/exec — Komut calistir
-- /api/v1/kernel/* — Kernel kontrol
-- /api/v1/system/* — Sistem yonetimi
-- /api/v1/files/* — Dosya islemleri
-- /api/v1/monitor/* — Metrikler
-- /api/v1/claude/* — Claude Code API (run, stream, status)
-- /api/v1/vps/* — VPS yonetimi
-- /api/v1/devops/* — DevOps agent
-- /ws/terminal — WebSocket terminal (PTY)
 
-## Docker Konteynerler (9 aktif)
-- **Gozlem:** dozzle (9999), uptime-kuma (3001), grafana (3030), prometheus (9090), node-exporter (9100), cadvisor (9080)
-- **Otomasyon/RAG:** n8n (5678), qdrant (6333/6334)
-- **Arac:** stirling-pdf (8090)
-- Ollama host'ta (11434) — modeller: qwen3:30b-a3b-instruct-2507-q3_K_M (RAG default + reasoning, thinking-siz MoE — q4_K_M'den 2026-07-23'te değiştirildi: TR-eval C+D bloğu 20/20 ile birebir aynı kalite + ~1.9x daha hızlı (8.1s vs 15.4s/soru ort.), tuzak-soru/halüsinasyon testi #19 dahil geçti; "default" etiketi fiktif, gerçek-tüketici bağlanana kadar açık-soru, topic-5 kararı), qwen3.5:9b (classify — 2026-07-12'de 2507'den taşındı), qwen2.5:3b (consciousness deep-thought), gemma3:12b-it-qat (TR-hi, GEÇİCİ — rolü DeepSeek-Layer2'ye taşınacak, topic-5 kararı P2/surer-lane tamamlanınca kaldırılır), qwen2.5:7b (KISMİ-EMEKLİ, 2026-07-24: automation-lane'in 4 script'i (autonomous-health-check.sh, autonomous-classifier-v2.sh, autonomous-spawn-summarize.sh, signal_quality.py) qwen3.5:9b'e taşındı + `think:false` eklendi (qwen3.5 hibrit-thinking, atlanırsa "response" boş kalır — LLMCore-DIŞI direkt-Ollama çağrıları bu korumanın dışında). dispatch.py qwen2.5:7b'DE KALDI: canlı-test KLIPPER/SURER/HYBRID route+komut-analizinde qwen3.5:9b tutarsız/güvenilmez çıktı verdi (route hep "HYBRID", komut uydurma, sahte surer_tasks) — qwen2.5:7b bu yüzden DİSKTE KALICI, "5→4 script" değil; LLMCore-DIŞI doğrudan Ollama çağrısı yapıyor, bu yüzden llm_calls telemetrisinde görünmüyor), bge-m3 + nomic-embed-text (embed). qwen3-coder:30b SİLİNDİ (2026-07-19, topic-5 kararı — 0-çağrı kanıtlı, .env LLM_ROUTE_CODE_REVIEW override'i kalıcı, code-review fiilen her zaman claude-haiku'ya gidiyordu; 4-model-önerisi qwen3.6:27b/r1:32b/r1:8b/openthinker:7b de aynı kararla reddedildi). Hibrit-thinking modeller (qwen3.5/3.6 ailesi) için `think:false` llmcore.py'de koşulsuz uygulanır (allowlist yok, güvenli-varsayılan)
+**Tam liste buraya yazilmaz** — kanonik kaynak OpenAPI, bayatlamaz:
+`curl -s http://127.0.0.1:8420/openapi.json | python3 -c "import json,sys; print('\n'.join(sorted(json.load(sys.stdin)['paths'])))"`
+
+Bootstrap istisnasi — gunluk kullanilan giris noktalari:
+- `/dashboard` — Super Dashboard v2 · `/claude` — Claude Code chat
+- `/api/v1/memory/*` — hafiza · `/api/v1/shell/exec` — komut calistir
+- `/api/v1/vps/exec` — VPS'e SSH · `/ws/terminal` — WebSocket PTY
+
+**Auth (tek kapi — `require_auth`, `app/middleware/dependencies.py`):** korumali her route **ucunden birini** kabul eder — `X-API-Key` (ic otomasyon: n8n/cron/webhook), `X-Memory-Key` (hafiza istemcileri: surer, klipper-autonomous), veya Bearer JWT. **Ilk ikisi `admin` kapsami verir**, yani `require_admin`'li route'lar (ornegin `shell/exec`) `X-Memory-Key` ile de calisir — "shell/exec JWT ister, X-Memory-Key olmaz" DOGRU DEGIL.
+
+## Docker Konteynerler
+
+**Konteyner listesi ve portlar buraya yazilmaz** — `docker ps` uretir. Burada yalnizca KARAR durur:
+
+- **Klipper-first:** gozlem/otomasyon stack'i (n8n, grafana, prometheus, cadvisor, uptime-kuma) VPS'ten klipper'a tasindi.
+- **Dashy bilerek VPS'te birakildi** — internal dashboard, tasima ROI'si sifir. Tekrar onerilmesin.
+
+## Ollama / Model Rolleri
+
+Ollama host'ta (11434). **Kurulu model listesi buraya yazilmaz** (`ollama list` uretir) — burada yalnizca ROL ATAMALARI ve gerekceleri durur, cunku onlar karardir:
+
+- **`qwen3:30b-a3b-instruct-2507-q3_K_M`** — RAG default + reasoning (thinking-siz MoE). 2026-07-23'te q4_K_M'den q3'e dusuruldu: TR-eval C+D blogu 20/20 ile **birebir ayni kalite**, ~1.9x daha hizli (8.1s vs 15.4s/soru ort.), tuzak-soru/halusinasyon testi #19 dahil gecti. "default" etiketi fiktif — gercek-tuketici baglanana kadar acik-soru (topic-5 karari).
+- **`qwen3.5:9b`** — classify (2026-07-12'de 2507'den tasindi).
+- **`qwen2.5:3b`** — consciousness deep-thought.
+- **`gemma3:12b-it-qat`** — TR-hi, **GECICI**: rolu DeepSeek-Layer2'ye tasinacak, topic-5 karari geregi P2/surer-lane tamamlaninca kaldirilir.
+- **`qwen2.5:7b`** — **KISMI-EMEKLI**, 2026-07-24: automation-lane'in 4 script'i (`autonomous-health-check.sh`, `autonomous-classifier-v2.sh`, `autonomous-spawn-summarize.sh`, `signal_quality.py`) `qwen3.5:9b`'e tasindi. **Ama `dispatch.py` 7b'DE KALDI ve DISKTE KALICI** — canli testte KLIPPER/SURER/HYBRID route+komut analizinde 9b tutarsiz/guvenilmez cikti verdi (route hep "HYBRID", komut uydurma, sahte surer_tasks). "5→4 script" diye ozetlemeyin; **"tutarlilik icin 9b'ye gecirelim" onerisi bu kanitla reddedildi.** LLMCore-DISI dogrudan Ollama cagrisi yapiyor, bu yuzden `llm_calls` telemetrisinde gorunmuyor.
+- **`bge-m3` + `nomic-embed-text`** — embed.
+- **`qwen3-coder:30b` SILINDI** (2026-07-19, topic-5): 0-cagri kanitli, `.env` `LLM_ROUTE_CODE_REVIEW` override'i kalici, code-review fiilen her zaman claude-haiku'ya gidiyordu. Ayni kararla 4-model onerisi de (`qwen3.6:27b`/`r1:32b`/`r1:8b`/`openthinker:7b`) reddedildi. **Yeniden onermeyin.**
+
+**Tuzak:** hibrit-thinking modellerde (qwen3.5/3.6 ailesi) `think:false` atlanirsa `response` **bos** doner. `llmcore.py`'de kosulsuz uygulanir (allowlist yok, guvenli-varsayilan) — ama **LLMCore-DISI dogrudan Ollama cagrilari bu korumanin disinda**, orada elle eklemek gerekir.
 
 VPS Dokploy uzerinde ayrica baska servisler var (asagi bkz).
 
@@ -85,25 +101,31 @@ VPS Dokploy uzerinde ayrica baska servisler var (asagi bkz).
 - nf_linux_ai — /proc/linux_ai_firewall (IP engelleme)
 - usb_linux_ai — /proc/linux_ai_usb (USB whitelist)
 
-**DKMS:** Moduller DKMS'e bagli (`linux-ai/1.0`) — her kernel upgrade'inde otomatik rebuild+install (`/etc/kernel/postinst.d/dkms` hook), boot'ta `/etc/modules-load.d/linux-ai.conf` ile yuklenir. Kaynak=git (`kernel/*.c`), DKMS kopyasi=`/usr/src/linux-ai-1.0`. Kayit/yeniden-kayit: `bash kernel/install-dkms.sh` (idempotent; DKMS kaydi + boot autoload dosyasini `kernel/modules-load.conf`'tan kurar). Durum: `dkms status linux-ai`.
+Uc modul adi ve gorevi burada durur — bunlar projenin kendi urettigi bilesenler, drift etmiyorlar. **Calisma durumu/surum buraya yazilmaz:** `lsmod | grep linux_ai` ve `dkms status linux-ai` ile bak.
+
+**DKMS:** Moduller DKMS'e bagli (`linux-ai/1.0`) — her kernel upgrade'inde otomatik rebuild+install (`/etc/kernel/postinst.d/dkms` hook), boot'ta `/etc/modules-load.d/linux-ai.conf` ile yuklenir. Kaynak=git (`kernel/*.c`), DKMS kopyasi=`/usr/src/linux-ai-1.0`. Kayit/yeniden-kayit: `bash kernel/install-dkms.sh` (idempotent; DKMS kaydi + boot autoload dosyasini `kernel/modules-load.conf`'tan kurar).
+
+**Iki yol da GECERLI, amaclari farkli — birbirinin yerine gecmez:**
+- Elle `make && sudo insmod` = **gecici gelistirme testi**. `.c`'yi degistirip hizlica denemek icin. Reboot'ta ve kernel yukseltmesinde kaybolur.
+- `bash kernel/install-dkms.sh` = **kalici + kernel-upgrade-guvenli**. DKMS elle yolun yerine gecmez, uzerine gelir.
 
 ## Iliskili Projeler
 
 ### PetVet (petvet.panola.app)
-Veteriner + pet shop yonetimi. React 19, Cloudflare Workers + D1. 64 test.
+Veteriner + pet shop yonetimi. React 19, Cloudflare Workers + D1.
 GitHub: github.com/turer73/petvet
 Test: REDACTED_PHONE / test1234
 
 ### Kuafor SaaS (kuafor.panola.app)
-Salon yonetimi. React 19, Cloudflare Workers + D1. 50 test.
+Salon yonetimi. React 19, Cloudflare Workers + D1.
 GitHub: github.com/turer73/kuafor
 Test: REDACTED_PHONE / test1234
 
 ### Panola ERP (panola.app)
-Siparis/uretim/stok/CRM. React 19, Supabase. 898 test.
+Siparis/uretim/stok/CRM. React 19, Supabase.
 
 ### Linux-AI Server (100.84.251.49:8420)
-Bu sunucu. FastAPI, kernel modulleri, 94 test dosyasi.
+Bu sunucu. FastAPI, kernel modulleri.
 GitHub: github.com/turer73/claude-server
 
 ## VPS (Contabo) — 20 konteyner (audit: 2026-06-01, surer doğrulanmış)
