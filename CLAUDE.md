@@ -1,18 +1,43 @@
 # Linux-AI Server — Klipper Sunucu
 
 ## Sunucu Bilgileri
-- **Hostname:** klipper
-- **Donanim:** Beelink SER8 (AZW) — BIOS V035 P8C0M0C15.14 (26/06/2025)
-- **OS:** Ubuntu 26.04 LTS (Resolute)
-- **Kernel:** 7.0.0-28-generic (canli, reboot 2026-08-02 09:11) + 3 ozel modul (proc_linux_ai, nf_linux_ai, usb_linux_ai) — **DKMS-yonetimli**, kernel-upgrade'de otomatik rebuild
-- **CPU:** AMD Ryzen 7 8845HS w/ Radeon 780M, 8 cekirdek / 16 thread
-- **RAM:** 28GB (27946896 kB)
-- **Disk:** 2 NVMe (LVM, tum mountlar UUID-tabanli — slot degisimi guvenli). **Rol ayrimi (2026-08-01 karari): Lexar = yalniz yedekleme/soguk veri, Crucial = aktif her sey** — gerekce Lexar'in kararsiz PCIe linki (asagi bkz). Migrasyon: Faz A `/datasets`→Lexar ✅ · Faz B `/var/lib/ollama`→Crucial ✅ · Faz C `/`→Crucial ✅ (2026-08-02 09:11 reboot'unda canli)
-  - **nvme0n1 — Lexar NM790 2TB** (`ubuntu-vg-1`, 605G VFree): EFI + /boot + `/datasets` (600G, 4.2G, yedekler). `lv-models` (400G) ve eski `ubuntu-lv` (300G, Faz C sonrasi artik mount-suz) bos duruyor — ikisi de rollback icin bekletiliyor, dogrulaninca silinip VG'ye iade edilecek. PCIe slot 00:02.4 — **link gecmisi KARARSIZ**, disc#1479 hala ACIK. Boot'ta 16GT/s x4 egitiyor, ama bir sure sonra NVMe kuyruk hatasi (`genctr mismatch` / `invalid id completed`) uretip **2.5GT/s'e dusup orada kaliyordu** (2026-08-01 boot 16:50 → hata 17:25 → Gen1; o boot 16.3 saatte 2 hata = 0.12/saat). **2026-08-02 boot'u farkli:** 4.5 saat + 3.8 TB okuma sonunda hala 16GT/s x4, 0 hata. **Ama bu HENUZ KANIT DEGIL** — 0.12/saat taban hizina gore 4.5 saatte sifir hata gorme olasiligi %58, yani hicbir sey degismese de beklenen sonuc. Kesinlik icin **~25 saat kesintisiz hatasiz** gerekir. Ayrica bu boot'ta ayni anda birden fazla degisken oynadi (toz filtresi, kasa kapagi, sogutucu sokulu, Faz C ile `/` diskten kalkti) — filtreyi izole etmek icin filtreyi geri takip tekrarlamak sart. Sogutucu sokup yeniden oturtmak DUZELTMEZ, yalnizca sayaci sifirlar. Teshis: diskin PHY/sinyal-butunlugu arizasi — Gen4'te hata veriyor, Gen1 kararli geri-cekilmesi. **Onemli:** link durumunu boot'tan hemen sonra degil, **yuk + zaman sonrasi** kontrol et (`sudo lspci -vv -s 0000:05:00.0 | grep LnkSta`). **Hata sayarken `dmesg` KULLANMA** — halka tampon doluyor ve boot'un ilk saatlerini dusuruyor (2026-08-02'de dmesg'de hic nvme satiri kalmamisti); kalici journal kullan: `journalctl -k -b 0 | grep -iE 'genctr mismatch|invalid id completed'` (onceki boot icin `-b -1`). Simdiye kadar fs/blok I/O hatasi YOK, SMART temiz (0 media error, %0 asinma), kapasite dogrulandi (1.18T uzak-bolge, 0 hata) — **sahte kapasite DEGIL, veri kaybi yok**. Ayrica 4K-rastgelede Crucial'in ~2.5x gerisinde (Gen4'teyken de olculdu → linkten degil, DRAM-less diskin kendisinden). **Sogutucu artik takili degil** (idle 33°C)
-  - **nvme1n1 — Crucial P3 1TB** (`vg-storage`, 101G VFree): `/` (150G, 59G kullanimda, 81G bos — Faz C ile buraya tasindi) + `/var/lib/docker` (400G, 3.0G) + `/var/lib/ollama` (180G, 36G) + `/var/log` (100G, 383M). PCIe slot 00:01.2 — 16GT/s x4 saglikli, kararli (3.0-5.6 GB/s bolgeye gore), 0 link hatasi. **Aktif/hot disk.** Ollama tasinmasinin olculen etkisi: soguk model yukleme 30b 22.0s→13.5s, 9b 13.8s→7.6s, 7b 8.2s→6.2s; **token uretimi degismedi** (~12.7 tok/s, %100 CPU — disk-disi)
+
+> **Bu bolumun kurali — GOZLEM vs KARAR.** Bir komutun uretebildigi hicbir sey burada yazmaz (bayatlar, ve yalanci-kesinlik uretir); yalnizca olculemeyen sey yazar: kararlar, gerekceleri, invaryantlar ve ogrenilmis tuzaklar. **Tek istisna (bootstrap):** kanonik kaynaga ULASMAK icin gereken bilgi, olculebilir olsa da burada kalir — yoksa dosya kendi kendine yetmez.
+
+**Bootstrap — baglanmak icin gerekli, bu yuzden burada:**
+- **Hostname:** klipper · **Kullanici:** klipperos (sudo NOPASSWD)
 - **Ag:** LAN 192.168.1.113 | Tailscale 100.84.251.49 (klipper-2 olarak kayitli)
-- **Python:** 3.14 (venv: /opt/linux-ai-server/venv)
-- **Kullanici:** klipperos (sudo NOPASSWD)
+- **Servis portu:** 8420 · **Python venv:** `/opt/linux-ai-server/venv`
+- **Donanim (degismez):** Beelink SER8 (AZW), AMD Ryzen 7 8845HS w/ Radeon 780M (8C/16T), 28GB RAM, 2 NVMe (Lexar NM790 2TB + Crucial P3 1TB). BIOS V035 P8C0M0C15.14 (26/06/2025)
+
+**Canli durum — DOSYAYA BAKMA, OLC:**
+
+| Ne | Komut |
+|---|---|
+| Disk/LVM yerlesimi, hangi LV hangi fiziksel diskte | `lsblk -e7 -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL` |
+| Bos alan | `vgs` (VG bazinda) · `df -h` (fs bazinda) |
+| Kernel surumu / OS | `uname -r` · `lsb_release -d` |
+| PCIe link durumu | `sudo lspci -vv -s 0000:05:00.0 \| grep LnkSta` (Lexar) |
+| NVMe hatalari | `journalctl -k -b 0 \| grep -iE 'genctr mismatch\|invalid id completed'` |
+
+**KARARLAR ve INVARYANTLAR** (olculemez — kaynagi yalniz bu dosya):
+- **Disk rol ayrimi (2026-08-01 karari):** Lexar = yalniz yedekleme/soguk veri · Crucial = aktif her sey. Gerekce: Lexar'in PCIe linki kararsiz (kesif 1479). **Aktif veriyi Lexar'a koyma.**
+- Tum mountlar **UUID-tabanli** → slot degisimi guvenli. Yeni mount eklerken bunu bozma.
+- Lexar'da mount-suz duran `lv-models` ve eski `ubuntu-lv` **bilerek** bekletiliyor (ollama ve Faz C rollback'i); dogrulaninca silinip VG'ye iade edilecek. Bos gorunuyorlar diye silme.
+- `fstab` duzenledikten sonra **`systemctl daemon-reload` sart** — atlanirsa bayat mount unit eski cihaza baglanir ve yeni mount sessizce dusebilir.
+
+**ACIK PROBLEM — kesif 1479 (Lexar PCIe link kararsizligi):**
+- Belirti: boot'ta 16GT/s x4 egitiyor, bir sure sonra `genctr mismatch` / `invalid id completed` uretip **2.5GT/s'e dusup orada kaliyor**. Crucial ayni surede 0 hata.
+- Teshis: diskin PHY/sinyal-butunlugu arizasi — Gen4'te hata veriyor, Gen1 kararli geri-cekilmesi.
+- **Veri riski yok:** fs/blok I/O hatasi hic gorulmedi, SMART temiz, kapasite dogrulandi → **sahte kapasite DEGIL**.
+- Ayri bir bulgu: 4K-rastgelede Crucial'in ~2.5x gerisinde. Bu **linkten degil**, DRAM-less diskin kendisinden (Gen4'teyken de olculdu) — link duzelse de gecmez.
+- **KAPATMA KRITERI:** yuk altinda **~25 saat kesintisiz hatasiz** sure. Daha kisa temiz pencereler kanit degil — taban hiz ~0.12 hata/saat oldugu icin birkac saatlik sessizlik hicbir sey degismese de beklenen sonuctur.
+
+**OGRENILMIS TUZAKLAR** (bunlari bilmeden olcen yanlis sonuca varir):
+- **Link durumunu boot'tan hemen sonra kontrol etme** — yuk + zaman gectikten sonra bak. Boot'ta saglikli gorunmesi hicbir sey soylemez.
+- **NVMe hatasi sayarken `dmesg` KULLANMA** — halka tampon doluyor ve boot'un ilk saatlerini sessizce dusuruyor, sahte "0 hata" uretiyor (2026-08-02'de dmesg'de hic nvme satiri kalmamisti). `journalctl -k -b 0` kullan (onceki boot: `-b -1`).
+- **Sogutucu sokup yeniden oturtmak link sorununu DUZELTMEZ**, yalnizca hata sayacini sifirlar — "duzeldi" gibi gorunur.
+- Ollama'yi Crucial'a tasimak soguk model yuklemesini ~2x hizlandirdi ama **token uretimini degistirmedi** — uretim %100 CPU-bound, disk-disi. Disk degisikligiyle tok/s beklemeyin.
 
 ## Servis
 - **Port:** 8420
