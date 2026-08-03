@@ -28,10 +28,10 @@
 
 **ACIK PROBLEM — kesif 1479 (Lexar PCIe link kararsizligi):**
 - Belirti: boot'ta 16GT/s x4 egitiyor, bir sure sonra `genctr mismatch` / `invalid id completed` uretip **2.5GT/s'e dusup orada kaliyor**. Crucial ayni surede 0 hata.
-- Teshis: diskin PHY/sinyal-butunlugu arizasi — Gen4'te hata veriyor, Gen1 kararli geri-cekilmesi.
+- Teshis **acik, iki hipotez**: (a) diskin PHY/sinyal-butunlugu arizasi, (b) IOMMU/DMA — hatanin hemen oncesinde **ayni saniyede** `AMD-Vi: Event logged [IO_PAGE_FAULT]` var (2026-08-03 05:00:50, n=1). Ayirt edici gozlem: bir sonraki dususte IO_PAGE_FAULT yine once mi geliyor. **"PHY kesin" diye yazmayin.**
 - **Veri riski yok:** fs/blok I/O hatasi hic gorulmedi, SMART temiz, kapasite dogrulandi → **sahte kapasite DEGIL**.
 - Ayri bir bulgu: 4K-rastgelede Crucial'in ~2.5x gerisinde. Bu **linkten degil**, DRAM-less diskin kendisinden (Gen4'teyken de olculdu) — link duzelse de gecmez.
-- **KAPATMA KRITERI:** yuk altinda **~25 saat kesintisiz hatasiz** sure. Daha kisa temiz pencereler kanit degil — taban hiz ~0.12 hata/saat oldugu icin birkac saatlik sessizlik hicbir sey degismese de beklenen sonuctur.
+- **KAPATMA KRITERI (iki kosul, BIRLIKTE):** yuk altinda **~25 saat hatasiz** *ve* **link hala 16.0 GT/s**. Hata sayaci tek basina GECERSIZ: disk 2.5GT/s'e dustukten sonra hata **uretmiyor** — 2026-08-03 05:00:50'deki dusustan sonraki ~13 saat tamamen temizdi. **Sessizlik saglik degil, teslim olabilir**; her hata-kontrolunun yaninda `current_link_speed` de okunur.
 
 **OGRENILMIS TUZAKLAR** (bunlari bilmeden olcen yanlis sonuca varir):
 - **Link durumunu boot'tan hemen sonra kontrol etme** — yuk + zaman gectikten sonra bak. Boot'ta saglikli gorunmesi hicbir sey soylemez.
