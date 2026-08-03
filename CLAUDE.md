@@ -140,12 +140,18 @@ curl -s -X POST http://127.0.0.1:8420/api/v1/vps/exec \
   -d '{"command":"docker ps --format \"{{.Names}}\t{{.Status}}\" | sort"}'
 ```
 
-> **Bayatlamanin kaniti (2026-08-02):** bu bolum "20 konteyner (audit 2026-06-01)" diyordu; kendi alt-listesi 22'ye topluyordu; canli sayim da 22 ama **uyeler farkliydi**. `coturn` ve `livekit` eklenmis (dokumanda hic yoktu), `bilge-english-postgrest` ve `bilge-english-realtime` ise **yok** — durmus da degil, hic mevcut degil (`docker ps -a` = 22, exited 0). Iki ayda uc ayri sapma birikmis ve hicbiri fark edilmemisti.
+> **Liste tutmanin maliyeti — kanit (2026-08-02/03):** bu bolum "20 konteyner (audit 2026-06-01)" diyordu; **kendi alt-listesi 22'ye topluyordu** (dokuman kendi icinde bile tutarsizdi); canli sayim da 22 ama uyeler farkliydi — `coturn`/`livekit` eklenmisti, `bilge-english-postgrest`/`-realtime` ise yoktu.
+> Iki ayri hata sinifi vardi ve **ikincisi daha sinsi**: (1) *drift* — coturn/livekit sonradan eklendi, dokuman guncellenmedi; (2) *bastan yanlis* — bilge-english satiri bilge-arena'nin stack'inden kopyalanmisti, o iki konteyner **hic var olmadi** (compose'da tanimli degiller, volume'lari bile yok). Yani liste tutmanin riski yalnizca "zamanla kayar" degil, **"bastan yanlis girilir ve kimse dogrulamaz"**.
+> Teshis ipucu: "durmus mu, hic yok mu" ayrimini `docker ps -a` + exited/dead taramasiyla yap. Bu yapilmasaydi "servis coktu" diye yanlis teshis edilip gereksiz mudahale baslatilacakti (kesif 1487).
 
 **KARARLAR** (olculemez — kaynagi yalniz bu dosya):
 - **Klipper-first:** gozlem/otomasyon stack'i (n8n, grafana, prometheus, cadvisor, uptime-kuma) VPS'ten klipper'a tasindi.
 - **VPS'te kalanlarin gerekcesi:** public domain zorunlulugu. panola.app, bilge-english, bilge-arena (data layer), plausible analytics, csp-collector (csp.3d-labx.com), social-media-server (media.3d-labx.com), dokploy stack'in kendisi ve VPS-side node-exporter bu yuzden orada.
 - **Dashy bilerek VPS-only** — internal dashboard, tasima ROI'si sifir. Tekrar onerilmesin.
+- **Ayni sunucuda IKI FARKLI mimari yan yana — karistirmayin:**
+  - `bilge-arena` = Supabase-tarzi **katmanli**: kendi `postgrest` + `realtime` konteynerleri var.
+  - `bilge-english` = Next.js → Postgres **dogrudan**: `DATABASE_URL` ile baglaniyor, **PostgREST/Realtime YOK ve olmasi da gerekmiyor** (auth ayri: GoTrue, `AUTH_URL=http://auth:9999`). Uc konteyner yeterli.
+  - Bu ikisini simetrik varsaymak 2026-08'de yanlis-alarma yol acti (kesif 1487): bilge-english'te "eksik konteyner" sanildi, aslinda hic olmamislardi.
 
 **Detay/migrasyon plani:** hafiza kaydi `architecture-vps-klipper-migration-2026-05-26`
 
