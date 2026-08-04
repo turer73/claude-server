@@ -32,8 +32,10 @@
 - **Veri riski yok:** fs/blok I/O hatasi hic gorulmedi, SMART temiz, kapasite dogrulandi → **sahte kapasite DEGIL**.
 - Ayri bir bulgu: 4K-rastgelede Crucial'in ~2.5x gerisinde. Bu **linkten degil**, DRAM-less diskin kendisinden (Gen4'teyken de olculdu) — link duzelse de gecmez.
 - **KAPATMA KRITERI (iki kosul, BIRLIKTE):** yuk altinda **~25 saat hatasiz** *ve* **link hala 16.0 GT/s**. Hata sayaci tek basina GECERSIZ: disk 2.5GT/s'e dustukten sonra hata **uretmiyor** — 2026-08-03 05:00:50'deki dusustan sonraki ~13 saat tamamen temizdi. **Sessizlik saglik degil, teslim olabilir**; her hata-kontrolunun yaninda `current_link_speed` de okunur.
+- **~25 saat NEREDEN geliyor:** gozlenen iki dususun **en gec olaninin otesi** olsun diye — dususler **35 dakika** ve **19 saat 50 dakika**'da geldi. Bu istatistiksel guven **degil**; n=2 ve iki ornek iki ayri buyukluk mertebesinde, dagilim uydurulamaz. **Olasilik dili kullanmayin** ("%X tesaduf" hesaplari gecersiz). Ayni nedenle 15-20 saatlik temiz pencere de kanit degil: gozlenen en gec dususun altinda kalir.
 
 **OGRENILMIS TUZAKLAR** (bunlari bilmeden olcen yanlis sonuca varir):
+- **`nvmeXn1` adiyla calisma, PCI adresiyle calis** — 2026-08-01 slot takasindan sonra isimler YER DEGISTIRDI (Lexar bugun `nvme1n1`, eski kayitlarda `nvme0n1`). Yanlis diski olcup "temiz" raporlamak sessizce olur. Blok cihazi her seferinde `ls /sys/bus/pci/devices/0000:05:00.0/nvme/` ile turet (Lexar=05:00.0, Crucial=01:00.0).
 - **Link durumunu boot'tan hemen sonra kontrol etme** — yuk + zaman gectikten sonra bak. Boot'ta saglikli gorunmesi hicbir sey soylemez.
 - **NVMe hatasi sayarken `dmesg` KULLANMA** — halka tampon doluyor ve boot'un ilk saatlerini sessizce dusuruyor, sahte "0 hata" uretiyor (2026-08-02'de dmesg'de hic nvme satiri kalmamisti). `journalctl -k -b 0` kullan (onceki boot: `-b -1`).
 - **Sogutucu sokup yeniden oturtmak link sorununu DUZELTMEZ**, yalnizca hata sayacini sifirlar — "duzeldi" gibi gorunur.
@@ -173,7 +175,7 @@ D1: kuafor-db, petvet-db
 Oturum basinda hook DB durumunu otomatik yukler. Her oturum sonunda /memory save ile oturumu kaydet.
 
 ## Log Dizinleri (amac ayrimi)
-- `/var/log/` — **ayri LV** (`vg-storage/lv-log`, 98G, nvme1n1 uzerinde; 2026-08-01'de root'tan tasindi). Eski icerik mount altinda gizli duruyor (471M, rollback).
+- `/var/log/` — **ayri LV** (`vg-storage/lv-log`; 2026-08-01'de root'tan tasindi). Eski icerik mount altinda gizli duruyor (rollback icin bilerek); `lsblk` bunu gostermez, mount'u kaldirmadan bakamazsin.
 - `/var/log/linux-ai-server/` — Cron job stdout/stderr (klipper-cron-wrap.sh per-job log). Append, rotate yok.
 - `/opt/linux-ai-server/logs/` — Test runner gunluk rotated log (`test-runner-YYYYMMDD.log`) + fail snapshots (`test-fail-*`) + artifact dirs (`e2e/`)
 - `/opt/linux-ai-server/data/` — Database files (server.db, claude_memory.db, coverage.db) + autonomous spawn logs (`hook-logs/`) + lock/hook state (`hook-state/`). **Mod `2775` olmali — sticky bit (`+t`) KOYMA.** Bu DB'lere hem `klipperos` (API) hem `klipper-auto` (cron) yaziyor; `fs.protected_regular=2` ile sticky+grup-yazilabilir dizinde SQLite `-wal`/`-shm` dosyalarini sahibi olmayan kullanici `O_CREAT` ile acamaz → tum yazmalar `attempt to write a readonly database` ile 500 doner (2026-08-02'de 90dk kesinti, disc#1486)
