@@ -17,28 +17,31 @@
 | Disk/LVM yerlesimi, hangi LV hangi fiziksel diskte | `lsblk -e7 -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL` |
 | Bos alan | `vgs` (VG bazinda) · `df -h` (fs bazinda) |
 | Kernel surumu / OS | `uname -r` · `lsb_release -d` |
-| PCIe link durumu | `sudo lspci -vv -s 0000:05:00.0 \| grep LnkSta` (Lexar) |
+| PCIe link durumu | `cat /sys/bus/pci/devices/0000:05:00.0/current_link_speed` (Lexar) — `lspci` shell/exec whitelist'inde YOK (403); sysfs herkeste calisir |
 | NVMe hatalari | `journalctl -k -b 0 \| grep -iE 'genctr mismatch\|invalid id completed'` |
 
 **KARARLAR ve INVARYANTLAR** (olculemez — kaynagi yalniz bu dosya):
-- **Disk rol ayrimi (2026-08-01 karari):** Lexar = yalniz yedekleme/soguk veri · Crucial = aktif her sey. Gerekce: Lexar'in PCIe linki kararsiz (kesif 1479). **Aktif veriyi Lexar'a koyma.**
+- **Disk rol ayrimi (2026-08-01 karari, 2026-08-04'te gerekcesi guncellendi):** Lexar = yedekleme/soguk veri · Crucial = aktif her sey. **Karar ayni kaldi, ama gerekcesi degisti:** orijinal gerekce "PCIe linki kararsiz" idi, o sorun yatistirildi (asagi bkz). **Bugunku gerekce: Lexar 4K-rastgelede Crucial'in ~2.5x gerisinde ve bu linkten degil diskin kendisinden** — kalici. Ikincil: link arizasi yatistirildi ama nedeni kanitlanmadi, artik risk sifir degil. **Rastgele-I/O agir is yuklerini Lexar'a koyma.** Sirali/soguk is icin engel YOK (yedek, arsiv, model blob'u).
+- **ASPM udev kurali YUK TASIYOR** — `/etc/udev/rules.d/99-lexar-aspm.rules` deneysel artik DEGIL, kesif 1479'un fiili cozumu. **Silmeyin, "temizlik" yapmayin**; kaldirilirsa link arizasinin donmesi beklenir.
 - Tum mountlar **UUID-tabanli** → slot degisimi guvenli. Yeni mount eklerken bunu bozma.
 - Lexar'da mount-suz duran `lv-models` ve eski `ubuntu-lv` **bilerek** bekletiliyor (ollama ve Faz C rollback'i); dogrulaninca silinip VG'ye iade edilecek. Bos gorunuyorlar diye silme.
 - `fstab` duzenledikten sonra **`systemctl daemon-reload` sart** — atlanirsa bayat mount unit eski cihaza baglanir ve yeni mount sessizce dusebilir.
 
-**ACIK PROBLEM — kesif 1479 (Lexar PCIe link kararsizligi):**
-- Belirti: boot'ta 16GT/s x4 egitiyor, bir sure sonra `genctr mismatch` / `invalid id completed` uretip **2.5GT/s'e dusup orada kaliyor**. Crucial ayni surede 0 hata.
-- Teshis **acik, iki hipotez**: (a) diskin PHY/sinyal-butunlugu arizasi, (b) IOMMU/DMA — hatanin hemen oncesinde **ayni saniyede** `AMD-Vi: Event logged [IO_PAGE_FAULT]` var (2026-08-03 05:00:50, n=1). Ayirt edici gozlem: bir sonraki dususte IO_PAGE_FAULT yine once mi geliyor. **"PHY kesin" diye yazmayin.**
-- **Veri riski yok:** fs/blok I/O hatasi hic gorulmedi, SMART temiz, kapasite dogrulandi → **sahte kapasite DEGIL**.
-- Ayri bir bulgu: 4K-rastgelede Crucial'in ~2.5x gerisinde. Bu **linkten degil**, DRAM-less diskin kendisinden (Gen4'teyken de olculdu) — link duzelse de gecmez.
-- **KAPATMA KRITERI (iki kosul, BIRLIKTE):** yuk altinda **~25 saat hatasiz** *ve* **link hala 16.0 GT/s**. Hata sayaci tek basina GECERSIZ: disk 2.5GT/s'e dustukten sonra hata **uretmiyor** — 2026-08-03 05:00:50'deki dusustan sonraki ~13 saat tamamen temizdi. **Sessizlik saglik degil, teslim olabilir**; her hata-kontrolunun yaninda `current_link_speed` de okunur.
-- **~25 saat NEREDEN geliyor:** gozlenen iki dususun **en gec olaninin otesi** olsun diye — dususler **35 dakika** ve **19 saat 50 dakika**'da geldi. Bu istatistiksel guven **degil**; n=2 ve iki ornek iki ayri buyukluk mertebesinde, dagilim uydurulamaz. **Olasilik dili kullanmayin** ("%X tesaduf" hesaplari gecersiz). Ayni nedenle 15-20 saatlik temiz pencere de kanit degil: gozlenen en gec dususun altinda kalir.
+**KAPANDI — kesif 1479 (Lexar PCIe link kararsizligi), 2026-08-04. YATISTIRILDI, "anlasildi" DEGIL:**
+- Belirtiydi: boot'ta 16GT/s x4 egitiyor, bir sure sonra `genctr mismatch` / `invalid id completed` uretip **2.5GT/s'e dusup orada kaliyor**. Crucial ayni surede 0 hata.
+- **Cozum: Lexar'da ASPM + ClockPM kapatildi** (udev, vendor:device ID ile — yuva degisiminden etkilenmez). Kural yuk tasir, yukaridaki invaryanta bakin.
+- **Kapatma kaniti:** 25s00d kesintisiz **16.0 GT/s x4 + 0 hata + 0 fs/blok hatasi** (journal tam boot kapsamasi dogrulandi). Anlamli karsilastirma: **onceki dusus ayni kosulda (bosta) 19s50d'de gelmisti** — gozlenen en gec dusus ~5 saat asildi.
+- **KANITLANMADI — nedensellik.** Ayni pencerede reboot da vardi, ve daha once sogutucu sokme/yuva takasi da yapilmisti; degisken tek degil. Izolasyon adimi (yalniz `clkpm=1` geri acip beklemek) **bilerek yapilmadi**: calisan yapilandirma, "neden"i bilmeye tercih edildi. Yani elimizdeki ifade sudur — *"ASPM kapaliyken 25 saat dusmedi"*, **"ASPM sebebiydi" DEGIL**.
+- **YENIDEN ACMA kosulu (biri yeterli):** `journalctl -k -b 0` icinde `genctr mismatch` / `invalid id completed` / `IO_PAGE_FAULT` **veya** `current_link_speed` != 16.0 GT/s. Boyle bir sey gorurseniz once **iki satirin SIRASINI ve tam zaman damgasini** kaydedin (IO_PAGE_FAULT once mi geliyor) — teshisi ayiracak tek veri bu.
+- **Veri riski hic gorulmedi:** fs/blok I/O hatasi yok, SMART temiz, kapasite dogrulandi → **sahte kapasite DEGIL**.
+- **Linkten bagimsiz, KALICI bulgu:** 4K-rastgelede Crucial'in ~2.5x gerisinde. Bu **linkten degil**, DRAM-less diskin kendisinden (Gen4'teyken de olculdu). Link duzeldi, bu **gecmedi** — disk rol ayriminin bugunku gerekcesi budur.
+- **Kriter nasil kuruldu (metod olarak sakli):** iki kosul BIRLIKTE — "~25 saat hatasiz" *ve* "link hala 16.0 GT/s". Sayac tek basina gecersizdi, cunku disk 2.5GT/s'e dustukten sonra hata **uretmiyor** (05:00:50 dususunden sonraki ~13 saat tamamen temizdi) → **sessizlik saglik degil, teslim olabilir**. 25 rakami da istatistik degil: gozlenen iki dususun (**35 dakika** ve **19 saat 50 dakika**) en gecinin otesi. n=2 ve iki ayri buyukluk mertebesi oldugu icin **olasilik dili kullanmayin** ("%X tesaduf" hesaplari gecersiz).
 
 **OGRENILMIS TUZAKLAR** (bunlari bilmeden olcen yanlis sonuca varir):
 - **`nvmeXn1` adiyla calisma, PCI adresiyle calis** — 2026-08-01 slot takasindan sonra isimler YER DEGISTIRDI (Lexar bugun `nvme1n1`, eski kayitlarda `nvme0n1`). Yanlis diski olcup "temiz" raporlamak sessizce olur. Blok cihazi her seferinde `ls /sys/bus/pci/devices/0000:05:00.0/nvme/` ile turet (Lexar=05:00.0, Crucial=01:00.0).
 - **Link durumunu boot'tan hemen sonra kontrol etme** — yuk + zaman gectikten sonra bak. Boot'ta saglikli gorunmesi hicbir sey soylemez.
 - **NVMe hatasi sayarken `dmesg` KULLANMA** — halka tampon doluyor ve boot'un ilk saatlerini sessizce dusuruyor, sahte "0 hata" uretiyor (2026-08-02'de dmesg'de hic nvme satiri kalmamisti). `journalctl -k -b 0` kullan (onceki boot: `-b -1`).
-- **Sogutucu sokup yeniden oturtmak link sorununu DUZELTMEZ**, yalnizca hata sayacini sifirlar — "duzeldi" gibi gorunur.
+- **Sogutucu sokup yeniden oturtmak link sorununu DUZELTMEDI**, yalnizca hata sayacini sifirladi — "duzeldi" gibi gorundu (2026-08-01'de bu tuzaga dusuldu).
 - Ollama'yi Crucial'a tasimak soguk model yuklemesini ~2x hizlandirdi ama **token uretimini degistirmedi** — uretim %100 CPU-bound, disk-disi. Disk degisikligiyle tok/s beklemeyin.
 
 ## Servis
