@@ -12,9 +12,15 @@
 #   0 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh renderhane-balance \
 #     /opt/linux-ai-server/automation/social-renderhane-balance-alert.sh
 
-source /opt/linux-ai-server/.env 2>/dev/null
+# .env yolu da override-edilebilir: aksi halde source, testin verdiği env'i (TELEGRAM_BOT_TOKEN,
+# threshold) GERÇEK prod değerleriyle eziyor — izolasyon yalancı oluyor. Default değişmedi.
+source "${RENDERHANE_ENV_FILE:-/opt/linux-ai-server/.env}" 2>/dev/null
 
-LOG=/var/log/linux-ai-server/social-renderhane-balance.log
+# LOG da STATE_DIR gibi override-edilebilir: testler bu script'i GERÇEKTEN çalıştırıyor
+# (tests/test_renderhane_outcome.py) ve hardcoded yol yüzünden her koşuda prod-log'a sahte
+# ERROR/WARN satırı yazıyorlardı ({"foo": 1}, GATE='iki', balance=500). Zarar teorik değil:
+# log-tabanlı triyaj o dosyayı "20 hata" diye işaretliyor, gerçek saatlik cron ise temiz.
+LOG=${RENDERHANE_LOG:-/var/log/linux-ai-server/social-renderhane-balance.log}
 TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 URL="http://100.126.113.23:9800/api/health"   # VPS panola-social Tailscale node
 THRESHOLD=${RENDERHANE_BALANCE_THRESHOLD:-200}

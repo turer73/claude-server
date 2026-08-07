@@ -51,6 +51,11 @@ def _run_bash(tmp_path: Path, extra_env: dict | None = None) -> str:
         "RENDERHANE_RETRY_SLEEP": "0",  # test hızı (backoff sıfır)
         # State'i tmp'ye izole et — prod hook-state'e streak-file sızdırma + gate testlenebilir.
         "RENDERHANE_STATE_DIR": str(tmp_path / "state"),
+        # Log'u da tmp'ye izole et: hardcoded yol yüzünden testler prod-log'a sahte ERROR/WARN
+        # yazıyordu ve log-tabanlı triyaj bunları gerçek arıza sanıyordu.
+        "RENDERHANE_LOG": str(tmp_path / "balance.log"),
+        # .env'i de izole et — yoksa source, buradaki token/threshold'u prod değeriyle ezer.
+        "RENDERHANE_ENV_FILE": str(tmp_path / "absent.env"),
     }
     if extra_env:
         env.update(extra_env)
@@ -156,3 +161,24 @@ def test_renderhane_state_unwritable_fails_open(tmp_path):
     out = _run(tmp_path, "", extra_env={"RENDERHANE_STATE_DIR": str(blocker / "state")})
     assert "OUTCOME: partial" in out
     assert "fail-open" in out
+
+
+def test_renderhane_log_isolated_prod_untouched(tmp_path):
+    """Repro: LOG hardcoded'ken bu testler prod-log'a sahte ERROR yazıyordu.
+
+    Kanıt (2026-08-07): prod log'da test fixture'ları duruyordu — `PARSE ERROR: ... {"foo": 1}`,
+    `GATE='iki'`, `balance=500` — gerçek saatlik cron ise hep temiz (balance=550). Log-tabanlı
+    triyaj bunu "20 hata" diye işaretleyip yanlış-tanı üretiyordu.
+    """
+    prod = Path("/var/log/linux-ai-server/social-renderhane-balance.log")
+    before = prod.stat().st_mtime_ns if prod.exists() else None
+
+    out = _run(tmp_path, '{"foo": 1}', extra_env={"RENDERHANE_PARTIAL_GATE": "1"})
+    assert "OUTCOME: partial" in out
+
+    isolated = tmp_path / "balance.log"
+    assert isolated.exists(), "RENDERHANE_LOG onurlandırılmadı"
+    assert "PARSE ERROR" in isolated.read_text(), "hata satırı izole log'a düşmedi"
+
+    if before is not None:
+        assert prod.stat().st_mtime_ns == before, "test hâlâ PROD log'a yazıyor"
