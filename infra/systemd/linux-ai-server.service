@@ -1,0 +1,43 @@
+[Unit]
+Description=Linux-AI Server (FastAPI)
+After=network.target ollama.service tailscaled.service
+Wants=ollama.service
+
+[Service]
+Type=simple
+User=klipperos
+Group=klipperos
+StateDirectory=linux-ai-server
+WorkingDirectory=/opt/linux-ai-server
+Environment=PATH=/home/klipperos/.npm-global/bin:/opt/linux-ai-server/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=CONFIG_FILE=/etc/linux-ai-server/server.yml
+Environment=DB_PATH=/opt/linux-ai-server/data/server.db
+ExecStart=/opt/linux-ai-server/venv/bin/uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8420 --workers 2
+Restart=always
+RestartSec=5
+
+# Bellek limiti (2026-08-07): 768M -> 2G. Eski limit 2 uvicorn worker'a dar geliyordu ve servis
+# TAVANDA yasiyordu; cgroup sayaclari (memory.events) limite 694.951 kez carpma, swap.events
+# fail=408, sock_throttled=545, swap peak 2.9G gosteriyordu. OOM-kill hic olmadi -> arıza
+# gorunmuyordu, bedeli surekli reclaim + swap olarak odeniyordu. Makinede 26G RAM var, 8.3G bosta.
+# MemoryHigh = yumusak esik: once reclaim baskisi (PSI'de gorunur), ancak asilirsa MemoryMax.
+# Limit BILEREK korunuyor (kaldirilmadi): kacak-bellek regresyonuna karsi tavan.
+MemoryHigh=1536M
+MemoryMax=2G
+
+# Guvenlik-sertlestirme (2026-07-12, klipper) — sadece shell-exec/dosya-yonetim API'lerini
+# ETKILEMEYEN direktifler. ProtectSystem=strict/ReadWritePaths BILINCLI ATLANDI: bu servis
+# tasarim-geregi genis-dosya-sistemi-erisimi gerektiriyor (kernel-modul, shell-exec, dosya-
+# yonetim, SSH/VPS API'leri). Tam-hizalama (aiserver-user + ExecStart + EnvironmentFile)
+# ayri, cok-daha-riskli bir is olarak birakildi (dogrulanmamis varsayimlar).
+NoNewPrivileges=yes
+PrivateTmp=yes
+Environment="ADMIN_KEY_TMP_ISOLATED=1"
+UMask=0002
+
+# NOT: canli sistemde ayrica iki drop-in var (/etc/systemd/system/linux-ai-server.service.d/):
+#   limits.conf   — LimitNOFILE=65536 (disc#1378 kok-nedeni; server.db bozulmalarinin fixi)
+#   vps-env.conf  — SIR ICERIR (MEMORY_API_KEY hardcoded), bu yuzden repo'ya ALINMADI.
+# Bu dosya kanonik degil, kalici-kayittir: canliya kopyalayinca daemon-reload + restart sart.
+[Install]
+WantedBy=multi-user.target

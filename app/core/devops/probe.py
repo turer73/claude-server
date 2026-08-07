@@ -38,8 +38,8 @@ class ProbeMixin(_DevOpsAgentBase):
                 else:
                     result = await self._executor.execute(f"systemctl is-active {shlex.quote(svc)}", timeout=5)
                     problem = None if result.get("stdout", "").strip() == "active" else f"Service {svc} is not active"
+                source = f"service:{svc}"
                 if problem:
-                    source = f"service:{svc}"
                     if source not in self._active_alerts:
                         alert = Alert(
                             id=f"{source}-{self._check_count}",
@@ -57,6 +57,16 @@ class ProbeMixin(_DevOpsAgentBase):
                         # (metrics.py _detect:132) ile simetrik.
                         asyncio.create_task(self._store_alert(alert))
                         await self._remediate_service(svc, alert)
+                else:
+                    # İYİLEŞME DALI: vps:* döngüsüyle (bkz. _check_vps ~line 263) simetrik. Bu dal
+                    # PR#340 follow-up'ında yalnız vps:* yoluna eklenmişti; local service/docker
+                    # yolunda YOKTU ve iki ayrı arıza üretiyordu:
+                    #   (1) DB satırı sonsuza dek resolved=0 (07-31'den beri 4 çakılı kritik alarm),
+                    #   (2) DAHA SİNSİ: yeni-alarm üretimi `source not in _active_alerts` ile kapılı
+                    #       olduğu için, düzelen kaynak in-memory setten silinmeyince AYNI process
+                    #       ömründe İKİNCİ kesinti tamamen sessiz kalıyordu — ne alarm ne remediate.
+                    self._active_alerts.pop(source, None)
+                    asyncio.create_task(self._resolve_alert_db_by_source(source, now))
             except Exception as e:
                 # disc#1353b: sessiz-yutma bug-maskeler (07-18 DB-lock 6-saat-körlük dersi).
                 # Yalnız tip-adı loglanır (PR#339 Codex-dersi: exception-str komut-metni taşıyabilir).
@@ -79,8 +89,8 @@ class ProbeMixin(_DevOpsAgentBase):
                     # Healthcheck'li container (n8n/qdrant) unhealthy = kritik outage -> yakala.
                     down = not status or "Up" not in status
                     unhealthy = "unhealthy" in status.lower()
+                source = f"docker:{container}"
                 if down or unhealthy:
-                    source = f"docker:{container}"
                     if source not in self._active_alerts:
                         msg = invalid_msg or (
                             f"Container {container} is not running" if down else f"Container {container} UNHEALTHY ({status})"
@@ -98,6 +108,10 @@ class ProbeMixin(_DevOpsAgentBase):
                         # disc#1353a: service-yoluyla simetrik ilk-an kalıcılık.
                         asyncio.create_task(self._store_alert(alert))
                         await self._remediate_container(container, alert)
+                else:
+                    # İYİLEŞME DALI — service yoluyla simetrik (bkz. yukarısı, gerekçe orada).
+                    self._active_alerts.pop(source, None)
+                    asyncio.create_task(self._resolve_alert_db_by_source(source, now))
             except Exception as e:
                 # disc#1353b: sessiz-yutma yerine tip-adı logu (payload'sız).
                 log.warning("container-probe %s failed: %s", container, type(e).__name__)
