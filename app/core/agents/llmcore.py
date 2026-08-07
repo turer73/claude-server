@@ -72,7 +72,14 @@ _TASK_ROUTES: dict[str, tuple[str, str]] = {
     "research-hi": ("deepseek", "deepseek-v4-flash"),
     "escalate": ("claude", "claude-haiku-4-5-20251001"),  # hızlı/ucuz Claude (Max-abonelik)
     "verify": ("claude", "claude-haiku-4-5-20251001"),  # #4 adversarial-verify: qwen-coder kendi FP'sini çürütemiyor → güçlü model
-    "synthesis": ("claude", "claude-sonnet-4-6"),  # derin sentez
+    "synthesis": ("claude", "claude-sonnet-4-6"),  # derin sentez (code_reviewer.py:446 — DOKUNMA)
+    # LSA günlük sentezi (system-state.py). AYRI task, bilerek: task='synthesis' Claude'da kalıyor
+    # çünkü onu code-review yolu da kullanıyor. Bu iş GÖZETİMSİZ bir cron (07:30) ve Claude Max
+    # aboneliğinin kotasını interaktif kullanımla PAYLAŞIYORDU → 2026-08-03/04/06/07'de sentez
+    # boş döndü (ok=false), 08-05'te çalıştı: kesintili, "abonelik kapalı" DEĞİL (keşif 1439'un
+    # öncülü canlı testte yanlışlandı). Gözetimsiz iş, kota-rekabeti olmayan ücretli-ama-kuruş
+    # DeepSeek'e taşındı; interaktif Claude yolları etkilenmiyor.
+    "system-state": ("deepseek", "deepseek-v4-flash"),
     "default": ("ollama", "qwen2.5:3b"),
 }
 

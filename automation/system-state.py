@@ -23,15 +23,18 @@ import sys
 import urllib.request
 from datetime import UTC, datetime
 
-from app.core.claude_run import claude_result
 from app.db.data_layer import get_conn
 
 ENV_FILE = os.environ.get("NOTIFY_ENV_FILE", "/opt/linux-ai-server/.env")
 API_BASE = os.environ.get("API_BASE", "http://localhost:8420")
 SRV_DB = os.environ.get("SERVER_DB", "/opt/linux-ai-server/data/server.db")
 MEM_DB = os.environ.get("MEMORY_DB", "/opt/linux-ai-server/data/claude_memory.db")
-# Sentez = Sonnet (anlatı zenginliği). /api/v1/claude/run model-param (LLMCore task-route DEĞİL).
-SYNTH_MODEL = os.environ.get("SYSTEM_STATE_MODEL", "claude-sonnet-4-6")
+# Sentez artık LLMCore task-route'u üzerinden (2026-08-07): task='system-state' → DeepSeek.
+# Önce /api/v1/claude/run + Sonnet idi; gözetimsiz cron, interaktif Claude Max kotasıyla
+# yarışıp kesintili boş dönüyordu (llmcore.py route yorumunda gerekçe). Model override'ı
+# korunuyor — SYSTEM_STATE_MODEL verilirse route'un modelinin yerine geçer.
+SYNTH_MODEL = os.environ.get("SYSTEM_STATE_MODEL") or None
+SYNTH_TASK = "system-state"
 DAYS = int(os.environ.get("SYSTEM_STATE_DAYS", "7"))
 
 
@@ -154,10 +157,8 @@ def render_data(st: dict) -> str:
     return "\n".join(L)
 
 
-def synthesize(summary: str, ikey: str) -> str:
-    """Sonnet ile YAŞAYAN sistem anlatısı: bu-dönem + trend + dikkat-gereken. Best-effort."""
-    if not ikey:
-        return ""
+def synthesize(summary: str) -> str:
+    """YAŞAYAN sistem anlatısı: bu-dönem + trend + dikkat-gereken. Best-effort."""
     prompt = (
         "Aşağıda bir AI-server'ın son günlerdeki sistem-durumu ham verisi var. Türkçe, 4-7 cümlelik "
         "YAŞAYAN SİSTEM ANLATISI yaz (klipper ajanına brifing): (1) genel durum, (2) TREND — neyin "
@@ -166,18 +167,22 @@ def synthesize(summary: str, ikey: str) -> str:
         "Abartma, sadece veriye dayan. Sadece anlatıyı döndür.\n\n" + summary
     )
     try:
-        out = _post_json(
-            f"{API_BASE}/api/v1/claude/run",
-            {"prompt": prompt, "read_only": True, "max_turns": 1, "model": SYNTH_MODEL},
-            {"X-API-Key": ikey},
-            180,
-        )
-        # ok-guard: 429/limit yanıtı BOŞ-OLMAYAN result döner -> guard olmadan
-        # rate-limit metni sistem-durumu anlatısı diye kaydediliyordu (#1469).
-        synth = claude_result(out)
-        return synth or "(Sonnet sentez başarısız: ok=false veya boş yanıt)"
+        from app.core.agents.llmcore import llm_core
+
+        # raise_on_error=True BİLEREK: sessiz "" dönüşü, hata metnini sentez sanma riskini
+        # (#1469) geri getirmez ama SEBEBİ de gizler. İstisna aşağıda sentinel'e çevrilir,
+        # böylece OUTCOME=partial satırında gerçek neden görünür.
+        synth = llm_core.generate_sync(
+            prompt,
+            task=SYNTH_TASK,
+            model=SYNTH_MODEL,
+            timeout=180,
+            raise_on_error=True,
+        ).strip()
+        # Boş yanıt hâlâ mümkün (backend 200 + boş içerik) → fail-closed, sentinel döndür.
+        return synth or "(sentez başarısız: backend boş yanıt döndü)"
     except Exception as e:
-        return f"(Sonnet sentez başarısız: {str(e)[:80]})"
+        return f"(sentez başarısız: {type(e).__name__}: {str(e)[:80]})"
 
 
 def write_state(summary: str, narrative: str, mkey: str) -> str:
@@ -215,9 +220,8 @@ def main() -> int:
             pass
     st = gather_state(days)
     summary = render_data(st)
-    ikey = _envget("INTERNAL_API_KEY")  # /api/v1/claude/run X-API-Key (agent-health-report deseni)
     mkey = _envget("MEMORY_API_KEY")
-    narrative = synthesize(summary, ikey)
+    narrative = synthesize(summary)
     if "--now" in sys.argv:  # on-demand: anlatıyı stdout'a da bas
         print(narrative or "(sentez yok)")
     err = write_state(summary, narrative, mkey)
@@ -225,7 +229,10 @@ def main() -> int:
     if err:
         print(f"OUTCOME: partial | sentez OK ama discovery yazılamadı: {err}")
     elif not narrative or narrative.startswith("("):
-        print(f"OUTCOME: partial | sentez zayıf/başarısız ({n_open} açık-borç); ham-veri yazıldı")
+        # NEDENİ de bas: eskiden yalnız "sentez zayıf/başarısız" yazıyordu ve cron-log'dan
+        # sebep okunamıyordu — 2026-08-03..07 arası 4 gün boyunca teşhis bu yüzden gecikti.
+        reason = narrative.strip("()") if narrative else "anlatı boş"
+        print(f"OUTCOME: partial | sentez zayıf/başarısız ({n_open} açık-borç): {reason}; ham-veri yazıldı")
     else:
         print(f"OUTCOME: pass | Sistem Durumu yazıldı ({days}g, {n_open} açık-borç)")
     return 0

@@ -93,22 +93,70 @@ def test_write_state_no_key():
     assert ss.write_state("h", "n", "") == "no MEMORY_API_KEY"
 
 
-def test_synthesize(monkeypatch):
-    assert ss.synthesize("veri", "") == ""  # key yok → boş
-    monkeypatch.setattr(ss, "_post_json", lambda *a, **k: {"ok": True, "result": "  yaşayan anlatı  "})
-    assert ss.synthesize("veri", "ikey") == "yaşayan anlatı"  # trim'li result
+def _patch_llmcore(monkeypatch, fn):
+    """llm_core.generate_sync'i değiştir — synthesize onu fonksiyon-içinde import ediyor."""
+    from app.core.agents import llmcore
 
-    def boom(*a, **k):
-        raise RuntimeError("claude/run patladı")
+    monkeypatch.setattr(llmcore.llm_core, "generate_sync", fn)
 
-    monkeypatch.setattr(ss, "_post_json", boom)
-    out = ss.synthesize("veri", "ikey")
-    assert out.startswith("(Sonnet sentez başarısız")  # fail-safe, exception yutulur
+
+def test_synthesize_uses_llmcore_system_state_task(monkeypatch):
+    """Repro: sentez artık /api/v1/claude/run DEĞİL, LLMCore task='system-state' üzerinden.
+
+    Gözetimsiz cron, interaktif Claude Max kotasıyla yarışıyordu → 2026-08-03/04/06/07'de
+    boş döndü (08-05 çalıştı: kesintili). DeepSeek rotası kota-rekabetini kaldırır.
+    """
+    seen = {}
+
+    def fake(prompt, **kw):
+        seen.update(kw)
+        seen["prompt"] = prompt
+        return "  yaşayan anlatı  "
+
+    _patch_llmcore(monkeypatch, fake)
+    # claude/run'a düşerse test patlasın: HTTP yolu sentezde artık kullanılmamalı.
+    monkeypatch.setattr(ss, "_post_json", lambda *a, **k: pytest.fail("sentez hâlâ HTTP claude/run kullanıyor"))
+
+    assert ss.synthesize("veri") == "yaşayan anlatı"  # trim'li
+    assert seen["task"] == "system-state"
+    assert seen["raise_on_error"] is True  # sebep gizlenmemeli
+    assert "veri" in seen["prompt"]
+
+
+def test_synthesize_failure_sentinel_carries_reason(monkeypatch):
+    """Hata sentinel'i '(' ile başlamalı (main() bunu partial sayar) ve SEBEBİ taşımalı.
+
+    Eskiden yalnız 'ok=false veya boş yanıt' yazıyordu; 4 gün boyunca cron-log'dan
+    neden okunamadığı için teşhis gecikti.
+    """
+
+    def boom(prompt, **kw):
+        raise RuntimeError("backend patladı")
+
+    _patch_llmcore(monkeypatch, boom)
+    out = ss.synthesize("veri")
+    assert out.startswith("(")  # main() → OUTCOME: partial
+    assert "RuntimeError" in out
+    assert "backend patladı" in out
+
+
+def test_synthesize_empty_backend_response_is_failclosed(monkeypatch):
+    """Backend 200 + boş içerik → sentinel (boş anlatı 'başarı' sayılmamalı)."""
+    _patch_llmcore(monkeypatch, lambda prompt, **kw: "   ")
+    assert ss.synthesize("veri").startswith("(")
+
+
+def test_system_state_route_is_deepseek_and_synthesis_untouched():
+    """system-state kendi rotasında; task='synthesis' (code_reviewer.py:446) DEĞİŞMEMELİ."""
+    from app.core.agents.llmcore import llm_core
+
+    assert llm_core.route("system-state")[0] == "deepseek"
+    assert llm_core.route("synthesis") == ("claude", "claude-sonnet-4-6")
 
 
 def test_main_outcome_pass(dbs, monkeypatch, capsys):
     monkeypatch.setattr(ss, "_envget", lambda k: "key" if "KEY" in k else "")
-    monkeypatch.setattr(ss, "synthesize", lambda summary, ikey: "gerçek anlatı cümlesi")
+    monkeypatch.setattr(ss, "synthesize", lambda summary: "gerçek anlatı cümlesi")
     monkeypatch.setattr(ss, "write_state", lambda s, n, m: "")  # başarılı yazım
     monkeypatch.setattr(ss.sys, "argv", ["system-state.py", "--days", "7"])
     rc = ss.main()
@@ -118,7 +166,7 @@ def test_main_outcome_pass(dbs, monkeypatch, capsys):
 
 def test_main_outcome_partial_on_write_fail(dbs, monkeypatch, capsys):
     monkeypatch.setattr(ss, "_envget", lambda k: "key" if "KEY" in k else "")
-    monkeypatch.setattr(ss, "synthesize", lambda summary, ikey: "anlatı")
+    monkeypatch.setattr(ss, "synthesize", lambda summary: "anlatı")
     monkeypatch.setattr(ss, "write_state", lambda s, n, m: "DB hatası")  # yazım başarısız
     monkeypatch.setattr(ss.sys, "argv", ["system-state.py"])
     ss.main()
