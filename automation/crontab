@@ -43,8 +43,15 @@
 30 3 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh self-pentest /opt/linux-ai-server/automation/self-pentest.sh
 # 04:40 (stagger): agir Docker guvenlik taramasi — demo-reset 04:00 + pull-vps 04:20 sonrasi
 40 4 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh nuclei-scan /opt/linux-ai-server/automation/nuclei-scan.sh
-# DB retention — server.db + ci_tests.db (haftalik Pazar 02:00)
+# DB retention — server.db + ci_tests.db (haftalik Pazar 02:00). VACUUM 2026-08-09'da
+# KALDIRILDI (kesif 1462 kok-nedeni: canli-DB VACUUM bozulma uretiyordu); artik yalniz
+# retention DELETE'leri + checkpoint. Gerekce script icinde.
 0 2 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh db-retention /opt/linux-ai-server/automation/db-retention.sh
+# DB butunluk detektoru (kesif 1462) — saatlik quick_check, salt-okuma (~0.7sn/4 DB).
+# Bozulmanin ANI'ni dakika hassasiyetinde kaydeder; oncesinde tespit saatlerce gecikiyordu
+# ve bu yuzden 6 tekrar boyunca kok-neden korelasyonu kurulamadi. Bozulmada OUTCOME: fail
+# -> cron-wrap CRITICAL + events/Telegram.
+30 * * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh db-integrity /opt/linux-ai-server/automation/db-integrity-check.sh
 # Claude Code global npm guncelleme (haftalik Pazar 05:00)
 0 5 * * 0 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh claude-code-update /opt/linux-ai-server/automation/claude-code-update.sh
 # Otonom mod gunluk aktivite ozeti (her gun 06:00) — memory entry yazar, kullanici SessionStart'ta gorur

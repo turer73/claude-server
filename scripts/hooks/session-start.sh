@@ -72,11 +72,11 @@ fi
   # Watermark = bu cihazın SON kaydedilen oturumunun created_at'i. "Sen yokken ne oldu" deltası.
   # FAIL-SAFE: hata → atla. SRV_DB aşağıda da kullanılıyor (burada tanımla).
   SRV_DB="${HOOK_SERVER_DB:-/opt/linux-ai-server/data/server.db}"
-  LASTSES=$(sqlite3 "$DB" "SELECT created_at FROM sessions WHERE device_name='$DEV' ORDER BY id DESC LIMIT 1;" 2>/dev/null)
+  LASTSES=$(sqlite3 -cmd ".timeout 5000" "$DB" "SELECT created_at FROM sessions WHERE device_name='$DEV' ORDER BY id DESC LIMIT 1;" 2>/dev/null)
   if [ -n "$LASTSES" ]; then
-    NEW_DISC=$(sqlite3 "$DB" "SELECT COUNT(*) FROM discoveries WHERE created_at > '$LASTSES';" 2>/dev/null)
-    NEW_NOTE=$(sqlite3 "$DB" "SELECT COUNT(*) FROM notes WHERE created_at > '$LASTSES' AND from_device != '$DEV';" 2>/dev/null)
-    NEW_CRIT=$(sqlite3 "$SRV_DB" "SELECT COUNT(*) FROM alerts WHERE timestamp > '$LASTSES' AND severity='critical';" 2>/dev/null)
+    NEW_DISC=$(sqlite3 -cmd ".timeout 5000" "$DB" "SELECT COUNT(*) FROM discoveries WHERE created_at > '$LASTSES';" 2>/dev/null)
+    NEW_NOTE=$(sqlite3 -cmd ".timeout 5000" "$DB" "SELECT COUNT(*) FROM notes WHERE created_at > '$LASTSES' AND from_device != '$DEV';" 2>/dev/null)
+    NEW_CRIT=$(sqlite3 -cmd ".timeout 5000" "$SRV_DB" "SELECT COUNT(*) FROM alerts WHERE timestamp > '$LASTSES' AND severity='critical';" 2>/dev/null)
     if [ "${NEW_DISC:-0}" -gt 0 ] || [ "${NEW_NOTE:-0}" -gt 0 ] || [ "${NEW_CRIT:-0}" -gt 0 ]; then
       echo "🆕 Son oturumdan beri (${LASTSES%%.*}): ${NEW_DISC:-0} yeni discovery, ${NEW_NOTE:-0} yeni not, ${NEW_CRIT:-0} kritik alarm"
       echo ""
@@ -101,14 +101,14 @@ fi
   # (analitik/ileride kullanım için) ama SIRALAMAYI YÖNLENDİRMEZ (least-read-first, eski-
   # hiç-gösterilmemiş bir kaydı bugünün raporunun önüne geçirirdi — "ne oldu ŞİMDİ" amacının
   # tersi; feedback-memories'ten BİLEREK farklı).
-  LEARN_TOTAL=$(sqlite3 "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='learning' AND status='active';" 2>/dev/null)
+  LEARN_TOTAL=$(sqlite3 -cmd ".timeout 5000" "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='learning' AND status='active';" 2>/dev/null)
   if [ "${LEARN_TOTAL:-0}" -gt 0 ]; then
     if [ -n "$PROJECT_PREFIX" ]; then
       ORDERBY="CASE WHEN project LIKE '${PROJECT_PREFIX}%' THEN 0 ELSE 1 END, created_at DESC"
     else
       ORDERBY="created_at DESC"
     fi
-    LEARN_IDS=$(sqlite3 "$DB" "SELECT id || char(9) || title FROM discoveries WHERE type='learning' AND status='active' ORDER BY $ORDERBY;" 2>/dev/null |
+    LEARN_IDS=$(sqlite3 -cmd ".timeout 5000" "$DB" "SELECT id || char(9) || title FROM discoveries WHERE type='learning' AND status='active' ORDER BY $ORDERBY;" 2>/dev/null |
       awk -F'\t' '{
         fam = $2
         sub(/ — [0-9]{4}-(W[0-9]{2}|[0-9]{2}-[0-9]{2})$/, "", fam)
@@ -118,17 +118,17 @@ fi
     if [ -n "$LEARN_IDS" ]; then
       N_SHOWN=$(echo "$LEARN_IDS" | tr ',' '\n' | wc -l)
       echo "📋 Son Ajan Bulguları — ne oldu/ne yapılacak ($LEARN_TOTAL aktif, $N_SHOWN rapor-ailesi — /memory search ile tümü):"
-      sqlite3 "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title || ' — ' || substr(REPLACE(COALESCE(details,''),char(10),' '),1,90) FROM discoveries WHERE id IN ($LEARN_IDS) ORDER BY $ORDERBY;" 2>/dev/null
-      sqlite3 "$DB" "UPDATE discoveries SET read_count=COALESCE(read_count,0)+1, last_read_at=datetime('now') WHERE id IN ($LEARN_IDS);" 2>/dev/null
+      sqlite3 -cmd ".timeout 5000" "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title || ' — ' || substr(REPLACE(COALESCE(details,''),char(10),' '),1,90) FROM discoveries WHERE id IN ($LEARN_IDS) ORDER BY $ORDERBY;" 2>/dev/null
+      sqlite3 -cmd ".timeout 5000" "$DB" "UPDATE discoveries SET read_count=COALESCE(read_count,0)+1, last_read_at=datetime('now') WHERE id IN ($LEARN_IDS);" 2>/dev/null
       echo ""
     fi
   fi
 
   # Stats
   echo "Durum:"
-  sqlite3 "$DB" "SELECT '  Hafiza: ' || COUNT(*) || ' kayit' FROM memories WHERE active=1;" 2>/dev/null
-  sqlite3 "$DB" "SELECT '  Oturum: ' || COUNT(*) || ' toplam (' || (SELECT COUNT(*) FROM sessions WHERE device_name='$DEV') || ' bu cihaz)' FROM sessions;" 2>/dev/null
-  sqlite3 "$DB" "SELECT '  Otonomi modu: ' || '$HOOK_AUTONOMY';" 2>/dev/null
+  sqlite3 -cmd ".timeout 5000" "$DB" "SELECT '  Hafiza: ' || COUNT(*) || ' kayit' FROM memories WHERE active=1;" 2>/dev/null
+  sqlite3 -cmd ".timeout 5000" "$DB" "SELECT '  Oturum: ' || COUNT(*) || ' toplam (' || (SELECT COUNT(*) FROM sessions WHERE device_name='$DEV') || ' bu cihaz)' FROM sessions;" 2>/dev/null
+  sqlite3 -cmd ".timeout 5000" "$DB" "SELECT '  Otonomi modu: ' || '$HOOK_AUTONOMY';" 2>/dev/null
   if [ -n "$PROJECT_PREFIX" ]; then
     echo "  Proje (cwd): $RAW_PROJECT (filter prefix: $PROJECT_PREFIX*)"
   fi
@@ -137,29 +137,29 @@ fi
   # Stale tanımı: 30+ gün açık + read_count=0 → büyük olasılıkla flake/obsolete,
   # session-start'ta gizle; LLM triage cron (memory-triage-llm.py) zaten temizleyecek.
   # /memory bugs ile tam liste hala erişilebilir.
-  BUGS_TOTAL=$(sqlite3 "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='bug' AND status='active';" 2>/dev/null)
+  BUGS_TOTAL=$(sqlite3 -cmd ".timeout 5000" "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='bug' AND status='active';" 2>/dev/null)
 
   if [ "${BUGS_TOTAL:-0}" -gt 0 ] && [ -n "$PROJECT_PREFIX" ]; then
     # Bu projedeki bug'lar — STALE FILTER YOK (proje bağlamı her zaman göster)
-    PROJ_BUGS=$(sqlite3 "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='bug' AND status='active' AND project LIKE '${PROJECT_PREFIX}%';" 2>/dev/null)
+    PROJ_BUGS=$(sqlite3 -cmd ".timeout 5000" "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='bug' AND status='active' AND project LIKE '${PROJECT_PREFIX}%';" 2>/dev/null)
     if [ "${PROJ_BUGS:-0}" -gt 0 ]; then
       echo ""
       echo "Bu Projedeki Bug'lar ($PROJ_BUGS):"
-      sqlite3 "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title FROM discoveries WHERE type='bug' AND status='active' AND project LIKE '${PROJECT_PREFIX}%' ORDER BY created_at DESC LIMIT 7;" 2>/dev/null
+      sqlite3 -cmd ".timeout 5000" "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title FROM discoveries WHERE type='bug' AND status='active' AND project LIKE '${PROJECT_PREFIX}%' ORDER BY created_at DESC LIMIT 7;" 2>/dev/null
     fi
 
     # Diğer projeler — STALE FILTER (30+ gün unread'leri çıkar)
-    OTHER_BUGS=$(sqlite3 "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='bug' AND status='active' AND project NOT LIKE '${PROJECT_PREFIX}%' AND NOT (julianday('now') - julianday(created_at) > 30 AND read_count = 0);" 2>/dev/null)
+    OTHER_BUGS=$(sqlite3 -cmd ".timeout 5000" "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='bug' AND status='active' AND project NOT LIKE '${PROJECT_PREFIX}%' AND NOT (julianday('now') - julianday(created_at) > 30 AND read_count = 0);" 2>/dev/null)
     if [ "${OTHER_BUGS:-0}" -gt 0 ]; then
       echo ""
       echo "Diğer Açık Bug'lar ($OTHER_BUGS, stale filtreli):"
-      sqlite3 "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title FROM discoveries WHERE type='bug' AND status='active' AND project NOT LIKE '${PROJECT_PREFIX}%' AND NOT (julianday('now') - julianday(created_at) > 30 AND read_count = 0) ORDER BY created_at DESC LIMIT 5;" 2>/dev/null
+      sqlite3 -cmd ".timeout 5000" "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title FROM discoveries WHERE type='bug' AND status='active' AND project NOT LIKE '${PROJECT_PREFIX}%' AND NOT (julianday('now') - julianday(created_at) > 30 AND read_count = 0) ORDER BY created_at DESC LIMIT 5;" 2>/dev/null
     fi
   elif [ "${BUGS_TOTAL:-0}" -gt 0 ]; then
     # Proje türetilemedi — eski davranış, stale filter ile
     echo ""
     echo "Acik Bug'lar ($BUGS_TOTAL, stale filtreli):"
-    sqlite3 "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title FROM discoveries WHERE type='bug' AND status='active' AND NOT (julianday('now') - julianday(created_at) > 30 AND read_count = 0) ORDER BY created_at DESC LIMIT 10;" 2>/dev/null
+    sqlite3 -cmd ".timeout 5000" "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title FROM discoveries WHERE type='bug' AND status='active' AND NOT (julianday('now') - julianday(created_at) > 30 AND read_count = 0) ORDER BY created_at DESC LIMIT 10;" 2>/dev/null
   fi
 
   # ─── 🔁 Tekrarlayan hatalar (auto-bug + events recurrence, Slice C) ──
@@ -168,7 +168,7 @@ fi
   # DB -> sessiz atla (oturum-start ASLA bozulmaz). Mevcut bug-sorguları DEĞİŞMEDİ.
   SRV_DB="${HOOK_SERVER_DB:-/opt/linux-ai-server/data/server.db}"
   if [ -r "$SRV_DB" ]; then
-    RECUR=$(sqlite3 "$DB" "ATTACH '${SRV_DB}' AS srv; SELECT '  #' || d.id || ' ' || d.title || ' (🔁' || (SELECT COUNT(*) FROM srv.events e WHERE e.source = substr(d.title,13) AND e.severity='critical' AND e.timestamp > datetime('now','-7 days')) || 'x/7g)' FROM discoveries d WHERE d.type='bug' AND d.status='active' AND d.title LIKE 'AUTO-alert: %' AND (SELECT COUNT(*) FROM srv.events e WHERE e.source = substr(d.title,13) AND e.severity='critical' AND e.timestamp > datetime('now','-7 days')) >= 3 ORDER BY d.created_at DESC LIMIT 5;" 2>/dev/null)
+    RECUR=$(sqlite3 -cmd ".timeout 5000" "$DB" "ATTACH '${SRV_DB}' AS srv; SELECT '  #' || d.id || ' ' || d.title || ' (🔁' || (SELECT COUNT(*) FROM srv.events e WHERE e.source = substr(d.title,13) AND e.severity='critical' AND e.timestamp > datetime('now','-7 days')) || 'x/7g)' FROM discoveries d WHERE d.type='bug' AND d.status='active' AND d.title LIKE 'AUTO-alert: %' AND (SELECT COUNT(*) FROM srv.events e WHERE e.source = substr(d.title,13) AND e.severity='critical' AND e.timestamp > datetime('now','-7 days')) >= 3 ORDER BY d.created_at DESC LIMIT 5;" 2>/dev/null)
     if [ -n "$RECUR" ]; then
       echo ""
       echo "🔁 Tekrarlayan Hatalar (kök-neden incele):"
@@ -182,7 +182,7 @@ fi
   # Çözülmemiş critical/warning, son 6h, kaynak+mesaj dedup (2-worker uvicorn çift-yazar).
   # FAIL-SAFE: hata/eksik DB -> sessiz atla (oturum-start ASLA bozulmaz).
   if [ -r "$SRV_DB" ]; then
-    ALARMS=$(sqlite3 "$SRV_DB" "SELECT '  [' || severity || '] ' || source || ': ' || substr(message,1,48) || '  (×' || COUNT(*) || ', son ' || datetime(MAX(timestamp),'localtime') || ')' FROM alerts WHERE resolved=0 AND timestamp > datetime('now','-6 hours') GROUP BY source, message ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, MAX(timestamp) DESC LIMIT 6;" 2>/dev/null)
+    ALARMS=$(sqlite3 -cmd ".timeout 5000" "$SRV_DB" "SELECT '  [' || severity || '] ' || source || ': ' || substr(message,1,48) || '  (×' || COUNT(*) || ', son ' || datetime(MAX(timestamp),'localtime') || ')' FROM alerts WHERE resolved=0 AND timestamp > datetime('now','-6 hours') GROUP BY source, message ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, MAX(timestamp) DESC LIMIT 6;" 2>/dev/null)
     if [ -n "$ALARMS" ]; then
       echo ""
       echo "🌡️ Acik Sistem Alarmlari (server.db, cozulmemis, son 6h):"
@@ -206,22 +206,22 @@ fi
   fi
 
   # ─── Aktif planlar — aynı project relevance ─────────────────────
-  PLANS_TOTAL=$(sqlite3 "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='plan' AND status='active';" 2>/dev/null)
+  PLANS_TOTAL=$(sqlite3 -cmd ".timeout 5000" "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='plan' AND status='active';" 2>/dev/null)
   if [ "${PLANS_TOTAL:-0}" -gt 0 ] && [ -n "$PROJECT_PREFIX" ]; then
-    PROJ_PLANS=$(sqlite3 "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='plan' AND status='active' AND project LIKE '${PROJECT_PREFIX}%';" 2>/dev/null)
+    PROJ_PLANS=$(sqlite3 -cmd ".timeout 5000" "$DB" "SELECT COUNT(*) FROM discoveries WHERE type='plan' AND status='active' AND project LIKE '${PROJECT_PREFIX}%';" 2>/dev/null)
     if [ "${PROJ_PLANS:-0}" -gt 0 ]; then
       echo ""
       echo "Bu Projedeki Planlar ($PROJ_PLANS):"
-      sqlite3 "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title FROM discoveries WHERE type='plan' AND status='active' AND project LIKE '${PROJECT_PREFIX}%' ORDER BY created_at DESC LIMIT 5;" 2>/dev/null
+      sqlite3 -cmd ".timeout 5000" "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title FROM discoveries WHERE type='plan' AND status='active' AND project LIKE '${PROJECT_PREFIX}%' ORDER BY created_at DESC LIMIT 5;" 2>/dev/null
     fi
   elif [ "${PLANS_TOTAL:-0}" -gt 0 ]; then
     echo ""
     echo "Aktif Planlar ($PLANS_TOTAL):"
-    sqlite3 "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title FROM discoveries WHERE type='plan' AND status='active' ORDER BY created_at DESC LIMIT 5;" 2>/dev/null
+    sqlite3 -cmd ".timeout 5000" "$DB" "SELECT '  [' || project || '] #' || id || ' ' || title FROM discoveries WHERE type='plan' AND status='active' ORDER BY created_at DESC LIMIT 5;" 2>/dev/null
   fi
 
   # Okunmamis notlar — PER-DEVICE (#647): read_by varsa bu cihaza gore filtrele, yoksa legacy.
-  HAS_RB=$(sqlite3 "$DB" "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='read_by';" 2>/dev/null)
+  HAS_RB=$(sqlite3 -cmd ".timeout 5000" "$DB" "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='read_by';" 2>/dev/null)
   if [ "${HAS_RB:-0}" -gt 0 ]; then
     UNREAD_PRED="read=0 AND (read_by IS NULL OR read_by NOT LIKE '%|$DEV|%')"
   else
@@ -229,41 +229,41 @@ fi
   fi
   # Policy-gate #1222: held dispatch AKTIF-okunmamis listesinden CIKAR (teslim-filtresi, aksiyon-tetiklemesin)
   # AMA insana onay-icin AYRI bolumde goster (tasarim §4). Kolon-guard: status yoksa filtre-yok (geri-uyum).
-  HAS_STATUS=$(sqlite3 "$DB" "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='status';" 2>/dev/null)
+  HAS_STATUS=$(sqlite3 -cmd ".timeout 5000" "$DB" "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='status';" 2>/dev/null)
   [ "${HAS_STATUS:-0}" -gt 0 ] && UNREAD_PRED="$UNREAD_PRED AND COALESCE(status,'active')='active'"
-  NOTES=$(sqlite3 "$DB" "SELECT COUNT(*) FROM notes WHERE (to_device='$DEV' OR to_device IS NULL) AND $UNREAD_PRED;" 2>/dev/null)
+  NOTES=$(sqlite3 -cmd ".timeout 5000" "$DB" "SELECT COUNT(*) FROM notes WHERE (to_device='$DEV' OR to_device IS NULL) AND $UNREAD_PRED;" 2>/dev/null)
   if [ "${NOTES:-0}" -gt 0 ]; then
     echo ""
     echo "Okunmamis Notlar ($NOTES):"
-    sqlite3 "$DB" "SELECT '  ' || from_device || ': ' || title || ' — ' || substr(content,1,80) FROM notes WHERE (to_device='$DEV' OR to_device IS NULL) AND $UNREAD_PRED ORDER BY created_at DESC LIMIT 5;" 2>/dev/null
+    sqlite3 -cmd ".timeout 5000" "$DB" "SELECT '  ' || from_device || ': ' || title || ' — ' || substr(content,1,80) FROM notes WHERE (to_device='$DEV' OR to_device IS NULL) AND $UNREAD_PRED ORDER BY created_at DESC LIMIT 5;" 2>/dev/null
   fi
 
   # Policy-gate #1222 onay-gorunumu: held dispatch'ler INSANA onay-icin (approve/reject MASTER-key).
   # Aktif-listede DEGIL (aksiyon-tetiklemez); yalniz "onay-bekliyor" hatirlatmasi (tasarim §4, Telegram-DEGIL).
   if [ "${HAS_STATUS:-0}" -gt 0 ]; then
-    HELD=$(sqlite3 "$DB" "SELECT COUNT(*) FROM notes WHERE (to_device='$DEV' OR to_device IS NULL) AND status='held';" 2>/dev/null)
+    HELD=$(sqlite3 -cmd ".timeout 5000" "$DB" "SELECT COUNT(*) FROM notes WHERE (to_device='$DEV' OR to_device IS NULL) AND status='held';" 2>/dev/null)
     if [ "${HELD:-0}" -gt 0 ]; then
       echo ""
       echo "Onay Bekleyen HELD Dispatch ($HELD) — otonom-consequential, approve/reject MASTER-key:"
-      sqlite3 "$DB" "SELECT '  #' || id || ' ' || from_device || '->' || COALESCE(to_device,'*') || ': ' || title FROM notes WHERE (to_device='$DEV' OR to_device IS NULL) AND status='held' ORDER BY created_at DESC LIMIT 10;" 2>/dev/null
+      sqlite3 -cmd ".timeout 5000" "$DB" "SELECT '  #' || id || ' ' || from_device || '->' || COALESCE(to_device,'*') || ': ' || title FROM notes WHERE (to_device='$DEV' OR to_device IS NULL) AND status='held' ORDER BY created_at DESC LIMIT 10;" 2>/dev/null
     fi
   fi
 
   # Son 3 oturum
   echo ""
   echo "Son Oturumlar:"
-  sqlite3 "$DB" "SELECT '  #' || session_num || ' (' || device_name || ', ' || date || '): ' || substr(summary,1,70) FROM sessions ORDER BY id DESC LIMIT 3;" 2>/dev/null
+  sqlite3 -cmd ".timeout 5000" "$DB" "SELECT '  #' || session_num || ' (' || device_name || ', ' || date || '): ' || substr(summary,1,70) FROM sessions ORDER BY id DESC LIMIT 3;" 2>/dev/null
 
   # Aktif feedback memoriler (top 8: read_count ASC = en az gorulen once)
   # Why: feedback memoriler claude'un davranisini sekillendirir; dormant kalmasinlar.
   # Read tracking icin de session basina bump.
-  FEEDBACK_IDS=$(sqlite3 "$DB" "SELECT id FROM memories WHERE active=1 AND type='feedback' ORDER BY read_count ASC, updated_at DESC LIMIT 8;" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+  FEEDBACK_IDS=$(sqlite3 -cmd ".timeout 5000" "$DB" "SELECT id FROM memories WHERE active=1 AND type='feedback' ORDER BY read_count ASC, updated_at DESC LIMIT 8;" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
   if [ -n "$FEEDBACK_IDS" ]; then
     echo ""
     echo "Aktif Feedback (en az gorulen 8):"
-    sqlite3 "$DB" "SELECT '  #' || id || ' [' || source_device || '] ' || name || ' — ' || substr(description,1,90) FROM memories WHERE id IN ($FEEDBACK_IDS) ORDER BY read_count, updated_at DESC;" 2>/dev/null
+    sqlite3 -cmd ".timeout 5000" "$DB" "SELECT '  #' || id || ' [' || source_device || '] ' || name || ' — ' || substr(description,1,90) FROM memories WHERE id IN ($FEEDBACK_IDS) ORDER BY read_count, updated_at DESC;" 2>/dev/null
     # Read bump — bu feedback'leri context'e dahil ettik, gosterim sayilir
-    sqlite3 "$DB" "UPDATE memories SET read_count=read_count+1, last_read_at=datetime('now') WHERE id IN ($FEEDBACK_IDS);" 2>/dev/null
+    sqlite3 -cmd ".timeout 5000" "$DB" "UPDATE memories SET read_count=read_count+1, last_read_at=datetime('now') WHERE id IN ($FEEDBACK_IDS);" 2>/dev/null
   fi
 
   # Son test/build sonuclari (hook ile yakalananlar)
