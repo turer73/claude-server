@@ -101,7 +101,7 @@ print(json.dumps({
 
 # Slice C: kaynağın son RECUR_DAYS gününde kaç critical event'i var (tekrar-deseni).
 recur_count() {
-    sqlite3 "$DB_PATH" \
+    sqlite3 -cmd ".timeout 5000" "$DB_PATH" \
         "SELECT COUNT(*) FROM events WHERE source='${1//\'/}' AND severity='critical' AND timestamp > datetime('now','-${RECUR_DAYS} days');" \
         2>/dev/null || echo 0
 }
@@ -115,16 +115,16 @@ reconcile_autobugs() {
     # Codex P2: FIX-PENDING teşhisleri MUAF. Raw auto-alert "kaynak sessiz=düzeldi" ile
     # kapatılabilir; ama auto-investigate'in FIX-PENDING teşhisi alarm geçici sessizleşse
     # bile çözülmemiştir (fix uygulanmadı) — kapatırsak #567'deki gömülme tekrarlanır.
-    sqlite3 "$MEMORY_DB" \
+    sqlite3 -cmd ".timeout 5000" "$MEMORY_DB" \
         "SELECT id || '|' || substr(title,13) FROM discoveries WHERE type='bug' AND status='active' AND title LIKE 'AUTO-alert: %' AND COALESCE(details,'') NOT LIKE '%FIX-PENDING%';" \
         2>/dev/null | while IFS='|' read -r did dsrc; do
         [ -z "$did" ] || [ -z "$dsrc" ] && continue
         local recent
-        recent=$(sqlite3 "$DB_PATH" \
+        recent=$(sqlite3 -cmd ".timeout 5000" "$DB_PATH" \
             "SELECT COUNT(*) FROM events WHERE source='${dsrc//\'/}' AND severity='critical' AND timestamp > datetime('now','-${RESOLVE_QUIET_MIN} minutes');" \
             2>/dev/null)
         if [ "${recent:-1}" = "0" ]; then
-            sqlite3 "$MEMORY_DB" \
+            sqlite3 -cmd ".timeout 5000" "$MEMORY_DB" \
                 "UPDATE discoveries SET status='completed', resolved=1, rationale=COALESCE(rationale,'')||' [auto-resolved: kaynak ${RESOLVE_QUIET_MIN}dk sessiz=düzeldi]' WHERE id=${did} AND status='active';" \
                 2>>"$LOG" || true
             echo "[$(date -Iseconds)] AUTO-RESOLVE id=${did} src=${dsrc} (${RESOLVE_QUIET_MIN}dk sessiz)" >> "$LOG" 2>/dev/null
@@ -148,7 +148,7 @@ has_action() {
 
 # LIMIT 50: batch/spam-cap (Codex #24). Outage/producer-bug sonrasi sinirsiz burst
 # onler; kalan-backlog sonraki */20 run'da drenaj edilir (no-loss korunur).
-IDS=$(sqlite3 "$DB_PATH" \
+IDS=$(sqlite3 -cmd ".timeout 5000" "$DB_PATH" \
     "SELECT id FROM events WHERE severity IN ('warn','critical') AND notified=0 ORDER BY id ASC LIMIT 50;" \
     2>/dev/null)
 q_rc=$?
@@ -170,7 +170,7 @@ declare -A CRIT_SENT_RUN
 
 for id in $IDS; do
     [ -z "$id" ] && continue
-    row=$(sqlite3 -separator $'\x1f' "$DB_PATH" \
+    row=$(sqlite3 -cmd ".timeout 5000" -separator $'\x1f' "$DB_PATH" \
         "SELECT type,source,severity,title,COALESCE(detail,''),timestamp FROM events WHERE id=${id};" \
         2>/dev/null)
     [ -z "$row" ] && continue
@@ -246,14 +246,14 @@ ${ts}"
     CRITICAL_COOLDOWN_SECONDS="${CRITICAL_COOLDOWN_SECONDS:-900}"
     COOLDOWN_OK=1
     if [ "$TG_OK" = "1" ] && [ "$sev" != "critical" ] && [ "${NOTIFY_COOLDOWN_SECONDS}" -gt 0 ]; then
-        last_notified_age=$(sqlite3 "$DB_PATH" \
+        last_notified_age=$(sqlite3 -cmd ".timeout 5000" "$DB_PATH" \
             "SELECT CAST((julianday('now') - julianday(MAX(timestamp))) * 86400 AS INTEGER)
              FROM events WHERE source='${src//\'/}' AND notified=1;" 2>/dev/null)
         if [ -n "$last_notified_age" ] && [ "$last_notified_age" -lt "$NOTIFY_COOLDOWN_SECONDS" ] 2>/dev/null; then
             # notified=2 = collapsed/suppressed (Telegram GİTMEDİ). notified=1 SADECE gerçek
             # gönderim → cooldown query'leri (notified=1) collapsed satırları saymaz, pencere
             # yalnız gerçek-bildirimlerden ilerler (Codex #233 P1).
-            sqlite3 "$DB_PATH" "UPDATE events SET notified=2 WHERE id=${id};" 2>>"$LOG" || true
+            sqlite3 -cmd ".timeout 5000" "$DB_PATH" "UPDATE events SET notified=2 WHERE id=${id};" 2>>"$LOG" || true
             echo "[$(date -Iseconds)] COOLDOWN id=${id} src=${SAFE_SRC} last=${last_notified_age}s<${NOTIFY_COOLDOWN_SECONDS}s" >> "$LOG"
             COOLDOWN_OK=0
         fi
@@ -264,14 +264,14 @@ ${ts}"
                 # notified=1 SADECE gerçek-gönderim (collapse'lar notified=2) → bu pencere
                 # yalnız gerçekten Telegram'a giden critical'lerden ilerler (Codex #233 P1:
                 # collapsed satır artık MAX(timestamp)'i kirletmez → 15dk sonra hatırlatma kaçmaz).
-                last_crit_age=$(sqlite3 "$DB_PATH" \
+                last_crit_age=$(sqlite3 -cmd ".timeout 5000" "$DB_PATH" \
                     "SELECT CAST((julianday('now') - julianday(MAX(timestamp))) * 86400 AS INTEGER)
                      FROM events WHERE source='${src//\'/}' AND severity='critical' AND notified=1;" 2>/dev/null)
                 # in-run guard: bu run'da aynı kaynağın critical'i ZATEN gönderildiyse, DB
                 # satırının eski emit-timestamp'i pencere-dışı görünse de collapse (outage
                 # recover-backlog burst'ünü kes — cooldown gerçek-gönderim anından başlar).
                 if [ -n "${CRIT_SENT_RUN[$src]:-}" ] || { [ -n "$last_crit_age" ] && [ "$last_crit_age" -lt "$CRITICAL_COOLDOWN_SECONDS" ] 2>/dev/null; }; then
-                    sqlite3 "$DB_PATH" "UPDATE events SET notified=2 WHERE id=${id};" 2>>"$LOG" || true
+                    sqlite3 -cmd ".timeout 5000" "$DB_PATH" "UPDATE events SET notified=2 WHERE id=${id};" 2>>"$LOG" || true
                     echo "[$(date -Iseconds)] COOLDOWN-CRIT id=${id} src=${SAFE_SRC} last=${last_crit_age:-none}s in_run=${CRIT_SENT_RUN[$src]:-0} (collapse; ilk-critical zaten bildirildi)" >> "$LOG"
                     COOLDOWN_OK=0
                 fi
@@ -293,7 +293,7 @@ ${ts}"
 
     if [ "$HTTP" = "200" ] || [ "$HTTP" = "cooldown" ]; then
         if [ "$HTTP" = "200" ]; then
-            sqlite3 "$DB_PATH" "UPDATE events SET notified=1 WHERE id=${id};" 2>>"$LOG" || true
+            sqlite3 -cmd ".timeout 5000" "$DB_PATH" "UPDATE events SET notified=1 WHERE id=${id};" 2>>"$LOG" || true
             # gerçek critical gönderimi → in-run burst-guard'ı işaretle (Codex #233 P1)
             [ "$sev" = "critical" ] && CRIT_SENT_RUN["$src"]=1
             echo "[$(date -Iseconds)] SENT id=${id} src=${SAFE_SRC} sev=${sev}" >> "$LOG"
@@ -303,7 +303,7 @@ ${ts}"
         # Memory-only: critical hafızaya YAZILDIYSA handled (notified=1). Yazılamadıysa
         # (Codex P2) notified=0 kalır -> sonraki run retry (kayıp yok). warn -> ertele.
         if [ "$sev" = "critical" ] && [ "$DISCOVERY_OK" = "1" ]; then
-            sqlite3 "$DB_PATH" "UPDATE events SET notified=1 WHERE id=${id};" 2>>"$LOG" || true
+            sqlite3 -cmd ".timeout 5000" "$DB_PATH" "UPDATE events SET notified=1 WHERE id=${id};" 2>>"$LOG" || true
             echo "[$(date -Iseconds)] MEMORY-ONLY id=${id} src=${SAFE_SRC} critical->hafıza (Telegram yok)" >> "$LOG"
             sent=$((sent + 1))
         else

@@ -139,25 +139,32 @@ if [ -d "$HOOK_LOGS_DIR" ]; then
 fi
 
 if [ "$DRY_RUN" = "1" ]; then
-    log "DRY RUN complete — exiting before VACUUM"
+    log "DRY RUN complete — exiting before checkpoint"
     exit 0
 fi
 
-# Reclaim disk space. Order matters in WAL mode:
-#   1. checkpoint(TRUNCATE) first  → flush any pending writes into the main DB
-#   2. VACUUM                       → rewrite the main DB compacted (uses WAL)
-#   3. checkpoint(TRUNCATE) again   → drain VACUUM's WAL back to the DB so the
-#                                     -wal sidecar shrinks to 0 bytes
-# Without step 3 the WAL grows to ~DB-size during VACUUM and stays that way.
+# VACUUM KALDIRILDI (2026-08-09, kesif 1462 kok-nedeni). ONCEDEN:
+#   "PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);"
+# NEDEN KALDIRILDI — VACUUM CANLI DB'yi bozuyordu:
+#   VACUUM tum veritabanini (~420MB) bastan yazar, WAL moddayken bu once WAL'e gider.
+#   Sondaki checkpoint(TRUNCATE) WAL'i geri bosaltmali AMA 2 uvicorn worker + cron
+#   yazicilari aktifken TRUNCATE checkpoint kilit alamaz ve SESSIZCE basarisiz olur.
+#   Sonuc: DB hic kuculmuyor, WAL ~DB-boyutuna sisiyor, ve VACUUM'un yarim kalan
+#   B-tree/indeks yeniden-insasi bozulma uretiyor:
+#     "2nd reference to page X" + "wrong # of entries in index idx_*"
+#   Script bunu AYLARDIR log'luyordu ve kimse okumamisti (negatif "freed"):
+#     VACUUM server.db: db 453500928->453500928, wal 11383592->443789952 (-422271 KB freed)
+#   2026-08-09 (Pazar) canli yakalandi: 02:00 VACUUM -> 13:30 checkpoint -> malformed.
+#   Tarihsel uyum: bozulma TESPIT tarihleri onceki Pazar'dan 0/3/2/2/0 gun sonra (5'te 4).
+# KAZANC KAYBI YOK: VACUUM zaten hicbir sey kazandirmiyordu (db boyutu degismiyordu).
+# Yer geri kazanmak GEREKIRSE: servis DURDURULMUS halde elle VACUUM (tek-yazici sart).
+# Checkpoint TEK BASINA guvenli: kilit alamazsa no-op doner, veri yeniden yazilmaz.
 for db in "$SERVER_DB" "$CI_DB"; do
     [ -f "$db" ] || continue
-    pre_db=$(stat -c%s "$db" 2>/dev/null || echo 0)
     pre_wal=$(stat -c%s "${db}-wal" 2>/dev/null || echo 0)
-    sqlite3 -cmd ".timeout 30000" "$db" "PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null
-    post_db=$(stat -c%s "$db" 2>/dev/null || echo 0)
+    sqlite3 -cmd ".timeout 30000" "$db" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null
     post_wal=$(stat -c%s "${db}-wal" 2>/dev/null || echo 0)
-    saved=$(( (pre_db + pre_wal - post_db - post_wal) / 1024 ))
-    log "  VACUUM $(basename "$db"): db ${pre_db}→${post_db}, wal ${pre_wal}→${post_wal} (${saved} KB freed)"
+    log "  checkpoint $(basename "$db"): wal ${pre_wal}→${post_wal} (VACUUM yok — kesif 1462)"
 done
 
 log "retention complete"

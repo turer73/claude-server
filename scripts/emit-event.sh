@@ -51,7 +51,7 @@ S_SRC="$(esc "$SOURCE")"
 S_TITLE="$(esc "$TITLE")"
 S_DET="$(esc "$DETAIL")"
 
-sqlite3 "$DB_PATH" \
+sqlite3 -cmd ".timeout 5000" "$DB_PATH" \
     "INSERT INTO events (type,source,severity,title,detail) VALUES ('${S_TYPE}','${S_SRC}','${SEV}','${S_TITLE}','${S_DET}');" \
     2>/dev/null || true
 

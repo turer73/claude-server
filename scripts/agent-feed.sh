@@ -26,7 +26,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-q() { sqlite3 "$1" "$2" 2>/dev/null; }
+q() { sqlite3 -cmd ".timeout 5000" "$1" "$2" 2>/dev/null; }
 LINES=()
 add() { LINES+=("$1"); }
 
