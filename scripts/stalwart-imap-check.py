@@ -27,6 +27,18 @@ import ssl
 import sys
 
 
+def is_transport_refusal(message: str) -> bool:
+    """Sunucu girisi PAROLADAN bagimsiz bir sebeple mi reddetti?
+
+    Kritik ayrim: Stalwart duz 143'te LOGIN'i tamamen kapatir ve bunu yanlis
+    parolayla AYNI istisna tipiyle (imaplib.IMAP4.error) bildirir. Ikisini
+    ayirmazsan calisan bir parola "reddedildi" diye raporlanir — bu tam olarak
+    2026-08-10'da bir hesabin parolasini bilinmeyen bir degere dusuren hataydi.
+    """
+    low = message.lower()
+    return "disabled" in low or "clear-text" in low or "cleartext" in low
+
+
 def check(account: str, password: str, host: str) -> tuple[int, str]:
     # Sertifika dogrulamasi bilerek kapali: bu kontrol sunucuya 127.0.0.1
     # uzerinden baglanir, sertifika ise mail.panola.app icin duzenlenmistir —
@@ -58,7 +70,7 @@ def check(account: str, password: str, host: str) -> tuple[int, str]:
                 conn.logout()
             except Exception:
                 pass
-            if "disabled" in msg.lower() or "clear-text" in msg.lower():
+            if is_transport_refusal(msg):
                 transport_errors.append(f"{mode}: {msg}")
                 continue
             return 1, f"reddedildi ({mode}): {msg}"

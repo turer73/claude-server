@@ -25,9 +25,12 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from typing import Any, cast
 
 API = "https://api.cloudflare.com/client/v4"
 ENV_FILE = os.environ.get("ENV_FILE", "/opt/linux-ai-server/.env")
+
+Record = dict[str, Any]
 
 
 def read_tokens() -> list[tuple[str, str]]:
@@ -50,7 +53,7 @@ def read_tokens() -> list[tuple[str, str]]:
     return out
 
 
-def call(token: str, path: str, method: str = "GET", body: dict | None = None) -> dict:
+def call(token: str, path: str, method: str = "GET", body: dict[str, Any] | None = None) -> dict[str, Any]:
     url = f"{API}{path}"
     # The bearer token is attached below, so the request must not be able to
     # leave the Cloudflare API over an attacker-chosen scheme or host. `path`
@@ -69,11 +72,13 @@ def call(token: str, path: str, method: str = "GET", body: dict | None = None) -
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 — scheme asserted above
-            return json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+            return cast("dict[str, Any]", json.loads(resp.read()))
     except urllib.error.HTTPError as exc:
+        # Cloudflare returns its error detail in the body on 4xx; that is far
+        # more useful than the status alone, so prefer it when parseable.
         try:
-            return json.loads(exc.read())
+            return cast("dict[str, Any]", json.loads(exc.read()))
         except Exception:
             return {"success": False, "errors": [{"message": f"HTTP {exc.code}"}]}
     except OSError as exc:
@@ -96,17 +101,44 @@ def resolve_zone(zone: str) -> tuple[str, str]:
     sys.exit(f"error: no token in {ENV_FILE} can edit DNS for {zone}")
 
 
-def records(token: str, zid: str) -> list[dict]:
+def records(token: str, zid: str) -> list[Record]:
     res = call(token, f"/zones/{zid}/dns_records?per_page=200")
     if not res.get("success"):
         sys.exit(f"error: {res.get('errors')}")
-    return res["result"]
+    return cast("list[Record]", res["result"])
 
 
 def fqdn(zone: str, name: str) -> str:
     if name in ("@", "", zone):
         return zone
     return name if name.endswith(zone) else f"{name}.{zone}"
+
+
+def select_existing(
+    all_records: list[Record],
+    rtype: str,
+    name: str,
+    content: str,
+    match_prefix: str | None,
+) -> list[Record]:
+    """Which record an upsert should overwrite — or [] to create a new one.
+
+    Getting this wrong is silent and costly, so the two cases are kept apart:
+
+    * `match_prefix` — singleton TXT records (SPF, DMARC). A zone may hold only
+      one of each; publishing a second does not add to the first, it invalidates
+      both (SPF permerror). So the record is matched by its leading marker and
+      edited in place. More than one match means the zone is already broken —
+      refuse rather than pick one arbitrarily.
+    * MX/TXT without a prefix — a zone legitimately holds many of these under
+      one name. Match on exact content so an upsert cannot clobber a sibling.
+    """
+    hits = [r for r in all_records if r["type"] == rtype and r["name"] == name]
+    if match_prefix is not None:
+        return [r for r in hits if r["content"].strip('"').startswith(match_prefix)]
+    if rtype in ("MX", "TXT"):
+        return [r for r in hits if r["content"] == content]
+    return hits
 
 
 def cmd_zones(_: argparse.Namespace) -> None:
@@ -131,7 +163,7 @@ def cmd_list(args: argparse.Namespace) -> None:
 def cmd_upsert(args: argparse.Namespace) -> None:
     token, zid = resolve_zone(args.zone)
     name = fqdn(args.zone, args.name)
-    payload: dict = {
+    payload: dict[str, Any] = {
         "type": args.type,
         "name": name,
         "content": args.content,
@@ -142,18 +174,9 @@ def cmd_upsert(args: argparse.Namespace) -> None:
     if args.priority is not None:
         payload["priority"] = args.priority
 
-    existing = [r for r in records(token, zid) if r["type"] == args.type and r["name"] == name]
-    # A zone holds many MX/TXT records under one name; only replace the one
-    # carrying this exact content, otherwise every upsert clobbers a sibling.
-    if args.match_prefix:
-        # Singleton TXT records (SPF, DMARC) must be edited in place — publishing
-        # a second one is not additive, it invalidates the pair. Match the record
-        # by its leading marker instead of exact content.
-        existing = [r for r in existing if r["content"].strip('"').startswith(args.match_prefix)]
-        if len(existing) > 1:
-            sys.exit(f"error: {len(existing)} records match prefix {args.match_prefix!r} on {name}; resolve by hand before upserting")
-    elif args.type in ("MX", "TXT"):
-        existing = [r for r in existing if r["content"] == args.content]
+    existing = select_existing(records(token, zid), args.type, name, args.content, args.match_prefix)
+    if args.match_prefix and len(existing) > 1:
+        sys.exit(f"error: {len(existing)} records match prefix {args.match_prefix!r} on {name}; resolve by hand before upserting")
 
     if existing:
         rid = existing[0]["id"]
