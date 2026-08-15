@@ -33,6 +33,23 @@ SCRIPT = REPO / "automation" / "codex-feed-poll.sh"
 TITLE = "feat(mail): Stalwart mail altyapisi — P0 kapatma, ACME/DNS-01, DKIM"
 
 
+def _script_at_foreign_root(tmp_path: Path) -> Path:
+    """Script'i BASKA bir kokten kosturmak icin kopyala.
+
+    Script `cd`'i kendi konumundan turetiyor. Sabit `cd /opt/linux-ai-server`
+    yazilsaydi bu kopya "OUTCOME: fail | cd" verirdi — ama gelistirme
+    makinesinde /opt/linux-ai-server VAR oldugu icin yerinde kosan bir test bunu
+    goremez ve yalnizca CI'da (checkout /home/runner/work/... altinda) dusertdi.
+    Kopyalayarak o ortam farkini testin ICINE tasiyoruz.
+    """
+    root = tmp_path / "repo"
+    (root / "automation").mkdir(parents=True)
+    dest = root / "automation" / SCRIPT.name
+    dest.write_bytes(SCRIPT.read_bytes())
+    dest.chmod(0o755)
+    return dest
+
+
 def _stub_gh(bin_dir: Path) -> None:
     """`gh` yerine sabit cevap veren stub — ag cagrisi yok, deterministik."""
     gh = bin_dir / "gh"
@@ -59,7 +76,7 @@ def test_cache_is_valid_utf8_when_title_truncated_mid_character(tmp_path: Path) 
     out = tmp_path / "codex-open.txt"
 
     result = subprocess.run(
-        ["bash", str(SCRIPT)],
+        ["bash", str(_script_at_foreign_root(tmp_path))],
         capture_output=True,
         text=True,
         timeout=60,
@@ -94,7 +111,7 @@ def test_consumer_grep_still_sees_the_line(tmp_path: Path) -> None:
     out = tmp_path / "codex-open.txt"
 
     subprocess.run(
-        ["bash", str(SCRIPT)],
+        ["bash", str(_script_at_foreign_root(tmp_path))],
         capture_output=True,
         text=True,
         timeout=60,

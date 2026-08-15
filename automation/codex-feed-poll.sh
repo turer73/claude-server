@@ -8,7 +8,13 @@
 # Salt-okunur (yalnız cache dosyası yazılır). FAIL-SAFE: gh yok/ağ-yok → eski cache korunur, OUTCOME partial.
 # Çıktı satır formatı (feed grep -v '^#' ile okur):  🤖 Codex: PR#176 "başlık" — 2 açık (1 P1, 1 P2)
 set -uo pipefail
-cd /opt/linux-ai-server || { echo "OUTCOME: fail | cd"; exit 0; }
+# Repo kokunu SABIT yazma, script'in kendi konumundan turet. Sabit
+# `cd /opt/linux-ai-server` uretimde calisiyordu ama CI checkout'u
+# /home/runner/work/... altinda oldugu icin orada "OUTCOME: fail | cd" veriyordu
+# — testin CI'da dusup lokalde gecmesi tam olarak bu yuzdendi (shell-harness
+# CI-only-fail sinifi). Uretimde sonuc AYNI: automation/.. = /opt/linux-ai-server.
+REPO_ROOT="${CODEX_FEED_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+cd "$REPO_ROOT" || { echo "OUTCOME: fail | cd"; exit 0; }
 
 # UTF-8 locale ZORUNLU — baslik kirpmasi karakter-farkinda olmali (disc#1552).
 # Cron ortaminda LANG genelde tanimsizdir; o zaman bash'in ${x:0:N} dilimlemesi
