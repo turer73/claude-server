@@ -10,8 +10,12 @@
 set -uo pipefail
 source /opt/linux-ai-server/.env 2>/dev/null
 
-BACKUP_DIR="/var/lib/linux-ai-server/backups"
-LOG="/var/log/linux-ai-server/backup-restore-test.log"
+# Yollar override edilebilir — TEK sebebi test edilebilirlik: pytest bu script'i
+# sahte bir backup dizini uzerinde kosturup davranisini dogruluyor
+# (tests/test_backup_restore_test_sh.py). Cron ortaminda degisken tanimli
+# olmadigi icin uretim yollari aynen gecerli.
+BACKUP_DIR="${BACKUP_DIR:-/var/lib/linux-ai-server/backups}"
+LOG="${RESTORE_TEST_LOG:-/var/log/linux-ai-server/backup-restore-test.log}"
 TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 mkdir -p "$(dirname "$LOG")" 2>/dev/null
@@ -52,8 +56,19 @@ fi
 # 3) Tum .db dosyalarini bulup integrity_check
 DB_COUNT=0
 FAIL_COUNT=0
+SKIP_COUNT=0
 FAIL_NAMES=""
 while IFS= read -r -d '' db; do
+    # ADI ".db" olan her sey SQLite DEGIL. data/hook-state/ altindaki playbook
+    # cooldown damgalari hedef-adiyla isimlendiriliyor ve bu deseni tutturuyor
+    # (ornek: investigate-db-integrity_server.db = 18 baytlik unix timestamp).
+    # 2026-08-15'te testi kalici kirmiziya cekti -> alarm korlugu riski.
+    # Ada degil ICERIGE bak: SQLite dosyasi "SQLite format 3\0" ile baslar.
+    if [ "$(head -c 15 "$db" 2>/dev/null)" != "SQLite format 3" ]; then
+        SKIP_COUNT=$((SKIP_COUNT + 1))
+        log "  – $(basename "$db") atlandi (SQLite basligi yok, DB degil)"
+        continue
+    fi
     DB_COUNT=$((DB_COUNT + 1))
     result=$(sqlite3 "$db" "PRAGMA integrity_check;" 2>&1)
     if [ "$result" = "ok" ]; then
@@ -85,7 +100,7 @@ $FAIL_NAMES"
     exit 1
 fi
 
-log "PASS: $DB_COUNT DB hepsi integrity OK"
-echo "OUTCOME: pass | $DB_COUNT DB integrity OK ($LATEST_NAME)"
+log "PASS: $DB_COUNT DB hepsi integrity OK (atlanan: $SKIP_COUNT)"
+echo "OUTCOME: pass | $DB_COUNT DB integrity OK, $SKIP_COUNT atlandi ($LATEST_NAME)"
 # Sessiz PASS — Telegram spam yapmasin (sadece fail bildirilir)
 exit 0
