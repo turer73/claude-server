@@ -10,6 +10,12 @@
 set -uo pipefail
 cd /opt/linux-ai-server || { echo "OUTCOME: fail | cd"; exit 0; }
 
+# UTF-8 locale ZORUNLU — baslik kirpmasi karakter-farkinda olmali (disc#1552).
+# Cron ortaminda LANG genelde tanimsizdir; o zaman bash'in ${x:0:N} dilimlemesi
+# BAYT tabanli calisir ve cok-baytli bir karakteri ORTASINDAN keser.
+# C.UTF-8 yoksa asagidaki iconv guard'i zaten bozuk ciktiyi yayinlatmaz.
+export LC_ALL=C.UTF-8
+
 REPO="${CODEX_FEED_REPO:-turer73/claude-server}"
 OUT="${CODEX_FEED_OUT:-data/hook-state/codex-open.txt}"
 TMP="${OUT}.tmp"
@@ -39,11 +45,28 @@ while IFS=$'\t' read -r num title; do
     tot=$(( ${p1:-0} + ${p2:-0} ))
     [ "$tot" -eq 0 ] && continue
     FLAGGED=$((FLAGGED + 1))
-    short=$(printf '%s' "$title" | cut -c1-38)
+    # KARAKTER bazli kirpma — `cut -c` GNU'da locale'den BAGIMSIZ olarak BAYT
+    # tabanlidir (-c ile -b ayni) ve cok-baytli karakteri ortasindan keserdi.
+    # Belirti (disc#1552): "... altyapisi \xe2\x80" -> gecersiz UTF-8. Sonuc
+    # tuketiciye gore degisiyordu: UTF-8 locale'de grep dosyayi binary sayip
+    # Codex panelini SESSIZCE dusuruyordu; C locale'de Python tuketicileri
+    # UnicodeDecodeError ile patliyordu. Bash dilimlemesi UTF-8 locale altinda
+    # karakter-farkindadir (yukarida LC_ALL sabitlendi).
+    short=${title:0:38}
     # NOT: tot = PR'daki TÜM Codex P1/P2 yorumu (çözülen dahil; unresolved-filtresi GraphQL ister, v1'de yok).
     # "açık" demiyoruz → DOĞRULA ile gerçek-durumu PR'da teyit ettiririz.
     echo "🤖 Codex: PR#${num} \"${short}\" — ${tot} bulgu (${p1} P1, ${p2} P2), DOĞRULA" >> "$TMP"
 done <<< "$PRS"
+
+# YAZ-ONCE-DOGRULA (disc#1552): bozuk UTF-8'i ASLA yayinlama. Gecersiz bayt
+# iceren cache sessiz-arizaya yol aciyor — tuketici ya paneli dusuruyor ya
+# patliyor, ikisi de tesahis edilmesi zor. Bozuksa eski cache korunur ve durum
+# partial olarak RAPORLANIR (sessizce yutulmaz).
+if ! iconv -f UTF-8 -t UTF-8 "$TMP" >/dev/null 2>&1; then
+    rm -f "$TMP"
+    echo "OUTCOME: partial | uretilen cache gecersiz UTF-8 (eski cache korundu, disc#1552)"
+    exit 0
+fi
 
 mv "$TMP" "$OUT" 2>/dev/null || { echo "OUTCOME: partial | cache yazılamadı"; exit 0; }
 echo "OUTCOME: pass | ${TOTAL_PR} açık PR, ${FLAGGED} Codex-bulgulu → cache güncel"
