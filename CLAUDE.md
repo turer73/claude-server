@@ -8,7 +8,7 @@
 - **Hostname:** klipper · **Kullanici:** klipperos (sudo NOPASSWD)
 - **Ag:** LAN 192.168.1.113 | Tailscale 100.84.251.49 (klipper-2 olarak kayitli)
 - **Servis portu:** 8420 · **Python venv:** `/opt/linux-ai-server/venv`
-- **Donanim (degismez):** Beelink SER8 (AZW), AMD Ryzen 7 8845HS w/ Radeon 780M (8C/16T), 28GB RAM, 2 NVMe (Lexar NM790 2TB + Crucial P3 1TB). BIOS V035 P8C0M0C15.14 (26/06/2025)
+- **Donanim:** Beelink SER8 (AZW), AMD Ryzen 7 8845HS w/ Radeon 780M (8C/16T), 28GB RAM, BIOS V035 P8C0M0C15.14 (26/06/2025). **NVMe: TEK disk — Crucial P3 1TB (`0000:01:00.0`).** Ikinci yuva bos: Lexar NM790 2TB 2026-08-11'de oldu, 2026-08-15'te sokuldu (asagi bkz).
 
 **Canli durum — DOSYAYA BAKMA, OLC:**
 
@@ -17,33 +17,29 @@
 | Disk/LVM yerlesimi, hangi LV hangi fiziksel diskte | `lsblk -e7 -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL` |
 | Bos alan | `vgs` (VG bazinda) · `df -h` (fs bazinda) |
 | Kernel surumu / OS | `uname -r` · `lsb_release -d` |
-| PCIe link durumu | `cat /sys/bus/pci/devices/0000:05:00.0/current_link_speed` (Lexar) — `lspci` shell/exec whitelist'inde YOK (403); sysfs herkeste calisir |
+| PCIe link durumu | `cat /sys/bus/pci/devices/0000:01:00.0/current_link_speed` (Crucial) — `lspci` shell/exec whitelist'inde YOK (403); sysfs herkeste calisir |
+| Takili NVMe var mi | `ls /sys/class/nvme/` — ikinci disk takilirsa burada `nvme1` belirir |
 | NVMe hatalari | `journalctl -k -b 0 \| grep -iE 'genctr mismatch\|invalid id completed'` |
 
 **KARARLAR ve INVARYANTLAR** (olculemez — kaynagi yalniz bu dosya):
-- **Disk rol ayrimi (2026-08-01 karari, 2026-08-04'te gerekcesi guncellendi):** Lexar = yedekleme/soguk veri · Crucial = aktif her sey. **Karar ayni kaldi, ama gerekcesi degisti:** orijinal gerekce "PCIe linki kararsiz" idi, o sorun yatistirildi (asagi bkz). **Bugunku gerekce: Lexar 4K-rastgelede Crucial'in ~2.5x gerisinde ve bu linkten degil diskin kendisinden** — kalici. Ikincil: link arizasi yatistirildi ama nedeni kanitlanmadi, artik risk sifir degil. **Rastgele-I/O agir is yuklerini Lexar'a koyma.** Sirali/soguk is icin engel YOK (yedek, arsiv, model blob'u).
-- **ASPM udev kurali YUK TASIYOR** — `/etc/udev/rules.d/99-lexar-aspm.rules` deneysel artik DEGIL, kesif 1479'un fiili cozumu. **Silmeyin, "temizlik" yapmayin**; kaldirilirsa link arizasinin donmesi beklenir.
+- **TEK DISK — disk-seviyesi yedeklilik YOK (2026-08-15'ten beri).** Her sey (root, /boot, ESP, docker, log, ollama, yedekler) tek bir Crucial P3 1TB uzerinde. **"Yedegimiz var" cumlesini disk arizasina karsi koruma anlaminda KURMAYIN** — mevcut yedekler yalnizca mantiksal senaryolari (silme, bozulma, VPS kaybi) korur. Off-site/ikinci-disk kopya **eksik ve acik borc**. Ikinci disk takilirsa once bu maddeyi guncelleyin.
+- **Yedek hedefi `vg-storage/lv-backup` → `/backups` (30G, 2026-08-15).** Eskiden Lexar'daki `lv-datasets` idi; disk olunce `pull-vps-backup` her gece `mkdir: Input/output error` ile dustu. LV bilerek kucuk tutuldu: olculen ihtiyac ~1.5G (7 gun retention), VG'de 67G bos duruyor, gerekirse `lvextend + resize2fs` ile online buyutulur. **VG'yi bastan doldurmayin** — snapshot/ara-tasima icin bos alan lazim.
+- **`/boot` ve `/boot/efi` root ile AYNI diskte kalmali** — kesif #1549'un dersi kural haline geldi: 2026-08-02'de root Crucial'a tasindi ama boot alanlari Lexar'da birakildi, disk olunce sistem **4 gun bootloader'siz** calisti (kernel RAM'deydi, ilk reboot'ta acilmayacakti). Disk isine dokunan her degisiklikten sonra ucunu AYRI AYRI dogrula: `findmnt /boot`, `findmnt /boot/efi`, `efibootmgr -v`'deki `HD(N,GPT,<PARTUUID>,...)` hangi diske denk geliyor.
 - Tum mountlar **UUID-tabanli** → slot degisimi guvenli. Yeni mount eklerken bunu bozma.
-- Lexar'da mount-suz duran `lv-models` ve eski `ubuntu-lv` **bilerek** bekletiliyor (ollama ve Faz C rollback'i); dogrulaninca silinip VG'ye iade edilecek. Bos gorunuyorlar diye silme.
 - `fstab` duzenledikten sonra **`systemctl daemon-reload` sart** — atlanirsa bayat mount unit eski cihaza baglanir ve yeni mount sessizce dusebilir.
 
-**KAPANDI — kesif 1479 (Lexar PCIe link kararsizligi), 2026-08-04. YATISTIRILDI, "anlasildi" DEGIL:**
-- Belirtiydi: boot'ta 16GT/s x4 egitiyor, bir sure sonra `genctr mismatch` / `invalid id completed` uretip **2.5GT/s'e dusup orada kaliyor**. Crucial ayni surede 0 hata.
-- **Cozum: Lexar'da ASPM + ClockPM kapatildi** (udev, vendor:device ID ile — yuva degisiminden etkilenmez). Kural yuk tasir, yukaridaki invaryanta bakin.
-- **Kapatma kaniti:** 25s00d kesintisiz **16.0 GT/s x4 + 0 hata + 0 fs/blok hatasi** (journal tam boot kapsamasi dogrulandi). Anlamli karsilastirma: **onceki dusus ayni kosulda (bosta) 19s50d'de gelmisti** — gozlenen en gec dusus ~5 saat asildi.
-- **KANITLANMADI — nedensellik.** Ayni pencerede reboot da vardi, ve daha once sogutucu sokme/yuva takasi da yapilmisti; degisken tek degil. Izolasyon adimi (yalniz `clkpm=1` geri acip beklemek) **bilerek yapilmadi**: calisan yapilandirma, "neden"i bilmeye tercih edildi. Yani elimizdeki ifade sudur — *"ASPM kapaliyken 25 saat dusmedi"*, **"ASPM sebebiydi" DEGIL**.
-- **RAKIP ACIKLAMA — toz filtresi baskisi (Turgut, 2026-08-09).** Ariza fiziksel olabilir: toz filtresi diski/karti baskiliyordu. Mevcut delillerle **tutarli** ve bugune kadarki tek somut mekanizma onerisi: (a) sogutucu sokup yeniden oturtmak hata sayacini sifirlamis ama duzeltmemisti — mekanik mudahalenin gecici etkisi baski hipoteziyle uyusur; (b) yuva takasi da mekanik bir mudahaleydi; (c) ASPM kapatmanin **neden** ise yaradigi zaten hicbir zaman aciklanamamisti. Bu da kanitlanmis degil; ikisi birbirini **dislamiyor** (marjinal sinyal kalitesi + guc-durumu gecisleri birlikte esigi asmis olabilir).
-- **Ariza EN AZ 2026-07-24'ten beri vardi** (klipper olcumu, 2026-08-09): eski root LV'deki Temmuz `kern.log` arsivinde `07-24T22:48 nvme nvme0: request 0x3 genctr mismatch` satiri var — slot-takasi ONCESI adlandirmada `nvme0` = **Lexar**. Yani ariza 08-01 mudahaleleriyle **baslamadi**; kronik-fiziksel bir sebebi (toz filtresi gibi) destekler. 06-28..08-01 penceresinde baska NVMe hatasi **yok** (tek satir bu). Arsiv: `/datasets/forensics-prerootmove-20260808/` — eski LV silinince **tek kopya** orasi.
-- **YENIDEN ACMA kosulu (biri yeterli):** `journalctl -k -b 0` icinde `genctr mismatch` / `invalid id completed` / `IO_PAGE_FAULT` **veya** `current_link_speed` != 16.0 GT/s. Boyle bir sey gorurseniz once **iki satirin SIRASINI ve tam zaman damgasini** kaydedin (IO_PAGE_FAULT once mi geliyor) — teshisi ayiracak tek veri bu.
-- **Veri riski hic gorulmedi:** fs/blok I/O hatasi yok, SMART temiz, kapasite dogrulandi → **sahte kapasite DEGIL**.
-- **Linkten bagimsiz, KALICI bulgu:** 4K-rastgelede Crucial'in ~2.5x gerisinde. Bu **linkten degil**, DRAM-less diskin kendisinden (Gen4'teyken de olculdu). Link duzeldi, bu **gecmedi** — disk rol ayriminin bugunku gerekcesi budur.
-- **Kriter nasil kuruldu (metod olarak sakli):** iki kosul BIRLIKTE — "~25 saat hatasiz" *ve* "link hala 16.0 GT/s". Sayac tek basina gecersizdi, cunku disk 2.5GT/s'e dustukten sonra hata **uretmiyor** (05:00:50 dususunden sonraki ~13 saat tamamen temizdi) → **sessizlik saglik degil, teslim olabilir**. 25 rakami da istatistik degil: gozlenen iki dususun (**35 dakika** ve **19 saat 50 dakika**) en gecinin otesi. n=2 ve iki ayri buyukluk mertebesi oldugu icin **olasilik dili kullanmayin** ("%X tesaduf" hesaplari gecersiz).
+**KAPANDI — Lexar NM790 2TB, 2026-08-15'te sokuldu.** Iki ayri ariza yasadi; ikisini karistirmayin:
+- **Kesif 1479 (2026-08 basi) — PCIe link kararsizligi.** Boot'ta 16GT/s x4 egitiyor, sonra `genctr mismatch`/`invalid id completed` uretip 2.5GT/s'e dusup kaliyordu. ASPM+ClockPM kapatilarak (udev) **yatistirildi**, ama **nedeni hic kanitlanmadi** — reboot/sogutucu-sokme/yuva-takasi ayni pencerede oldugu icin degisken tek degildi. Rakip aciklama (Turgut): toz filtresi baskisi. Ariza en az 2026-07-24'e uzaniyordu.
+- **Kesif #1549 (2026-08-11 06:29) — NAMESPACE olumu, AYRI ve kalici.** `nvme nvme1: Identify namespace failed (-5)`, `/sys/block/nvme1n1/size=0`, admin komutlari bile cevapsiz. **PCIe linki bu sirada 16.0 GT/s x4 SAGLAMDI** — yani 1479 ile ayni ariza degil. `lsblk` bir sure p1/p2/p3 ve LV'leri gostermeye devam etti; o **bayat kernel/device-mapper hafizasiydi**, erisilebilir veri degil.
+- **Birlikte kaybedilenler:** `ubuntu-vg-1` VG'nin tamami — eski root LV (rollback yolu), `lv-datasets` (VPS yedekleri), `lv-models`, ve `/datasets/forensics-prerootmove-20260808/` (Temmuz kern.log arsivinin **tek** kopyasiydi). Kurtulan: `/datasets/pre-rootmove-20260802-0801/` — kok LV uzerindeydi, `/backups/archive/` altina alindi.
+- **Kalici olcum (disk gitti ama bulgu duruyor):** Lexar 4K-rastgelede Crucial'in ~2.5x gerisindeydi ve bu **linkten degil DRAM-less diskin kendisindendi** (Gen4'teyken de olculmustu). Yeni disk alinirsa DRAM-li model tercih edin.
 
 **OGRENILMIS TUZAKLAR** (bunlari bilmeden olcen yanlis sonuca varir):
-- **`nvmeXn1` adiyla calisma, PCI adresiyle calis** — 2026-08-01 slot takasindan sonra isimler YER DEGISTIRDI (Lexar bugun `nvme1n1`, eski kayitlarda `nvme0n1`). Yanlis diski olcup "temiz" raporlamak sessizce olur. Blok cihazi her seferinde `ls /sys/bus/pci/devices/0000:05:00.0/nvme/` ile turet (Lexar=05:00.0, Crucial=01:00.0).
-- **Link durumunu boot'tan hemen sonra kontrol etme** — yuk + zaman gectikten sonra bak. Boot'ta saglikli gorunmesi hicbir sey soylemez.
+- **Sessizlik saglik degil — arizanin "teslim olmus" hali de sessizdir.** Lexar 2.5GT/s'e dustukten sonra hata **uretmiyordu**: dususu izleyen ~13 saat tamamen temizdi. Bu yuzden saglik kriteri her zaman **iki kosullu** olmali: "hata yok" *VE* "durum degiskeni saglikli" (link hizi, degraded-flag, namespace boyutu). Tek basina sayaca bakan yanlis "temiz" raporlar.
+- **Zamana bagli degiskende tek okuma kanit degil.** "Duzeldi" demeden once yuk + gecen zaman + hata logu birlikte gerekir; 2026-08-01'de tek-atislik olcumle "cozuldu" denip 3 kalici kayit guncellendi ve 40 dakika sonra geri alindi.
+- **`nvmeXn1` adiyla calisma, PCI adresiyle calis** — 2026-08-01 slot takasindan sonra isimler YER DEGISTIRMISTI ve yanlis diski olcup "temiz" raporlamak sessizce olur. Blok cihazi `ls /sys/bus/pci/devices/0000:01:00.0/nvme/` ile turet (Crucial=01:00.0). Ikinci disk takilirsa ayni kurali onun adresiyle uygula.
 - **NVMe hatasi sayarken `dmesg` KULLANMA** — halka tampon doluyor ve boot'un ilk saatlerini sessizce dusuruyor, sahte "0 hata" uretiyor (2026-08-02'de dmesg'de hic nvme satiri kalmamisti). `journalctl -k -b 0` kullan (onceki boot: `-b -1`).
-- **Sogutucu sokup yeniden oturtmak link sorununu DUZELTMEDI**, yalnizca hata sayacini sifirladi — "duzeldi" gibi gorundu (2026-08-01'de bu tuzaga dusuldu).
+- **Sogutucu sokup yeniden oturtmak link sorununu DUZELTMEDI**, yalnizca hata sayacini sifirladi — "duzeldi" gibi gorundu (2026-08-01'de bu tuzaga dusuldu). Mekanik mudahale sonrasi sayac sifirlanmasini iyilesme sanmayin.
 - Ollama'yi Crucial'a tasimak soguk model yuklemesini ~2x hizlandirdi ama **token uretimini degistirmedi** — uretim %100 CPU-bound, disk-disi. Disk degisikligiyle tok/s beklemeyin.
 
 ## Servis

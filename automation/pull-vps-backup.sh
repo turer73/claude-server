@@ -1,7 +1,7 @@
 #!/bin/bash
 # Pull VPS Backup — Dokploy konfig + Docker volume snapshot
 # Cron: 0 4 * * * (her gece 04:00)
-# Hedef: /datasets/backups/vps/<YYYY-MM-DD>/  (7 gün retention)
+# Hedef: /backups/vps/<YYYY-MM-DD>/  (7 gün retention)
 #
 # VPS = root@100.126.113.23 (Tailscale-only). Klipper'dan SSH key ile bağlanır.
 # Eski makinede script kayboldu; bu yeni minimal versiyon.
@@ -12,9 +12,13 @@ source /opt/linux-ai-server/.env 2>/dev/null
 VPS="${VPS_HOST:?Set VPS_HOST in .env}"
 SSH="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 $VPS"
 LOG=/var/log/linux-ai-server/vps-backup.log
-# disc#1290: root-LV (/data, ~42G bos) yerine datasets-LV (393G) — disk planina uygun.
-# Eski konum /data/backups/vps ops-migration ile symlink olarak yeni konuma isaret eder.
-TARGET_ROOT=/datasets/backups/vps
+# 2026-08-15: eski hedef /datasets/backups/vps idi; o LV Lexar NM790'daydi ve disk
+# 2026-08-11'de namespace-seviyesinde oldu (kesif #1549) -> hedef yok oldu, script
+# "mkdir: Input/output error" ile dusuyordu. Yeni hedef vg-storage/lv-backup (30G).
+# UYARI: makinede artik TEK disk var (Crucial P3). Bu yedek veriyle AYNI fiziksel
+# diskte duruyor; disk arizasina karsi koruma SAGLAMAZ, yalnizca mantiksal
+# (silme/bozulma/VPS-kaybi) senaryolarini korur. Off-site kopya hala eksik.
+TARGET_ROOT=/backups/vps
 RETENTION_DAYS=7
 TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 DATE=$(date +%Y-%m-%d)
@@ -111,6 +115,15 @@ _emit_outcome() {
   _relay_vps_backup  # VPS backup.sh outcome'unu da cron_outcomes'a relay et
 }
 trap _emit_outcome EXIT
+
+# MOUNTPOINT GUARD — fstab'da /backups "nofail" ile duruyor (headless makinede
+# mount hatasi emergency-mode'a dusurmesin diye, bkz /etc/fstab yorumu). Bunun
+# karsi-riski: mount yoksa /backups kok-LV uzerinde sirali bir dizin olur ve bu
+# script her gece oraya yazip kok diski sessizce doldurur -- ustelik "yedek var"
+# yanilsamasi uretir. Yazmadan ONCE gercekten mount'lu mu dogrula.
+if ! mountpoint -q /backups; then
+  fail "/backups mount DEGIL (vg-storage/lv-backup dusmus?) — kok-LV'ye yazmamak icin durduruldu"
+fi
 
 mkdir -p "$DEST" || fail "mkdir $DEST"
 log "=== START backup -> $DEST ==="
