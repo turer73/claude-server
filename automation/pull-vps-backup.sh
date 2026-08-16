@@ -37,7 +37,16 @@ DEST="$TARGET_ROOT/$DATE"
 #   - grafana-data
 # plausible_event-data (ClickHouse) volume tar etmiyoruz — 449MB'i sistem
 # log/WAL, gercek data sadece 3.4 MiB. Logical dump asagida (step 2.5).
-VOLUME_PATTERN='^dokploy|n8n-data$|^plausible_db|^grafana-data$'
+#
+# n8n-data ve grafana-data 2026-08-15'te PATTERN'DAN CIKARILDI (disc#1559).
+# Olculdu: VPS'te n8n/grafana KONTEYNERI YOK (docker ps -a bos), her iki volume
+# de DANGLING ve son 30 gunde 0 dosya degismis (mtime'lar 2026-05-12/13).
+# Sebep: gozlem/otomasyon stack'i 2026-05'te "klipper-first" karariyla klipper'a
+# tasindi; bunlar o tasimadan kalma ARTIK. Gecelik 24MB olu veri cekiliyordu,
+# CANLI olanlar ise klipper'da ve HIC yedeklenmiyordu -> yeni script:
+# automation/backup-docker-volumes.sh (SQLite online-backup ile).
+# Cekmeyi durdurmadan once son kopya alindi: /backups/archive/vps-orphan-volumes-20260815/
+VOLUME_PATTERN='^dokploy|^plausible_db'
 
 # CANLI POSTGRES VERI DIZINI TAR'LANMAZ (2026-08-15).
 # Calisan bir Postgres'in data dizinini pg_start_backup/WAL-arsivi olmadan tar

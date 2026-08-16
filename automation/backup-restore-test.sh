@@ -64,7 +64,9 @@ while IFS= read -r -d '' db; do
     # (ornek: investigate-db-integrity_server.db = 18 baytlik unix timestamp).
     # 2026-08-15'te testi kalici kirmiziya cekti -> alarm korlugu riski.
     # Ada degil ICERIGE bak: SQLite dosyasi "SQLite format 3\0" ile baslar.
-    if [ "$(head -c 15 "$db" 2>/dev/null)" != "SQLite format 3" ]; then
+    # NUL-guvenli: $(...) NUL bayti iceren ikili dosyada bash uyarisi basardi
+    # ("ignored null byte in input"). Ayni kontrol backup-docker-volumes.sh'te de var.
+    if ! head -c 15 "$db" 2>/dev/null | cmp -s - <(printf 'SQLite format 3'); then
         SKIP_COUNT=$((SKIP_COUNT + 1))
         log "  – $(basename "$db") atlandi (SQLite basligi yok, DB degil)"
         continue
