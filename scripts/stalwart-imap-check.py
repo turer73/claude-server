@@ -39,6 +39,19 @@ def is_transport_refusal(message: str) -> bool:
     return "disabled" in low or "clear-text" in low or "cleartext" in low
 
 
+def _close(conn: imaplib.IMAP4) -> None:
+    """Baglantiyi her kosulda kapat — kapanis hatasi sonucu degistirmemeli.
+
+    disc#1537: login sirasinda IMAP4.error DISI bir istisna (soket/timeout)
+    olustugunda eski kod baglantiyi ACIK BIRAKIP `continue` ediyordu; iki modlu
+    dongude bu, her cagride sizinti demekti.
+    """
+    try:
+        conn.logout()
+    except Exception:
+        pass
+
+
 def check(account: str, password: str, host: str) -> tuple[int, str]:
     # Sertifika dogrulamasi bilerek kapali: bu kontrol sunucuya 127.0.0.1
     # uzerinden baglanir, sertifika ise mail.panola.app icin duzenlenmistir —
@@ -66,22 +79,19 @@ def check(account: str, password: str, host: str) -> tuple[int, str]:
             # gercek bir cevap. Tek istisna: sunucu bu portta LOGIN'i hic
             # kabul etmiyorsa bu da IMAP4.error olarak gelir, onu ayikla.
             msg = str(exc)
-            try:
-                conn.logout()
-            except Exception:
-                pass
+            _close(conn)
             if is_transport_refusal(msg):
                 transport_errors.append(f"{mode}: {msg}")
                 continue
             return 1, f"reddedildi ({mode}): {msg}"
         except Exception as exc:
+            # SIZINTI DUZELTMESI (disc#1537): burada da kapat. IMAP4.error dali
+            # zaten kapatiyordu, bu dal kapatmadan `continue` ediyordu.
+            _close(conn)
             transport_errors.append(f"{mode}: {exc}")
             continue
 
-        try:
-            conn.logout()
-        except Exception:
-            pass
+        _close(conn)
         return 0, f"giris basarili ({mode})"
 
     return 2, "tasima hatasi -> " + " | ".join(transport_errors)

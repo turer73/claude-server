@@ -85,10 +85,26 @@ def call(token: str, path: str, method: str = "GET", body: dict[str, Any] | None
         return {"success": False, "errors": [{"message": str(exc)}]}
 
 
-def resolve_zone(zone: str) -> tuple[str, str]:
-    """Find (token, zone_id) for a zone name — the first token that can READ
-    its records. Listing a zone is not enough: several tokens can see a zone
-    they have no DNS permission on, and that only fails later, mid-change."""
+# Aday listesi bir kosum boyunca degismez (token'lar .env'den, zone id sabit) ve
+# her aday 2 API cagrisina mal oluyor. mx-cutover.sh her MX kaydi icin bir
+# `delete` cagirdigindan, onbelleksiz hal ayni probe'u N kez tekrarlar.
+# Script tek-atislik oldugu icin bayatlama riski yok.
+_ZONE_CACHE: dict[str, list[tuple[str, str, str]]] = {}
+
+
+def zone_candidates(zone: str) -> list[tuple[str, str, str]]:
+    """Zone'un kayitlarini OKUYABILEN tum (ad, token, zone_id) adaylari.
+
+    Okuma probe'u yalnizca OKUMA kanitlar. Read-yetkili ama Edit-yetkisiz bir
+    token bu probe'u gecer; eski kod ilk gecen token'i secip donuyordu ve her
+    upsert/delete yetki hatasiyla dusuyordu — ustelik .env'de zone'u DUZENLEYEBILEN
+    baska bir token varken. Bu yuzden artik TEK aday degil, LISTE donuyoruz;
+    yazma yolu authz hatasinda siradakine gecer (bkz write_call).
+    """
+    cached = _ZONE_CACHE.get(zone)
+    if cached is not None:
+        return cached
+    out: list[tuple[str, str, str]] = []
     for name, token in read_tokens():
         res = call(token, f"/zones?name={zone}")
         if not res.get("success") or not res.get("result"):
@@ -96,16 +112,86 @@ def resolve_zone(zone: str) -> tuple[str, str]:
         zid = res["result"][0]["id"]
         probe = call(token, f"/zones/{zid}/dns_records?per_page=1")
         if probe.get("success"):
-            return token, zid
-        print(f"  ({name} sees {zone} but cannot read DNS — skipping)", file=sys.stderr)
-    sys.exit(f"error: no token in {ENV_FILE} can edit DNS for {zone}")
+            out.append((name, token, zid))
+        else:
+            print(f"  ({name} sees {zone} but cannot read DNS — skipping)", file=sys.stderr)
+    _ZONE_CACHE[zone] = out
+    return out
+
+
+def resolve_zone(zone: str) -> tuple[str, str]:
+    """Okuma islerinde kullanilan ilk aday. Yazma icin write_call kullan."""
+    cands = zone_candidates(zone)
+    if not cands:
+        sys.exit(f"error: no token in {ENV_FILE} can read DNS for {zone}")
+    _, token, zid = cands[0]
+    return token, zid
+
+
+# Cloudflare yetki hatalari: 10000 = Authentication error,
+# 9109 = Unauthorized to access requested resource.
+_AUTHZ_CODES = {10000, 9109}
+
+
+def is_authz_error(res: dict[str, Any]) -> bool:
+    """Cevap, TOKEN DEGISTIRMEKLE cozulebilecek bir yetki hatasi mi?
+
+    Ayrim onemli: gercek bir istek hatasinda (gecersiz icerik, cakisan kayit)
+    siradaki token'i denemek anlamsizdir ve hatayi gizler.
+    """
+    for e in res.get("errors") or []:
+        if e.get("code") in _AUTHZ_CODES:
+            return True
+        msg = str(e.get("message", "")).lower()
+        if "authenticat" in msg or "unauthorized" in msg or "http 403" in msg:
+            return True
+    return False
+
+
+def write_call(zone: str, path: str, method: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Yazma cagrisi — zone'u okuyabilen adaylari sirayla dener.
+
+    `path` icinde {zid} yer tutucusu bulunur; her aday icin doldurulur.
+    """
+    cands = zone_candidates(zone)
+    if not cands:
+        sys.exit(f"error: no token in {ENV_FILE} can read DNS for {zone}")
+    res: dict[str, Any] = {}
+    for name, token, zid in cands:
+        res = call(token, path.format(zid=zid), method, body)
+        if res.get("success") or not is_authz_error(res):
+            return res
+        print(f"  ({name} cannot edit {zone} — trying next token)", file=sys.stderr)
+    return res
 
 
 def records(token: str, zid: str) -> list[Record]:
-    res = call(token, f"/zones/{zid}/dns_records?per_page=200")
-    if not res.get("success"):
-        sys.exit(f"error: {res.get('errors')}")
-    return cast("list[Record]", res["result"])
+    """TUM kayitlari getir — sayfalama SART.
+
+    Tek sayfa (per_page=200) cekmek, 200'den fazla kayitli bir zone'da sonraki
+    sayfalari SESSIZCE dusuruyordu. Sonuc kozmetik degil: cmd_upsert kaydi
+    bulamayip "yok" sanarak IKINCISINI olusturur. SPF/DMARC gibi tekil TXT
+    kayitlarinda bu, --match-prefix'in tam da onlemek icin var oldugu
+    duplicate-kayit / mail-dogrulama permerror'unu uretir.
+    """
+    out: list[Record] = []
+    page = 1
+    while True:
+        res = call(token, f"/zones/{zid}/dns_records?per_page=200&page={page}")
+        if not res.get("success"):
+            sys.exit(f"error: {res.get('errors')}")
+        out.extend(cast("list[Record]", res["result"]))
+        info = res.get("result_info") or {}
+        total = info.get("total_pages")
+        # total_pages yoksa (eski/kismi cevap) bos sayfa gelene kadar devam et;
+        # sessizce ilk sayfada durmak yasak.
+        if total is not None:
+            if page >= int(total):
+                break
+        elif not res["result"]:
+            break
+        page += 1
+    return out
 
 
 def fqdn(zone: str, name: str) -> str:
@@ -180,10 +266,10 @@ def cmd_upsert(args: argparse.Namespace) -> None:
 
     if existing:
         rid = existing[0]["id"]
-        res = call(token, f"/zones/{zid}/dns_records/{rid}", "PUT", payload)
+        res = write_call(args.zone, "/zones/{zid}/dns_records/" + rid, "PUT", payload)
         action = "updated"
     else:
-        res = call(token, f"/zones/{zid}/dns_records", "POST", payload)
+        res = write_call(args.zone, "/zones/{zid}/dns_records", "POST", payload)
         action = "created"
 
     if not res.get("success"):
@@ -192,8 +278,7 @@ def cmd_upsert(args: argparse.Namespace) -> None:
 
 
 def cmd_delete(args: argparse.Namespace) -> None:
-    token, zid = resolve_zone(args.zone)
-    res = call(token, f"/zones/{zid}/dns_records/{args.record_id}", "DELETE")
+    res = write_call(args.zone, "/zones/{zid}/dns_records/" + args.record_id, "DELETE")
     if not res.get("success"):
         sys.exit(f"error: {res.get('errors')}")
     print(f"deleted: {args.record_id}")

@@ -41,9 +41,19 @@ umask 077
 echo "### 0. Yedek"
 cp -a "$CFG" "$CFG.pre-p0.$STAMP"
 cp -a "$COMPOSE" "$COMPOSE.pre-p0.$STAMP"
-# Yarim kalmis bir kosudan artik kayit varsa kenara al — ayni hesap icin iki
-# satir birakmak, hangisinin gecerli oldugunu belirsizlestirir.
-[ -s "$CRED" ] && mv "$CRED" "$CRED.$STAMP.eski"
+# Yarim kalmis bir kosudan artik kayit varsa kenara alinacak — ayni hesap icin
+# iki satir birakmak, hangisinin gecerli oldugunu belirsizlestirir.
+#
+# AMA ONCE OKU, SONRA TASI. Basarili bir onceki kosumdan sonra konteyner yeniden
+# olusturuldugu icin fallback-admin parolasi `docker logs`'ta ARTIK YOK; tek
+# kopyasi bu dosyadaki "webadmin-admin" satiridir. Eskiden dosya burada
+# tasiniyor, kimlik dogrulama (asagida) yalnizca log'a bakip bos bulunca
+# "parolayi $CRED icinden al" diyerek cikiyordu — oysa $CRED'i az once kendisi
+# tasimisti. Yani --force yolu, isaret ettigi dosyayi yok ederek olurdu.
+SAVED_ADM=""
+if [ -s "$CRED" ]; then
+  SAVED_ADM=$(grep -m1 '^webadmin-admin[[:space:]]' "$CRED" | awk '{print $2}')
+fi
 echo "  $CFG.pre-p0.$STAMP"
 
 # IMAP dogrulayici. Duz 143'te LOGIN kapali oldugu icin STARTTLS/993 sart;
@@ -85,10 +95,14 @@ PY
 
 echo "### 1. Mevcut admin ile baglan"
 OLDP=$(docker logs stalwart-mail 2>&1 | grep -oP "password '\K[^']+" | head -1)
+if [ -z "$OLDP" ] && [ -n "$SAVED_ADM" ]; then
+  # Konteyner yeniden olusturulmus (basarili onceki kosum). Kayitli kimlikle devam et.
+  echo "  log'da parola yok — $CRED icindeki webadmin-admin kaydi kullaniliyor"
+  OLDP="$SAVED_ADM"
+fi
 if [ -z "$OLDP" ]; then
-  echo "HATA: fallback-admin parolasi log'da yok."
-  echo "      Konteyner yeniden olusturulmus olabilir. O zaman parolayi"
-  echo "      $CRED icinden alip AUTH'u elle kurmalisin."
+  echo "HATA: fallback-admin parolasi ne log'da ne $CRED icinde bulunabildi."
+  echo "      AUTH'u elle kurman gerekiyor."
   exit 1
 fi
 AUTH=$(printf 'admin:%s' "$OLDP" | base64 -w0)
@@ -99,6 +113,14 @@ if ! api "http://127.0.0.1:8443/api/principal?types=domain" | grep -q '"domain"'
 fi
 echo "  baglanti tamam"
 
+# Kimlik dogrulama BASARILI oldu — eski kayit dosyasini ancak simdi kenara al.
+# Once tasinsaydi, yukaridaki kurtarma yolu (SAVED_ADM) kendi kaynagini silmis
+# olurdu ve --force calistirmak kimlik dosyasini kalicı olarak kaybettirirdi.
+if [ -s "$CRED" ]; then
+  mv "$CRED" "$CRED.$STAMP.eski"
+  echo "  eski kimlik dosyasi: $CRED.$STAMP.eski"
+fi
+
 # --- 2. Ilk hesabi dondur ve $6$ hash'inin GERCEKTEN kabul edildigini kanitla.
 # Stalwart birden fazla hash bicimi destekler; yanlis bicim sessizce yazilir ve
 # hesap kilitlenir. Once bir hesapta IMAP girisiyle dogrula, sonra digerlerine gec.
@@ -106,11 +128,25 @@ echo "### 2. Hash bicimi dogrulaniyor (tek hesap uzerinde)"
 FIRST=$(echo $ACCOUNTS | awk '{print $1}')
 P=$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 20)
 H=$(openssl passwd -6 "$P")
-CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 15 -X PATCH \
+# GOVDEYI BURADA DA OKU. Asagidaki dongude oldugu gibi, Stalwart principal
+# hatasini HTTP 200 + JSON govdesiyle bildirebiliyor. Govde atilirsa reddedilen
+# bir rotasyon "PATCH tamam" sayilir; sonraki IMAP dogrulamasi elbette duser ama
+# TESHISI YANLIS koyar ("hash bicimi kabul EDILMEDI"), oysa hash'e hic sira
+# gelmemistir. Iki hatayi ayirmak, sonraki adimi (yeniden calistir / AUTH'u
+# duzelt) dogru secmeyi mumkun kilar.
+RESP=$(curl -s -w '\n%{http_code}' -m 15 -X PATCH \
   -H "Authorization: Basic $AUTH" -H 'Content-Type: application/json' \
   --data "[{\"action\":\"set\",\"field\":\"secrets\",\"value\":[\"$H\"]}]" \
   "http://127.0.0.1:8443/api/principal/$FIRST")
+CODE=$(printf '%s' "$RESP" | tail -n1)
+BODY=$(printf '%s' "$RESP" | sed '$d')
 [ "$CODE" = "200" ] || { echo "HATA: PATCH $FIRST -> HTTP $CODE"; exit 1; }
+if printf '%s' "$BODY" | grep -qiE '"error"|notFound|"type"[[:space:]]*:[[:space:]]*"[a-zA-Z]*[Ee]rror'; then
+  echo "HATA: PATCH $FIRST HTTP 200 dondu ama govdede principal hatasi var:"
+  echo "      $(printf '%s' "$BODY" | head -c 200)"
+  echo "      Bu bir HASH BICIMI sorunu DEGIL — hesap adini ve AUTH'u kontrol et."
+  exit 1
+fi
 
 python3 "$CHECK" "$FIRST" "$P"
 case $? in
@@ -139,13 +175,23 @@ for acct in $ACCOUNTS; do
   [ "$acct" = "$FIRST" ] && continue
   P=$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 20)
   H=$(openssl passwd -6 "$P")
-  CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 15 -X PATCH \
+  # GOVDEYI DE OKU: Stalwart uygulama-seviyesi principal hatasini HTTP 200 ile
+  # JSON govdesinde bildirebiliyor (stalwart-create-mailboxes.sh bunu "notFound"
+  # icin zaten ele aliyor). Govde atilirsa reddedilen bir rotasyon BASARILI
+  # sayilir ve hesap "Test1234!" ile kalir; son kontrol yalnizca
+  # noreply@panola.app'i test ettigi icin digerlerinin sessiz basarisizligi
+  # "SONUC: TAMAM" uretebilirdi.
+  RESP=$(curl -s -w '\n%{http_code}' -m 15 -X PATCH \
     -H "Authorization: Basic $AUTH" -H 'Content-Type: application/json' \
     --data "[{\"action\":\"set\",\"field\":\"secrets\",\"value\":[\"$H\"]}]" \
     "http://127.0.0.1:8443/api/principal/$acct")
-  if [ "$CODE" = "200" ]; then
+  CODE=$(printf '%s' "$RESP" | tail -n1)
+  BODY=$(printf '%s' "$RESP" | sed '$d')
+  if [ "$CODE" = "200" ] && ! printf '%s' "$BODY" | grep -qiE '"error"|notFound|"type"[[:space:]]*:[[:space:]]*"[a-zA-Z]*[Ee]rror'; then
     echo "$acct  $P" >> "$CRED"
     echo "  OK  $acct"
+  elif [ "$CODE" = "200" ]; then
+    echo "  BASARISIZ $acct (HTTP 200 ama govdede hata: $(printf '%s' "$BODY" | head -c 160))"; FAIL=1
   else
     echo "  BASARISIZ $acct (HTTP $CODE)"; FAIL=1
   fi
@@ -217,5 +263,14 @@ esac
 rm -f "$CHECK"
 echo "-- kimlik dosyasi: $(ls -l "$CRED" | awk '{print $1, $3, $9}')"
 echo
-[ $FAIL -eq 0 ] && echo "SONUC: TAMAM" || echo "SONUC: KISMI — yukaridaki BASARISIZ satirlarina bak"
 echo "Parolalar: $CRED  (sadece root okur)"
+if [ $FAIL -eq 0 ]; then
+  echo "SONUC: TAMAM"
+  exit 0
+fi
+# CIKIS KODU SART: eskiden yalnizca "KISMI" basilip 0 donuluyordu. vps-run.sh ve
+# her otomasyon sertlestirmeyi TAMAMLANMIS sayiyordu — oysa varsayilan kimlik
+# bilgileri ya da halka acik yonetim portu hala acik olabilir. Sessiz "basarili"
+# raporu, bu script'in onlemek icin var oldugu riski gizler.
+echo "SONUC: KISMI — yukaridaki BASARISIZ satirlarina bak"
+exit 1

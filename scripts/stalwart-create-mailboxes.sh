@@ -19,6 +19,17 @@ umask 077
 echo "" >> "$CRED"
 echo "# --- info kutulari, $(date -Is) ---" >> "$CRED"
 
+# SABIT /tmp YOLU KULLANMA. Bu script root ile kosuyor; /tmp/mbresp ve
+# /tmp/imapchk.py gibi ONGORULEBILIR adlar, makinede baska bir yerel kullanici
+# varsa onceden symlink olarak yaratilabilir. Kabuk yonlendirmesi (>) o linki
+# IZLER ve hedefi root yetkisiyle keser (symlink saldirisi). mktemp -d ile 700
+# izinli ozel bir dizin ac, cikista trap ile temizle.
+TMPD=$(mktemp -d /tmp/stalwart-mb.XXXXXX) || { echo "HATA: mktemp"; exit 1; }
+chmod 700 "$TMPD"
+trap 'rm -rf -- "$TMPD"' EXIT
+MBRESP="$TMPD/mbresp"
+IMAPCHK="$TMPD/imapchk.py"
+
 CREATED=0; SKIPPED=0; FAILED=0
 for box in $BOXES; do
   # DIKKAT: Stalwart olmayan kayit icin de HTTP 200 dondurur ve hatayi
@@ -35,7 +46,7 @@ for box in $BOXES; do
 
   PW=$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 20)
   HASH=$(openssl passwd -6 "$PW")
-  CODE=$(curl -s -m 20 -o /tmp/mbresp -w '%{http_code}' -X POST \
+  CODE=$(curl -s -m 20 -o "$MBRESP" -w '%{http_code}' -X POST \
     -H "Authorization: Basic $AUTH" -H 'Content-Type: application/json' \
     --data "{\"type\":\"individual\",\"name\":\"$box\",\"emails\":[\"$box\"],\"secrets\":[\"$HASH\"],\"roles\":[\"user\"]}" \
     "$BASE/api/principal")
@@ -45,17 +56,16 @@ for box in $BOXES; do
     echo "  olusturuldu: $box"
     CREATED=$((CREATED+1))
   else
-    echo "  BASARISIZ $box (HTTP $CODE): $(head -c 160 /tmp/mbresp)"
+    echo "  BASARISIZ $box (HTTP $CODE): $(head -c 160 "$MBRESP")"
     FAILED=$((FAILED+1))
   fi
 done
-rm -f /tmp/mbresp
 chmod 600 "$CRED"
 
 echo
 echo "=== Dogrulama: gercek IMAP girisi ==="
 # Olusturuldu demek yetmez; hesabin fiilen acilabildigini kanitla.
-cat > /tmp/imapchk.py <<'PY'
+cat > "$IMAPCHK" <<'PY'
 import imaplib, ssl, sys
 ctx = ssl._create_unverified_context()
 try:
@@ -68,9 +78,8 @@ PY
 VERIFIED=0
 while read -r acct pw; do
   case "$acct" in info@*|postmaster@*) ;; *) continue ;; esac
-  python3 /tmp/imapchk.py "$acct" "$pw" && VERIFIED=$((VERIFIED+1))
+  python3 "$IMAPCHK" "$acct" "$pw" && VERIFIED=$((VERIFIED+1))
 done < <(awk '/^# --- info kutulari/{f=1;next} f && NF==2 {print $1, $2}' "$CRED")
-rm -f /tmp/imapchk.py
 
 echo
 echo "=== Tum hesaplar ==="
