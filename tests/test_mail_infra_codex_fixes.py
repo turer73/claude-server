@@ -250,12 +250,49 @@ def test_acme_sends_token_over_stdin_not_argv() -> None:
     src = (SCRIPTS / "stalwart-setup-acme.sh").read_text()
     code = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
 
-    assert "cat > /tmp/.cf_tok" in code, "token uzak dosyaya yazilmiyor"
+    assert 'cat > "$d/cf_tok"' in code, "token uzak ozel dizine yazilmiyor"
     # Token artik PRE dosyasina (vps-run.sh govdesi) YAZILMAMALI.
     pre_block = code.split('} > "$PRE"')[0].split("PRE=$(mktemp")[-1]
     assert "TOKEN" not in pre_block, "token hala vps-run.sh govdesine gomuluyor"
     assert "printf " in code, "stdin kanali kurulmamis: printf yok"
     assert "ssh " in code, "stdin kanali kurulmamis: dogrudan ssh cagrisi yok"
+
+
+def test_acme_uses_private_remote_tmpdir() -> None:
+    """UZAK tarafta da sabit /tmp adi olmamali — burada kesme degil SIR IFSASI.
+
+    VPS'te baska bir yerel kullanici /tmp/.cf_tok'u kendi okuyabildigi bir hedefe
+    symlink yaparsa, root ile kosan `cat >` linki izler ve CANLI Cloudflare
+    DNS-edit token'ini oraya yazar. Dizini uzak taraf mktemp -d ile uretmeli.
+    """
+    src = (SCRIPTS / "stalwart-setup-acme.sh").read_text()
+    code = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
+
+    for fixed in ("/tmp/.cf_tok", "/tmp/.acme_domain", "/tmp/.acme_contact"):
+        assert fixed not in code, f"sabit uzak yol hala calisan kodda: {fixed}"
+    assert "mktemp -d /tmp/stalwart-acme." in code, "uzak ozel dizin mktemp -d ile acilmiyor"
+    assert "REMOTE_TMPD" in code, "uretilen yol yakalanmiyor"
+    # Donen yol dogrulanmali: bos/bozuk cevapla devam etmek, token'i /cf_tok gibi
+    # bir yola yazmaya calismak demektir.
+    assert "/tmp/stalwart-acme.??????)" in code, "donen uzak yol dogrulanmiyor"
+
+
+def test_acme_remote_script_bakes_generated_path() -> None:
+    """Uzak govde, uretilen dizini LITERAL olarak icermeli (yerel genisleme).
+
+    REMOTE_EOF heredoc'u tirnaksiz; ic ice `<<'PY'` bloguna ragmen $REMOTE_TMPD
+    YEREL genisler, $CFG/$STAMP ise (\\$ ile kacirilmis) uzakta degerlenir. Bu
+    ayrim bozulursa uzak script bos yol acar. Govdeyi sahte bir yolla uretip bak.
+    """
+    src = (SCRIPTS / "stalwart-setup-acme.sh").read_text()
+    body = re.search(r'^cat > "\$REMOTE" <<REMOTE_EOF$.*?^REMOTE_EOF$', src, re.MULTILINE | re.DOTALL)
+    assert body, "REMOTE_EOF heredoc bulunamadi"
+    script = "REMOTE_TMPD=/tmp/stalwart-acme.AbC123\nREMOTE=/dev/stdout\n" + body.group(0)
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30).stdout
+
+    assert "/tmp/stalwart-acme.AbC123/cf_tok" in out, "uretilen yol govdeye islenmemis"
+    assert "$REMOTE_TMPD" not in out, "yol yerel genislememis (uzakta bos olurdu)"
+    assert "$CFG" in out, "$CFG yerelde genislemis olmamali (uzakta degerlenmeli)"
 
 
 # --- p0-harden: kismi sertlestirmede sifir donme ---------------------------
