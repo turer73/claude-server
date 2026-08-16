@@ -314,6 +314,45 @@ def test_p0_harden_inspects_patch_body() -> None:
     assert code.count("BODY=") >= 2, f"govde kontrolu yalnizca {code.count('BODY=')} PATCH yolunda"
 
 
+def test_create_mailboxes_exits_nonzero_on_partial() -> None:
+    """Ayni "kismi is, sifir cikis" sinifi kardes script'te de vardi.
+
+    Iki basarisizlik ayri ayri kapiyi tutmali:
+      FAILED>0         -> kutu hic olusturulamadi
+      VERIFIED<CREATED -> kutu var ama IMAP'ten ACILAMIYOR ($6$ hash bicimi
+                          yanlis yazildiginda tam olarak bu olur)
+    Yalnizca FAILED'a bakan bir kontrol kilitli kutuyu basarili gosterirdi.
+    """
+    src = (SCRIPTS / "stalwart-create-mailboxes.sh").read_text()
+    code = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
+
+    assert '[ "$FAILED" -gt 0 ]' in code, "FAILED cikis koduna yansimiyor"
+    assert '[ "$VERIFIED" -lt "$CREATED" ]' in code, "dogrulanamayan kutu cikis koduna yansimiyor"
+    assert 'exit "$RC"' in code, "script cikis kodu dondurmuyor"
+
+
+@pytest.mark.parametrize(
+    ("failed", "created", "verified", "want"),
+    [
+        (0, 3, 3, 0),  # hepsi acildi ve dogrulandi
+        (1, 3, 3, 1),  # bir kutu hic olusmadi
+        (0, 3, 2, 1),  # olustu ama biri IMAP'ten acilamadi -> SESSIZ kalmamali
+        (0, 0, 0, 0),  # yapacak is yoktu
+    ],
+)
+def test_create_mailboxes_exit_matrix(failed: int, created: int, verified: int, want: int) -> None:
+    """Cikis mantigini script'ten AYNEN cikarip kosar (kopyalamaz)."""
+    src = (SCRIPTS / "stalwart-create-mailboxes.sh").read_text()
+    block = src[src.index("RC=0") :]
+    rc = subprocess.run(
+        ["bash", "-c", f"FAILED={failed}; CREATED={created}; VERIFIED={verified}\n{block}"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    ).returncode
+    assert rc == want, f"FAILED={failed} CREATED={created} VERIFIED={verified} -> {rc}, beklenen {want}"
+
+
 def test_p0_harden_reads_creds_before_archiving() -> None:
     """--force yolunda arsivleme, kimlik dogrulamadan SONRA olmali."""
     src = (SCRIPTS / "stalwart-p0-harden.sh").read_text()

@@ -93,3 +93,28 @@ print('    toplam:', d['total'])
 echo
 echo "olusturulan=$CREATED atlanan=$SKIPPED basarisiz=$FAILED dogrulanan=$VERIFIED"
 echo "Parolalar: $CRED"
+
+# CIKIS KODU SART — kardes scriptlerde (p0-harden, mx-cutover) kapatilan
+# "kismi is, sifir cikis" sinifinin AYNISI burada da vardi: sayaclar basiliyor
+# ama script her durumda 0 donuyordu, yani vps-run.sh ve otomasyon bir kutu
+# hic acilmamisken de "kutular hazir" sayiyordu.
+#
+# Iki ayri basarisizlik var ve IKISI DE onemli:
+#   FAILED>0            -> kutu HIC olusturulamadi (HTTP/govde hatasi)
+#   VERIFIED<CREATED    -> kutu olusturuldu ama IMAP'ten ACILAMADI. Bu script'in
+#                          kendi yorumu bunu zaten soyluyor: "Olusturuldu demek
+#                          yetmez; hesabin fiilen acilabildigini kanitla."
+#                          Yalnizca FAILED'a bakmak, kilitli bir kutuyu basarili
+#                          gosterirdi — sertlestirme sirasinda $6$ hash bicimi
+#                          yanlis yazildiginda tam olarak bu oluyor.
+RC=0
+if [ "$FAILED" -gt 0 ]; then
+  echo "SONUC: KISMI — $FAILED kutu olusturulamadi"
+  RC=1
+fi
+if [ "$VERIFIED" -lt "$CREATED" ]; then
+  echo "SONUC: KISMI — olusturulan $CREATED kutunun $VERIFIED tanesi IMAP ile acilabildi"
+  RC=1
+fi
+[ "$RC" -eq 0 ] && echo "SONUC: TAMAM"
+exit "$RC"
