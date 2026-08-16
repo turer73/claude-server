@@ -1,6 +1,6 @@
 """backup-docker-volumes.sh — canli SQLite HAM kopyalanmaz, snapshot alinir.
 
-Arka plan (disc#1559): klipper'daki CANLI n8n/grafana/uptime-kuma volume'leri hic
+Arka plan (disc#1565): klipper'daki CANLI n8n/grafana/uptime-kuma volume'leri hic
 yedeklenmiyordu; pull-vps-backup ise VPS'te kalan OLU artiklarini cekiyordu.
 Yeni script bu bosluğu kapatiyor.
 

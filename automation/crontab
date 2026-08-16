@@ -2,7 +2,7 @@
 */10 * * * * /opt/linux-ai-server/automation/health-check.sh
 */5 * * * * /opt/linux-ai-server/automation/alert-check.sh
 0 3 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh daily-backup /opt/linux-ai-server/automation/daily-backup.sh
-# Docker volume yedegi (disc#1559) — klipper'daki CANLI n8n/grafana/uptime-kuma. Ucu de SQLite; ham kopya
+# Docker volume yedegi (disc#1565) — klipper'daki CANLI n8n/grafana/uptime-kuma. Ucu de SQLite; ham kopya
 # tutarsiz olabilecegi icin `.backup` (online backup API) kullanilir, -wal/-shm arsive KONMAZ.
 # sudo SART: grafana.db 0640 root-grubu (472:root), klipperos okuyamaz. Tek sudo'lu cron satiri budur.
 10 3 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh docker-volumes sudo /opt/linux-ai-server/automation/backup-docker-volumes.sh

@@ -4,7 +4,7 @@
 # Cron: 10 3 * * * (daily-backup 03:00 sonrasi, restore-test 03:20 oncesi)
 # Hedef: /backups/klipper-volumes/<YYYY-MM-DD>/  (7 gun retention)
 #
-# NEDEN VAR (2026-08-15, disc#1559): gozlem/otomasyon stack'i 2026-05'te
+# NEDEN VAR (2026-08-15, disc#1565): gozlem/otomasyon stack'i 2026-05'te
 # "klipper-first" karariyla VPS'ten klipper'a tasindi. pull-vps-backup.sh o
 # tarihten beri VPS'te kalan OLU volume artiklarini cekiyordu (dangling, 30
 # gunde 0 yazma) — bu arada klipper'daki CANLI n8n workflow'lari, grafana
