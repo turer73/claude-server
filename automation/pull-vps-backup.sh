@@ -38,7 +38,7 @@ DEST="$TARGET_ROOT/$DATE"
 # plausible_event-data (ClickHouse) volume tar etmiyoruz — 449MB'i sistem
 # log/WAL, gercek data sadece 3.4 MiB. Logical dump asagida (step 2.5).
 #
-# n8n-data ve grafana-data 2026-08-15'te PATTERN'DAN CIKARILDI (disc#1559).
+# n8n-data ve grafana-data 2026-08-15'te PATTERN'DAN CIKARILDI (disc#1565).
 # Olculdu: VPS'te n8n/grafana KONTEYNERI YOK (docker ps -a bos), her iki volume
 # de DANGLING ve son 30 gunde 0 dosya degismis (mtime'lar 2026-05-12/13).
 # Sebep: gozlem/otomasyon stack'i 2026-05'te "klipper-first" karariyla klipper'a
