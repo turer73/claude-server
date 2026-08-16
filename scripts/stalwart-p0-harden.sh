@@ -59,7 +59,19 @@ echo "  $CFG.pre-p0.$STAMP"
 # IMAP dogrulayici. Duz 143'te LOGIN kapali oldugu icin STARTTLS/993 sart;
 # ayrica "reddedildi" (cikis 1) ile "ulasilamadi" (cikis 2) ayrilmali, yoksa
 # tasima hatasi sahte "parola yanlis" olarak okunur.
-CHECK=/tmp/stalwart-imap-check.$STAMP.py
+# SABIT /tmp YOLU KULLANMA — kardes script'te (stalwart-create-mailboxes.sh)
+# kapatilan symlink saldirisinin AYNISI burada da vardi. $STAMP saniye
+# hassasiyetinde bir tarih, yani ONGORULEBILIR: baska bir yerel kullanici olasi
+# saniyeler icin onceden symlink birakabilir, `cat >` o linki IZLER ve hedefi
+# root yetkisiyle keser. umask 077 bunu onlemez (yeni dosyanin iznini belirler,
+# var olan bir linki izlemeyi engellemez). Ustelik burada dosya sonradan
+# `python3 "$CHECK"` ile CALISTIRILIYOR.
+# Trap ayrica sizintiyi da kapatir: asagida CHECK yazildiktan sonra 8 ayri
+# `exit` yolu var, tek `rm -f` yalnizca mutlu yolda calisiyordu.
+TMPD=$(mktemp -d /tmp/stalwart-p0.XXXXXX) || { echo "HATA: mktemp"; exit 1; }
+chmod 700 "$TMPD"
+trap 'rm -rf -- "$TMPD"' EXIT
+CHECK="$TMPD/imap-check.py"
 cat > "$CHECK" <<'PY'
 import imaplib, ssl, sys
 def check(account, password, host):
@@ -260,7 +272,7 @@ case $? in
   1) echo "     OK reddedildi" ;;
   2) echo "     BELIRSIZ: IMAP'e ulasilamadi, eski parola test EDILEMEDI"; FAIL=1 ;;
 esac
-rm -f "$CHECK"
+# Temizlik artik trap'te (her cikis yolunda), burada tekrarina gerek yok.
 echo "-- kimlik dosyasi: $(ls -l "$CRED" | awk '{print $1, $3, $9}')"
 echo
 echo "Parolalar: $CRED  (sadece root okur)"

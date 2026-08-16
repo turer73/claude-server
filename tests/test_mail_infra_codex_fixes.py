@@ -184,6 +184,64 @@ def test_create_mailboxes_uses_private_tmpdir() -> None:
     assert "/tmp/imapchk" not in code, "sabit /tmp/imapchk hala calisan kodda"
 
 
+def test_p0_harden_uses_private_tmpdir() -> None:
+    """Ayni symlink saldirisi kardes script'te de vardi (simetri taramasi).
+
+    $STAMP saniye hassasiyetinde bir tarih = ONGORULEBILIR ad. umask 077 bunu
+    onlemez: yeni dosyanin iznini belirler, var olan bir symlink'i izlemeyi
+    engellemez. Burada dosya ustelik sonradan `python3` ile calistiriliyor.
+    """
+    src = (SCRIPTS / "stalwart-p0-harden.sh").read_text()
+    code = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
+
+    assert "mktemp -d" in code, "ozel gecici dizin acilmiyor"
+    assert "/tmp/stalwart-imap-check." not in code, "sabit /tmp yolu hala calisan kodda"
+    assert "trap 'rm -rf -- \"$TMPD\"' EXIT" in code, "trap ile temizlik yok"
+
+
+def test_p0_harden_cleans_tmp_on_every_exit() -> None:
+    """CHECK yazildiktan SONRA 8 ayri `exit` yolu var; tek `rm -f` mutlu yoldaydi."""
+    src = (SCRIPTS / "stalwart-p0-harden.sh").read_text()
+    tmpd = src.index("TMPD=$(mktemp -d")
+    trap = src.index("trap 'rm -rf -- \"$TMPD\"' EXIT")
+    first_exit = src.index("exit 1", trap)
+    assert tmpd < trap < first_exit, "trap, gecici dizin acildiktan hemen sonra kurulmali"
+
+
+# --- Shell operator onceligi: `a || b && c` — C DEGIL, kabuk kurallari ------
+
+
+def test_dkim_test_guard_fires_when_either_password_missing() -> None:
+    """Otomatik-review FP'sini kilitler: kabukta `&&` ve `||` ESIT onceliklidir.
+
+    Iddia (C onceligi varsayimi): `[ -z A ] || [ -z B ] && { exit 1; }` ->
+    `[ -z A ] || ([ -z B ] && exit 1)`, yani A bosken kisa-devre olup exit
+    tetiklenmez. YANLIS. POSIX kabugunda ikisi de esit oncelikli ve SOLDAN
+    baglanir: `([ -z A ] || [ -z B ]) && { exit 1; }`. Iddiayi tartismak yerine
+    script'teki satiri AYNEN cikarip kosuyoruz.
+    """
+    src = (SCRIPTS / "stalwart-dkim-test.sh").read_text()
+    m = re.search(r'^\[ -z "\$FPW" \].*$', src, re.MULTILINE)
+    assert m, "korumali satir script'te bulunamadi"
+    guard = m.group(0)
+
+    def fires(fpw: str, tpw: str) -> bool:
+        return (
+            subprocess.run(
+                ["bash", "-c", f"FPW={fpw!r}; TPW={tpw!r}; CRED=/x\n{guard}\necho ULASILDI"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            ).stdout.strip()
+            != "ULASILDI"
+        )
+
+    assert fires("", "dolu"), "FPW bosken koruma tetiklenmedi"
+    assert fires("dolu", ""), "TPW bosken koruma tetiklenmedi"
+    assert fires("", ""), "ikisi de bosken koruma tetiklenmedi"
+    assert not fires("dolu", "dolu"), "ikisi de doluyken koruma yanlislikla tetiklendi"
+
+
 # --- Sir komut satirina girmemeli ------------------------------------------
 
 
