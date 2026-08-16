@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 from typing import Any
 
 import aiosqlite
@@ -202,18 +203,18 @@ class Database:
         cur = await self._conn.execute("PRAGMA table_info(events)")
         cols = {row[1] for row in await cur.fetchall()}
         if cols and "acked" not in cols:
-            await self._conn.execute("ALTER TABLE events ADD COLUMN acked INTEGER NOT NULL DEFAULT 0")
+            await self._add_column("events", "acked", "INTEGER NOT NULL DEFAULT 0")
 
         # INTERV: remediation_log'a rollback + provenance kolonları (idempotent)
         cur = await self._conn.execute("PRAGMA table_info(remediation_log)")
         rcols = {row[1] for row in await cur.fetchall()}
         if rcols:
             if "rolled_back" not in rcols:
-                await self._conn.execute("ALTER TABLE remediation_log ADD COLUMN rolled_back INTEGER NOT NULL DEFAULT 0")
+                await self._add_column("remediation_log", "rolled_back", "INTEGER NOT NULL DEFAULT 0")
             if "rollback_result" not in rcols:
-                await self._conn.execute("ALTER TABLE remediation_log ADD COLUMN rollback_result TEXT")
+                await self._add_column("remediation_log", "rollback_result", "TEXT")
             if "provenance" not in rcols:
-                await self._conn.execute("ALTER TABLE remediation_log ADD COLUMN provenance TEXT")
+                await self._add_column("remediation_log", "provenance", "TEXT")
 
         # SİNYAL-BÜTÜNLÜĞÜ: alerts'e bi-temporal kolonlar (discoveries ile aynı ilke).
         # transaction-time (resolved/resolved_at) ZATEN var; VALID-time ekliyoruz.
@@ -221,14 +222,28 @@ class Database:
         acols = {row[1] for row in await cur.fetchall()}
         if acols:
             if "valid_at" not in acols:
-                await self._conn.execute("ALTER TABLE alerts ADD COLUMN valid_at TEXT")
+                await self._add_column("alerts", "valid_at", "TEXT")
                 await self._conn.execute("UPDATE alerts SET valid_at = timestamp WHERE valid_at IS NULL")
             if "invalid_at" not in acols:
-                await self._conn.execute("ALTER TABLE alerts ADD COLUMN invalid_at TEXT")
+                await self._add_column("alerts", "invalid_at", "TEXT")
                 # backfill: zaten resolved olanların gerçek-dünya geçersizliği = resolved_at
                 await self._conn.execute("UPDATE alerts SET invalid_at = resolved_at WHERE invalid_at IS NULL AND resolved=1")
             if "supersedes_id" not in acols:
-                await self._conn.execute("ALTER TABLE alerts ADD COLUMN supersedes_id INTEGER")
+                await self._add_column("alerts", "supersedes_id", "INTEGER")
+
+    async def _add_column(self, table: str, column: str, decl: str) -> None:
+        """Race-safe ALTER TABLE ADD COLUMN.
+
+        2 uvicorn worker ayni anda fresh-DB'de _migrate kosunca ikisi de
+        PRAGMA table_info'da kolonu yok gorur, ikisi de ALTER atar; kaybeden
+        worker "duplicate column name" (sqlite3.OperationalError) alir. Bunu
+        idempotent kabul et (kolon artik var) - diger hatalar yukari firlar.
+        """
+        try:
+            await self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e):
+                raise
 
     async def close(self) -> None:
         if self._conn:

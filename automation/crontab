@@ -2,6 +2,10 @@
 */10 * * * * /opt/linux-ai-server/automation/health-check.sh
 */5 * * * * /opt/linux-ai-server/automation/alert-check.sh
 0 3 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh daily-backup /opt/linux-ai-server/automation/daily-backup.sh
+# Docker volume yedegi (disc#1565) — klipper'daki CANLI n8n/grafana/uptime-kuma. Ucu de SQLite; ham kopya
+# tutarsiz olabilecegi icin `.backup` (online backup API) kullanilir, -wal/-shm arsive KONMAZ.
+# sudo SART: grafana.db 0640 root-grubu (472:root), klipperos okuyamaz. Tek sudo'lu cron satiri budur.
+10 3 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh docker-volumes sudo /opt/linux-ai-server/automation/backup-docker-volumes.sh
 # Backup restore-test — "yedek alindi" != "yedek calisir"; en yeni backup'i acip SQLite integrity dogrula (gunluk 03:20, daily-backup sonrasi). Fail -> Telegram + cron_outcomes.
 20 3 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh restore-test /opt/linux-ai-server/automation/backup-restore-test.sh
 # Artifact cleanup — yas-temelli (logrotate uymaz, benzersiz-isimli dosyalar): hook-logs + logs/e2e + self-pentest + nuclei, 30g retention (haftalik Pazar 03:45). OUTCOME marker.

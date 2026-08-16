@@ -12,10 +12,21 @@ from pathlib import Path
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "agent-feed.sh"
 
 
-def _run(srv, mem):
+def _run(srv, mem, codex=None):
     return subprocess.run(
         ["bash", str(SCRIPT), "--hours", "24"],
-        env={"AGENT_FEED_SRV_DB": str(srv), "AGENT_FEED_MEM_DB": str(mem), "PATH": os.environ["PATH"]},
+        env={
+            "AGENT_FEED_SRV_DB": str(srv),
+            "AGENT_FEED_MEM_DB": str(mem),
+            # AGENT_FEED_CODEX de yonlendirilmeli: aksi halde script varsayilan
+            # data/hook-state/codex-open.txt'i, yani GERCEK makine durumunu okur.
+            # disc#1552'de tam bu oldu — o dosyada bozuk UTF-8 vardi ve testler
+            # canli makinede UnicodeDecodeError ile dustu; data/ .gitignore'da
+            # oldugu icin CI'da dosya YOKTU ve ariza CI'da hic gorunmedi
+            # (yanlis-yesil). Varsayilan: var-olmayan yol -> Codex blogu atlanir.
+            "AGENT_FEED_CODEX": str(codex) if codex else str(srv.parent / "no-codex-cache.txt"),
+            "PATH": os.environ["PATH"],
+        },
         capture_output=True,
         text=True,
         timeout=30,
