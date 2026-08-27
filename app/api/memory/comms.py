@@ -32,13 +32,22 @@ def _operator_enabled() -> bool:
     return (read_env_var("AUTONOMOUS_COMMS_ACTIVE") or "").strip().casefold() in {"1", "true", "on", "yes"}
 
 
+def _canary_enabled() -> bool:
+    return (read_env_var("AUTONOMOUS_COMMS_CANARY_ACTIVE") or "").strip().casefold() in {"1", "true", "on", "yes"}
+
+
 @router.get("/comms/promotion")
 async def promotion_status() -> dict[str, object]:
     db = get_db()
     try:
         ensure_schema(db)
         criteria = PromotionCriteria()
-        decision = evaluate_promotion(db, operator_enabled=_operator_enabled(), criteria=criteria)
+        decision = evaluate_promotion(
+            db,
+            operator_enabled=_operator_enabled(),
+            canary_enabled=_canary_enabled(),
+            criteria=criteria,
+        )
         approval = db.execute(
             """
             SELECT approved, approved_by, approved_at, revoked_at, updated_at
@@ -61,7 +70,10 @@ async def promotion_status() -> dict[str, object]:
         ).fetchone()
         return {
             "mode": "active" if decision.active else "shadow",
+            "promotion_profile": decision.profile,
             "operator_enabled": _operator_enabled(),
+            "canary_enabled": _canary_enabled(),
+            "advisory_only": True,
             "blocking_reasons": list(decision.reasons),
             "approval": None if approval is None else dict(approval),
             "metrics": None if metrics is None else dict(metrics),

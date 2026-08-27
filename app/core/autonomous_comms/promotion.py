@@ -20,17 +20,19 @@ class PromotionCriteria:
 class PromotionDecision:
     active: bool
     reasons: tuple[str, ...]
+    profile: str = "standard"
 
 
 def evaluate_promotion(
     conn: sqlite3.Connection,
     *,
     operator_enabled: bool,
+    canary_enabled: bool = False,
     criteria: PromotionCriteria = PromotionCriteria(),
     now: float | None = None,
 ) -> PromotionDecision:
     if not operator_enabled:
-        return PromotionDecision(False, ("operator_config_off",))
+        return PromotionDecision(False, ("operator_config_off",), "canary" if canary_enabled else "standard")
     current = time.time() if now is None else now
     reasons: list[str] = []
     try:
@@ -53,37 +55,43 @@ def evaluate_promotion(
             """
             SELECT reviewed_count, routing_correct_count, accepted_count,
                    critical_violations, generation_total, generation_failures,
-                   loop_blocks, reviewed_at
+                   loop_blocks, reviewed_at, generation_updated_at
             FROM autonomous_comms_promotion_metrics WHERE singleton = 1
             """
         ).fetchone()
         if metrics is None:
             reasons.append("metrics_missing")
         else:
-            reviewed, routing_correct, accepted, critical, total, failed, loops, reviewed_at = metrics
-            if reviewed_at is None or current - float(reviewed_at) > criteria.max_metrics_age_seconds:
-                reasons.append("metrics_stale")
-            if int(reviewed) < criteria.min_reviewed_samples:
-                reasons.append("reviewed_samples_below_minimum")
-            if int(reviewed) <= 0:
-                reasons.extend(("routing_precision_unavailable", "accepted_precision_unavailable"))
-            else:
-                if int(routing_correct) / int(reviewed) < criteria.min_routing_precision:
-                    reasons.append("routing_precision_below_minimum")
-                if int(accepted) / int(reviewed) < criteria.min_accepted_precision:
-                    reasons.append("accepted_precision_below_minimum")
+            reviewed, routing_correct, accepted, critical, total, failed, loops, reviewed_at, generation_updated_at = metrics
             if int(critical) != 0:
                 reasons.append("critical_safety_violations")
-            if int(total) <= 0:
-                reasons.extend(("generation_failure_rate_unavailable", "loop_block_rate_unavailable"))
+            if canary_enabled:
+                if generation_updated_at is None or current - float(generation_updated_at) > criteria.max_metrics_age_seconds:
+                    reasons.append("canary_generation_metrics_stale")
+                if int(total) <= int(failed):
+                    reasons.append("canary_successful_generation_missing")
             else:
-                if int(failed) / int(total) > criteria.max_generation_failure_rate:
-                    reasons.append("generation_failure_rate_above_maximum")
-                if int(loops) / int(total) > criteria.max_loop_block_rate:
-                    reasons.append("loop_block_rate_above_maximum")
+                if reviewed_at is None or current - float(reviewed_at) > criteria.max_metrics_age_seconds:
+                    reasons.append("metrics_stale")
+                if int(reviewed) < criteria.min_reviewed_samples:
+                    reasons.append("reviewed_samples_below_minimum")
+                if int(reviewed) <= 0:
+                    reasons.extend(("routing_precision_unavailable", "accepted_precision_unavailable"))
+                else:
+                    if int(routing_correct) / int(reviewed) < criteria.min_routing_precision:
+                        reasons.append("routing_precision_below_minimum")
+                    if int(accepted) / int(reviewed) < criteria.min_accepted_precision:
+                        reasons.append("accepted_precision_below_minimum")
+                if int(total) <= 0:
+                    reasons.extend(("generation_failure_rate_unavailable", "loop_block_rate_unavailable"))
+                else:
+                    if int(failed) / int(total) > criteria.max_generation_failure_rate:
+                        reasons.append("generation_failure_rate_above_maximum")
+                    if int(loops) / int(total) > criteria.max_loop_block_rate:
+                        reasons.append("loop_block_rate_above_maximum")
     except sqlite3.Error as exc:
         reasons.append(f"database_error:{type(exc).__name__}")
-    return PromotionDecision(not reasons, tuple(reasons))
+    return PromotionDecision(not reasons, tuple(reasons), "canary" if canary_enabled else "standard")
 
 
 def set_human_approval(

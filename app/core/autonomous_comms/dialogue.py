@@ -14,7 +14,8 @@ Return plain text only."""
 
 _ACTION_LIKE = re.compile(
     r"(?:```|\b(?:sudo|powershell|bash|curl|wget|systemctl|subprocess|os\.system)\b|"
-    r"\b(?:execute|dispatch|deploy|delete|drop\s+table|reset\s+--hard|run\s+this|apply\s+patch)\b)",
+    r"\b(?:execute|dispatch|deploy|delete|drop\s+table|reset\s+--hard|run\s+this|apply\s+patch|"
+    r"çalıştır|calistir|uygula|sil|yeniden\s+başlat|yeniden\s+baslat)\b)",
     re.IGNORECASE,
 )
 _CREDENTIAL_URL = re.compile(r"[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s:@]+@", re.IGNORECASE)

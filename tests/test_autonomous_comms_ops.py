@@ -13,7 +13,7 @@ from app.core.autonomous_comms.budget import BudgetLimits
 from app.core.autonomous_comms.dialogue import DialogueSuccess, DialogueTurn
 from app.core.autonomous_comms.pipeline import RuntimeConfig, process_note
 from app.core.autonomous_comms.schema import ensure_schema
-from automation.autonomous_comms_poller import process_batch
+from automation.autonomous_comms_poller import process_batch, runtime_config
 
 
 class FakeProducer:
@@ -120,10 +120,31 @@ async def test_promotion_status_and_approval_api(db_path: str, monkeypatch) -> N
     status = await comms_api.promotion_status()
     assert status["mode"] == "shadow"
     assert status["operator_enabled"] is False
+    assert status["canary_enabled"] is False
+    assert status["advisory_only"] is True
     assert (await comms_api.update_promotion_approval(PromotionApproval(approved=True)))["approved"] is True
     conn = _connect(db_path)
     assert conn.execute("SELECT COUNT(*) FROM autonomous_comms_decision_audit WHERE decision = 'promotion_admin'").fetchone()[0] == 1
     conn.close()
+
+
+def test_canary_runtime_is_hard_capped(monkeypatch) -> None:
+    values = {
+        "AUTONOMOUS_COMMS_ACTIVE": "1",
+        "AUTONOMOUS_COMMS_CANARY_ACTIVE": "1",
+        "AUTONOMOUS_COMMS_DAILY_REPLIES": "500",
+        "AUTONOMOUS_COMMS_DAILY_TOKENS": "500000",
+        "AUTONOMOUS_COMMS_DAILY_NEW_THREADS": "50",
+        "AUTONOMOUS_COMMS_IN_FLIGHT": "20",
+    }
+    monkeypatch.setattr(
+        "automation.autonomous_comms_poller.read_env_var",
+        lambda name: values.get(name),
+    )
+    config = runtime_config()
+    assert config.operator_enabled is True
+    assert config.canary_enabled is True
+    assert config.budget_limits == BudgetLimits(5, 5_000, 1, 1)
 
 
 def test_autonomous_credential_cannot_self_approve(monkeypatch) -> None:

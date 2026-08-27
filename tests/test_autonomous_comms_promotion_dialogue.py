@@ -53,6 +53,38 @@ def test_promotion_active_only_when_all_three_gates_pass(conn: sqlite3.Connectio
     assert evaluate_promotion(conn, operator_enabled=True, now=1_000).active is True
 
 
+def test_canary_requires_approval_recent_success_and_zero_critical_violations(conn: sqlite3.Connection) -> None:
+    record_promotion_metrics(conn, generation_total=3, generation_failures=2, now=1_000)
+    missing_approval = evaluate_promotion(conn, operator_enabled=True, canary_enabled=True, now=1_000)
+    assert missing_approval.active is False
+    assert missing_approval.profile == "canary"
+    assert missing_approval.reasons == ("approval_missing",)
+
+    set_human_approval(conn, approved=True, approved_by="admin", now=1_000)
+    assert evaluate_promotion(conn, operator_enabled=True, canary_enabled=True, now=1_000).active is True
+
+    record_promotion_metrics(conn, critical_violations=1, now=1_001)
+    blocked = evaluate_promotion(conn, operator_enabled=True, canary_enabled=True, now=1_001)
+    assert blocked.active is False
+    assert "critical_safety_violations" in blocked.reasons
+
+
+def test_canary_fails_closed_without_successful_or_fresh_generation(conn: sqlite3.Connection) -> None:
+    set_human_approval(conn, approved=True, approved_by="admin", now=1_000)
+    record_promotion_metrics(conn, generation_total=2, generation_failures=2, now=1_000)
+    no_success = evaluate_promotion(conn, operator_enabled=True, canary_enabled=True, now=1_000)
+    assert "canary_successful_generation_missing" in no_success.reasons
+
+    stale = evaluate_promotion(
+        conn,
+        operator_enabled=True,
+        canary_enabled=True,
+        criteria=PromotionCriteria(max_metrics_age_seconds=10),
+        now=1_011,
+    )
+    assert "canary_generation_metrics_stale" in stale.reasons
+
+
 @pytest.mark.parametrize(
     ("metrics", "reason"),
     [
@@ -147,6 +179,7 @@ def test_dialogue_uses_dedicated_route_bounded_redacted_context() -> None:
         ("", "empty_reply"),
         ("```sh\nrm -rf /\n```", "action_like_reply"),
         ("Please dispatch this task", "action_like_reply"),
+        ("Şu komutu çalıştır", "action_like_reply"),
         ("https://user:pass@example.com/a", "credential_url"),
         ("Error: provider down", "provider_error_text"),
         ("ok\x07", "control_characters"),

@@ -28,6 +28,7 @@ from app.core.privacy import redact
 @dataclass(frozen=True)
 class RuntimeConfig:
     operator_enabled: bool = False
+    canary_enabled: bool = False
     max_hops: int = 3
     claim_lease_seconds: float = 60
     stale_processing_seconds: float = 300
@@ -343,7 +344,12 @@ def process_note(
         return ProcessResult(RouteVerdict.REJECT, thread_error, correlation_id, thread_id)
 
     halt = _kill_switch_active(conn)
-    promotion = evaluate_promotion(conn, operator_enabled=config.operator_enabled, now=current)
+    promotion = evaluate_promotion(
+        conn,
+        operator_enabled=config.operator_enabled,
+        canary_enabled=config.canary_enabled,
+        now=current,
+    )
     msg_type = _message_type(source)
     if msg_type is MessageType.DIALOGUE and _as_int(source.get("verified") or 0, field="verified") != 1:
         msg_type = MessageType.UNKNOWN
@@ -362,7 +368,7 @@ def process_note(
         correlation_id=correlation_id,
         thread_id=thread_id,
         source_note_id=source_note_id,
-        metadata={"blocking_reasons": list(promotion.reasons)},
+        metadata={"blocking_reasons": list(promotion.reasons), "profile": promotion.profile, "advisory_only": True},
     )
     _audit(
         conn,

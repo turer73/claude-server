@@ -11,6 +11,8 @@ Phase C is fail-safe by default. `AUTONOMOUS_COMMS_PHASE_C=0` keeps the legacy p
 - Reply, token, new-thread, and in-flight capacity are reserved transactionally before LLM work. No DB transaction remains open during an LLM call.
 - Semantic repetition and acknowledgement ping-pong are blocked in addition to hop TTL.
 - Audit stores decisions and identifiers, never prompts, note content, credentials, or secrets.
+- Active replies are advisory-only `dialogue` notes. The producer rejects command, tool, deploy,
+  dispatch, file-change, and other action-like output; Phase C never spawns the execution worker.
 
 ## Promotion sequence
 
@@ -19,6 +21,19 @@ Phase C is fail-safe by default. `AUTONOMOUS_COMMS_PHASE_C=0` keeps the legacy p
 3. Minimum default criteria are 100 reviews, routing precision at least 0.95, accepted-response precision at least 0.90, zero critical violations, generation failure rate at most 0.05, and loop-block rate at most 0.10. Metrics must be newer than 24 hours.
 4. Record human approval with `PUT /api/v1/memory/comms/promotion/approval`. Approval must be newer than seven days.
 5. Set `AUTONOMOUS_COMMS_ACTIVE=1` and restart the poller/service. Active sending occurs only while the env flip, approval, freshness, and every metric threshold remain valid.
+
+### Explicit active canary
+
+When an operator deliberately chooses to learn from a very small number of real advisory exchanges,
+set both `AUTONOMOUS_COMMS_ACTIVE=1` and `AUTONOMOUS_COMMS_CANARY_ACTIVE=1`, then record fresh human
+approval. Canary still requires at least one recent successful generation and zero critical safety
+violations. It does not fabricate or overwrite review metrics. The poller hard-caps canary at 5 replies,
+5,000 tokens, 1 new thread, and 1 in-flight generation per UTC day even when larger env values are set.
+Kill-switch, message-type routing, identity, thread claims, idempotency, hop TTL, closed-thread rejection,
+semantic loop protection, audit, and advisory-only output validation remain mandatory.
+
+Canary is a reversible observation mode, not standard promotion. After enough reviewed evidence exists,
+unset `AUTONOMOUS_COMMS_CANARY_ACTIVE` and use the standard thresholds above.
 
 The admin/master human credential is required for approval and reviews. Autonomous and device credentials cannot self-approve. The public `NoteCreate` model has no thread, identity, or message-type authority.
 
