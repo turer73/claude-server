@@ -149,6 +149,33 @@ def test_active_send_derives_authoritative_reply_fields(conn: sqlite3.Connection
     assert {"promotion", "route", "claim", "idempotency", "budget", "generation", "guard", "send"} <= audited
 
 
+def test_active_canary_sends_advisory_dialogue_without_action_work_item(conn: sqlite3.Connection) -> None:
+    source_id = _note(conn)
+    set_human_approval(conn, approved=True, approved_by="admin", now=1_000)
+    record_promotion_metrics(conn, generation_total=3, generation_failures=2, now=1_000)
+    result = process_note(
+        conn,
+        trusted_sender="klipper-autonomous",
+        source_note_id=source_id,
+        config=_active_config(canary_enabled=True),
+        producer=FakeProducer("Yalnızca bilgi ve çözüm önerisi paylaşabilirim."),
+        now=1_000,
+    )
+    assert result.reason == "active_sent"
+    row = conn.execute(
+        "SELECT msg_type, verified, content FROM notes WHERE id = ?",
+        (result.outgoing_note_id,),
+    ).fetchone()
+    assert tuple(row) == ("dialogue", 1, "Yalnızca bilgi ve çözüm önerisi paylaşabilirim.")
+    assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='work_items'").fetchone()[0] == 0
+    metadata = conn.execute(
+        "SELECT metadata_json FROM autonomous_comms_decision_audit WHERE source_note_id = ? AND decision = 'promotion'",
+        (source_id,),
+    ).fetchone()[0]
+    assert '"advisory_only":true' in metadata
+    assert '"profile":"canary"' in metadata
+
+
 def test_duplicate_retry_returns_same_outgoing_note(conn: sqlite3.Connection) -> None:
     source_id = _note(conn)
     _promote(conn)

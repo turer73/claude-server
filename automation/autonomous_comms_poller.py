@@ -29,15 +29,26 @@ def _positive_int(name: str, default: int) -> int:
 
 
 def runtime_config() -> RuntimeConfig:
+    canary_enabled = _enabled("AUTONOMOUS_COMMS_CANARY_ACTIVE")
+    daily_replies = _positive_int("AUTONOMOUS_COMMS_DAILY_REPLIES", 50)
+    daily_tokens = _positive_int("AUTONOMOUS_COMMS_DAILY_TOKENS", 50_000)
+    daily_new_threads = _positive_int("AUTONOMOUS_COMMS_DAILY_NEW_THREADS", 5)
+    concurrent_in_flight = _positive_int("AUTONOMOUS_COMMS_IN_FLIGHT", 2)
+    if canary_enabled:
+        daily_replies = min(daily_replies, 5)
+        daily_tokens = min(daily_tokens, 5_000)
+        daily_new_threads = min(daily_new_threads, 1)
+        concurrent_in_flight = min(concurrent_in_flight, 1)
     return RuntimeConfig(
         operator_enabled=_enabled("AUTONOMOUS_COMMS_ACTIVE"),
+        canary_enabled=canary_enabled,
         max_hops=_positive_int("AUTONOMOUS_COMMS_MAX_HOPS", 3),
         estimated_reply_tokens=_positive_int("AUTONOMOUS_COMMS_REPLY_TOKENS", 384),
         budget_limits=BudgetLimits(
-            daily_replies=_positive_int("AUTONOMOUS_COMMS_DAILY_REPLIES", 50),
-            daily_tokens=_positive_int("AUTONOMOUS_COMMS_DAILY_TOKENS", 50_000),
-            daily_new_threads=_positive_int("AUTONOMOUS_COMMS_DAILY_NEW_THREADS", 5),
-            concurrent_in_flight=_positive_int("AUTONOMOUS_COMMS_IN_FLIGHT", 2),
+            daily_replies=daily_replies,
+            daily_tokens=daily_tokens,
+            daily_new_threads=daily_new_threads,
+            concurrent_in_flight=concurrent_in_flight,
         ),
     )
 
@@ -45,7 +56,7 @@ def runtime_config() -> RuntimeConfig:
 def process_batch(
     conn: sqlite3.Connection,
     *,
-    notes: list[dict],
+    notes: list[dict[str, object]],
     device: str,
     last_seen: int,
     producer: DialogueProducer,
