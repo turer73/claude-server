@@ -53,4 +53,6 @@ def append_audit(
         ),
     )
     conn.commit()
-    return int(cursor.lastrowid)
+    if cursor.lastrowid is None:
+        raise RuntimeError("audit insert did not return a row id")
+    return cursor.lastrowid

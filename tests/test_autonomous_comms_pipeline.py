@@ -212,24 +212,30 @@ def test_kill_switch_active_or_missing_fails_closed(conn: sqlite3.Connection) ->
     conn.execute("UPDATE autonomous_comms_halt SET active = 1 WHERE id = 1")
     conn.commit()
     producer = FakeProducer()
-    assert process_note(
-        conn,
-        trusted_sender="klipper-autonomous",
-        source_note_id=source_id,
-        config=_active_config(),
-        producer=producer,
-        now=1_000,
-    ).reason == "kill_switch_active"
+    assert (
+        process_note(
+            conn,
+            trusted_sender="klipper-autonomous",
+            source_note_id=source_id,
+            config=_active_config(),
+            producer=producer,
+            now=1_000,
+        ).reason
+        == "kill_switch_active"
+    )
     conn.execute("DROP TABLE autonomous_comms_halt")
     conn.commit()
-    assert process_note(
-        conn,
-        trusted_sender="klipper-autonomous",
-        source_note_id=source_id,
-        config=_active_config(),
-        producer=producer,
-        now=1_001,
-    ).reason == "kill_switch_active"
+    assert (
+        process_note(
+            conn,
+            trusted_sender="klipper-autonomous",
+            source_note_id=source_id,
+            config=_active_config(),
+            producer=producer,
+            now=1_001,
+        ).reason
+        == "kill_switch_active"
+    )
     assert producer.calls == 0
 
 

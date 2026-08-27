@@ -135,7 +135,7 @@ def create_work_item_sync(
         ),
     )
     conn.commit()
-    return cursor.rowcount == 1
+    return bool(cursor.rowcount == 1)
 
 
 async def route_event(event: Event) -> None:

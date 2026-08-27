@@ -130,9 +130,7 @@ def test_concurrent_idempotency_has_one_winner(db_path: str) -> None:
     def worker() -> None:
         conn = _connect(db_path)
         barrier.wait()
-        results.append(
-            begin_processing(conn, thread_id=21, source_note_id=31, stale_after_seconds=60, now=100) is not None
-        )
+        results.append(begin_processing(conn, thread_id=21, source_note_id=31, stale_after_seconds=60, now=100) is not None)
         conn.close()
 
     threads = [threading.Thread(target=worker) for _ in range(2)]

@@ -65,34 +65,42 @@ def _load_note(conn: sqlite3.Connection, note_id: int) -> dict[str, object] | No
     return None if row is None else _row_dict(cursor, tuple(row))
 
 
+def _as_int(value: object, *, field: str) -> int:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, (str, bytes, bytearray)):
+        return int(value)
+    raise ValueError(f"{field} must be an integer")
+
+
 def _effective_root(note: Mapping[str, object]) -> int:
-    return int(note.get("thread_id") or note["id"])
+    return _as_int(note.get("thread_id") or note["id"], field="thread_id")
 
 
 def _resolve_source(
     conn: sqlite3.Connection,
     source: Mapping[str, object],
 ) -> tuple[int, int, str | None]:
-    source_id = int(source["id"])
+    source_id = _as_int(source["id"], field="source_note_id")
     root_id = _effective_root(source)
-    hop_count = int(source.get("hop_count") or 0)
+    hop_count = _as_int(source.get("hop_count") or 0, field="hop_count")
     if hop_count < 0:
         return root_id, hop_count, "negative_hop_count"
     if root_id != source_id:
         root = _load_note(conn, root_id)
-        if root is None or _effective_root(root) != root_id or int(root.get("hop_count") or 0) != 0:
+        if root is None or _effective_root(root) != root_id or _as_int(root.get("hop_count") or 0, field="hop_count") != 0:
             return root_id, hop_count, "invalid_thread_root"
     reply_to = source.get("reply_to")
     if reply_to is None:
         if root_id != source_id or hop_count != 0:
             return root_id, hop_count, "missing_parent"
         return root_id, hop_count, None
-    parent = _load_note(conn, int(reply_to))
+    parent = _load_note(conn, _as_int(reply_to, field="reply_to"))
     if parent is None:
         return root_id, hop_count, "parent_not_found"
     if _effective_root(parent) != root_id:
         return root_id, hop_count, "parent_thread_mismatch"
-    if hop_count != int(parent.get("hop_count") or 0) + 1:
+    if hop_count != _as_int(parent.get("hop_count") or 0, field="hop_count") + 1:
         return root_id, hop_count, "non_monotonic_hop"
     return root_id, hop_count, None
 
@@ -194,7 +202,7 @@ def _atomic_send(
     processing: ProcessingClaim,
     now: float,
 ) -> int | None:
-    source_id = int(source["id"])
+    source_id = _as_int(source["id"], field="source_note_id")
     try:
         conn.execute("BEGIN IMMEDIATE")
         current_source = _load_note(conn, source_id)
@@ -232,7 +240,9 @@ def _atomic_send(
                 current_hop + 1,
             ),
         )
-        outgoing_id = int(cursor.lastrowid)
+        if cursor.lastrowid is None:
+            raise RuntimeError("note insert did not return a row id")
+        outgoing_id = cursor.lastrowid
         updated = conn.execute(
             """
             UPDATE autonomous_comms_processing
@@ -335,7 +345,7 @@ def process_note(
     halt = _kill_switch_active(conn)
     promotion = evaluate_promotion(conn, operator_enabled=config.operator_enabled, now=current)
     msg_type = _message_type(source)
-    if msg_type is MessageType.DIALOGUE and int(source.get("verified") or 0) != 1:
+    if msg_type is MessageType.DIALOGUE and _as_int(source.get("verified") or 0, field="verified") != 1:
         msg_type = MessageType.UNKNOWN
     decision = route(
         GateInput(

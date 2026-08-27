@@ -33,7 +33,7 @@ def _operator_enabled() -> bool:
 
 
 @router.get("/comms/promotion")
-async def promotion_status() -> dict:
+async def promotion_status() -> dict[str, object]:
     db = get_db()
     try:
         ensure_schema(db)
@@ -73,7 +73,7 @@ async def promotion_status() -> dict:
 
 
 @router.get("/comms/shadow-candidates", dependencies=[Depends(verify_admin_key)])
-async def list_shadow_candidates(limit: int = 50) -> dict:
+async def list_shadow_candidates(limit: int = 50) -> dict[str, object]:
     safe_limit = min(max(limit, 1), 100)
     db = get_db()
     try:
@@ -93,7 +93,7 @@ async def list_shadow_candidates(limit: int = 50) -> dict:
 
 
 @router.put("/comms/promotion/approval", dependencies=[Depends(verify_admin_key)])
-async def update_promotion_approval(data: PromotionApproval) -> dict:
+async def update_promotion_approval(data: PromotionApproval) -> dict[str, object]:
     db = get_db()
     try:
         ensure_schema(db)
@@ -113,7 +113,7 @@ async def update_promotion_approval(data: PromotionApproval) -> dict:
 
 
 @router.post("/comms/promotion/reviews", dependencies=[Depends(verify_admin_key)])
-async def review_shadow_candidate(data: ShadowReview) -> dict:
+async def review_shadow_candidate(data: ShadowReview) -> dict[str, object]:
     db = get_db()
     try:
         ensure_schema(db)

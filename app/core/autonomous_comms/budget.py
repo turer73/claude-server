@@ -36,12 +36,15 @@ def reserve_budget(
 ) -> BudgetReservation | None:
     if not day_utc or estimated_tokens <= 0 or stale_after_seconds <= 0:
         raise ValueError("invalid budget request")
-    if min(
-        limits.daily_replies,
-        limits.daily_tokens,
-        limits.daily_new_threads,
-        limits.concurrent_in_flight,
-    ) < 0:
+    if (
+        min(
+            limits.daily_replies,
+            limits.daily_tokens,
+            limits.daily_new_threads,
+            limits.concurrent_in_flight,
+        )
+        < 0
+    ):
         raise ValueError("budget limits cannot be negative")
     current = time.time() if now is None else now
     reservation_id = secrets.token_urlsafe(24)

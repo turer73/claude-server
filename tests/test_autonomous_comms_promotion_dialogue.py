@@ -162,7 +162,5 @@ def test_dialogue_handles_provider_error_and_empty_context() -> None:
     def fail(**_: object) -> str:
         raise RuntimeError("secret provider detail")
 
-    assert DialogueProducer(llm_callable=fail).produce([DialogueTurn("user", "hello")]) == DialogueFailure(
-        "provider_error"
-    )
+    assert DialogueProducer(llm_callable=fail).produce([DialogueTurn("user", "hello")]) == DialogueFailure("provider_error")
     assert DialogueProducer(llm_callable=lambda **_: "ok").produce([]) == DialogueFailure("empty_context")

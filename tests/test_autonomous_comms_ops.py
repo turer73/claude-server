@@ -99,13 +99,16 @@ async def test_shadow_review_api_is_unique_and_updates_metrics(db_path: str, mon
         """
     ).fetchone()
     assert tuple(metrics) == (1, 1, 1)
-    assert conn.execute(
-        """
+    assert (
+        conn.execute(
+            """
         SELECT COUNT(*) FROM autonomous_comms_decision_audit
         WHERE correlation_id = ? AND decision = 'human_review'
         """,
-        (shadow.correlation_id,),
-    ).fetchone()[0] == 1
+            (shadow.correlation_id,),
+        ).fetchone()[0]
+        == 1
+    )
     conn.close()
 
 
@@ -118,9 +121,7 @@ async def test_promotion_status_and_approval_api(db_path: str, monkeypatch) -> N
     assert status["operator_enabled"] is False
     assert (await comms_api.update_promotion_approval(PromotionApproval(approved=True)))["approved"] is True
     conn = _connect(db_path)
-    assert conn.execute(
-        "SELECT COUNT(*) FROM autonomous_comms_decision_audit WHERE decision = 'promotion_admin'"
-    ).fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM autonomous_comms_decision_audit WHERE decision = 'promotion_admin'").fetchone()[0] == 1
     conn.close()
 
 
