@@ -742,6 +742,7 @@ class SpawnFailureRetryResponse(BaseModel):
 # Kernel (DB_PATH/keys/verify_key/get_db/router'lar/helpers/models) yukarıda kalır.
 from app.api.memory import agenda as agenda  # noqa: E402, F401
 from app.api.memory import claims as claims  # noqa: E402, F401
+from app.api.memory import comms as comms  # noqa: E402, F401
 from app.api.memory import dashboard as dashboard  # noqa: E402, F401
 from app.api.memory import devices as devices  # noqa: E402, F401
 from app.api.memory import discoveries as discoveries  # noqa: E402, F401

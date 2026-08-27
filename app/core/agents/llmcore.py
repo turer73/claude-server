@@ -80,6 +80,9 @@ _TASK_ROUTES: dict[str, tuple[str, str]] = {
     # öncülü canlı testte yanlışlandı). Gözetimsiz iş, kota-rekabeti olmayan ücretli-ama-kuruş
     # DeepSeek'e taşındı; interaktif Claude yolları etkilenmiyor.
     "system-state": ("deepseek", "deepseek-v4-flash"),
+    # Phase-C agent-to-agent dialogue. Dedicated env override:
+    # LLM_ROUTE_AUTONOMOUS_DIALOGUE=backend:model
+    "autonomous_dialogue": ("deepseek", "deepseek-v4-flash"),
     "default": ("ollama", "qwen2.5:3b"),
 }
 

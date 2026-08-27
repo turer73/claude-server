@@ -136,7 +136,13 @@ PY
         # Faz-A SS5 kill-switch + SS10 audit (docs/autonomous-comms-design.md): karar-mantigi
         # bagimsiz/test-edilebilir modulde (embedded-heredoc bash-quote-escaping kirilganligindan
         # kacinmak + pytest'ten import edilebilmek icin, bkz automation/note_poller_decide.py).
-        spawned_max_id=$(printf '%s' "$new_notes" | python3 /opt/linux-ai-server/automation/note_poller_decide.py "$HOOK_DB" "$HOOK_DEVICE" "$last_seen" 2>>"$LOG_FILE" || echo $last_seen)
+        if [ "${AUTONOMOUS_COMMS_PHASE_C:-0}" = "1" ]; then
+            # Faz-C fail-safe pipeline: process spawn ETMEZ. Shadow varsayilan;
+            # active send ancak env flip + taze insan onayi + metrik esikleriyle.
+            spawned_max_id=$(printf '%s' "$new_notes" | python3 /opt/linux-ai-server/automation/autonomous_comms_poller.py "$HOOK_DB" "$HOOK_DEVICE" "$last_seen" 2>>"$LOG_FILE" || echo $last_seen)
+        else
+            spawned_max_id=$(printf '%s' "$new_notes" | python3 /opt/linux-ai-server/automation/note_poller_decide.py "$HOOK_DB" "$HOOK_DEVICE" "$last_seen" 2>>"$LOG_FILE" || echo $last_seen)
+        fi
     else
         # AUTONOMOUS_MODE=0: tum batch state'e gec
         spawned_max_id=$(printf '%s' "$new_notes" | python3 -c "import json,sys; d=json.load(sys.stdin); print(max(n['id'] for n in d) if d else 0)" 2>/dev/null || echo 0)
