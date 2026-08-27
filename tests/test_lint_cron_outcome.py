@@ -62,6 +62,16 @@ def test_lint_passes_when_script_emits_outcome(tmp_path):
     assert r.returncode == 0
 
 
+def test_lint_does_not_lose_early_outcome_to_pipefail_sigpipe(tmp_path):
+    # Regression: grep -v | grep -q + pipefail, erken eslesmede upstream grep'i
+    # SIGPIPE(141) ile dusurup gercek marker'i yok sayabiliyordu. Pipe buffer'ini
+    # asan son ek bu yarisi eski uygulamada deterministik olarak tetikler.
+    body = '#!/bin/bash\necho "OUTCOME: pass | tamam"\n' + ("echo filler\n" * 20000)
+    env = _fixture(tmp_path, body)
+    r = _run(env)
+    assert r.returncode == 0, f"lint false-negative:\n{r.stdout}\n{r.stderr}"
+
+
 def test_lint_flags_comment_only_outcome(tmp_path):
     # Codex P2: '# TODO OUTCOME:' gerçek emit DEĞİL → lint geçirmemeli (sessiz-green engeli).
     env = _fixture(tmp_path, "#!/bin/bash\n# TODO OUTCOME: ekle\necho merhaba\n")
