@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -163,3 +164,11 @@ def test_poller_batch_advances_terminal_shadow_but_retries_transient_budget(db_p
     assert next_seen == shadow_id
     assert results[0]["reason"] == "budget_denied"
     conn.close()
+
+
+def test_note_poller_runs_phase_c_with_project_venv_and_fails_safe_if_missing() -> None:
+    script = (Path(__file__).parents[1] / "automation" / "note-poller.sh").read_text(encoding="utf-8")
+    assert 'PHASE_C_PYTHON="${PHASE_C_PYTHON:-/opt/linux-ai-server/venv/bin/python}"' in script
+    assert 'if [ ! -x "$PHASE_C_PYTHON" ]; then' in script
+    assert '"$PHASE_C_PYTHON" /opt/linux-ai-server/automation/autonomous_comms_poller.py' in script
+    assert "spawned_max_id=$last_seen" in script

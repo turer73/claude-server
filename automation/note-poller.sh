@@ -30,6 +30,7 @@ PENDING_FILE="${PENDING_FILE:-/opt/linux-ai-server/data/hook-state/pending-notes
 STATE_FILE="${STATE_FILE:-/opt/linux-ai-server/data/hook-state/poller-state.json}"
 LOG_FILE="${LOG_FILE:-/opt/linux-ai-server/data/hook-logs/note-poller.log}"
 POLL_INTERVAL="${POLL_INTERVAL:-30}"
+PHASE_C_PYTHON="${PHASE_C_PYTHON:-/opt/linux-ai-server/venv/bin/python}"
 
 mkdir -p "$(dirname "$PENDING_FILE")" "$(dirname "$LOG_FILE")" 2>/dev/null || true
 
@@ -139,7 +140,12 @@ PY
         if [ "${AUTONOMOUS_COMMS_PHASE_C:-0}" = "1" ]; then
             # Faz-C fail-safe pipeline: process spawn ETMEZ. Shadow varsayilan;
             # active send ancak env flip + taze insan onayi + metrik esikleriyle.
-            spawned_max_id=$(printf '%s' "$new_notes" | python3 /opt/linux-ai-server/automation/autonomous_comms_poller.py "$HOOK_DB" "$HOOK_DEVICE" "$last_seen" 2>>"$LOG_FILE" || echo $last_seen)
+            if [ ! -x "$PHASE_C_PYTHON" ]; then
+                log "phase-c interpreter unavailable: $PHASE_C_PYTHON"
+                spawned_max_id=$last_seen
+            else
+                spawned_max_id=$(printf '%s' "$new_notes" | "$PHASE_C_PYTHON" /opt/linux-ai-server/automation/autonomous_comms_poller.py "$HOOK_DB" "$HOOK_DEVICE" "$last_seen" 2>>"$LOG_FILE" || echo $last_seen)
+            fi
         else
             spawned_max_id=$(printf '%s' "$new_notes" | python3 /opt/linux-ai-server/automation/note_poller_decide.py "$HOOK_DB" "$HOOK_DEVICE" "$last_seen" 2>>"$LOG_FILE" || echo $last_seen)
         fi
