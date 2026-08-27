@@ -29,14 +29,18 @@ has_outcome() {
     [ -f "$abs" ] || return 1
     # YORUM satırlarını (^\s*#) HARİÇ tut: '# TODO OUTCOME:' gerçek emit DEĞİL, lint'i
     # geçirmemeli (Codex P2 — yoksa engellemesi gereken sessiz-green'i geçer).
-    grep -vE '^[[:space:]]*#' "$abs" | grep -qE 'OUTCOME:|emit_outcome|outcome\.sh' && return 0
+    # Tek awk kullan: `grep -v | grep -q` pipefail altında, eslesme dosyanin
+    # basindaysa grep -q erken kapanip upstream grep'e SIGPIPE (141) verebiliyor.
+    # Bu da gercek OUTCOME marker'ini nondeterministik olarak "yok" sayiyordu.
+    awk '!/^[[:space:]]*#/ && /OUTCOME:|emit_outcome|outcome\.sh/ { found=1; exit } END { exit !found }' "$abs" && return 0
     # exec/python/bash ile çağrılan repo-içi script'leri takip et (1 seviye)
     local sub
     for sub in $(grep -oE '[A-Za-z0-9_./-]+\.(py|sh)' "$abs" | sort -u); do
         local subrel="${sub#"$PREFIX"}"
         subrel="${subrel#./}"
         [ "$subrel" = "$rel" ] && continue
-        [ -f "$ROOT/$subrel" ] && grep -vE '^[[:space:]]*#' "$ROOT/$subrel" | grep -qE 'OUTCOME:|emit_outcome' && return 0
+        [ -f "$ROOT/$subrel" ] && \
+            awk '!/^[[:space:]]*#/ && /OUTCOME:|emit_outcome/ { found=1; exit } END { exit !found }' "$ROOT/$subrel" && return 0
     done
     return 1
 }
