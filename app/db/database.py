@@ -2,14 +2,41 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sqlite3
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
 
 import aiosqlite
 
+from app.core.db_health_alarm import report_db_failure, report_db_recovered
+
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+# Kalıcı bağlantının "zehirlendiği" durumlar: dosya diskte yazılabilir olsa bile
+# bu bağlantı bir daha çalışmaz, tek çare yeniden bağlanmak. 2026-08-18'de tam
+# olarak bu yaşandı — cron'un kısa-ömürlü sqlite3 CLI'ı aynı dosyaya 8 gün
+# boyunca sorunsuz yazdı, uygulamanın kalıcı bağlantısı ise ölü kaldı.
+#
+# DAR TUTULDU (bilerek): "database is locked" (busy_timeout'un işi),
+# "no such table" (şema hatası) ve IntegrityError (kısıt ihlali) BURAYA GİRMEZ —
+# onlarda reconnect ya faydasız ya da gerçek bir bug'ı maskeler.
+_RECONNECT_MARKERS = (
+    "file is not a database",
+    "database disk image is malformed",
+)
+
+
+def _is_connection_poisoned(exc: sqlite3.DatabaseError) -> bool:
+    if isinstance(exc, sqlite3.IntegrityError):
+        return False
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _RECONNECT_MARKERS)
+
 
 # DB path fallback'i için TEK kaynak. Production systemd DB_PATH set eder; bu
 # yalnızca env yokken devreye girer. main.py (schema init) ve events.py (emit/read)
@@ -170,6 +197,11 @@ class Database:
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
         self._conn: aiosqlite.Connection | None = None
+        self._reconnect_lock = asyncio.Lock()
+        # Eşzamanlı çağrıların aynı arızada üst üste reconnect denemesini önler:
+        # kilidi alan ilk coroutine bağlantıyı tazeler, kuyruktakiler jenerasyon
+        # numarasının değiştiğini görüp kendi denemelerini atlar.
+        self._generation = 0
 
     async def initialize(self) -> None:
         # DB-sertleştirme (audit P1#7): prod'da DB_PATH set edilmezse /tmp fallback'e
@@ -181,8 +213,19 @@ class Database:
                 "veri-kaybı riski (restart'ta /tmp uçabilir). systemd DB_PATH'i doğrula.",
                 self.db_path,
             )
-        self._conn = await aiosqlite.connect(self.db_path)
-        self._conn.row_factory = aiosqlite.Row
+        self._conn = await self._open()
+        await self._conn.executescript(SCHEMA_V1)
+        await self._migrate()
+        await self._conn.commit()
+
+    async def _open(self) -> aiosqlite.Connection:
+        """Bağlantı + bağlantı-başı PRAGMA'lar. initialize() ve _reconnect() ORTAK kullanır.
+
+        Ortak olması şart: reconnect bu PRAGMA'ları atlarsa yeni bağlantı
+        busy_timeout'suz kalır ve "database is locked" hataları geri döner.
+        """
+        conn = await aiosqlite.connect(self.db_path)
+        conn.row_factory = aiosqlite.Row
         # DB-sertleştirme (audit P1#6): WAL = eşzamanlı okuma+yazma (uvicorn 2-worker +
         # events.py ikili-writer → #517 kilit-çekişmesinin kökü). busy_timeout = kilitliyse
         # "database is locked" yerine N ms bekle (BUSY≠READONLY≠hata). journal_mode=WAL
@@ -190,11 +233,65 @@ class Database:
         # Codex P2: busy_timeout WAL'DEN ÖNCE — DELETE→WAL geçişi kilit alır; başka writer
         # (cron/worker) kilidi tutuyorsa WAL pragma'sı bekleyecek olan ilk işlem, timeout
         # daha kurulmadan "database is locked" atabilir. Önce timeout, sonra kilit-alan WAL.
-        await self._conn.execute("PRAGMA busy_timeout=10000")
-        await self._conn.execute("PRAGMA journal_mode=WAL")
-        await self._conn.executescript(SCHEMA_V1)
-        await self._migrate()
-        await self._conn.commit()
+        await conn.execute("PRAGMA busy_timeout=10000")
+        await conn.execute("PRAGMA journal_mode=WAL")
+        return conn
+
+    async def _reconnect(self, seen_generation: int) -> bool:
+        """Zehirlenmiş bağlantıyı tazele. Başarılıysa True.
+
+        seen_generation: çağıranın hatayı gördüğü andaki jenerasyon. Kilit
+        içinde jenerasyon değişmişse başka bir coroutine zaten tazelemiştir —
+        tekrar bağlanma, mevcut bağlantıyla devam et.
+        """
+        async with self._reconnect_lock:
+            if self._generation != seen_generation:
+                return True
+
+            # ÖNCE yeni bağlantıyı kur, SONRA takas et. `self._conn`'u arada None
+            # yapmak, hatayı görüp kilidi bekleyen eşzamanlı çağrıların
+            # "Database not initialized" ile patlamasına yol açıyordu (testle yakalandı).
+            new_conn = await self._open()
+            old, self._conn = self._conn, new_conn
+            self._generation += 1
+
+            if old is not None:
+                try:
+                    await old.close()
+                except Exception as exc:  # bozuk bağlantıda close da patlayabilir
+                    logger.warning("bozuk DB bağlantısı kapatılamadı (yok sayılıyor): %s", exc)
+            return True
+
+    async def _with_recovery(self, op: str, fn: Callable[[], Awaitable[T]]) -> T:
+        """fn()'i çalıştır; bağlantı zehirlendiyse BİR KEZ yeniden bağlanıp tekrar dene.
+
+        Tek deneme bilinçli: kalıcı bozulmada sonsuz retry, 55.855 hatalık
+        sessiz kesintinin yerine 55.855 reconnect fırtınası koyardı.
+        """
+        generation = self._generation
+        try:
+            return await fn()
+        except sqlite3.DatabaseError as exc:
+            if not _is_connection_poisoned(exc):
+                raise
+            logger.error("DB bağlantısı zehirlendi (%s): %s — yeniden bağlanılıyor", op, exc)
+            try:
+                await self._reconnect(generation)
+            except Exception as reconnect_exc:
+                logger.critical("DB yeniden bağlanma BAŞARISIZ (%s): %s", op, reconnect_exc)
+                report_db_failure(op, reconnect_exc)
+                raise exc from reconnect_exc
+
+            try:
+                result = await fn()
+            except sqlite3.DatabaseError as retry_exc:
+                logger.critical("DB yeniden bağlandı ama işlem yine başarısız (%s): %s", op, retry_exc)
+                report_db_failure(op, retry_exc)
+                raise
+
+            logger.warning("DB bağlantısı yeniden kuruldu, işlem başarılı (%s)", op)
+            report_db_recovered(op)
+            return result
 
     async def _migrate(self) -> None:
         """İdempotent kolon-eklemeleri: CREATE TABLE IF NOT EXISTS mevcut (prod)
@@ -257,16 +354,27 @@ class Database:
         return self._conn
 
     async def execute(self, sql: str, params: tuple[Any, ...] = ()) -> aiosqlite.Cursor:
-        cursor = await self.conn.execute(sql, params)
-        await self.conn.commit()
-        return cursor
+        async def _run() -> aiosqlite.Cursor:
+            cursor = await self.conn.execute(sql, params)
+            await self.conn.commit()
+            return cursor
+
+        # Retry güvenli: hata commit'ten ÖNCE atılırsa hiçbir şey kalıcı olmamıştır,
+        # dolayısıyla ikinci deneme yazmayı ÇİFTLEMEZ.
+        return await self._with_recovery("execute", _run)
 
     async def fetch_all(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
-        cursor = await self.conn.execute(sql, params)
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+        async def _run() -> list[dict[str, Any]]:
+            cursor = await self.conn.execute(sql, params)
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+        return await self._with_recovery("fetch_all", _run)
 
     async def fetch_one(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
-        cursor = await self.conn.execute(sql, params)
-        row = await cursor.fetchone()
-        return dict(row) if row else None
+        async def _run() -> dict[str, Any] | None:
+            cursor = await self.conn.execute(sql, params)
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+        return await self._with_recovery("fetch_one", _run)
