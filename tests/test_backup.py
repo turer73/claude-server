@@ -207,3 +207,76 @@ def test_snapshot_content_is_valid_and_complete(db_bm, tmp_path):
         assert con.execute("SELECT count(*) FROM t").fetchone()[0] == 50
     finally:
         con.close()
+
+
+# --- Olu kopyalar arsive girmemeli (2026-09-02 olcumu) ---
+#
+# data/ 13 GB'in 9,8 GB'i eski DB kopyasiydi (*.memsyn-bak.* 7,4 GB, *.corrupt-* 2,4 GB)
+# ve gecelik yedek hepsini HER GECE yeniden tar'liyordu: tarball 755 MB -> 1,05 GB.
+# Bunlar SILINMEZ (adli kanit), yalnizca arsive alinmaz.
+
+
+def _dead_copy_bm(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "server.db").write_bytes(b"SQLite format 3\x00" + b"\x00" * 200)
+    (source / "canli.txt").write_text("canli veri")
+    for dead in (
+        "claude_memory.db.memsyn-bak.1788158700",
+        "server.db.corrupt-20260809-134445",
+        "server.db.lostfound-20260815",
+        "server.db.precorrupt-20260828",
+        "server.db.preswap-20260614",
+        "server.yml.bak-jwtrotate-20260603",
+        "server.db.backup.1787842507",
+    ):
+        (source / dead).write_text("olu kopya " * 100)
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    return BackupManager(source_dirs=[str(source)], backup_dir=str(backup_dir))
+
+
+def _members(path: str) -> list[str]:
+    import tarfile
+
+    with tarfile.open(path) as tar:
+        return tar.getnames()
+
+
+def test_dead_copies_excluded_from_archive(tmp_path):
+    """Olu-kopya desenleri arsive GIRMEZ, canli dosyalar girer."""
+    bm = _dead_copy_bm(tmp_path)
+    result = bm.create_backup()
+    names = " ".join(_members(result["path"]))
+
+    for dead in ("memsyn-bak", "corrupt-", "lostfound-", "precorrupt", "preswap-", "bak-", "backup."):
+        assert dead not in names, f"olu kopya arsive girdi ({dead}): {names}"
+    assert "source/server.db" in names, names
+    assert "source/canli.txt" in names, names
+
+
+def test_dead_copy_skip_is_counted_not_silent(tmp_path):
+    """Sessiz eleme YOK — atlanan sayisi ve boyutu raporlanmali."""
+    bm = _dead_copy_bm(tmp_path)
+    result = bm.create_backup()
+
+    assert result["skipped_dead_copies"] == 7, result
+    assert result["skipped_bytes"] > 0, result
+
+
+def test_live_db_names_never_match_dead_patterns():
+    """Canli DB adlari hicbir olu-kopya desenine UYMAMALI (yanlis-dislama korumasi)."""
+    from app.core.backup_manager import _is_dead_copy
+
+    for live in ("server.db", "claude_memory.db", "coverage.db", "rag_metrics.db", "server.yml"):
+        assert not _is_dead_copy(live), f"canli dosya olu-kopya sanildi: {live}"
+
+
+def test_exclusion_can_be_disabled(tmp_path, monkeypatch):
+    """BACKUP_NO_EXCLUDE=1 kacis kapisi — her sey arsive girer."""
+    monkeypatch.setenv("BACKUP_NO_EXCLUDE", "1")
+    bm = _dead_copy_bm(tmp_path)
+    result = bm.create_backup()
+
+    assert result["skipped_dead_copies"] == 0, result
+    assert "memsyn-bak" in " ".join(_members(result["path"]))

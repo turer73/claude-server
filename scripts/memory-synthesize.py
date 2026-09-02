@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import math
 import os
-import shutil
 import sqlite3
 import sys as _sys
 from pathlib import Path as _Path
@@ -111,11 +110,58 @@ def _ensure_schema(con: sqlite3.Connection) -> None:
         con.commit()
 
 
+MEMSYN_KEEP = max(1, int(os.environ.get("MEMSYN_BACKUP_KEEP", "2")))
+_MEMSYN_SUFFIX = ".memsyn-bak."
+
+
+def _memsyn_backups() -> list[str]:
+    """Bu script'in urettigi kopyalar, YENIDEN ESKIYE. Damga sayisal olmali —
+    yabanci bir dosyayi yanlislikla silmemek icin desen DAR tutulur."""
+    base = os.path.basename(DB_PATH) + _MEMSYN_SUFFIX
+    d = os.path.dirname(DB_PATH) or "."
+    out = []
+    for n in os.listdir(d):
+        if n.startswith(base) and n[len(base) :].isdigit():
+            out.append(os.path.join(d, n))
+    return sorted(out, key=lambda p: int(p.rsplit(_MEMSYN_SUFFIX, 1)[1]), reverse=True)
+
+
+def _prune_backups() -> int:
+    """En yeni MEMSYN_KEEP kopyayi birak, eskileri sil. Silinen sayisini dondurur.
+
+    Eskiden HIC temizlik yoktu: 2026-09-02'de 12 dosya / 7,4 GB birikmisti ve
+    her gece yedege giriyordu (data/ 13 GB'in 9,8 GB'i olu kopyaydi).
+    """
+    removed = 0
+    for old in _memsyn_backups()[MEMSYN_KEEP:]:
+        try:
+            os.remove(old)
+            removed += 1
+            print(f"  memsyn-bak budandi: {os.path.basename(old)}")
+        except OSError as e:
+            print(f"  UYARI: {os.path.basename(old)} silinemedi: {e}")
+    return removed
+
+
 def _backup_db() -> str:
-    """APPLY öncesi timestamped DB-backup (ZORUNLU). Yedek yolunu döndürür."""
+    """APPLY öncesi timestamped DB-backup (ZORUNLU). Yedek yolunu döndürür.
+
+    SQLite backup API kullanilir, `shutil.copy2` DEGIL: canli WAL DB'nin ham
+    dosya kopyasi `-wal`'siz alindiginda TUTARSIZ olur — yani eski "yedek"lerin
+    geri-yuklenebilirligi garanti degildi. Kaynak `mode=ro` acilir (yedekleme
+    yolu canli DB'ye yazamaz; PR#376 ile ayni kural).
+    """
     mtime = int(os.path.getmtime(DB_PATH))
-    dst = f"{DB_PATH}.memsyn-bak.{mtime}"
-    shutil.copy2(DB_PATH, dst)
+    dst = f"{DB_PATH}{_MEMSYN_SUFFIX}{mtime}"
+    src_conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+    try:
+        dst_conn = sqlite3.connect(dst)
+        try:
+            src_conn.backup(dst_conn)
+        finally:
+            dst_conn.close()
+    finally:
+        src_conn.close()
     return dst
 
 
@@ -190,9 +236,14 @@ def main() -> int:
     if APPLY:
         try:
             backup = _backup_db()
-        except OSError as e:
+        except (OSError, sqlite3.Error) as e:
+            # sqlite3.Error de yakalanmali: backup artik SQLite backup API ile
+            # aliniyor, saf dosya-kopyasi degil.
             print(f"OUTCOME: fail | DB-backup başarısız, APPLY iptal: {e}")
             return 0
+        # Budama YALNIZ yeni kopya basariyla alindiktan SONRA — aksi halde
+        # elimizde hic yedek kalmadan eskileri silmis olurduk.
+        _prune_backups()
     try:
         res = synthesize()
     except (urllib.error.URLError, RuntimeError, sqlite3.Error) as e:

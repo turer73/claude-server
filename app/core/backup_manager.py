@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import logging
 import os
 import sqlite3
@@ -24,6 +25,44 @@ def _is_sqlite_file(path: str) -> bool:
             return f.read(16) == b"SQLite format 3\x00"
     except OSError:
         return False
+
+
+# Yedege ALINMAYACAK olu-kopya desenleri. Bunlar canli veri DEGIL; eski
+# DB kopyalari ve bozulma-adli-kanitlari. 2026-09-02 olcumu: data/ 13 GB'in
+# 9,8 GB'i bunlardan olusuyordu ve gecelik yedek hepsini HER GECE yeniden
+# tar'liyordu (tarball 755 MB -> 1,05 GB, surekli buyuyor).
+#
+# ONEMLI: bunlar SILINMEZ, yalnizca ARSIVE ALINMAZ. Eski `*.corrupt-*`
+# dosyalari bozulma arastirmasinin adli kanitidir; diskte kalirlar.
+#
+# Desen listesi bilerek DAR: yalnizca adinda kopya-damgasi tasiyanlar. Canli
+# DB adlari (server.db, claude_memory.db, coverage.db, rag_metrics.db) hicbir
+# desene uymaz. BACKUP_NO_EXCLUDE=1 ile tamamen kapatilabilir (kacis kapisi).
+_DEAD_COPY_PATTERNS = (
+    "*.memsyn-bak.*",  # memory-synthesize haftalik kopyalari (7,4 GB)
+    "*.corrupt-*",  # bozulma adli-kanitlari
+    "*.lostfound-*",
+    "*.precorrupt*",
+    "*.preswap-*",
+    "*.bak-*",
+    "*.bak.*",
+    "*.backup.*",
+)
+
+
+def _is_dead_copy(name: str) -> bool:
+    """Ad kopya-damgasi tasiyor mu? (Canli DB adlari uymaz.)
+
+    Kacis kapisi `read_env_var` ile okunur, `os.environ.get` ile DEGIL: servis
+    systemd altinda calisiyor ve systemd `.env`'i process-env'e YUKLEMEZ —
+    os.environ ile kurulan gate serviste sessizce olu kalirdi (#174 sinifi,
+    dead-gate guard'i bunu yakaladi).
+    """
+    from app.core.config import read_env_var  # lazy: import-cycle onleme
+
+    if (read_env_var("BACKUP_NO_EXCLUDE") or "0").strip().lower() in ("1", "true", "on", "yes"):
+        return False
+    return any(fnmatch.fnmatch(name, pat) for pat in _DEAD_COPY_PATTERNS)
 
 
 def _snapshot_sqlite(src: str, dst: str) -> None:
@@ -99,6 +138,9 @@ class BackupManager:
         # claude_memory.db tek basina 1.8 GB — varsayilan /tmp kullanildiginda her
         # gece bu kadar veri RAM'e yaziliyordu. backup_dir zaten yukarida
         # makedirs edildi ve ciktinin kendisiyle ayni dosya sisteminde.
+        skipped_dead = 0
+        skipped_bytes = 0
+
         with tempfile.TemporaryDirectory(prefix="bkp-snap-", dir=self._backup_dir) as snap_dir:
             # Map source path -> arcname for items added to tar.
             # SQLite files get a consistent snapshot into snap_dir first.
@@ -113,6 +155,16 @@ class BackupManager:
                             arcname = os.path.join(src_base, entry)
                             # Skip WAL/SHM sidecars — captured by online backup
                             if entry.endswith((".db-wal", ".db-shm")):
+                                continue
+                            # Olu kopyalar arsive girmez. SESSIZ eleme YOK —
+                            # sayilir ve sonucta raporlanir (restore-test dersi:
+                            # sessizce atlanan sey gozden kacar).
+                            if _is_dead_copy(entry):
+                                skipped_dead += 1
+                                try:
+                                    skipped_bytes += os.path.getsize(full)
+                                except OSError:
+                                    pass
                                 continue
                             if _is_sqlite_file(full):
                                 snap_path = os.path.join(snap_dir, entry)
@@ -141,12 +193,21 @@ class BackupManager:
         os.replace(tmp_path, path)
 
         size = os.path.getsize(path)
+        if skipped_dead:
+            logger.info(
+                "backup: %d olu-kopya atlandi (%.1f GB arsive girmedi)",
+                skipped_dead,
+                skipped_bytes / 1073741824,
+            )
         return {
             "success": True,
             "path": path,
             "filename": name,
             "size_bytes": size,
             "created": datetime.now().isoformat(),
+            # Gorunurluk: neyin DISARIDA birakildigi da sonucun parcasi.
+            "skipped_dead_copies": skipped_dead,
+            "skipped_bytes": skipped_bytes,
         }
 
     def list_backups(self) -> list[dict[str, Any]]:
