@@ -17,10 +17,35 @@ TOKEN=$(curl -s -X POST $API/api/v1/auth/token \
     -d "{\"api_key\": \"$KEY\"}" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null)
 
 if [ -z "$TOKEN" ]; then
-    MSG="🔴 *Backup FAILED*\nAPI auth başarısız — servis çalışmıyor olabilir"
-    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] AUTH FAILED" >> "$LOG"
-    send_telegram "$MSG"
-    echo "OUTCOME: fail | API auth basarisiz (servis down olabilir)"
+    # Auth dusunce kosulsuz "servis calismiyor olabilir" demek YANLIS TESHIS
+    # uretiyordu: 2026-08-31/09-02'de gercek neden BOZUK server.db idi (auth
+    # api_keys'i oradan okur) ama alarm servisi isaret etti ve 45 saat yanlis
+    # yone baktirdi. Artik iki degisken AYRI olculur: servis ayakta mi, DB saglam mi.
+    TS_NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    HEALTH=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$API/health" 2>/dev/null)
+    DB_FILE="${SERVER_DB:-/opt/linux-ai-server/data/server.db}"
+    DB_STATE="bilinmiyor"
+    if [ -f "$DB_FILE" ] && command -v sqlite3 >/dev/null 2>&1; then
+        if [ "$(sqlite3 "$DB_FILE" 'PRAGMA quick_check;' 2>&1 | head -1)" = "ok" ]; then
+            DB_STATE="saglam"
+        else
+            DB_STATE="BOZUK"
+        fi
+    fi
+
+    if [ "$HEALTH" != "200" ]; then
+        REASON="servis yanit vermiyor (/health=${HEALTH:-yok})"
+    elif [ "$DB_STATE" = "BOZUK" ]; then
+        REASON="servis AYAKTA ama server.db BOZUK - auth api_keys'i okuyamiyor"
+    else
+        REASON="servis ayakta (/health=200), server.db ${DB_STATE} - auth anahtar sorunu (API_KEY gecersiz/rotate edilmis?)"
+    fi
+
+    echo "[$TS_NOW] AUTH FAILED: $REASON" >> "$LOG"
+    send_telegram "🔴 *Backup FAILED*
+API auth basarisiz.
+Neden: $REASON"
+    echo "OUTCOME: fail | API auth basarisiz - $REASON"
     exit 1
 fi
 

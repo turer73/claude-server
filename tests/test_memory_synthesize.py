@@ -138,3 +138,100 @@ def test_min_cluster_skips_small_on_apply(tmp_path, monkeypatch):
     active45 = con.execute("SELECT COUNT(*) FROM memories WHERE id IN (4,5) AND active=1").fetchone()[0]
     con.close()
     assert active45 == 2  # 2-üye küme dokunulmadı
+
+
+# --- memsyn-bak: tutarli kopya + retention (2026-09-02) ---
+#
+# Iki ayri kusur vardi: (1) kopya canli WAL DB'den `shutil.copy2` ile ham
+# aliniyordu, yani `-wal`'siz TUTARSIZ olabiliyordu; (2) HIC temizlik yoktu —
+# 12 dosya / 7,4 GB birikmisti ve her gece yedege giriyordu.
+
+
+def _make_wal_db_with_uncheckpointed_rows(path):
+    """Verisi WAL'de duran (henuz checkpoint edilmemis) canli DB.
+
+    Baglanti ACIK birakilir: kapanista checkpoint tetiklenmesin. Ham dosya
+    kopyasi bu satirlari GORMEZ, SQLite backup API gorur.
+    """
+    con = sqlite3.connect(path)
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+    con.executemany("INSERT INTO t (v) VALUES (?)", [(f"r{i}",) for i in range(25)])
+    con.commit()
+    return con  # acik birakiliyor
+
+
+def test_backup_db_captures_wal_content_unlike_raw_copy(tmp_path, monkeypatch):
+    """Kopya WAL'deki satirlari da icermeli — ham dosya kopyasi icermezdi."""
+    import shutil
+
+    db = tmp_path / "claude_memory.db"
+    con = _make_wal_db_with_uncheckpointed_rows(db)
+    try:
+        assert (tmp_path / "claude_memory.db-wal").stat().st_size > 0, "WAL bos, test anlamsiz"
+
+        # Kontrol: ESKI davranis (ham kopya) satirlari KACIRIR.
+        raw = tmp_path / "raw-copy.db"
+        shutil.copy2(db, raw)
+        raw_con = sqlite3.connect(f"file:{raw}?mode=ro", uri=True)
+        try:
+            raw_rows = raw_con.execute("SELECT count(*) FROM t").fetchone()[0]
+        except sqlite3.DatabaseError:
+            raw_rows = -1  # tablo bile gorunmuyor
+        finally:
+            raw_con.close()
+        assert raw_rows != 25, "ham kopya WAL'i gormus — test ayirt edici degil"
+
+        # YENI davranis: SQLite backup API tam icerigi alir.
+        monkeypatch.setattr(memsyn, "DB_PATH", str(db))
+        dst = memsyn._backup_db()
+
+        chk = sqlite3.connect(f"file:{dst}?mode=ro", uri=True)
+        try:
+            assert chk.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            assert chk.execute("SELECT count(*) FROM t").fetchone()[0] == 25
+        finally:
+            chk.close()
+    finally:
+        con.close()
+
+
+def _touch_baks(tmp_path, stamps):
+    db = tmp_path / "claude_memory.db"
+    db.write_bytes(b"SQLite format 3\x00")
+    for s in stamps:
+        (tmp_path / f"claude_memory.db.memsyn-bak.{s}").write_text("eski kopya")
+    return db
+
+
+def test_prune_keeps_only_newest_n(tmp_path, monkeypatch):
+    """En yeni N kopya kalir, eskiler budanir."""
+    db = _touch_baks(tmp_path, [100, 200, 300, 400, 500])
+    monkeypatch.setattr(memsyn, "DB_PATH", str(db))
+    monkeypatch.setattr(memsyn, "MEMSYN_KEEP", 2)
+
+    assert memsyn._prune_backups() == 3
+
+    kalan = sorted(p.name for p in tmp_path.glob("*.memsyn-bak.*"))
+    assert kalan == [
+        "claude_memory.db.memsyn-bak.400",
+        "claude_memory.db.memsyn-bak.500",
+    ], kalan
+
+
+def test_prune_never_touches_foreign_files(tmp_path, monkeypatch):
+    """Desen DAR: yabanci dosyalar ve canli DB asla silinmez."""
+    db = _touch_baks(tmp_path, [100, 200, 300])
+    (tmp_path / "claude_memory.db.memsyn-bak.ELDE-TUTULACAK").write_text("sayisal degil")
+    (tmp_path / "server.db.memsyn-bak.100").write_text("baska DB")
+    (tmp_path / "claude_memory.db-wal").write_text("sidecar")
+    monkeypatch.setattr(memsyn, "DB_PATH", str(db))
+    monkeypatch.setattr(memsyn, "MEMSYN_KEEP", 1)
+
+    memsyn._prune_backups()
+
+    assert db.exists(), "canli DB silindi!"
+    assert (tmp_path / "claude_memory.db.memsyn-bak.ELDE-TUTULACAK").exists()
+    assert (tmp_path / "server.db.memsyn-bak.100").exists()
+    assert (tmp_path / "claude_memory.db-wal").exists()
+    assert (tmp_path / "claude_memory.db.memsyn-bak.300").exists()  # en yeni korunur
