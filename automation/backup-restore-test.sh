@@ -16,6 +16,11 @@ source /opt/linux-ai-server/.env 2>/dev/null
 # olmadigi icin uretim yollari aynen gecerli.
 BACKUP_DIR="${BACKUP_DIR:-/var/lib/linux-ai-server/backups}"
 LOG="${RESTORE_TEST_LOG:-/var/log/linux-ai-server/backup-restore-test.log}"
+# Acma dizini DISKTE olmali. mktemp varsayilani /tmp = tmpfs (RAM, 14G) ve arsiv
+# 12 GB aciliyordu -> tar "Cannot write: Disk quota exceeded" ile duser, script de
+# bunu "tar acilamadi (corrupt?)" diye raporlardi. Yedek SAGLAMKEN 2 gun boyunca
+# bozuk sanildi (2026-09-02). /var/tmp lv-root uzerinde, ~61G bos.
+WORKDIR="${RESTORE_TEST_WORKDIR:-/var/tmp}"
 TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 mkdir -p "$(dirname "$LOG")" 2>/dev/null
@@ -41,12 +46,38 @@ fi
 LATEST_NAME=$(basename "$LATEST")
 log "Test ediliyor: $LATEST_NAME"
 
-# 2) Gecici dizine ac
-TMP=$(mktemp -d -t restore-test-XXXXXX)
+# 2) Gecici dizine ac — YALNIZ *.db uyeleri.
+# Asagidaki dogrulama zaten sadece .db dosyalarina bakiyor (find -name '*.db');
+# arsivin tamamini acmak saf israfti: 12.07 GB yerine 2.27 GB, 13.7sn yerine 9.4sn.
+# Sahte ".db" adli dosyalar da cikar ama SQLite-basligi kontrolu onlari atliyor.
+mkdir -p "$WORKDIR" 2>/dev/null
+TMP=$(mktemp -d -p "$WORKDIR" restore-test-XXXXXX)
 trap "rm -rf '$TMP'" EXIT
 
-if ! tar -xzf "$LATEST" -C "$TMP" 2>>"$LOG"; then
-    log "FAIL: tar acilmadi"
+# tar stderr'i AYRI yakala: nedeni siniflandirmak icin lazim. Eskiden dogrudan
+# $LOG'a ekleniyordu ve script nedene bakmadan hepsine "corrupt?" diyordu.
+TAR_ERR="$TMP/.tar-stderr"
+if ! tar -xzf "$LATEST" -C "$TMP" --wildcards '*.db' 2>"$TAR_ERR"; then
+    cat "$TAR_ERR" >> "$LOG" 2>/dev/null
+    # "yer yok" ile "arsiv bozuk" AYRI arizalar — ayni mesaji vermek alarm korlugu
+    # uretir (gercekten bozuk bir yedegi de "corrupt?" diye gorup ayirt edemezdik).
+    if grep -qiE "no space left|quota exceeded|write error" "$TAR_ERR" 2>/dev/null; then
+        AVAIL=$(df -h "$WORKDIR" 2>/dev/null | awk 'NR==2{print $4}')
+        log "FAIL: acma dizininde YER YOK ($WORKDIR, bos: ${AVAIL:-?}) — arsiv bozuk DEGIL"
+        echo "OUTCOME: fail | acma dizininde yer yok ($WORKDIR, bos ${AVAIL:-?}): $LATEST_NAME"
+        send_telegram "🔴 *Backup Restore Test FAIL*
+Acma dizininde YER YOK: \`$WORKDIR\` (bos ${AVAIL:-?})
+Arsiv bozuk DEGIL — RESTORE_TEST_WORKDIR'i daha genis bir diske alin."
+        exit 1
+    fi
+    if grep -qi "not found in archive" "$TAR_ERR" 2>/dev/null; then
+        log "FAIL: arsivde hic .db uyesi yok"
+        echo "OUTCOME: fail | $LATEST_NAME içinde SQLite DB yok"
+        send_telegram "🔴 *Backup Restore Test FAIL*
+\`$LATEST_NAME\` icinde hic .db uyesi yok!"
+        exit 1
+    fi
+    log "FAIL: tar acilmadi (corrupt?): $(head -c 200 "$TAR_ERR" 2>/dev/null | tr '\n' ' ')"
     echo "OUTCOME: fail | tar açılamadı (corrupt?): $LATEST_NAME"
     send_telegram "🔴 *Backup Restore Test FAIL*
 \`$LATEST_NAME\` tar.gz acilamadi (corrupt?)"

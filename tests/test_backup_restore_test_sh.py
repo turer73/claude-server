@@ -47,19 +47,40 @@ def _build_backup(tmp_path: Path, payload: Path) -> Path:
     return backup_dir
 
 
-def _run(backup_dir: Path, tmp_path: Path) -> subprocess.CompletedProcess[str]:
+def _run(
+    backup_dir: Path,
+    tmp_path: Path,
+    env_extra: dict[str, str] | None = None,
+    path_prefix: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    path = "/usr/bin:/bin:/usr/local/bin"
+    if path_prefix is not None:
+        path = f"{path_prefix}:{path}"
+    env = {
+        "PATH": path,
+        "HOME": str(tmp_path),
+        "BACKUP_DIR": str(backup_dir),
+        "RESTORE_TEST_LOG": str(tmp_path / "restore-test.log"),
+        "RESTORE_TEST_WORKDIR": str(tmp_path / "workdir"),
+    }
+    env.update(env_extra or {})
     return subprocess.run(
         ["bash", str(SCRIPT)],
         capture_output=True,
         text=True,
         timeout=120,
-        env={
-            "PATH": "/usr/bin:/bin:/usr/local/bin",
-            "HOME": str(tmp_path),
-            "BACKUP_DIR": str(backup_dir),
-            "RESTORE_TEST_LOG": str(tmp_path / "restore-test.log"),
-        },
+        env=env,
     )
+
+
+def _stub_tar(tmp_path: Path, body: str) -> Path:
+    """PATH'in basina sahte `tar` koy — gercek ENOSPC'i root'suz uretemeyiz."""
+    bin_dir = tmp_path / "stubbin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    stub = bin_dir / "tar"
+    stub.write_text(body)
+    stub.chmod(0o755)
+    return bin_dir
 
 
 @pytest.mark.skipif(shutil.which("sqlite3") is None, reason="sqlite3 CLI yok")
@@ -107,3 +128,100 @@ def test_genuinely_corrupt_sqlite_still_fails(tmp_path: Path) -> None:
 
     assert result.returncode == 1, f"stdout={result.stdout!r} stderr={result.stderr!r}"
     assert "OUTCOME: fail" in result.stdout, result.stdout
+
+
+# --- "yer yok" != "arsiv bozuk" (2026-09-02, yanlis-alarm) ---
+#
+# Repro: mktemp varsayilani /tmp = tmpfs (14G); arsiv 12.07 GB aciliyordu ->
+# tar "Cannot write: Disk quota exceeded" ile duser, script bunu kosulsuz
+# "tar acilamadi (corrupt?)" diye raporlardi. Yedek SAGLAMKEN bozuk sanildi
+# (gzip -t rc=0, tar -tzf rc=0, diske acilis rc=0 ile kanitlandi).
+# Iki ayri ariza ayni mesaji verince gercek bozulma da ayirt edilemez = alarm korlugu.
+
+
+@pytest.mark.skipif(shutil.which("sqlite3") is None, reason="sqlite3 CLI yok")
+def test_out_of_space_reported_as_space_not_corrupt(tmp_path: Path) -> None:
+    """Yer yoksa 'yer yok' denmeli — 'corrupt?' DEGIL."""
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    _make_sqlite(payload / "server.db")
+    backup_dir = _build_backup(tmp_path, payload)
+
+    bin_dir = _stub_tar(
+        tmp_path,
+        "#!/bin/bash\n"
+        "echo 'tar: data/server.db: Cannot write: No space left on device' >&2\n"
+        "echo 'tar: Exiting with failure status due to previous errors' >&2\n"
+        "exit 2\n",
+    )
+    result = _run(backup_dir, tmp_path, path_prefix=bin_dir)
+
+    assert result.returncode == 1, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert "yer yok" in result.stdout, result.stdout
+    assert "corrupt" not in result.stdout.lower(), f"yer-yok arizasi 'corrupt' diye raporlandi (alarm korlugu): {result.stdout!r}"
+
+
+@pytest.mark.skipif(shutil.which("sqlite3") is None, reason="sqlite3 CLI yok")
+def test_genuinely_broken_archive_still_reported_as_corrupt(tmp_path: Path) -> None:
+    """Ayirt etme gercek bozulmayi maskelemiyor — bozuk arsiv hala 'corrupt?'."""
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    _make_sqlite(payload / "server.db")
+    backup_dir = _build_backup(tmp_path, payload)
+
+    bin_dir = _stub_tar(
+        tmp_path,
+        "#!/bin/bash\necho 'tar: Unexpected EOF in archive' >&2\nexit 2\n",
+    )
+    result = _run(backup_dir, tmp_path, path_prefix=bin_dir)
+
+    assert result.returncode == 1, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert "corrupt" in result.stdout.lower(), result.stdout
+    assert "yer yok" not in result.stdout, result.stdout
+
+
+@pytest.mark.skipif(shutil.which("sqlite3") is None, reason="sqlite3 CLI yok")
+def test_only_db_members_are_extracted(tmp_path: Path) -> None:
+    """Arsivin TAMAMI acilmamali — dogrulama zaten yalniz *.db'ye bakiyor.
+
+    12.07 GB yerine 2.27 GB acilir; tmpfs/disk tasmasinin kaynagi buydu.
+    """
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    _make_sqlite(payload / "server.db")
+    (payload / "buyuk-olu-kopya.bin").write_bytes(b"\0" * (2 * 1024 * 1024))
+    backup_dir = _build_backup(tmp_path, payload)
+
+    argfile = tmp_path / "tar-args.txt"
+    bin_dir = _stub_tar(
+        tmp_path,
+        f'#!/bin/bash\nprintf "%s\\n" "$@" > "{argfile}"\nexec /usr/bin/tar "$@"\n',
+    )
+    result = _run(backup_dir, tmp_path, path_prefix=bin_dir)
+
+    assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    args = argfile.read_text().splitlines()
+    assert "--wildcards" in args, args
+    assert "*.db" in args, args
+
+
+@pytest.mark.skipif(shutil.which("sqlite3") is None, reason="sqlite3 CLI yok")
+def test_workdir_is_configurable_and_used(tmp_path: Path) -> None:
+    """Acma dizini RESTORE_TEST_WORKDIR ile diske yonlendirilebilmeli (tmpfs degil)."""
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    _make_sqlite(payload / "server.db")
+    backup_dir = _build_backup(tmp_path, payload)
+
+    workdir = tmp_path / "ozel-workdir"
+    argfile = tmp_path / "tar-args.txt"
+    bin_dir = _stub_tar(
+        tmp_path,
+        f'#!/bin/bash\nprintf "%s\\n" "$@" > "{argfile}"\nexec /usr/bin/tar "$@"\n',
+    )
+    result = _run(backup_dir, tmp_path, env_extra={"RESTORE_TEST_WORKDIR": str(workdir)}, path_prefix=bin_dir)
+
+    assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    args = argfile.read_text().splitlines()
+    target = args[args.index("-C") + 1]
+    assert target.startswith(str(workdir)), f"acma dizini workdir disinda: {target}"
