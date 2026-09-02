@@ -78,3 +78,132 @@ def test_delete_backup(bm):
 def test_backup_size(bm):
     result = bm.create_backup()
     assert result["size_bytes"] > 0
+
+
+# --- Yedekleme yolu canli DB'ye YAZAMAZ (2026-08-31 server.db bozulmasi) ---
+#
+# Bozulma penceresinde (03:00:39 backup 200 OK -> 03:00:47 "disk I/O error" ->
+# 03:37 "malformed") donanim/disk-dolu/fd/RAM olcumle elendi. Mekanizma
+# kanitlanamadi; ama _snapshot_sqlite CANLI DB'yi okuma-yazma aciyordu ve
+# baglantiyi kapatmiyordu. Bu testler o yolu kalici olarak kapatir.
+
+
+@pytest.fixture
+def db_bm(tmp_path):
+    """Icinde gercek bir SQLite DB olan kaynak dizinli BackupManager."""
+    import sqlite3
+
+    source = tmp_path / "source"
+    source.mkdir()
+    db_path = source / "live.db"
+    con = sqlite3.connect(db_path)
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+    con.executemany("INSERT INTO t (v) VALUES (?)", [(f"row{i}",) for i in range(50)])
+    con.commit()
+    con.close()
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    bm = BackupManager(source_dirs=[str(source)], backup_dir=str(backup_dir))
+    return bm, str(db_path)
+
+
+def _spy_connect(monkeypatch):
+    """sqlite3.connect cagrilarini yakala; gercek baglantiyi dondur."""
+    import sqlite3
+
+    import app.core.backup_manager as bmod
+
+    calls: list[tuple[str, dict]] = []
+    real = sqlite3.connect
+
+    def spy(target, *args, **kwargs):
+        calls.append((str(target), kwargs))
+        return real(target, *args, **kwargs)
+
+    monkeypatch.setattr(bmod.sqlite3, "connect", spy)
+    return calls
+
+
+def test_snapshot_opens_source_readonly(db_bm, monkeypatch):
+    """Kaynak DB mode=ro ile acilmali — yedek yolu canli DB'ye yazamamali."""
+    bm, db_path = db_bm
+    calls = _spy_connect(monkeypatch)
+
+    assert bm.create_backup()["success"] is True
+
+    # Yalniz KAYNAK acilislari; snapshot HEDEFI de "live.db" adini tasir ve
+    # yazilabilir acilmalidir (yazilacak dosya odur) — onu disarida birak.
+    source_opens = [(t, kw) for t, kw in calls if db_path in t]
+    assert source_opens, f"kaynak DB hic acilmadi: {calls}"
+    for target, kwargs in source_opens:
+        assert target.startswith("file:"), f"URI degil, yazilabilir acilis: {target}"
+        assert "mode=ro" in target, f"read-only DEGIL: {target}"
+        assert kwargs.get("uri") is True, f"uri=True eksik: {target} {kwargs}"
+
+
+def test_snapshot_closes_connections(db_bm, monkeypatch):
+    """`with sqlite3.connect(...)` CLOSE ETMEZ — kapanis acik olmali."""
+    import sqlite3
+
+    bm, _ = db_bm
+    opened: list[sqlite3.Connection] = []
+
+    import app.core.backup_manager as bmod
+
+    real = sqlite3.connect
+
+    def spy(target, *args, **kwargs):
+        con = real(target, *args, **kwargs)
+        opened.append(con)
+        return con
+
+    monkeypatch.setattr(bmod.sqlite3, "connect", spy)
+    assert bm.create_backup()["success"] is True
+    assert opened, "hic baglanti acilmadi"
+
+    for con in opened:
+        with pytest.raises(sqlite3.ProgrammingError):
+            con.execute("SELECT 1")
+
+
+def test_snapshot_tempdir_on_disk_not_tmpfs(db_bm, monkeypatch):
+    """Snapshot /tmp'ye (tmpfs=RAM) degil, backup_dir'e (disk) yazilmali."""
+    import tempfile
+
+    import app.core.backup_manager as bmod
+
+    seen: list[dict] = []
+    real_td = tempfile.TemporaryDirectory
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs)
+        return real_td(*args, **kwargs)
+
+    monkeypatch.setattr(bmod.tempfile, "TemporaryDirectory", spy)
+    bm, _ = db_bm
+    assert bm.create_backup()["success"] is True
+
+    assert seen, "TemporaryDirectory hic cagrilmadi"
+    assert seen[0].get("dir") == bm._backup_dir, seen
+
+
+def test_snapshot_content_is_valid_and_complete(db_bm, tmp_path):
+    """Read-only snapshot gercek, butun ve okunabilir bir DB uretmeli."""
+    import sqlite3
+    import tarfile
+
+    bm, _ = db_bm
+    result = bm.create_backup()
+    out = tmp_path / "extracted"
+    out.mkdir()
+    with tarfile.open(result["path"]) as tar:
+        tar.extractall(out)  # noqa: S202 - test fixture, kendi urettigimiz arsiv
+
+    restored = next(out.rglob("live.db"))
+    con = sqlite3.connect(f"file:{restored}?mode=ro", uri=True)
+    try:
+        assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert con.execute("SELECT count(*) FROM t").fetchone()[0] == 50
+    finally:
+        con.close()

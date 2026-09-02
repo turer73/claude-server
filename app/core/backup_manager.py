@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 import tarfile
@@ -10,6 +11,8 @@ from datetime import datetime
 from typing import Any
 
 from app.exceptions import NotFoundError
+
+logger = logging.getLogger(__name__)
 
 
 def _is_sqlite_file(path: str) -> bool:
@@ -24,9 +27,35 @@ def _is_sqlite_file(path: str) -> bool:
 
 
 def _snapshot_sqlite(src: str, dst: str) -> None:
-    """Consistent online backup via SQLite backup API — no lock race."""
-    with sqlite3.connect(src) as src_conn, sqlite3.connect(dst) as dst_conn:
-        src_conn.backup(dst_conn)
+    """Consistent online backup via SQLite backup API — no lock race.
+
+    Kaynak READ-ONLY (`mode=ro`) acilir: yedekleme yolu canli DB'ye yazma yetkili
+    bir baglanti ACMAZ. Onceki hali `sqlite3.connect(src)` ile okuma-yazma
+    aciyordu, yani gecelik yedek canli server.db'ye yazabilen bir yoldu
+    (checkpoint/WAL-reset dahil). 2026-08-31 bozulmasinda mekanizma
+    KANITLANAMADI, ama bu yolu tamamen elemek maliyetsiz.
+
+    Baglantilar try/finally ile ACIKCA kapatilir: Python'da
+    `with sqlite3.connect(...)` islemi commit/rollback eder, CLOSE ETMEZ —
+    eski hali bu yuzden kapanisi GC'ye birakiyordu.
+
+    Geri dusus: yazarsiz bir WAL DB'de `mode=ro` acilamayabilir (shm yok).
+    O durumda eski okuma-yazma davranisina donulur — yazar yoksa risk de yoktur —
+    ve cagiran taraf ham `tar.add` fallback'ine dusmez (tutarsiz kopya olurdu).
+    """
+    try:
+        src_conn = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+    except sqlite3.Error:
+        logger.warning("snapshot: %s read-only acilamadi, rw'ye dusuluyor", src)
+        src_conn = sqlite3.connect(src)
+    try:
+        dst_conn = sqlite3.connect(dst)
+        try:
+            src_conn.backup(dst_conn)
+        finally:
+            dst_conn.close()
+    finally:
+        src_conn.close()
 
 
 class BackupManager:
@@ -66,7 +95,11 @@ class BackupManager:
             gzip_level = 1
         gzip_level = min(9, max(1, gzip_level))
 
-        with tempfile.TemporaryDirectory(prefix="bkp-snap-") as snap_dir:
+        # Snapshot dizini DISKTE olmali, /tmp'de DEGIL: /tmp burada tmpfs (RAM).
+        # claude_memory.db tek basina 1.8 GB — varsayilan /tmp kullanildiginda her
+        # gece bu kadar veri RAM'e yaziliyordu. backup_dir zaten yukarida
+        # makedirs edildi ve ciktinin kendisiyle ayni dosya sisteminde.
+        with tempfile.TemporaryDirectory(prefix="bkp-snap-", dir=self._backup_dir) as snap_dir:
             # Map source path -> arcname for items added to tar.
             # SQLite files get a consistent snapshot into snap_dir first.
             with tarfile.open(tmp_path, "w:gz", compresslevel=gzip_level) as tar:
