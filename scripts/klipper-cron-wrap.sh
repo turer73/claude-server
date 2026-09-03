@@ -36,7 +36,7 @@ mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR="$(mktemp -d 2>/dev/null || echo /tmp
 LOG="${LOG_DIR}/${NAME}.log"
 
 if [ $# -eq 0 ]; then
-    /opt/linux-ai-server/scripts/klipper-event.sh "cron-${NAME}" "MISSING-COMMAND"
+    ${_CRON_WRAP_REPO:-/opt/linux-ai-server}/scripts/klipper-event.sh "cron-${NAME}" "MISSING-COMMAND"
     exit 2
 fi
 
@@ -56,6 +56,16 @@ echo "[$TS_END] === END ${NAME}: rc=${RC} ===" >> "$LOG"
 # ── Outcome-contract (LIVESYS Faz 1): gercek sonucu rc'den degil, isin bastigi
 # son `OUTCOME: <pass|partial|fail> | <detay>` marker'indan turet. ──
 OUTCOME_LINE="$(grep -aE '^OUTCOME:[[:space:]]*(pass|partial|fail)' "$RUN_OUT" | tail -1)"
+
+# ── Notify-contract: is "bu sonucu KAYDET ama BILDIRIM gonderme" diyebilir (stdout'a
+# `NOTIFY: suppress`). cron_outcomes/events KAYDI DEGISMEZ — yalnizca alarm/Telegram
+# yolu atlanir. Neden: kalici-bilinen bir kosul her turda YENI alarm uretmesin.
+# Somut vaka (2026-09-03): liveness-check zaten "dead surüyor (tekrar-alarm yok)"
+# diyerek susmaya karar veriyor, ama yine de OUTCOME:partial donduruyordu; wrapper
+# bunu her 10 dakikada bir Telegram warn'ina cevirdi -> 24 saatte 137 mesaj.
+# Bastirma yanlis katmandaydi: is susmaya karar veriyor, ust katman konusuyordu.
+NOTIFY_SUPPRESS=0
+grep -qaE '^NOTIFY:[[:space:]]*suppress[[:space:]]*$' "$RUN_OUT" && NOTIFY_SUPPRESS=1
 rm -f "$RUN_OUT"
 
 if [ -n "$OUTCOME_LINE" ]; then
@@ -93,15 +103,19 @@ fi
 if [ "${CANARY_SUPPRESS_ALERT:-0}" = "1" ]; then
     : # canary: cron_outcomes yeterli, alert/event yok
 elif [ "$RESULT" = "pass" ]; then
-    /opt/linux-ai-server/scripts/klipper-event.sh "cron-${NAME}" "OK"
+    ${_CRON_WRAP_REPO:-/opt/linux-ai-server}/scripts/klipper-event.sh "cron-${NAME}" "OK"
+elif [ "$NOTIFY_SUPPRESS" = "1" ]; then
+    # Is bilincli olarak sustu: cron_outcomes ZATEN yazildi (yukarida), dashboard/
+    # liveness bu 'partial'i gormeye devam eder — yalnizca alarm/Telegram atlanir.
+    echo "[$(date -Iseconds)] NOTIFY-SUPPRESS ${NAME} ${RESULT} rc=${RC} (${DETAIL}) — cron_outcomes yazildi, alarm yok" >> "$LOG"
 else
     SEV="critical"; [ "$RESULT" = "partial" ] && SEV="warning"
-    /opt/linux-ai-server/scripts/klipper-event.sh "cron-${NAME}" "${RESULT} rc=${RC} (${DETAIL})"
+    ${_CRON_WRAP_REPO:-/opt/linux-ai-server}/scripts/klipper-event.sh "cron-${NAME}" "${RESULT} rc=${RC} (${DETAIL})"
 
     # LIVESYS Faz 3.2: merkezi events kaydi (job-outcome). YALNIZCA kayit — bildirim
     # AYRI notify-cron'un isi (henuz yok), bu yuzden ustteki alert-POST hala tek-notifier
     # ve cift-bildirim YOK. emit-helper fail-safe (cron-job'u dusurmez). sev: warning->warn.
-    /opt/linux-ai-server/scripts/emit-event.sh "job-outcome" "cron:${NAME}" "${SEV}" "cron ${NAME} ${RESULT}" "rc=${RC} ${DETAIL}"
+    ${_CRON_WRAP_REPO:-/opt/linux-ai-server}/scripts/emit-event.sh "job-outcome" "cron:${NAME}" "${SEV}" "cron ${NAME} ${RESULT}" "rc=${RC} ${DETAIL}"
 
     # ATOMIK CUTOVER: NOTIFY_CRON_ENABLED=true aninda notify-cron devralir, bu POST durur.
     # NOTIFY_CRON_ENABLED=false (default): legacy direkt n8n POST aktif (double-yok garanti icin

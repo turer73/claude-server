@@ -82,6 +82,9 @@ fi
 if [ "$DEAD_TO_ALERT" = "$PREV" ]; then
     echo "[$TS] dead sürüyor (tekrar-alarm yok): $DEAD_TO_ALERT" >> "$LOG"
     echo "OUTCOME: partial | dead sürüyor: $DEAD_TO_ALERT"
+    # "tekrar-alarm yok" kararini UST KATMANA da bildir: marker olmadan wrapper bu
+    # partial'i her run yeni Telegram warn'ina ceviriyordu (bastirma etkisiz kaliyordu).
+    echo "NOTIFY: suppress"
     exit 0
 fi
 echo "[$TS] YENİ PERSISTENT DEAD: $DEAD_TO_ALERT (tüm-dead: $DEAD)" >> "$LOG"

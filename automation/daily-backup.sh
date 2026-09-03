@@ -4,7 +4,10 @@ source /opt/linux-ai-server/.env 2>/dev/null
 
 API=http://localhost:8420
 KEY="${API_KEY:?Set API_KEY in .env}"
-LOG=/var/log/linux-ai-server/backup.log
+LOG="${BACKUP_LOG:-/var/log/linux-ai-server/backup.log}"
+# backup-restore-test.sh ile ayni konvansiyon; override edilebilir olmasi retention
+# davranisinin GERCEK dizine dokunmadan test edilmesini saglar.
+BACKUP_DIR="${BACKUP_DIR:-/var/lib/linux-ai-server/backups}"
 
 send_telegram() {
     curl --max-time 15 --connect-timeout 5 -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
@@ -62,9 +65,17 @@ TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 if [ "$SUCCESS" = "True" ]; then
     echo "[$TIMESTAMP] OK: $FILENAME ($SIZE)" >> "$LOG"
-    # Cleanup: keep only last 7 backups
-    ls -t /var/lib/linux-ai-server/backups/*.tar.gz 2>/dev/null | tail -n +8 | xargs rm -f 2>/dev/null
-    KEPT=$(ls /var/lib/linux-ai-server/backups/*.tar.gz 2>/dev/null | wc -l)
+    # Cleanup: en yeni $BACKUP_RETENTION_COUNT tarball kalir (2026-09-03: 7 -> 30).
+    # Gerekce: tek-diskli + off-site-siz makinede pencere = mantiksal bozulmayi
+    # FARK ETME suresi. Son server.db bozulmasi 45 saat fark edilmedi; 7 gun dar.
+    # PR#378 sonrasi gecelik tarball ~1015 MB -> ~198 MB dustu, 30 kopya ~6 GB
+    # (lv-root'ta 62 GB bos) -> maliyet olculdu, sigiyor.
+    # SAYI-bazli (gun degil): elle alinan ad-hoc yedekler de slot tuketir, ama
+    # disk tavani boylece deterministik kalir.
+    BACKUP_RETENTION_COUNT="${BACKUP_RETENTION_COUNT:-30}"
+    ls -t "$BACKUP_DIR"/*.tar.gz 2>/dev/null \
+        | tail -n +$((BACKUP_RETENTION_COUNT + 1)) | xargs rm -f 2>/dev/null
+    KEPT=$(ls "$BACKUP_DIR"/*.tar.gz 2>/dev/null | wc -l)
     DISK=$(df -h / | awk 'NR==2{print $4}')
     send_telegram "✅ *Backup OK*
 📦 \`$FILENAME\`
