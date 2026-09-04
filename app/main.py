@@ -632,9 +632,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             pass
 
         await _shutdown_continuous_agent_cohort(app, bus, bridge_handler)
-        dispatcher = getattr(app.state, "durable_dispatcher", None)
-        if dispatcher:
-            await dispatcher.stop()
+        running_dispatcher = getattr(app.state, "durable_dispatcher", None)
+        if running_dispatcher:
+            await running_dispatcher.stop()
         ptask = getattr(app.state, "presence_task", None)
         if ptask:
             ptask.cancel()

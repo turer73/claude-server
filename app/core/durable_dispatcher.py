@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sqlite3
 from typing import Any
 
 from app.core.agent_bus import Event
@@ -38,7 +39,7 @@ class DurableEventDispatcher:
         self._task: asyncio.Task[None] | None = None
         self._stopping = False
 
-    def _conn(self):
+    def _conn(self) -> sqlite3.Connection:
         global _schema_ready
         conn = get_conn(server_db_path())
         if not _schema_ready:

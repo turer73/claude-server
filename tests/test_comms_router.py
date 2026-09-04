@@ -7,11 +7,10 @@ kill-switch, legacy-pin hepsi rejected/held vermeli. Testler spawn/network icerm
 
 from __future__ import annotations
 
-import sys
-
-sys.path.insert(0, "/opt/linux-ai-server/automation")
-
-from comms_router import DIALOGUE, DISPATCH, HELD, LEGACY, REJECTED, route
+# Repo-goreli import (kardes test_note_poller_decide.py ile ayni bicim). Burada
+# eskiden `sys.path.insert(0, "/opt/linux-ai-server/automation")` vardi: makineye
+# gomulu mutlak yol lokalde yesil verip CI runner'da ModuleNotFoundError uretti.
+from automation.comms_router import DIALOGUE, DISPATCH, HELD, LEGACY, REJECTED, route
 
 
 def test_halt_kill_switch_rejects_everything():
