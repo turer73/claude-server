@@ -17,6 +17,11 @@ import sqlite3
 import subprocess
 import sys
 
+try:
+    from comms_router import route  # bash cagrisi: sys.path[0]=automation/
+except ImportError:  # pytest cagrisi: repo-root path'te
+    from automation.comms_router import route
+
 _AUTONOMOUS_CLAUDE = "/opt/linux-ai-server/automation/autonomous-claude.sh"
 
 # URGENT-sınıfı anahtar kelimeler (öncelik-skorlama)
@@ -65,6 +70,64 @@ def write_audit(db_path: str, device: str, note_id: int, action: str, detail: st
         sys.stderr.write(f"audit-yazim basarisiz (best-effort, spawn-akisini bozmaz): {e}\n")
 
 
+def read_budget(db_path: str):
+    """Faz-C SS7 global butce (gunluk spawn sayaci). FAIL-OPEN: okuma/kurma hatasinda
+    None doner (limit yok, eski davranis) -- halt-flag ile ayni gerekce (fail-CLOSED
+    gecici-DB-hiccup'ta otonom-hatti sessizce durdururdu)."""
+    import datetime
+
+    today = datetime.date.today().isoformat()
+    try:
+        conn = sqlite3.connect(db_path, timeout=5)
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS autonomous_comms_budget (
+                id INTEGER PRIMARY KEY CHECK (id=1),
+                spawns_today INTEGER NOT NULL DEFAULT 0,
+                daily_spawn_limit INTEGER NOT NULL DEFAULT 50,
+                threads_created_today INTEGER NOT NULL DEFAULT 0,
+                daily_thread_limit INTEGER NOT NULL DEFAULT 10,
+                daily_token_limit INTEGER NOT NULL DEFAULT 200000,
+                day TEXT NOT NULL DEFAULT '')"""
+            )
+            row = conn.execute("SELECT * FROM autonomous_comms_budget WHERE id=1").fetchone()
+            if not row:
+                conn.execute("INSERT INTO autonomous_comms_budget (id, day) VALUES (1, ?)", (today,))
+                conn.commit()
+                return {"spawns_today": 0, "daily_spawn_limit": 50, "day": today}
+            if row["day"] != today:
+                conn.execute(
+                    "UPDATE autonomous_comms_budget SET spawns_today=0, threads_created_today=0, day=? WHERE id=1",
+                    (today,),
+                )
+                conn.commit()
+                row = conn.execute("SELECT * FROM autonomous_comms_budget WHERE id=1").fetchone()
+            return {
+                "spawns_today": row["spawns_today"],
+                "daily_spawn_limit": row["daily_spawn_limit"],
+                "day": row["day"],
+            }
+        finally:
+            conn.close()
+    except Exception as e:
+        sys.stderr.write(f"budget okuma basarisiz (fail-OPEN, limit yok): {e}\n")
+        return None
+
+
+def increment_budget(db_path: str) -> None:
+    """SS7: spawn sonrasi gunluk sayaci artir (best-effort, spawn akisini bozmaz)."""
+    try:
+        conn = sqlite3.connect(db_path, timeout=5)
+        try:
+            conn.execute("UPDATE autonomous_comms_budget SET spawns_today = spawns_today + 1 WHERE id=1")
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        sys.stderr.write(f"budget artirma basarisiz (best-effort): {e}\n")
+
+
 def _score(n: dict) -> int:
     """Öncelik-skoru (yüksek = önce spawn). Ters-çevrilir (sort asc -> high-priority-first)."""
     title = (n.get("title") or "").upper()
@@ -83,6 +146,7 @@ def decide(notes: list[dict], db_path: str, device: str) -> dict:
     """Spawn-kararlarını hesapla + audit-yaz + (test-edilebilirlik için) spawn ETME —
     çağıran (main/test) `spawned` listesini kullanıp gerçek Popen'ı kendisi yapar."""
     halt = read_halt_flag(db_path)
+    budget = read_budget(db_path)
     sorted_notes = sorted(notes, key=_score)
 
     spawned: list[dict] = []
@@ -90,6 +154,7 @@ def decide(notes: list[dict], db_path: str, device: str) -> dict:
     skipped_protocol: list[int] = []
     skipped_halt: list[int] = []
     deferred_rate_limit: list[int] = []
+    deferred_budget: list[int] = []
 
     if halt:
         for n in sorted_notes:
@@ -116,6 +181,19 @@ def decide(notes: list[dict], db_path: str, device: str) -> dict:
                 write_audit(db_path, device, n["id"], "deferred_rate_limit", f"source={src} cnt>=3")
                 continue
             source_count[src] = cnt + 1
+            if budget and budget["spawns_today"] >= budget["daily_spawn_limit"]:
+                deferred_budget.append(n["id"])
+                write_audit(db_path, device, n["id"], "deferred_budget", f"limit={budget['daily_spawn_limit']}")
+                continue
+            verdict = route(
+                n.get("msg_type") or "legacy",
+                int(n.get("hop_count") or 0),
+                thread_state=n.get("thread_state") or "open",
+                halt_active=False,
+            )
+            write_audit(db_path, device, n["id"], "route_verdict", f"verdict={verdict}")
+            if budget:
+                budget["spawns_today"] += 1
             spawned.append(n)
 
     return {
@@ -125,6 +203,7 @@ def decide(notes: list[dict], db_path: str, device: str) -> dict:
         "skipped_protocol": skipped_protocol,
         "skipped_halt": skipped_halt,
         "deferred_rate_limit": deferred_rate_limit,
+        "deferred_budget": deferred_budget,
     }
 
 
@@ -143,6 +222,7 @@ def spawn(n: dict, db_path: str, device: str) -> None:
         env={**os.environ, "ENFORCE_INTERACTIVE_CHECK": "1"},
     )
     write_audit(db_path, device, nid, "spawned", f"from={frm}")
+    increment_budget(db_path)
 
 
 def main() -> None:
@@ -171,7 +251,7 @@ def main() -> None:
     for n in result["spawned"]:
         spawn(n, db_path, device)
 
-    handled_ids = [n["id"] for n in result["spawned"]] + result["skipped_self"] + result["skipped_protocol"] + result["skipped_halt"]
+    handled_ids = [n["id"] for n in result["spawned"]] + result["skipped_self"] + result["skipped_protocol"] + result["skipped_halt"] + result["deferred_budget"]
     spawned_max = max(handled_ids) if handled_ids else last_seen
 
     sys.stderr.write(
