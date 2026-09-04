@@ -31,6 +31,7 @@ class Event:
     payload: dict[str, Any]
     timestamp: float = field(default_factory=time.time)
     id: int = 0
+    from_db: bool = field(default=False)
 
     _next_id: int = 0
 
@@ -85,6 +86,10 @@ class AgentBus:
     def agent_status(self, name: str, **extra: Any) -> None:
         if name in self._agents:
             self._agents[name].update(extra)
+
+    def agent_names(self) -> list[str]:
+        """Registered agent adlari (presence heartbeat icin)."""
+        return list(self._agents.keys())
 
     async def publish(self, event: Event) -> None:
         thought_id = self._thought_id(event)

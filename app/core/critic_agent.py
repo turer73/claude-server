@@ -225,6 +225,13 @@ class CriticAgent:
             return
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
+        try:
+            from app.core.presence_manager import presence
+
+            presence.upsert("critic", "leader-1", "critic", "klipper", "klipper", {"evaluator": True})
+            presence.heartbeat("critic", status="idle")
+        except Exception as e:
+            log.warning("presence register failed (critic): %s", e)
         bus = get_bus()
         bus.register_agent("critic", "Thought quality evaluator")
         bus.subscribe("thought:new", self._on_thought)

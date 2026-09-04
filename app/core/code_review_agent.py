@@ -50,6 +50,19 @@ class CodeReviewAgent:
     def start(self) -> None:
         if not cr._ENABLED:
             return
+        try:
+            from app.core.presence_manager import presence
+
+            presence.upsert("code_review", "leader-1", "code_review", "klipper", "klipper", {"readonly": True})
+            presence.heartbeat("code_review", status="idle")
+        except Exception as e:
+            logger.warning("presence register failed (code_review): %s", e)
+        try:
+            from app.core.agent_bus import get_bus
+
+            get_bus().register_agent("code_review", "Read-only code review agent")
+        except Exception as e:
+            logger.warning("bus register failed (code_review): %s", e)
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._run_loop())
         if self._manual_task is None or self._manual_task.done():

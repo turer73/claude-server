@@ -191,6 +191,13 @@ class LearningLoop:
             return
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
+        try:
+            from app.core.presence_manager import presence
+
+            presence.upsert("learning_loop", "leader-1", "learning", "klipper", "klipper", {"improvement": True})
+            presence.heartbeat("learning_loop", status="idle")
+        except Exception as e:
+            log.warning("presence register failed (learning_loop): %s", e)
         bus = get_bus()
         bus.register_agent("learning_loop", "Closed-loop improvement engine")
         bus.subscribe("critic:score", self._on_score)

@@ -163,6 +163,19 @@ class DevOpsAgent(
     def start(self) -> None:
         if self._running:
             return
+        try:
+            from app.core.presence_manager import presence
+
+            presence.upsert("devops", "leader-1", "devops", "klipper", "klipper", {"remediation": True})
+            presence.heartbeat("devops", status="idle")
+        except Exception as e:
+            log.warning("presence register failed (devops): %s", e)
+        try:
+            from app.core.agent_bus import get_bus
+
+            get_bus().register_agent("devops", "System monitoring and remediation agent")
+        except Exception as e:
+            log.warning("bus register failed (devops): %s", e)
         self._running = True
         self._started_at = datetime.now(UTC).isoformat()
         self._task = asyncio.create_task(self._run_loop())
