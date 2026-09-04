@@ -517,6 +517,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     bus.subscribe_to_all(bridge_handler)
     logger.info("event spine bridge registered (bus → events)")
 
+    # Attention Router: bus → work_items (olü sinyaller iş itemi üretir)
+    from app.core.attention_router import route_event
+
+    bus.subscribe_to_all(route_event)
+    logger.info("attention router registered (bus → work_items)")
+
     # Read-only kod-mühendisi ajanı (qwen2.5-coder): commit-diff + idle-sweep ile
     # sürekli inceleme → discoveries (dedup'lı) + P1 Telegram. KOD DEĞİŞTİRMEZ.
     # CODE_REVIEW_ENABLED=0 ile kapatılır. start() yalnız enabled ise task açar.
@@ -528,6 +534,40 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from app.core.continuous_agent_leader import ContinuousAgentLeaderLock
 
     await _initialize_continuous_agent_cohort(app, ContinuousAgentLeaderLock())
+
+    # Presence + durable event dispatcher (yalniz leader worker)
+    #
+    # KAPALI — 2026-09-03, kontrollu deney (server.db bozulmasi #10, kesif #1676).
+    # Bu iki dongu 2026-08-27'de commit EDILMEDEN production'a girdi: dispatcher
+    # 1 sn'de bir cursor yaziyor, presence 15 sn'de bir heartbeat atiyordu.
+    # Bozulma sikligi ayni tarihte ikiye katlandi ve son iki olayin TEK ortak
+    # paydasi bu kod (backup da restart da ortak degil). NEDENSELLIK KANITLANMADI;
+    # bir hafta bozulma olmazsa sebep buradadir. Deney biti: 2026-09-10.
+    #
+    # KAPSAM UYARISI — bu tek-degiskenli bir deney DEGIL: attention_router
+    # (bus -> work_items, ~251 satir/saat) ayni partide eklendi ve kapinin
+    # DISINDA, hala yaziyor. Kalkan yuk eklenen yazmalarin ~%96'si; kalan %4
+    # hala aday. Bozulma tekrarlarsa ilk bakilacak yer orasi.
+    #
+    # Geri acmak icin: asagidaki bayragi True yap.
+    presence_dispatcher_enabled = False
+    if presence_dispatcher_enabled and getattr(app.state, "continuous_agents_role", "") == "leader":
+        try:
+            from app.core.durable_dispatcher import create_dispatcher
+
+            dispatcher = create_dispatcher(bus)
+            app.state.durable_dispatcher = dispatcher
+            await dispatcher.start()
+            logger.info("durable event dispatcher started (leader worker)")
+        except Exception:
+            logger.exception("durable dispatcher startup failed")
+        try:
+            from app.core.presence_heartbeat_task import run_presence_heartbeat_loop
+
+            app.state.presence_task = asyncio.create_task(run_presence_heartbeat_loop())
+            logger.info("presence heartbeat loop started (leader worker)")
+        except Exception:
+            logger.exception("presence heartbeat loop startup failed")
 
     # Boot-config-log (#3 silent-fail verify): runtime aktif-olu gate tespiti.
     # T1 static-lint PR-zamani yakalar; bu runtime backstop T1'i kacirani yakalar
@@ -592,6 +632,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             pass
 
         await _shutdown_continuous_agent_cohort(app, bus, bridge_handler)
+        running_dispatcher = getattr(app.state, "durable_dispatcher", None)
+        if running_dispatcher:
+            await running_dispatcher.stop()
+        ptask = getattr(app.state, "presence_task", None)
+        if ptask:
+            ptask.cancel()
+            try:
+                await ptask
+            except asyncio.CancelledError:
+                pass
         try:
             await devops.stop()
         except Exception:

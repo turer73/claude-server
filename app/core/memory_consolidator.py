@@ -353,6 +353,13 @@ class MemoryConsolidator:
         if last_state is not None:
             self._last_thought_id, focus, emotion = last_state
             self._last_state = {"focus": focus, "emotion": emotion}
+        try:
+            from app.core.presence_manager import presence
+
+            presence.upsert("memory_consolidator", "leader-1", "memory", "klipper", "klipper", {"consolidator": True})
+            presence.heartbeat("memory_consolidator", status="idle")
+        except Exception as e:
+            log.warning("presence register failed (memory_consolidator): %s", e)
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
         bus = get_bus()

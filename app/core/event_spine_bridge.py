@@ -43,6 +43,8 @@ BUS_SEVERITY_MAP = {
 def _bus_event_to_spine(event: Event) -> None:
     if event.source.startswith("bridge:"):
         return  # loop guard: events.py's bridge'ten gelen event'i geri gönderme
+    if getattr(event, "from_db", False):
+        return  # loop guard: dispatcher'dan gelen DB event'lerini spine'a geri yazma
     from app.core.events import emit_event
 
     spine_type = BUS_TO_SPINE_MAP.get(event.type, f"agentbus:{event.type}")

@@ -8,7 +8,7 @@
 - **Hostname:** klipper · **Kullanici:** klipperos (sudo NOPASSWD)
 - **Ag:** LAN 192.168.1.113 | Tailscale 100.84.251.49 (klipper-2 olarak kayitli)
 - **Servis portu:** 8420 · **Python venv:** `/opt/linux-ai-server/venv`
-- **Donanim:** Beelink SER8 (AZW), AMD Ryzen 7 8845HS w/ Radeon 780M (8C/16T), 28GB RAM, BIOS V035 P8C0M0C15.14 (26/06/2025). **NVMe: TEK disk — Crucial P3 1TB (`0000:01:00.0`).** Ikinci yuva bos: Lexar NM790 2TB 2026-08-11'de oldu, 2026-08-15'te sokuldu (asagi bkz).
+- **Donanim:** Beelink SER8 (AZW), AMD Ryzen 7 8845HS w/ Radeon 780M (8C/16T), 28GB RAM, BIOS V035 P8C0M0C15.16 (03/06/2026). **NVMe: TEK disk — Crucial P3 1TB (`0000:01:00.0`).** Ikinci yuva bos: Lexar NM790 2TB 2026-08-11'de oldu, 2026-08-15'te sokuldu (asagi bkz).
 
 **Canli durum — DOSYAYA BAKMA, OLC:**
 

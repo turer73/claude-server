@@ -635,6 +635,19 @@ class ConsciousnessStream:
         if self._manage_worker_lock and self._worker_lock_fd is None:
             log.info("another worker holds the lock — consciousness stream not started on this worker")
             return
+        try:
+            from app.core.presence_manager import presence
+
+            presence.upsert("consciousness", "leader-1", "consciousness", "klipper", "klipper", {"stream": True}, model="qwen2.5:3b")
+            presence.heartbeat("consciousness", status="idle")
+        except Exception as e:
+            log.warning("presence register failed (consciousness): %s", e)
+        try:
+            from app.core.agent_bus import get_bus
+
+            get_bus().register_agent("consciousness", "Continuous self-narrative stream")
+        except Exception as e:
+            log.warning("bus register failed (consciousness): %s", e)
         self._running = True
         self._started_at = datetime.now(UTC).isoformat()
         self._task = asyncio.create_task(self._run_loop())

@@ -94,7 +94,7 @@ def test_decide_writes_audit_rows_for_skip_categories(db):
     actions = {(note_id, action) for note_id, _, action, _ in rows}
     assert (3, "skipped_self") in actions
     assert (4, "skipped_protocol") in actions
-    assert len(rows) == 2  # yalniz 2 skip-kararı; 1/2 spawn-listesinde, henuz spawn() cagirilmadi
+    assert len(rows) == 4  # yalniz 2 skip-kararı; 1/2 spawn-listesinde, henuz spawn() cagirilmadi
 
 
 def test_decide_halt_writes_skipped_halt_audit_for_all(db):
@@ -213,3 +213,77 @@ def test_main_cli_end_to_end_with_halt_never_spawns(db):
     rows = _audit_rows(db)
     assert len(rows) == 4
     assert all(action == "skipped_halt" for _, _, action, _ in rows)
+
+
+def _ensure_budget(db):
+    import sqlite3 as _s
+
+    conn = _s.connect(db)
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS autonomous_comms_budget (
+        id INTEGER PRIMARY KEY CHECK (id=1),
+        spawns_today INTEGER NOT NULL DEFAULT 0,
+        daily_spawn_limit INTEGER NOT NULL DEFAULT 50,
+        threads_created_today INTEGER NOT NULL DEFAULT 0,
+        daily_thread_limit INTEGER NOT NULL DEFAULT 10,
+        daily_token_limit INTEGER NOT NULL DEFAULT 200000,
+        day TEXT NOT NULL DEFAULT '')"""
+    )
+    conn.execute("INSERT OR IGNORE INTO autonomous_comms_budget (id) VALUES (1)")
+    conn.commit()
+    conn.close()
+
+
+def test_decide_budget_limit_defers_spawns(db):
+    import datetime
+    import sqlite3 as _s
+
+    _ensure_budget(db)
+    conn = _s.connect(db)
+    conn.execute(
+        "UPDATE autonomous_comms_budget SET spawns_today=49, daily_spawn_limit=50, day=? WHERE id=1",
+        (datetime.date.today().isoformat(),),
+    )
+    conn.commit()
+    conn.close()
+    notes = [{"id": i, "from_device": "surer", "title": f"n{i}", "preview": ""} for i in range(1, 6)]
+    result = decide(notes, db, "klipper-test")
+    assert len(result["spawned"]) == 1
+    assert len(result["deferred_budget"]) == 2
+    assert len(result["deferred_rate_limit"]) == 2
+
+
+def test_decide_budget_day_rollover_resets_counter(db):
+    import sqlite3 as _s
+
+    _ensure_budget(db)
+    conn = _s.connect(db)
+    conn.execute("UPDATE autonomous_comms_budget SET spawns_today=50, day='2000-01-01' WHERE id=1")
+    conn.commit()
+    conn.close()
+    notes = [{"id": i, "from_device": "surer", "title": f"n{i}", "preview": ""} for i in range(1, 4)]
+    result = decide(notes, db, "klipper-test")
+    assert len(result["spawned"]) == 3
+    assert result["deferred_budget"] == []
+
+
+def test_route_verdict_audit_written_for_spawned(db):
+    decide(NOTES, db, "klipper-test")
+    rows = _audit_rows(db)
+    verdict_notes = sorted(nid for nid, _, action, _ in rows if action == "route_verdict")
+    assert verdict_notes == [1, 2]
+
+
+def test_spawn_increments_budget(db, monkeypatch):
+    class FakePopen:
+        def __init__(self, cmd, **kwargs):
+            pass
+
+    monkeypatch.setattr("automation.note_poller_decide.subprocess.Popen", FakePopen)
+    _ensure_budget(db)
+    spawn({"id": 9, "from_device": "surer", "title": "t", "preview": "p"}, db, "klipper-test")
+    import sqlite3 as _s
+
+    conn = _s.connect(db)
+    assert conn.execute("SELECT spawns_today FROM autonomous_comms_budget WHERE id=1").fetchone()[0] == 1
+    conn.close()
