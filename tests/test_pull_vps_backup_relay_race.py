@@ -123,8 +123,10 @@ def test_producer_still_running_is_not_reported_as_failure(tmp_path: Path) -> No
     assert "HALA KOSUYOR" in detail, detail
     assert "SIGKILL" not in detail, detail
 
+    # POZITIF iddia: "critical yok" tek basina bosluktan gecerdi (emit-event.sh hic
+    # kosmadiginda liste bos kalir — CI'da tam bu oldu). Warn'in YAZILDIGINI de ara.
     sevs = [s for s, _ in _backup_events(db)]
-    assert "critical" not in sevs, f"yaris durumu critical'a cikti: {_backup_events(db)}"
+    assert sevs == ["warn"], f"alarm yolu olculemedi/yanlis siniflandi: {_backup_events(db)}"
 
 
 @pytest.mark.skipif(shutil.which("mountpoint") is None, reason="mountpoint yok")

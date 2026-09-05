@@ -1,13 +1,19 @@
 #!/bin/bash
 # Pull VPS Backup — Dokploy konfig + Docker volume snapshot + Postgres SQL dump
-# Cron: 0 4 * * * (her gece 04:00)
+# Cron: 20 6 * * * (2026-09-05'te 04:20'den kaydirildi — VPS uretici 111dk'ya cikti)
 # Hedef: /backups/vps/<YYYY-MM-DD>/  (7 gün retention)
 #
 # VPS = root@100.126.113.23 (Tailscale-only). Klipper'dan SSH key ile bağlanır.
 # Eski makinede script kayboldu; bu yeni minimal versiyon.
 set -uo pipefail
 
-source /opt/linux-ai-server/.env 2>/dev/null
+# Repo-koku BASH_SOURCE'tan turetilir (hardcode /opt DEGIL): CI/test checkout'u
+# /opt'ta olmadigi icin sabit yol, alarm yolunu (emit-event.sh) sessizce OLCULEMEZ
+# yapiyordu — test "critical yok" diyerek BOSLUKTA gecerdi (klipper-cron-wrap ile ayni ders).
+_PVB_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
+_PVB_REPO="${_PVB_REPO:-/opt/linux-ai-server}"
+
+source "$_PVB_REPO/.env" 2>/dev/null
 
 VPS="${VPS_HOST:?Set VPS_HOST in .env}"
 SSH="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 $VPS"
@@ -104,7 +110,7 @@ STAGE=start; VOL_OK=0; VOL_COUNT=0; VOL_SKIP=0; CH_OK=0; SQL_OK=0; SQL_STALE=0; 
 # cron.log bugun 02:55'ten sonra yazilmali (bugunku 03:00 run), degilse stale->fail.
 _relay_vps_backup() {
   set +e
-  local db="${DB_PATH:-/opt/linux-ai-server/data/server.db}"
+  local db="${DB_PATH:-$_PVB_REPO/data/server.db}"
   [ -f "$db" ] || return 0
   local rts guard line res det safe today ts_m
   rts=$($SSH "stat -c %Y /opt/backup/logs/cron.log 2>/dev/null || echo 0" 2>/dev/null)
@@ -124,7 +130,7 @@ _relay_vps_backup() {
         # URETICI-TUKETICI YARISI (2026-09-05): "hala kosuyor" ile "bitti ama sonuc
         # yok" AYRI arizalar, tek mesaja gomulmesinler (PR#377 dersi). VPS backup
         # suresi 15dk'dan 111dk'ya cikti; 04:20'de okuyunca uretici henuz bitmemisti
-        # ve bu "SIGKILL/stale-log?" diye CRITICAL raporlandi — yedek sagIamdi.
+        # ve bu "SIGKILL/stale-log?" diye CRITICAL raporlandi — yedek saglamdi.
         if $SSH "pgrep -f '/opt/backup/backup\.sh' >/dev/null 2>&1" 2>/dev/null; then
           res=partial; det="VPS backup HALA KOSUYOR: bugunku sonuc henuz yok (son tamamlanan ts=$ts_m)"
         else
@@ -142,7 +148,7 @@ _relay_vps_backup() {
   if [ "${res:-fail}" != "pass" ]; then
     local bsev=critical
     [ "$res" = "partial" ] && bsev=warning
-    /opt/linux-ai-server/scripts/emit-event.sh "backup" "vps:backup-push" "$bsev" "VPS backup ${res:-fail}" "$det"
+    "$_PVB_REPO/scripts/emit-event.sh" "backup" "vps:backup-push" "$bsev" "VPS backup ${res:-fail}" "$det"
   fi
 }
 
