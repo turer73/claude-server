@@ -36,7 +36,12 @@ BUS_SEVERITY_MAP = {
     "thought:deep": "info",
     "critic:score": "info",
     "memory:pattern_detected": "info",
-    "learning:threshold_adjusted": "warn",
+    # 2026-09-03: warn -> info. learning_loop'un rutin oz-ayari (esik guncelleme);
+    # haritadaki diger tum bus olaylari zaten info. warn oldugu icin notify-cron
+    # bunu Telegram'a tasiyordu (24 saatte 21 mesaj) — olay bir ariza degil,
+    # sistemin normal calismasi. events tablosunda kayitli kalir, sadece
+    # bildirim esigi altina iner.
+    "learning:threshold_adjusted": "info",
 }
 
 

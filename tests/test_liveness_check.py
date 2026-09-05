@@ -86,6 +86,17 @@ def test_same_dead_set_no_repeat_alarm(tmp_path):
     assert "sendMessage" not in cap  # tekrar bildirim yok
 
 
+def test_same_dead_set_tells_wrapper_to_stay_quiet(tmp_path):
+    """Susma kararı ÜST KATMANA da bildirilmeli (2026-09-03 Telegram-seli).
+
+    Script'in kendi DIRECT-Telegram'ı sussa bile OUTCOME:partial dönüyordu ve
+    klipper-cron-wrap her non-pass outcome'ı koşulsuz warn-event'e çeviriyordu:
+    10dk'da bir mesaj = 24 saatte 137. Bastırma tek katmanda yeterli değil.
+    """
+    out, _ = _run(tmp_path, '{"dead":[{"source":"notify-cron"}]}', prev_state="notify-cron")
+    assert "NOTIFY: suppress" in out
+
+
 def test_recovery_clears_state(tmp_path):
     """Önceki dead vardı, şimdi temiz -> recovered (state temizlenir, alarm yok)."""
     out, cap = _run(tmp_path, '{"dead":[],"stale":[]}', prev_state="notify-cron")
