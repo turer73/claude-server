@@ -29,8 +29,11 @@
 # Cross-project PR-review poller — her 2 saat, ENABLED 2026-06-04 (spawn+post ACIK; pilot=claude-server; cap 5-run+10-gun; Codex-once-force). Rollback: env-prefix kaldir.
 0 */2 * * * DRY_RUN=0 PR_REVIEW_ENABLED=1 SPAWN_ENABLED=1 /opt/linux-ai-server/scripts/klipper-cron-wrap.sh pr-review-poll /opt/linux-ai-server/automation/pr-review-poller.sh
 # Klipper HDD backup — VPS Dokploy + volumes (7 gun retention)
-# 04:20 (stagger): demo-reset-test 04:00 + nuclei-scan 04:40 ile CPU spike yigilmasin
-20 4 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh pull-vps-backup /opt/linux-ai-server/automation/pull-vps-backup.sh
+# 06:20 (2026-09-05'te 04:20'den kaydirildi): VPS backup.sh 03:00'te basliyor ve
+# suresi 15dk'dan 111dk'ya cikti -> 04:20'de sonucu okumak URETICIYI YAKALIYORDU
+# (yanlis "stale-relay" critical). 06:20 = ureticiye 3sa20dk pencere; ayrica 06:00
+# uclusunden (test-runner/autonomous-summary/predictive-agent) ve 07:00 e2e'den ayri.
+20 6 * * * /opt/linux-ai-server/scripts/klipper-cron-wrap.sh pull-vps-backup /opt/linux-ai-server/automation/pull-vps-backup.sh
 # One-shot: gozlem haftasi sonu hatirlatma (2026-05-21, self-cleaning)
 0 9 21 5 * /opt/linux-ai-server/scripts/observation-week-end-reminder.sh > /var/log/linux-ai-server/observation-reminder.log 2>&1
 # Bilge Arena failover — Dokploy down ise Vercel e gecis (3dk kontrol)

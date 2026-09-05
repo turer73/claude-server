@@ -109,7 +109,9 @@ _relay_vps_backup() {
   local rts guard line res det safe today ts_m
   rts=$($SSH "stat -c %Y /opt/backup/logs/cron.log 2>/dev/null || echo 0" 2>/dev/null)
   guard=$(date -d 'today 02:55' +%s 2>/dev/null || echo 0)
-  today=$(date -u +%Y-%m-%d)
+  # YEREL tarih: VPS de klipper de Europe/Istanbul ve backup.sh ts'i YEREL yaziyor;
+  # date -u ile kiyas 21:00-00:00 arasi bir gun kayardi (mtime guard'i zaten yerel).
+  today=$(date +%Y-%m-%d)
   if [ "${rts:-0}" -ge "${guard:-0}" ] 2>/dev/null; then
     line=$($SSH "grep -aE '^OUTCOME:[[:space:]]*(pass|partial|fail)' /opt/backup/logs/cron.log | tail -1" 2>/dev/null)
     if [ -n "$line" ]; then
@@ -119,7 +121,15 @@ _relay_vps_backup() {
       # burada today-eslesme dogrula; eski-format (ts yok) -> kontrol atla.
       ts_m=$(printf '%s' "$line" | grep -oE 'ts:[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1 | sed 's/ts://')
       if [ -n "$ts_m" ] && [ "$ts_m" != "$today" ]; then
-        res=fail; det="stale-relay: OUTCOME ts=$ts_m, bugun=$today (SIGKILL/stale-log?)"
+        # URETICI-TUKETICI YARISI (2026-09-05): "hala kosuyor" ile "bitti ama sonuc
+        # yok" AYRI arizalar, tek mesaja gomulmesinler (PR#377 dersi). VPS backup
+        # suresi 15dk'dan 111dk'ya cikti; 04:20'de okuyunca uretici henuz bitmemisti
+        # ve bu "SIGKILL/stale-log?" diye CRITICAL raporlandi — yedek sagIamdi.
+        if $SSH "pgrep -f '/opt/backup/backup\.sh' >/dev/null 2>&1" 2>/dev/null; then
+          res=partial; det="VPS backup HALA KOSUYOR: bugunku sonuc henuz yok (son tamamlanan ts=$ts_m)"
+        else
+          res=fail; det="stale-relay: OUTCOME ts=$ts_m, bugun=$today, backup.sh KOSMUYOR (SIGKILL/stale-log?)"
+        fi
       fi
     else
       res=fail; det="cron.log taze ama OUTCOME yok (trap-oncesi/eksik run?)"
