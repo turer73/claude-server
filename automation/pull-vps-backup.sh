@@ -1,13 +1,19 @@
 #!/bin/bash
 # Pull VPS Backup — Dokploy konfig + Docker volume snapshot + Postgres SQL dump
-# Cron: 0 4 * * * (her gece 04:00)
+# Cron: 20 6 * * * (2026-09-05'te 04:20'den kaydirildi — VPS uretici 111dk'ya cikti)
 # Hedef: /backups/vps/<YYYY-MM-DD>/  (7 gün retention)
 #
 # VPS = root@100.126.113.23 (Tailscale-only). Klipper'dan SSH key ile bağlanır.
 # Eski makinede script kayboldu; bu yeni minimal versiyon.
 set -uo pipefail
 
-source /opt/linux-ai-server/.env 2>/dev/null
+# Repo-koku BASH_SOURCE'tan turetilir (hardcode /opt DEGIL): CI/test checkout'u
+# /opt'ta olmadigi icin sabit yol, alarm yolunu (emit-event.sh) sessizce OLCULEMEZ
+# yapiyordu — test "critical yok" diyerek BOSLUKTA gecerdi (klipper-cron-wrap ile ayni ders).
+_PVB_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
+_PVB_REPO="${_PVB_REPO:-/opt/linux-ai-server}"
+
+source "$_PVB_REPO/.env" 2>/dev/null
 
 VPS="${VPS_HOST:?Set VPS_HOST in .env}"
 SSH="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 $VPS"
@@ -104,12 +110,14 @@ STAGE=start; VOL_OK=0; VOL_COUNT=0; VOL_SKIP=0; CH_OK=0; SQL_OK=0; SQL_STALE=0; 
 # cron.log bugun 02:55'ten sonra yazilmali (bugunku 03:00 run), degilse stale->fail.
 _relay_vps_backup() {
   set +e
-  local db="${DB_PATH:-/opt/linux-ai-server/data/server.db}"
+  local db="${DB_PATH:-$_PVB_REPO/data/server.db}"
   [ -f "$db" ] || return 0
   local rts guard line res det safe today ts_m
   rts=$($SSH "stat -c %Y /opt/backup/logs/cron.log 2>/dev/null || echo 0" 2>/dev/null)
   guard=$(date -d 'today 02:55' +%s 2>/dev/null || echo 0)
-  today=$(date -u +%Y-%m-%d)
+  # YEREL tarih: VPS de klipper de Europe/Istanbul ve backup.sh ts'i YEREL yaziyor;
+  # date -u ile kiyas 21:00-00:00 arasi bir gun kayardi (mtime guard'i zaten yerel).
+  today=$(date +%Y-%m-%d)
   if [ "${rts:-0}" -ge "${guard:-0}" ] 2>/dev/null; then
     line=$($SSH "grep -aE '^OUTCOME:[[:space:]]*(pass|partial|fail)' /opt/backup/logs/cron.log | tail -1" 2>/dev/null)
     if [ -n "$line" ]; then
@@ -119,7 +127,15 @@ _relay_vps_backup() {
       # burada today-eslesme dogrula; eski-format (ts yok) -> kontrol atla.
       ts_m=$(printf '%s' "$line" | grep -oE 'ts:[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1 | sed 's/ts://')
       if [ -n "$ts_m" ] && [ "$ts_m" != "$today" ]; then
-        res=fail; det="stale-relay: OUTCOME ts=$ts_m, bugun=$today (SIGKILL/stale-log?)"
+        # URETICI-TUKETICI YARISI (2026-09-05): "hala kosuyor" ile "bitti ama sonuc
+        # yok" AYRI arizalar, tek mesaja gomulmesinler (PR#377 dersi). VPS backup
+        # suresi 15dk'dan 111dk'ya cikti; 04:20'de okuyunca uretici henuz bitmemisti
+        # ve bu "SIGKILL/stale-log?" diye CRITICAL raporlandi — yedek saglamdi.
+        if $SSH "pgrep -f '/opt/backup/backup\.sh' >/dev/null 2>&1" 2>/dev/null; then
+          res=partial; det="VPS backup HALA KOSUYOR: bugunku sonuc henuz yok (son tamamlanan ts=$ts_m)"
+        else
+          res=fail; det="stale-relay: OUTCOME ts=$ts_m, bugun=$today, backup.sh KOSMUYOR (SIGKILL/stale-log?)"
+        fi
       fi
     else
       res=fail; det="cron.log taze ama OUTCOME yok (trap-oncesi/eksik run?)"
@@ -132,7 +148,7 @@ _relay_vps_backup() {
   if [ "${res:-fail}" != "pass" ]; then
     local bsev=critical
     [ "$res" = "partial" ] && bsev=warning
-    /opt/linux-ai-server/scripts/emit-event.sh "backup" "vps:backup-push" "$bsev" "VPS backup ${res:-fail}" "$det"
+    "$_PVB_REPO/scripts/emit-event.sh" "backup" "vps:backup-push" "$bsev" "VPS backup ${res:-fail}" "$det"
   fi
 }
 
