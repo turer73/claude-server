@@ -4,6 +4,7 @@
 #
 #   vps-run.sh 'docker ps --format "{{.Names}}"'
 #   vps-run.sh 'tail -n 50 /var/log/syslog'
+#   vps-run.sh -f ./provision.sh          # send a whole script file
 #
 # Returns stdout, forwards stderr, exits with the remote command's
 # exit code. No whitelist gating on the inner command — `ssh` is the
@@ -12,7 +13,7 @@
 set -euo pipefail
 
 if [ $# -eq 0 ]; then
-  echo "usage: $(basename "$0") [-t SECONDS] '<command>'" >&2
+  echo "usage: $(basename "$0") [-t SECONDS] {'<command>' | -f <script-file>}" >&2
   exit 2
 fi
 
@@ -25,7 +26,20 @@ if [ "$1" = "-t" ] || [ "$1" = "--timeout" ]; then
   shift 2
 fi
 
-CMD="$*"
+# -f/--file: read the script body from a file instead of argv. Multi-line
+# scripts with quotes, $, and backticks survive intact this way — embedding
+# them in an argv string is how quoting corruption keeps creeping back in.
+if [ "$1" = "-f" ] || [ "$1" = "--file" ]; then
+  if [ ! -r "${2:-}" ]; then
+    echo "error: cannot read script file: ${2:-<missing>}" >&2
+    exit 2
+  fi
+  CMD=$(cat "$2")
+  shift 2
+else
+  CMD="$*"
+fi
+
 API="${VPS_API:-http://127.0.0.1:8420/api/v1}"
 ENV_FILE="${ENV_FILE:-/opt/linux-ai-server/.env}"
 
